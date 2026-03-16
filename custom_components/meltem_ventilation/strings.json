@@ -1,0 +1,187 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meltem",
+        "description": "An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB. The integration then scans the configured units and asks for the exact profile of each detected unit.",
+        "data": {
+          "port": "Serial port"
+        }
+      },
+      "confirm_usb": {
+        "title": "Discovered Meltem gateway",
+        "description": "Home Assistant found a USB device on {port} ({manufacturer}, {description}). An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB.",
+        "data": {
+          "port": "Serial port"
+        }
+      },
+      "profiles": {
+        "title": "Detected Meltem M-WRG units",
+        "description": "The integration found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit."
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Meltem gateway.",
+      "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure Meltem",
+        "description": "Choose whether to change the serial connection settings, update profiles for existing units, or scan for new units.",
+        "menu_options": {
+          "edit_connection": "Change serial connection",
+          "edit_profiles": "Change profiles for existing units",
+          "rescan_units": "Scan for new units"
+        }
+      },
+      "edit_connection": {
+        "title": "Change serial connection",
+        "description": "Update the serial device path and scheduler request rate used for the Meltem gateway.",
+        "data": {
+          "port": "Serial port",
+          "max_requests_per_second": "Maximum requests per second"
+        }
+      },
+      "edit_profiles": {
+        "title": "Change Meltem device profiles",
+        "description": "Update the selected profile for each configured Meltem M-WRG unit."
+      },
+      "rescan_units": {
+        "title": "Scan for new Meltem M-WRG units",
+        "description": "Scan the Meltem gateway for configured Meltem M-WRG units and update the stored profiles."
+      },
+      "profiles": {
+        "title": "Detected Meltem M-WRG units",
+        "description": "The rescan found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit."
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Meltem gateway.",
+      "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "exhaust_temperature": {
+        "name": "Exhaust temperature"
+      },
+      "outdoor_air_temperature": {
+        "name": "Outdoor air temperature"
+      },
+      "extract_air_temperature": {
+        "name": "Extract air temperature"
+      },
+      "supply_air_temperature": {
+        "name": "Supply air temperature"
+      },
+      "humidity_extract_air": {
+        "name": "Extract air humidity"
+      },
+      "humidity_supply_air": {
+        "name": "Supply air humidity"
+      },
+      "co2_extract_air": {
+        "name": "Extract air CO2"
+      },
+      "voc_supply_air": {
+        "name": "Supply air VOC"
+      },
+      "extract_air_flow": {
+        "name": "Extract air flow"
+      },
+      "supply_air_flow": {
+        "name": "Supply air flow"
+      },
+      "days_until_filter_change": {
+        "name": "Days until filter change"
+      },
+      "operating_hours": {
+        "name": "Operating hours"
+      },
+      "software_version": {
+        "name": "Software version"
+      },
+      "current_level": {
+        "name": "Common airflow"
+      },
+      "average_air_flow": {
+        "name": "Average airflow"
+      }
+    },
+    "binary_sensor": {
+      "error_status": {
+        "name": "Error status"
+      },
+      "frost_protection_active": {
+        "name": "Frost protection active"
+      },
+      "filter_change_due": {
+        "name": "Filter change due"
+      },
+      "rf_comm_status": {
+        "name": "RF communication status"
+      },
+      "fault_status": {
+        "name": "Fault status"
+      },
+      "value_error_status": {
+        "name": "Value error status"
+      }
+    },
+    "number": {
+      "level": {
+        "name": "Airflow"
+      },
+      "supply_level": {
+        "name": "Supply setpoint"
+      },
+      "extract_level": {
+        "name": "Extract setpoint"
+      },
+      "humidity_starting_point": {
+        "name": "Humidity starting point"
+      },
+      "humidity_min_level": {
+        "name": "Humidity minimum level"
+      },
+      "humidity_max_level": {
+        "name": "Humidity maximum level"
+      },
+      "co2_starting_point": {
+        "name": "CO2 starting point"
+      },
+      "co2_min_level": {
+        "name": "CO2 minimum level"
+      },
+      "co2_max_level": {
+        "name": "CO2 maximum level"
+      }
+    },
+    "select": {
+      "operation_mode": {
+        "name": "Operating mode",
+        "state": {
+          "off": "Off",
+          "manual": "Manual",
+          "unbalanced": "Unbalanced",
+          "humidity_control": "Humidity control",
+          "co2_control": "CO2 control",
+          "automatic": "Automatic"
+        }
+      }
+    }
+  },
+  "system_health": {
+    "info": {
+      "loaded_entries": "Loaded config entries",
+      "serial_port": "Serial port",
+      "configured_units": "Configured units",
+      "state_units": "Units with live state",
+      "last_update_success": "Last update successful",
+      "last_job_error": "Last scheduler error",
+      "gateway_units": "Gateway-discovered unit addresses"
+    }
+  }
+}

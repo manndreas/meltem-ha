@@ -1,0 +1,176 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meltem",
+        "description": "Ein M-WRG-GW Gateway ist erforderlich. Es muss bereits mit allen unterstützten Meltem M-WRG Geräten in der Meltem App eingerichtet und per USB mit dem Home-Assistant-Rechner verbunden sein. Die Integration scannt danach die eingerichteten Geräte und fragt das genaue Profil jedes erkannten Geräts ab.",
+        "data": {
+          "port": "Serieller Port"
+        }
+      },
+      "confirm_usb": {
+        "title": "Meltem-Gateway erkannt",
+        "description": "Home Assistant hat ein USB-Gerät an {port} gefunden ({manufacturer}, {description}). Erforderlich ist ein M-WRG-GW Gateway, das bereits mit allen unterstützten Meltem M-WRG Geräten in der Meltem App eingerichtet und per USB mit dem Home-Assistant-Rechner verbunden ist.",
+        "data": {
+          "port": "Serieller Port"
+        }
+      },
+      "profiles": {
+        "title": "Erkannte Meltem M-WRG Geräte",
+        "description": "Die Integration hat {device_count} Meltem M-WRG Geräte gefunden. Wähle für jedes erkannte Gerät das passende Profil aus."
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum Meltem-Gateway fehlgeschlagen.",
+      "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Meltem konfigurieren",
+        "description": "Wähle aus, ob du die seriellen Verbindungseinstellungen ändern, Profile bestehender Geräte ändern oder nach neuen Geräten suchen möchtest.",
+        "menu_options": {
+          "edit_connection": "Serielle Verbindung anpassen",
+          "edit_profiles": "Profile bestehender Geräte ändern",
+          "rescan_units": "Nach neuen Geräten suchen"
+        }
+      },
+      "edit_connection": {
+        "title": "Serielle Verbindung anpassen",
+        "description": "Aktualisiere den seriellen Gerätepfad und die Request-Rate des Schedulers für das Meltem-Gateway.",
+        "data": {
+          "port": "Serieller Port",
+          "max_requests_per_second": "Maximale Requests pro Sekunde"
+        }
+      },
+      "edit_profiles": {
+        "title": "Meltem Geräteprofile ändern",
+        "description": "Aktualisiere das ausgewählte Profil für jedes eingerichtete Meltem M-WRG Gerät."
+      },
+      "rescan_units": {
+        "title": "Nach neuen Meltem M-WRG Geräten suchen",
+        "description": "Scanne das Meltem-Gateway nach eingerichteten Meltem M-WRG Geräten und aktualisiere die gespeicherten Profile."
+      },
+      "profiles": {
+        "title": "Erkannte Meltem M-WRG Geräte",
+        "description": "Der erneute Scan hat {device_count} Meltem M-WRG Geräte gefunden. Wähle für jedes erkannte Gerät das passende Profil aus."
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum Meltem-Gateway fehlgeschlagen.",
+      "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "exhaust_temperature": {
+        "name": "Fortlufttemperatur"
+      },
+      "outdoor_air_temperature": {
+        "name": "Außenlufttemperatur"
+      },
+      "extract_air_temperature": {
+        "name": "Ablufttemperatur"
+      },
+      "supply_air_temperature": {
+        "name": "Zulufttemperatur"
+      },
+      "humidity_extract_air": {
+        "name": "Abluftfeuchte"
+      },
+      "humidity_supply_air": {
+        "name": "Zuluftfeuchte"
+      },
+      "co2_extract_air": {
+        "name": "Abluft-CO2"
+      },
+      "voc_supply_air": {
+        "name": "Zuluft-VOC"
+      },
+      "extract_air_flow": {
+        "name": "Abluftvolumenstrom"
+      },
+      "supply_air_flow": {
+        "name": "Zuluftvolumenstrom"
+      },
+      "days_until_filter_change": {
+        "name": "Tage bis Filterwechsel"
+      },
+      "operating_hours": {
+        "name": "Betriebsstunden"
+      },
+      "software_version": {
+        "name": "Software-Version"
+      },
+      "current_level": {
+        "name": "Gemeinsamer Volumenstrom"
+      },
+      "average_air_flow": {
+        "name": "Durchschnittlicher Volumenstrom"
+      }
+    },
+    "binary_sensor": {
+      "error_status": {
+        "name": "Fehlerstatus"
+      },
+      "frost_protection_active": {
+        "name": "Frostschutz aktiv"
+      },
+      "filter_change_due": {
+        "name": "Filterwechsel fällig"
+      },
+      "rf_comm_status": {
+        "name": "RF-Kommunikationsstatus"
+      },
+      "fault_status": {
+        "name": "Fehlerstatus intern"
+      },
+      "value_error_status": {
+        "name": "Wertefehlerstatus"
+      }
+    },
+    "number": {
+      "level": {
+        "name": "Volumenstrom"
+      },
+      "supply_level": {
+        "name": "Zuluft-Sollwert"
+      },
+      "extract_level": {
+        "name": "Abluft-Sollwert"
+      },
+      "humidity_starting_point": {
+        "name": "Feuchte-Startpunkt"
+      },
+      "humidity_min_level": {
+        "name": "Feuchte-Minimalstufe"
+      },
+      "humidity_max_level": {
+        "name": "Feuchte-Maximalstufe"
+      },
+      "co2_starting_point": {
+        "name": "CO2-Startpunkt"
+      },
+      "co2_min_level": {
+        "name": "CO2-Minimalstufe"
+      },
+      "co2_max_level": {
+        "name": "CO2-Maximalstufe"
+      }
+    },
+    "select": {
+      "operation_mode": {
+        "name": "Betriebsmodus",
+        "state": {
+          "off": "Aus",
+          "manual": "Manuell",
+          "unbalanced": "Unsymmetrisch",
+          "humidity_control": "Feuchtegesteuert",
+          "co2_control": "CO2-gesteuert",
+          "automatic": "Automatik"
+        }
+      }
+    }
+  }
+}
