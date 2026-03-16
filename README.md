@@ -1,6 +1,10 @@
 # Meltem Ventilation Home Assistant Custom Integration
 
-Home Assistant custom integration for Meltem `M-WRG-II` and `M-WRG-S`
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![GitHub Release](https://img.shields.io/github/v/release/neon-vector/meltem-ha)](https://github.com/neon-vector/meltem-ha/releases)
+[![License](https://img.shields.io/github/license/neon-vector/meltem-ha)](LICENSE)
+
+Home Assistant custom integration for Meltem `M-WRG-S` and `M-WRG-II`
 ventilation units via the Meltem `M-WRG-GW` gateway and Modbus RTU over USB.
 
 Use this integration at your own risk. It is an unofficial project and comes
@@ -63,12 +67,23 @@ The integration can detect optional sensors such as humidity, CO2 and VOC, but
 it cannot yet reliably distinguish `M-WRG-S` from `M-WRG-II` automatically.
 During setup, choose the exact profile manually.
 
-## Adding more units later
+## Options
 
-1. Add and configure the unit in the Meltem app first
-2. Open the integration options in Home Assistant
-3. Run the rescan
-4. Assign profiles to the newly detected units
+Open the integration options via `Settings` -> `Devices & Services` -> `Meltem`
+-> `Configure`.
+
+- **Change serial connection** — update the serial port or the maximum request
+  rate used by the scheduler
+- **Change profiles for existing units** — reassign profiles without rescanning
+  the gateway
+- **Scan for new units** — discover units that were added to the gateway after
+  the initial setup
+
+## Diagnostic entities
+
+Some diagnostic entities such as software version, RF communication status,
+fault status and value error status are created but disabled by default. To
+enable them, open the entity in Home Assistant and toggle the `Enabled` switch.
 
 ## Troubleshooting
 
@@ -114,6 +129,7 @@ setup when opening an issue.
 
 Additional project docs:
 
+- [CHANGELOG.md](./CHANGELOG.md)
 - [CONTRIBUTING.md](./CONTRIBUTING.md)
 - [SUPPORT.md](./SUPPORT.md)
 - [docs/MELTEM.md](./docs/MELTEM.md)
