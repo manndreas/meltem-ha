@@ -1,0 +1,29 @@
+{
+  "domain": "meltem_ventilation",
+  "name": "Meltem",
+  "codeowners": [
+    "@neon-vector"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/neon-vector/meltem-ha#readme",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/neon-vector/meltem-ha/issues",
+  "loggers": [
+    "custom_components.meltem_ventilation",
+    "pymodbus"
+  ],
+  "requirements": [
+    "pymodbus>=3.6.9,<4.0.0"
+  ],
+  "single_config_entry": true,
+  "usb": [
+    {
+      "description": "*modbus*",
+      "manufacturer": "*honeywell*",
+      "pid": "010A",
+      "vid": "10AC"
+    }
+  ],
+  "version": "1.0.0"
+}
