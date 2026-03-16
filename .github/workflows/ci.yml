@@ -1,4 +1,4 @@
-name: Tests
+name: CI
 
 on:
   push:
@@ -8,7 +8,19 @@ on:
   workflow_dispatch:
 
 jobs:
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Run hassfest
+        uses: home-assistant/actions/hassfest@master
+
   pytest:
+    name: Pytest
     runs-on: ubuntu-latest
 
     steps:
