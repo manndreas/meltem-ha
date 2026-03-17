@@ -34,9 +34,23 @@ from .const import (
 )
 from .modbus_client import MeltemModbusClient
 from .modbus_helpers import MeltemModbusError
-from .models import RefreshPlan, RoomConfig, RoomState
+from .models import EMPTY_ROOM_STATE, RefreshPlan, RoomConfig, RoomState
 
 _LOGGER = logging.getLogger(__name__)
+
+FULL_REFRESH_PLAN = RefreshPlan()
+AIRFLOW_REFRESH_PLAN = RefreshPlan.only(refresh_airflow=True)
+STATUS_REFRESH_PLAN = RefreshPlan.only(refresh_status=True)
+TEMPERATURE_REFRESH_PLAN = RefreshPlan.only(
+    refresh_temperatures=True,
+    refresh_environment=True,
+)
+FILTER_REFRESH_PLAN = RefreshPlan.only(
+    refresh_filter_change_due=True,
+    refresh_filter_days=True,
+)
+OPERATING_HOURS_REFRESH_PLAN = RefreshPlan.only(refresh_operating_hours=True)
+CONTROL_SETTINGS_REFRESH_PLAN = RefreshPlan.only(refresh_control_settings=True)
 
 
 class _CoordinatorLoggerProxy:
@@ -204,7 +218,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """Write a new operating mode for one room and refresh afterwards."""
 
         room = self._rooms_by_key[room_key]
-        state = self._safe_data.get(room.key, RoomState())
+        state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
         balanced_level = (
             state.current_level
             if state.current_level is not None
@@ -252,19 +266,17 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             )
             await asyncio.sleep(WRITE_SETTLE_SECONDS)
             previous_states = self._safe_data
-            previous_state = previous_states.get(room.key, RoomState())
+            previous_state = previous_states.get(room.key, EMPTY_ROOM_STATE)
             refreshed_room = await self.hass.async_add_executor_job(
                 self.client.read_room_state,
                 room,
                 previous_state,
-                RefreshPlan.only(refresh_control_settings=True),
+                CONTROL_SETTINGS_REFRESH_PLAN,
             )
-            self.async_set_updated_data(
-                {
-                    **previous_states,
-                    room.key: refreshed_room,
-                }
-            )
+            if refreshed_room != previous_state:
+                updated_states = dict(previous_states)
+                updated_states[room.key] = refreshed_room
+                self.async_set_updated_data(updated_states)
 
     def update_request_rate(self, max_requests_per_second: float) -> None:
         """Apply a new scheduler request rate without reloading the integration."""
@@ -328,16 +340,16 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """
 
         previous_states = self._safe_data
-        refreshed_room = previous_states.get(room.key, RoomState())
+        refreshed_room = previous_states.get(room.key, EMPTY_ROOM_STATE)
 
         for attempt in range(POST_WRITE_REFRESH_RETRIES + 1):
-            previous_state = self._safe_data.get(room.key, RoomState())
+            previous_state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
             try:
                 refreshed_room = await self.hass.async_add_executor_job(
                     self.client.read_room_state,
                     room,
                     previous_state,
-                    RefreshPlan.only(refresh_airflow=True),
+                    AIRFLOW_REFRESH_PLAN,
                 )
             except MeltemModbusError as err:
                 self.client.reset_connection()
@@ -348,12 +360,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 )
                 return
 
-            self.async_set_updated_data(
-                {
-                    **self._safe_data,
-                    room.key: refreshed_room,
-                }
-            )
+            if refreshed_room != previous_state:
+                updated_states = dict(self._safe_data)
+                updated_states[room.key] = refreshed_room
+                self.async_set_updated_data(updated_states)
 
             if self._post_write_refresh_reached_target(
                 refreshed_room,
@@ -406,13 +416,13 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             try:
                 states[room.key] = self.client.read_room_state(
                     room,
-                    RoomState(),
-                    RefreshPlan(),
+                    EMPTY_ROOM_STATE,
+                    FULL_REFRESH_PLAN,
                 )
                 successful_reads += 1
             except MeltemModbusError as err:
                 _LOGGER.warning("Failed to read room %s during startup: %s", room.key, err)
-                states[room.key] = RoomState()
+                states[room.key] = EMPTY_ROOM_STATE
                 last_error = err
                 # Reset after a failure so the next room starts with a clean connection.
                 self.client.reset_connection()
@@ -451,11 +461,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """Run one scheduled read job and merge the result into the state map."""
 
         room = self._rooms_by_key[job.room_key]
-        state_map = dict(previous_states)
-        previous_state = previous_states.get(room.key, RoomState())
+        previous_state = previous_states.get(room.key, EMPTY_ROOM_STATE)
 
         try:
-            state_map[room.key] = self.client.read_room_state(
+            refreshed_state = self.client.read_room_state(
                 room,
                 previous_state,
                 job.refresh_plan,
@@ -464,10 +473,13 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             _LOGGER.warning("Failed to read room %s for job %s: %s", room.key, job.key, err)
             self.client.reset_connection()
             self._last_job_error = err
-            state_map[room.key] = previous_state
+            return previous_states
         else:
             self._last_job_error = None
-
+            if refreshed_state == previous_state:
+                return previous_states
+            state_map = dict(previous_states)
+            state_map[room.key] = refreshed_state
         return state_map
 
     def _select_due_job(self, now: float) -> PollJob | None:
@@ -476,10 +488,13 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         if not self._jobs:
             return None
 
-        due_jobs = [job for job in self._jobs if job.next_due <= now]
-        if due_jobs:
-            return min(due_jobs, key=lambda job: job.next_due)
-        return None
+        due_job: PollJob | None = None
+        for job in self._jobs:
+            if job.next_due > now:
+                continue
+            if due_job is None or job.next_due < due_job.next_due:
+                due_job = job
+        return due_job
 
     def _build_jobs(self) -> list[PollJob]:
         """Build the scheduled job list.
@@ -495,7 +510,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self._build_group_jobs(
                 "flow",
                 FLOW_REFRESH_SECONDS,
-                RefreshPlan.only(refresh_airflow=True),
+                AIRFLOW_REFRESH_PLAN,
                 now,
             )
         )
@@ -503,7 +518,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self._build_group_jobs(
                 "status",
                 STATUS_REFRESH_SECONDS,
-                RefreshPlan.only(refresh_status=True),
+                STATUS_REFRESH_PLAN,
                 now,
             )
         )
@@ -511,10 +526,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self._build_group_jobs(
                 "temperature",
                 TEMPERATURE_REFRESH_SECONDS,
-                RefreshPlan.only(
-                    refresh_temperatures=True,
-                    refresh_environment=True,
-                ),
+                TEMPERATURE_REFRESH_PLAN,
                 now,
             )
         )
@@ -522,10 +534,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self._build_group_jobs(
                 "filter",
                 FILTER_REFRESH_SECONDS,
-                RefreshPlan.only(
-                    refresh_filter_change_due=True,
-                    refresh_filter_days=True,
-                ),
+                FILTER_REFRESH_PLAN,
                 now,
             )
         )
@@ -533,7 +542,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self._build_group_jobs(
                 "hours",
                 OPERATING_HOURS_REFRESH_SECONDS,
-                RefreshPlan.only(refresh_operating_hours=True),
+                OPERATING_HOURS_REFRESH_PLAN,
                 now,
             )
         )
@@ -541,7 +550,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self._build_group_jobs(
                 "control_settings",
                 CONTROL_SETTINGS_REFRESH_SECONDS,
-                RefreshPlan.only(refresh_control_settings=True),
+                CONTROL_SETTINGS_REFRESH_PLAN,
                 now,
             )
         )

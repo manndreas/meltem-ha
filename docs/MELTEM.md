@@ -154,8 +154,8 @@ Sources:
 | CO2-Regelung einstellbar |  |  |  |  |  |  | X |  |  |  |  |  | X |  |  | X |  |  |  |  |  |  |  |  | X |  |  | X |  |  | X |  |  | X |
 | Automatik-Betrieb rF + CO2 |  |  |  |  |  |  | X |  |  |  |  |  |  |  |  |  |  |  |  |  |  | X |  |  |  |  |  | X |  |  |  |  |  |  |
 | Automatik-Betrieb rF + CO2 einstellbar |  |  |  |  |  |  | X |  |  |  |  |  | X |  |  | X |  |  |  |  |  |  |  |  | X |  |  | X |  |  | X |  |  | X |
-| Intensivlüftung temporaer | X | X | X | X |  |  |  | X | X | X |  |  |  |  |  |  | X | X | X | X | X | X |  |  |  | X | X | X |  |  |  |  |  |  |
-| Intensivlüftung temporaer einstellbar |  |  |  |  | X | X | X |  |  |  | X | X | X | X | X | X |  |  |  |  |  |  | X | X | X |  |  |  | X | X | X | X | X | X |
+| Intensivlüftung temporär | X | X | X | X |  |  |  | X | X | X |  |  |  |  |  |  | X | X | X | X | X | X |  |  |  | X | X | X |  |  |  |  |  |  |
+| Intensivlüftung temporär einstellbar |  |  |  |  | X | X | X |  |  |  | X | X | X | X | X | X |  |  |  |  |  |  | X | X | X |  |  |  | X | X | X | X | X | X |
 | Zeitprogramm einstellbar |  |  |  |  |  |  |  |  |  |  | X | X | X | X | X | X |  |  |  |  |  |  |  |  |  |  |  |  | X | X | X | X | X | X |
 | Steuereingang | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X |
 | Eingang Gerät AUS (Rauchmelder, Fensterkontakt 24V) optional | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X |
@@ -166,7 +166,7 @@ Sources:
 | Betriebsstunden auslesen mit Zubehör |  | X | X | X | X | X | X | X |  |  |  |  |  |  |  |  |  |  |  | X | X | X | X | X | X | X | X | X |  |  |  |  |  |  |
 | Anzeige Sensorwerte |  |  |  |  |  |  |  | X | X | X | X | X | X |  | X | X |  |  |  |  |  |  |  |  |  | X | X | X | X | X | X | X | X | X |
 | Anzeige rF ZUL > rF ABL |  |  |  |  |  |  |  |  | X | X |  | X | X |  | X | X |  |  |  |  | X | X |  |  |  | X | X | X | X | X | X |  |  |  |
-| Stoermeldung optisch LED / Zeichen |  | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X |
+| Störmeldung optisch LED / Zeichen |  | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X |
 | Betriebsmeldung |  |  |  |  | X | X | X |  |  |  | X | X | X | X | X | X |  |  |  |  |  |  | X | X | X |  |  |  | X | X | X | X | X | X |
 | Betriebsmeldung LED |  | X | X | X |  |  |  | X | X | X |  |  |  |  |  |  |  |  |  | X | X | X |  |  |  | X | X | X | X | X | X |  |  |  |
 | Frostschutzfunktion | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X | X |

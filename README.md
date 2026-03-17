@@ -29,6 +29,7 @@ gateways, Home Assistant hosts, or other connected equipment.
 - a Meltem `M-WRG-GW` gateway
 - supported `M-WRG-S` / `M-WRG-II` units already added in the Meltem app
 - the gateway connected to the Home Assistant host via USB
+  > **Note:** Use a USB cable that is fully wired for data — charge-only cables will not work.
 
 ### HACS
 

@@ -59,6 +59,9 @@ class RoomState:
     co2_max_level: int | None = None
 
 
+EMPTY_ROOM_STATE = RoomState()
+
+
 @dataclass(slots=True, frozen=True)
 class RefreshPlan:
     """Describe which groups should be refreshed in the current scheduler tick."""

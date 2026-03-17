@@ -7,7 +7,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, INTEGRATION_NAME, profile_label
 from .coordinator import MeltemDataUpdateCoordinator
-from .models import RoomConfig, RoomState
+from .models import EMPTY_ROOM_STATE, RoomConfig, RoomState
 
 
 def room_supports_entity(room: RoomConfig, entity_key: str) -> bool:
@@ -52,4 +52,4 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
 
     @property
     def room_state(self) -> RoomState:
-        return self.coordinator.safe_data.get(self.room.key, RoomState())
+        return self.coordinator.safe_data.get(self.room.key, EMPTY_ROOM_STATE)
