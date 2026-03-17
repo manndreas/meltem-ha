@@ -13,6 +13,7 @@ import math
 import struct
 import threading
 import time
+from typing import cast
 
 from pymodbus.client import ModbusSerialClient
 
@@ -638,6 +639,21 @@ class MeltemModbusClient:
         )
         return list(response.registers[:count])
 
+    @staticmethod
+    def _decode_float32_from_block(
+        block: list[int],
+        *,
+        start_address: int,
+        address: int,
+    ) -> float | None:
+        """Decode one float32 value from a word-swapped register block."""
+
+        index = address - start_address
+        if index < 0 or index + 1 >= len(block):
+            return None
+        value = struct.unpack(">f", struct.pack(">HH", block[index + 1], block[index]))[0]
+        return value if math.isfinite(value) else None
+
     # ------------------------------------------------------------------
     #  Optional reads (swallow errors, return None)
     # ------------------------------------------------------------------
@@ -947,42 +963,118 @@ class MeltemModbusClient:
                 supply_air_temperature=prev.supply_air_temperature,
             )
 
-        exhaust = self._read_temperature_if_due(
-            client, room, "exhaust_temperature",
-            REGISTER_EXHAUST_AIR_TEMPERATURE, prev.exhaust_temperature, do_temp,
-        )
-        outdoor = self._read_temperature_if_due(
-            client, room, "outdoor_air_temperature",
-            REGISTER_OUTDOOR_AIR_TEMPERATURE, prev.outdoor_air_temperature, do_env,
-        )
-        extract = self._read_temperature_if_due(
-            client, room, "extract_air_temperature",
-            REGISTER_EXTRACT_AIR_TEMPERATURE, prev.extract_air_temperature, do_temp,
-        )
-        supply = self._read_temperature_if_due(
-            client, room, "supply_air_temperature",
-            REGISTER_SUPPLY_AIR_TEMPERATURE, prev.supply_air_temperature, do_temp,
-        )
+        exhaust = prev.exhaust_temperature
+        outdoor = prev.outdoor_air_temperature
+        extract = prev.extract_air_temperature
+        supply = prev.supply_air_temperature
 
-        humidity_extract = self._read_uint16_if_due(
-            client, room, "humidity_extract_air",
-            REGISTER_HUMIDITY_EXTRACT_AIR, prev.humidity_extract_air, do_env,
-        ) if room.profile in HUMIDITY_PROFILES else prev.humidity_extract_air
+        need_main_temp_block = any(
+            (
+                self._supports(room, "exhaust_temperature") and do_temp,
+                self._supports(room, "outdoor_air_temperature") and do_env,
+                self._supports(room, "extract_air_temperature") and do_temp,
+            )
+        )
+        if need_main_temp_block:
+            main_temp_block = self._read_optional_uint16_block(
+                client,
+                room.slave,
+                REGISTER_EXTRACT_AIR_TEMPERATURE,
+                6,
+            )
+            if main_temp_block is not None:
+                if self._supports(room, "exhaust_temperature") and do_temp:
+                    exhaust = self._coalesce(
+                        self._decode_float32_from_block(
+                            main_temp_block,
+                            start_address=REGISTER_EXTRACT_AIR_TEMPERATURE,
+                            address=REGISTER_EXHAUST_AIR_TEMPERATURE,
+                        ),
+                        prev.exhaust_temperature,
+                    )
+                if self._supports(room, "outdoor_air_temperature") and do_env:
+                    outdoor = self._coalesce(
+                        self._decode_float32_from_block(
+                            main_temp_block,
+                            start_address=REGISTER_EXTRACT_AIR_TEMPERATURE,
+                            address=REGISTER_OUTDOOR_AIR_TEMPERATURE,
+                        ),
+                        prev.outdoor_air_temperature,
+                    )
+                if self._supports(room, "extract_air_temperature") and do_temp:
+                    extract = self._coalesce(
+                        self._decode_float32_from_block(
+                            main_temp_block,
+                            start_address=REGISTER_EXTRACT_AIR_TEMPERATURE,
+                            address=REGISTER_EXTRACT_AIR_TEMPERATURE,
+                        ),
+                        prev.extract_air_temperature,
+                    )
 
-        humidity_supply = self._read_uint16_if_due(
-            client, room, "humidity_supply_air",
-            REGISTER_HUMIDITY_SUPPLY_AIR, prev.humidity_supply_air, do_env,
-        ) if room.profile in HUMIDITY_PROFILES else prev.humidity_supply_air
+        if self._supports(room, "supply_air_temperature") and do_temp:
+            supply = self._coalesce(
+                self._read_optional_float32_word_swap(
+                    client,
+                    room.slave,
+                    REGISTER_SUPPLY_AIR_TEMPERATURE,
+                ),
+                prev.supply_air_temperature,
+            )
 
-        co2 = self._read_uint16_if_due(
-            client, room, "co2_extract_air",
-            REGISTER_CO2_EXTRACT_AIR, prev.co2_extract_air, do_env,
-        ) if room.profile in CO2_PROFILES else prev.co2_extract_air
+        humidity_extract = prev.humidity_extract_air
+        humidity_supply = prev.humidity_supply_air
+        co2 = prev.co2_extract_air
+        voc = prev.voc_supply_air
 
-        voc = self._read_uint16_if_due(
-            client, room, "voc_supply_air",
-            REGISTER_VOC_SUPPLY_AIR, prev.voc_supply_air, do_env,
-        ) if room.profile in VOC_PROFILES else prev.voc_supply_air
+        need_extract_env_block = any(
+            (
+                room.profile in HUMIDITY_PROFILES and self._supports(room, "humidity_extract_air") and do_env,
+                room.profile in CO2_PROFILES and self._supports(room, "co2_extract_air") and do_env,
+            )
+        )
+        if need_extract_env_block:
+            extract_env_block = self._read_optional_uint16_block(
+                client,
+                room.slave,
+                REGISTER_HUMIDITY_EXTRACT_AIR,
+                2,
+            )
+            if extract_env_block is not None:
+                if room.profile in HUMIDITY_PROFILES and self._supports(room, "humidity_extract_air") and do_env:
+                    humidity_extract = self._coalesce(
+                        cast(int | None, extract_env_block[0]),
+                        prev.humidity_extract_air,
+                    )
+                if room.profile in CO2_PROFILES and self._supports(room, "co2_extract_air") and do_env:
+                    co2 = self._coalesce(
+                        cast(int | None, extract_env_block[1]),
+                        prev.co2_extract_air,
+                    )
+
+        need_supply_env_block = any(
+            (
+                room.profile in HUMIDITY_PROFILES and self._supports(room, "humidity_supply_air") and do_env,
+                room.profile in VOC_PROFILES and self._supports(room, "voc_supply_air") and do_env,
+            )
+        )
+        if need_supply_env_block:
+            supply_env_block = self._read_optional_uint16_block(
+                client,
+                room.slave,
+                REGISTER_HUMIDITY_SUPPLY_AIR,
+                3,
+            )
+            if supply_env_block is not None:
+                if room.profile in HUMIDITY_PROFILES and self._supports(room, "humidity_supply_air") and do_env:
+                    humidity_supply = self._coalesce(
+                        cast(int | None, supply_env_block[0]),
+                        prev.humidity_supply_air,
+                    )
+                if room.profile in VOC_PROFILES and self._supports(room, "voc_supply_air") and do_env:
+                    voc = self._coalesce(
+                        cast(int | None, supply_env_block[2]),
+                        prev.voc_supply_air,
+                    )
 
         return RoomState(
             exhaust_temperature=exhaust,

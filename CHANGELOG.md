@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+
+- Some minor resource optimizations
+
 ## 1.0.0 - Initial version
 
 - Initial release of the Meltem Home Assistant integration
