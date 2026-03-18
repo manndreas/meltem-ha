@@ -9,6 +9,7 @@ from custom_components.meltem_ventilation.const import (
     MODE_UNBALANCED,
     REGISTER_CO2_EXTRACT_AIR,
     REGISTER_CURRENT_LEVEL,
+    REGISTER_EXTRACT_AIR_TEMPERATURE,
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
@@ -435,29 +436,11 @@ class TestReadRoomState:
 
     def test_fc_voc_profile_reads_environment_values(self) -> None:
         client = self._build_client()
-        client._read_temperature_if_due = (
-            lambda _client, _room, key, _reg, _prev, _should: {
-                "exhaust_temperature": 18.0,
-                "outdoor_air_temperature": 5.0,
-                "extract_air_temperature": 22.0,
-                "supply_air_temperature": 19.0,
-            }[key]
-        )
-        # _read_uint16_if_due handles both plain uint16 and environment registers
-        original_read_uint16_if_due = client._read_uint16_if_due
-        env_values = {
-            "humidity_extract_air": 44,
-            "humidity_supply_air": 46,
-            "co2_extract_air": 780,
-            "voc_supply_air": 120,
-        }
-
-        def _patched_read_uint16_if_due(_client, _room, key, _reg, _prev, _should):
-            if key in env_values:
-                return env_values[key]
-            return original_read_uint16_if_due(_client, _room, key, _reg, _prev, _should)
-
-        client._read_uint16_if_due = _patched_read_uint16_if_due
+        client._read_optional_uint16_block = lambda _client, _slave, reg, _count: {
+            REGISTER_EXTRACT_AIR_TEMPERATURE: [220, 1800, 50, 1900, 0, 0],
+            REGISTER_HUMIDITY_EXTRACT_AIR: [44, 780],
+            REGISTER_HUMIDITY_SUPPLY_AIR: [46, 0, 120],
+        }.get(reg)
         room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc_voc", slave=2)
 
         state = client._read_profile_state(
