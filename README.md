@@ -2,7 +2,7 @@
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![GitHub Release](https://img.shields.io/github/v/release/neon-vector/meltem-ha)](https://github.com/neon-vector/meltem-ha/releases)
-[![License](https://img.shields.io/github/license/neon-vector/meltem-ha)](LICENSE)
+[![License](https://img.shields.io/github/license/neon-vector/meltem-ha)](https://github.com/neon-vector/meltem-ha/blob/main/LICENSE)
 
 Home Assistant custom integration for Meltem `M-WRG-S` and `M-WRG-II`
 ventilation units via the Meltem `M-WRG-GW` gateway and Modbus RTU over USB.
@@ -95,19 +95,6 @@ Check that:
 - the gateway is powered and reachable over USB
 - the units were already added in the Meltem app
 - the units are fully configured in the `M-WRG-GW` gateway
-
-### Values still show up after unplugging the gateway
-
-Home Assistant can continue to show the last cached values for a while when the
-gateway disappears. That does not mean the gateway is still connected. New
-updates and writes will fail until the gateway is available again.
-
-### Temperature names look odd
-
-The `M-WRG-GW` gateway appears to expose the documented `41000` and `41004`
-temperature values reversed on some setups. The integration compensates for
-this gateway quirk so the Home Assistant entity names match the observed
-airflow positions.
 
 ### Logs
 
