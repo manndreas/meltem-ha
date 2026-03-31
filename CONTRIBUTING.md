@@ -4,7 +4,7 @@ Thanks for helping improve the Meltem Home Assistant integration.
 
 ## Before you start
 
-- This project talks to real Meltem ventilation hardware via the `M-WRG-GW` gateway.
+- This project talks to real Meltem Modbus hardware via the `M-WRG-GW` gateway.
 - Please be conservative with write behavior, timing, retries, and register handling.
 - Read [docs/DEVELOPER.md](/Users/andreas/Code/meltem-ha/docs/DEVELOPER.md) for implementation notes.
 - Read [docs/MELTEM.md](/Users/andreas/Code/meltem-ha/docs/MELTEM.md) for the transcribed manufacturer reference.

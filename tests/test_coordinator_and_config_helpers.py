@@ -48,7 +48,8 @@ class _FakeClient:
         self.read_calls: list[tuple[str, RefreshPlan]] = []
         self.write_level_calls: list[tuple[str, int]] = []
         self.write_unbalanced_calls: list[tuple[str, int, int]] = []
-        self.next_read_state = RoomState(current_level=42)
+        self.write_preset_mode_calls: list[tuple[str, str]] = []
+        self.next_read_state = RoomState(target_level=42)
 
     def discover_gateway_units(self, start: int, end: int) -> list[int]:
         self.discover_calls.append((start, end))
@@ -76,6 +77,14 @@ class _FakeClient:
         self, room: RoomConfig, supply_level: int, extract_level: int
     ) -> None:
         self.write_unbalanced_calls.append((room.key, supply_level, extract_level))
+
+    def write_preset_mode(
+        self,
+        room: RoomConfig,
+        preset_mode: str,
+        preferred_level: int | None = None,
+    ) -> None:
+        self.write_preset_mode_calls.append((room.key, preset_mode))
 
     def reset_connection(self) -> None:
         return None
@@ -113,11 +122,22 @@ class TestConfigFlowHelpers:
         assert _profile_label(1, 2, {}) == "Unit 1 profile"
         assert (
             _profile_label(1, 2, {2: "ID 116852 | basic"})
-            == "Unit 1 profile (ID 116852 | basic)"
+            == "Unit 1 profile (Hardware ID 116852 | basic)"
+        )
+
+    def test_profile_label_prefers_existing_room_name_when_helpful(self) -> None:
+        assert (
+            _profile_label(
+                1,
+                2,
+                {2: "ID 116852 | basic"},
+                {2: {"name": "Wohnzimmer"}},
+            )
+            == "Unit 1 profile (Wohnzimmer, Hardware ID 116852 | basic)"
         )
 
     def test_build_rooms_from_profiles_preserves_existing_metadata(self) -> None:
-        selected_profiles = {"Unit 1 profile (ID 116852 | basic)": "ii_plain"}
+        selected_profiles = {"Unit 1 profile (Hardware ID 116852 | basic)": "ii_plain"}
         rooms = _build_rooms_from_profiles(
             [2],
             selected_profiles,
@@ -146,7 +166,7 @@ class TestConfigFlowHelpers:
         assert "humidity_extract_air" not in rooms[0]["supported_entity_keys"]
 
     def test_build_rooms_from_profiles_uses_english_field_keys(self) -> None:
-        selected_profiles = {"Unit 1 profile (ID 116852 | basic)": "ii_plain"}
+        selected_profiles = {"Unit 1 profile (Hardware ID 116852 | basic)": "ii_plain"}
         rooms = _build_rooms_from_profiles(
             [2],
             selected_profiles,
@@ -217,11 +237,11 @@ class TestCoordinator:
             hass,
             [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
         )
-        coordinator.data = {"unit_1": RoomState(current_level=30)}
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
         await coordinator.async_set_level("unit_1", 55)
 
         assert client.write_level_calls == [("unit_1", 55)]
-        assert coordinator.data["unit_1"].current_level == 30
+        assert coordinator.data["unit_1"].target_level == 30
         assert client.read_calls == []
 
     async def test_async_set_unbalanced_levels_writes_without_forced_refresh(
@@ -232,12 +252,121 @@ class TestCoordinator:
             [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
         )
         coordinator.data = {
-            "unit_1": RoomState(current_level=30, extract_target_level=35)
+            "unit_1": RoomState(target_level=30, extract_target_level=35)
         }
         await coordinator.async_set_unbalanced_levels("unit_1", 40, 35)
 
         assert client.write_unbalanced_calls == [("unit_1", 40, 35)]
         assert client.read_calls == []
+
+    async def test_async_set_preset_mode_writes_and_refreshes(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
+        )
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+
+        with patch("custom_components.meltem_ventilation.coordinator.asyncio.sleep"):
+            await coordinator.async_set_preset_mode("unit_1", "medium")
+
+        assert client.write_preset_mode_calls == [("unit_1", "medium")]
+        assert client.read_calls
+
+    async def test_async_set_preset_mode_forces_at_least_two_refresh_attempts(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
+        )
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+
+        with patch(
+            "custom_components.meltem_ventilation.coordinator.asyncio.sleep",
+            new=AsyncMock(),
+        ):
+            await coordinator.async_set_preset_mode("unit_1", "medium")
+
+        assert len(client.read_calls) == 2
+
+    async def test_async_set_preset_mode_passes_preferred_level(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
+        )
+        coordinator.data = {
+            "unit_1": RoomState(target_level=50, extract_target_level=70)
+        }
+
+        recorded: list[tuple[str, str, int | None]] = []
+
+        def _write_preset_mode(room: RoomConfig, preset_mode: str, preferred_level=None) -> None:
+            recorded.append((room.key, preset_mode, preferred_level))
+
+        client.write_preset_mode = _write_preset_mode  # type: ignore[method-assign]
+
+        with patch("custom_components.meltem_ventilation.coordinator.asyncio.sleep"):
+            await coordinator.async_set_preset_mode("unit_1", "extract_only")
+
+        assert recorded == [("unit_1", "extract_only", 50)]
+
+    async def test_async_set_preset_mode_prefers_remembered_extract_only_level(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
+        )
+        coordinator.data = {"unit_1": RoomState(target_level=70)}
+        coordinator._last_preset_levels_by_room["unit_1"] = {"extract_only": 30}
+
+        recorded: list[tuple[str, str, int | None]] = []
+
+        def _write_preset_mode(room: RoomConfig, preset_mode: str, preferred_level=None) -> None:
+            recorded.append((room.key, preset_mode, preferred_level))
+
+        client.write_preset_mode = _write_preset_mode  # type: ignore[method-assign]
+
+        with patch("custom_components.meltem_ventilation.coordinator.asyncio.sleep"):
+            await coordinator.async_set_preset_mode("unit_1", "extract_only")
+
+        assert recorded == [("unit_1", "extract_only", 30)]
+
+    def test_remember_preset_shortcut_level_updates_extract_and_supply_memory(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
+        )
+
+        coordinator._remember_preset_shortcut_level(
+            "unit_1",
+            RoomState(
+                preset_mode="extract_only",
+                extract_target_level=40,
+                extract_air_flow=35,
+            ),
+        )
+        coordinator._remember_preset_shortcut_level(
+            "unit_1",
+            RoomState(
+                preset_mode="supply_only",
+                target_level=50,
+                supply_air_flow=45,
+            ),
+        )
+
+        assert coordinator._last_preset_levels_by_room == {
+            "unit_1": {
+                "extract_only": 40,
+                "supply_only": 50,
+            }
+        }
 
     def test_build_jobs_only_includes_relevant_groups(
         self, hass: HomeAssistant,
@@ -258,7 +387,7 @@ class TestCoordinator:
                     profile="ii_plain",
                     slave=3,
                     supported_entity_keys=frozenset(
-                        {"extract_air_flow", "current_level"}
+                        {"extract_air_flow", "supply_air_flow"}
                     ),
                 ),
             ],
@@ -307,14 +436,14 @@ class TestCoordinator:
             hass,
             [RoomConfig(key="broken", name="Broken", profile="ii_plain", slave=2)],
         )
-        previous = {"broken": RoomState(current_level=30)}
+        previous = {"broken": RoomState(target_level=30)}
         job = PollJob(
             "flow", "broken", RefreshPlan.only(refresh_airflow=True), 10, 0.0
         )
 
         state_map = coordinator._read_one_job(previous, job)
 
-        assert state_map["broken"].current_level == 30
+        assert state_map["broken"].target_level == 30
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +545,7 @@ class TestOptionsFlow:
         hass.config_entries.async_reload = _async_reload
 
         result = await flow.async_step_profiles(
-            {"Unit 1 profile (ID 116852 | basic)": "ii_f"}
+            {"Unit 1 profile (Hardware ID 116852 | basic)": "ii_f"}
         )
 
         assert result["type"] == "create_entry"

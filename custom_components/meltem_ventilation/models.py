@@ -37,8 +37,6 @@ class RoomState:
     filter_change_due: bool | None = None
     frost_protection_active: bool | None = None
     rf_comm_status: bool | None = None
-    fault_status: bool | None = None
-    value_error_status: bool | None = None
     humidity_extract_air: int | None = None
     humidity_supply_air: int | None = None
     co2_extract_air: int | None = None
@@ -46,9 +44,11 @@ class RoomState:
     extract_air_flow: int | None = None
     supply_air_flow: int | None = None
     operation_mode: str | None = None
+    preset_mode: str | None = None
+    intensive_active: bool | None = None
     days_until_filter_change: int | None = None
     operating_hours: int | None = None
-    current_level: int | None = None
+    target_level: int | None = None
     extract_target_level: int | None = None
     software_version: int | None = None
     humidity_starting_point: int | None = None

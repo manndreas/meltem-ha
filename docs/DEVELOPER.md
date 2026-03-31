@@ -6,6 +6,12 @@ learned while developing the `Meltem M-WRG` Home Assistant integration.
 For the consolidated manufacturer reference we transcribed into Markdown, see
 `docs/MELTEM.md`.
 
+For the separate mobile app cloud API reverse-engineering notes, see
+`docs/CLOUD_API.md`.
+
+For the local Modbus-side settings reverse-engineering backlog, see
+`docs/SETTING_RE_BACKLOG.md`.
+
 ## Safety and liability
 
 This is an unofficial community project. It is provided without warranty, and
@@ -35,8 +41,67 @@ These are the most important practical findings from the latest hardware tests:
 
 ## Scope
 
-The integration currently targets Meltem ventilation units behind an
+The integration currently targets Meltem M-WRG units behind an
 `M-WRG-GW` gateway over Modbus RTU via USB.
+
+## Gateway network interface
+
+Current working assumption:
+
+- the `M-WRG-GW` gateway is not meaningfully controllable via a local LAN API
+- the Meltem mobile app communicates with Meltem's internet services rather
+  than directly with a local gateway API for normal control flows
+- local Home Assistant integration should therefore continue to treat USB /
+  serial Modbus as the primary supported path
+
+Observed basis for that assumption:
+
+- previous app traffic captures showed internet communication rather than a
+  usable local control channel
+- direct probing of the gateway IP on the tested setup did not reveal any
+  useful local TCP service, SSDP response, mDNS service, or other obvious LAN
+  control surface
+
+Practical consequence:
+
+- further reverse engineering effort is better spent on USB / serial Modbus
+  behavior or, if ever needed, on the app's cloud traffic rather than on the
+  gateway's local network interface
+
+Useful helper for local settings work:
+
+- `tools/capture_setting_family.py` captures focused before/after snapshots for
+  setting families such as `intensive`, `keypad`, `humidity`, and `co2`
+
+First focused local settings measurement so far:
+
+- changing one app-side intensive ventilation setting caused a broad local
+  shadow/meta update in `51100..51113`, `51120..51133`, `51150..51151`, and
+  `52006..52010`
+- the known runtime write/readback registers `41120..41124` and `41132` still
+  did not reveal a direct decoded configuration value for that app change
+- current working interpretation: the setting is very likely persisted locally,
+  but the observable Modbus effect looks more like a family-level commit or
+  payload version change than a simple one-register plain value
+- a second immediate before/after test for intensive airflow reproduced the
+  same pattern and additionally bumped `52000..52005`, which reinforces the
+  commit-sequence hypothesis rather than a direct plain-value mapping
+- a first keypad-default experiment was more promising: changing the LOW
+  airflow target left `51120..51133`, `51150..51151`, and `52010` at a new
+  stable value (`69 -> 71`) while the broader readable islands stayed unchanged
+- `52009` drifted back on an immediate no-change recapture, so it looks more
+  like family metadata; the stable `51120..`/`51150..`/`52010` block is the
+  better candidate for a persisted preset/default payload slot
+- a second LOW-default change weakened that interpretation again: the same
+  block moved from `71 -> 73` and then `73 -> 74` on an immediate no-change
+  recapture while the readable `40000..42009` islands still did not reveal a
+  direct preset target value
+- current working interpretation for keypad defaults: the `51120..`/`51150..`
+  / `52010` block is still family-relevant, but it behaves more like commit or
+  payload-sequence metadata than a stable decoded LOW/MED/HIGH airflow value
+- current project decision: deeper reverse engineering of app-side persisted
+  settings is parked for now and should only be revisited if a new register
+  family, payload hint, or external documentation changes the picture
 
 Supported series/profiles:
 
@@ -129,6 +194,23 @@ Observed software versions on the tested setup:
 The different software version on unit `5` matches the user's note that this
 unit likely had a replacement board.
 
+Additional holding-register sweep on `2026-03-31` for unit `slave 2`:
+
+- coarse scan over `40000..49999` with `10`-register windows only found
+  readable windows in these areas:
+  - `40000..40019`
+  - `40200..40209`
+  - `41000..41029`
+  - `41100..41109`
+- single-register follow-up refined that result to these readable islands:
+  - `40000..40022`, `40024..40025`
+  - `40200..40209`
+  - `41000..41029`
+  - `41100..41113`
+  - `42000..42009`
+- `43900..43905` remained unreadable on the unit itself, which is consistent
+  with `43901` / `43902..` being a gateway-side discovery path on `slave 1`
+
 Registers probed locally but not available on the tested setup:
 
 - `41041 FILTER_DURATION`
@@ -184,6 +266,307 @@ Confirmed local live test:
   loop
 
 ## Register and state caveats
+
+### App presets are only partially mappable with published Modbus docs
+
+The vendor app clearly exposes additional user-facing presets and settings
+such as:
+
+- `LOW`, `MED`, `HIGH`
+- temporary intensive ventilation airflow and runtime
+- app-configurable supply-only / extract-only defaults
+
+However, the published Modbus manuals currently used by this repository only
+document writable configuration registers up to `42009` plus the runtime write
+sequence `41120` / `41121` / `41122` / `41132`.
+
+Current interpretation:
+
+- the app uses extra preset encodings beyond the published `0..200` airflow
+  scaling path
+- plain airflow writes should not be assumed to update the same internal
+  keypad / LED state as the Meltem app or local folientastatur
+- claiming support for the app's preset configuration registers is not yet
+  justified
+
+Additional vendor context from a separate Meltem Modbus-KNX document:
+
+- the KNX object model also separates
+  - normal ventilation level
+  - unbalanced supply/extract operation
+  - automatic mode
+  - humidity mode
+  - CO2 mode
+  - intensive ventilation
+- that supports the architectural assumption that these are distinct control
+  concepts in Meltem's product logic rather than one flat shared mode list
+- however, the KNX values from that document must not be mapped directly onto
+  the USB gateway's holding registers without independent proof
+
+Confirmed local write tracing on `2026-03-30` for one `M-WRG-II` plain unit:
+
+- `LOW` -> `41120 = 3`, `41121 = 228`, then `41132 = 0`
+- `MED` -> `41120 = 3`, `41121 = 229`, then `41132 = 0`
+- `HIGH` -> `41120 = 3`, `41121 = 230`, then `41132 = 0`
+- temporary intensive ventilation -> `41123 = 3`, `41124 = 227`, then
+  `41132 = 0`
+- app `Abluft` / `Zuluft` shortcuts use `41120 = 4` and encode the configured
+  airflow on the active side as `200 + airflow_in_m3h / 10`
+
+Focused local setting-diff runs on `2026-03-31` for intensive airflow defaults
+did confirm that app-side changes leave local Modbus-visible traces, but only
+as family-level jumps in `511xx` / `520xx` shadow and meta words. A direct
+plain-value readback did not appear in `41120..41124`, `41132`, or
+`42000..42009`, and an immediate `40 -> 60 -> 40` A-B-A sequence still only
+produced monotonic version/commit-like changes. Until a new register family or
+payload decoding hint appears, deeper local support for intensive default
+settings should be treated as unconfirmed.
+
+A separate control write on `2026-04-01` used one documented local config
+register directly: `42000` (`humidity starting point`) was changed on
+`slave 2` from `70 -> 71` and then restored to `70`. That value echoed back
+exactly in `42000`, while the snapshot diff only showed a small side effect in
+`52008..52009` on the forward step. This is a useful reference pattern: known
+local config writes look like direct plain-value changes, unlike the intensive
+default experiments that only moved broad `511xx` / `520xx` meta blocks.
+
+Examples:
+
+- `Abluft 30` -> `41122 = 203`
+- `Abluft 50` -> `41122 = 205`
+- `Zuluft 50` -> `41121 = 205`
+
+On a later hardware check on `2026-03-31`, the same runtime write family
+successfully changed airflow on another tested unit (`slave 2`), but did not
+reproduce the physical keypad LEDs for `Abluft` / `Zuluft`.
+
+Observed raw Modbus writes and outcomes on `slave 2`:
+
+- `Abluft 10` written as `41120 = 4`, `41121 = 0`, `41122 = 201`,
+  then `41132 = 0`
+  - runtime readback stayed stable at `41120..41124 = [4, 0, 201, 0, 0]`
+  - the unit accepted the airflow change path
+  - the physical `Abluft` LED on the keypad did not light
+- `Zuluft 10` written as `41120 = 4`, `41121 = 201`, `41122 = 0`,
+  then `41132 = 0`
+  - runtime readback stayed stable at `41120..41124 = [4, 201, 0, 0, 0]`
+  - the physical keypad LEDs remained off
+- `Abluft 50` written as `41122 = 205`
+  - runtime readback stayed stable at `41120..41124 = [4, 0, 205, 0, 0]`
+  - airflow eventually converged to `50/0`
+  - the physical `Abluft` LED still did not light
+
+Current interpretation:
+
+- the reverse-engineered `200 + airflow_in_m3h / 10` encoding is still valid
+  as a runtime airflow control path
+- however, on at least one tested unit it is not sufficient on its own to
+  reproduce the keypad LED semantics for `Abluft` / `Zuluft`
+- the integration should therefore treat these writes as high-confidence
+  runtime airflow shortcuts, not yet as a complete reproduction of the local
+  panel state machine
+- later user verification on the same setup showed that the official Meltem
+  app also does not light the physical keypad LEDs when switching to
+  `Abluft` / `Zuluft`
+- this strongly suggests that missing LEDs for these two shortcuts may be
+  normal device behavior rather than a Home Assistant integration defect
+
+Additional local negative findings from the same reverse-engineering session:
+
+- changing app-side configuration values such as intensive airflow and then
+  leaving the settings page via `Zurueck` produced no visible register changes
+  in these searched ranges
+  - unit `slave 5`: `42000..42560`
+  - gateway `slave 1`: `41980..42540`
+- that suggests these deeper app settings are either
+  - stored outside the tested holding-register windows
+  - not written immediately
+  - or not exposed through the same direct Modbus path that runtime controls
+    use
+
+Additional system-level observations from the same setup:
+
+- the vendor app did not function without Internet connectivity
+- the gateway also appeared cloud-dependent in normal operation
+
+Current working hypothesis:
+
+- the Meltem app likely sends these deeper configuration changes to Meltem
+  backend services first
+- the gateway then synchronizes at least part of that configuration from the
+  cloud instead of exposing a simple local Modbus write path for every app
+  setting
+
+Important caveat:
+
+- this does not mean the values are "cloud only" at runtime
+- the user observed that changed keypad shortcut values remain usable from the
+  local folientastatur later even when the cloud path is unavailable
+- therefore the effective shortcut and intensive defaults must still end up
+  stored somewhere locally in the gateway, in the unit, or in another
+  internal memory path that was not visible in our tested holding-register
+  windows
+- the unresolved question is not whether local persistence exists, but through
+  which local interface or register space it is exposed
+
+Confirmed local persistence checks on `2026-03-30`:
+
+- after changing `Bedienfolie LOW` to `60 m3/h` in the app and then removing
+  cloud access, pressing `LOW` on the physical keypad still drove the unit at
+  `60/60 m3/h`
+- the same offline check still showed the app-style preset code path
+  `41120/41121/41122 = [3, 228, 0]`
+- after changing temporary intensive airflow to `90 m3/h` in the app and then
+  removing cloud access, activating intensive mode still drove the unit at
+  `90/90 m3/h`
+
+These checks confirm that at least some app-configured shortcut values are
+persisted locally, even though their storage writes were not visible in the
+tested holding-register windows.
+
+Additional local reverse-engineering findings on `2026-03-30`:
+
+- single-register scans uncovered additional readable shadow ranges on
+  `slave 5` that broad block reads had hidden because mixed valid/invalid
+  windows failed as a whole
+- confirmed readable shadow/meta ranges:
+  - `51100..51113`
+  - `51120..51133`
+  - `51150..51151`
+  - `52000..52010`
+- these ranges do not expose the human-readable configured values directly;
+  instead they behaved like local meta/state/commit words
+
+Observed diff patterns:
+
+- changing `Intensivluftung` airflow changed `51100..51112`
+- changing `Intensivluftung` run-on time produced a broad `+1` increment
+  across `51100..51113`, `51120..51132`, `51133`, `51150..51151`,
+  and `52000..52010`
+- changing `Bedienfolie LOW` produced the same broad `+1` style increment
+  pattern
+- changing `Bedienfolie HIGH` also produced the same broad `+1` style
+  increment pattern
+- one tested `Bedienfolie MED` change produced no diff in these shadow ranges
+
+Current interpretation:
+
+- these `51xxx` / `52xxx` registers are likely not the configured airflow or
+  runtime values themselves
+- they look more like local change counters, commit markers, version words,
+  or status bitfields associated with persisted configuration
+- the actual stored shortcut/configuration payload still has not been
+  identified
+
+Additional broader capture on `2026-03-31` using the combined known ranges
+(`41120..41124`, `41132`, `42000..42009`, `51100..51113`, `51120..51133`,
+`51150..51151`, `52000..52010`) for `slave 2`:
+
+- changing intensive airflow from `40` to `60` still produced no direct
+  readback in `411xx` or `420xx`
+- `51100..51112` bumped together from `4352` to `4353`
+- `51113`, `51120..51133`, and `51150..51151` bumped from `11` to `12`
+- `52008..52010` bumped from `11` to `12`
+- `52007` changed from `11` to `4352`, which again looks like a meta/payload
+  marker rather than a decoded target airflow
+
+This broader capture strengthens the current assumption that the relevant app
+settings are persisted locally, but not as one plain writable/readable holding
+register in the currently known windows.
+
+Practical implication:
+
+- treat keypad/runtime presets (`LOW` / `MED` / `HIGH` / `Intensiv`,
+  `Abluft`, `Zuluft`) as the current high-confidence reverse-engineered
+  surface
+- document deeper app settings first unless a concrete register mapping has
+  been reproduced locally
+- for Home Assistant writes, `Abluft` / `Zuluft` can already use the observed
+  app-style `200 + airflow / 10` encoding, but the integration currently
+  chooses that airflow from the room's live known target/flow because the
+  dedicated app shortcut storage is still unknown
+
+Additional panel-side hardware findings on `2026-03-31` for `slave 2`:
+
+- switching the local panel to `Abluft` changed runtime airflow, but did not
+  change `41120..41124`
+- observed diff for `neutral -> Abluft`:
+  - `41020: 20 -> 40`
+  - `41021: 20 -> 28`
+  - `51120..51133`: broad `+1` increment pattern
+  - `51150..51151`: `27 -> 28`
+  - `52007: 27 -> 4352`
+  - `52008..52010`: `27 -> 28`
+- switching the local panel to `Zuluft` also did not change `41120..41124`
+- observed diff for `neutral -> Zuluft`:
+  - `41020: 10 -> 0`
+  - `51113: 4353 -> 4352`
+  - `52008: 4352 -> 5376`
+  - `52009: 31 -> 1055`
+
+Implication of the panel diffs:
+
+- local `Abluft` / `Zuluft` keypresses on this unit are not represented only
+  by the direct runtime write block `41120..41124`
+- the physical panel appears to drive an additional local shadow/commit state
+  machine in the `51xxx` / `52xxx` ranges
+- this strongly explains why raw runtime writes can reproduce the functional
+  airflow change while still missing the keypad LED state
+- however, because the user later confirmed that the vendor app also leaves
+  those LEDs dark for `Abluft` / `Zuluft`, the missing LED state should no
+  longer be treated as clear evidence of an incomplete HA write sequence
+
+### Research plan for unresolved app settings
+
+The deeper settings pages in the Meltem app remain unresolved, especially for:
+
+- intensive airflow and run-on time
+- keypad configuration values
+- standby settings
+- acoustic signals
+- VOC / CO2 special configuration pages
+
+Current status:
+
+- no visible writes were found in the tested holding-register windows on the
+  unit slave or the gateway slave during single-setting changes
+- that makes blind linear scanning increasingly expensive
+- the current evidence now points more strongly toward a cloud-facing config
+  workflow plus a separate local persistence layer
+
+Recommended next steps for future sessions:
+
+1. Prefer before/after snapshot diffs over live watching.
+   Use `tools/diff_register_snapshot.py` with one setting change per run.
+
+2. Keep the test action minimal and stable.
+   For each run:
+   - capture baseline
+   - change exactly one app setting
+   - leave the page in a known way such as `Zurueck`
+   - capture diff
+
+3. Search one hypothesis at a time.
+   Suggested order:
+   - higher holding-register windows on gateway `slave 1`
+   - higher holding-register windows on the concrete unit slave
+   - alternate trigger moments: save, back navigation, activating the related
+     runtime mode, app restart
+
+4. Do not mix multiple setting changes in one trace.
+   Single-setting traces are much easier to reason about later.
+
+5. Record negative findings explicitly.
+   Each excluded range should be written down in this document so the same
+   search space is not repeated later.
+
+When to stop scanning and reassess:
+
+- after several consecutive wide no-hit ranges on both gateway and unit
+  levels, treat it as a sign that the storage path may not be exposed through
+  the same direct holding-register surface
+- at that point, prioritize consolidating confirmed runtime behavior and look
+  for new external evidence before continuing with more wide scans
 
 ### `REGISTER_CURRENT_LEVEL` is a useful target readback, not a current-airflow readback
 

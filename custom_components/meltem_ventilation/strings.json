@@ -2,14 +2,14 @@
   "config": {
     "step": {
       "user": {
-        "title": "Meltem",
+        "title": "Meltem Modbus",
         "description": "An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB. The integration then scans the configured units and asks for the exact profile of each detected unit.",
         "data": {
           "port": "Serial port"
         }
       },
       "confirm_usb": {
-        "title": "Discovered Meltem gateway",
+        "title": "Discovered Meltem Modbus gateway",
         "description": "Home Assistant found a USB device on {port} ({manufacturer}, {description}). An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB.",
         "data": {
           "port": "Serial port"
@@ -28,7 +28,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Configure Meltem",
+        "title": "Configure Meltem Modbus",
         "description": "Choose whether to change the serial connection settings, update profiles for existing units, or scan for new units.",
         "menu_options": {
           "edit_connection": "Change serial connection",
@@ -99,20 +99,11 @@
       },
       "operating_hours": {
         "name": "Operating hours"
-      },
-      "software_version": {
-        "name": "Software version"
-      },
-      "current_level": {
-        "name": "Common airflow"
-      },
-      "average_air_flow": {
-        "name": "Average airflow"
       }
     },
     "binary_sensor": {
       "error_status": {
-        "name": "Error status"
+        "name": "Device error"
       },
       "frost_protection_active": {
         "name": "Frost protection active"
@@ -120,25 +111,27 @@
       "filter_change_due": {
         "name": "Filter change due"
       },
+      "intensive_active": {
+        "name": "Intensive ventilation active"
+      },
       "rf_comm_status": {
         "name": "RF communication status"
-      },
-      "fault_status": {
-        "name": "Fault status"
-      },
-      "value_error_status": {
-        "name": "Value error status"
+      }
+    },
+    "button": {
+      "activate_intensive": {
+        "name": "Start intensive ventilation"
       }
     },
     "number": {
       "level": {
-        "name": "Airflow"
+        "name": "Common airflow"
       },
       "supply_level": {
-        "name": "Supply setpoint"
+        "name": "Supply air flow"
       },
       "extract_level": {
-        "name": "Extract setpoint"
+        "name": "Extract air flow"
       },
       "humidity_starting_point": {
         "name": "Humidity starting point"
@@ -161,7 +154,7 @@
     },
     "select": {
       "operation_mode": {
-        "name": "Operating mode",
+        "name": "Control mode",
         "state": {
           "off": "Off",
           "manual": "Manual",
@@ -169,6 +162,16 @@
           "humidity_control": "Humidity control",
           "co2_control": "CO2 control",
           "automatic": "Automatic"
+        }
+      },
+      "preset_mode": {
+        "name": "Quick mode",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High",
+          "extract_only": "Extract",
+          "supply_only": "Supply"
         }
       }
     }

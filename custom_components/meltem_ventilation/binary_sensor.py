@@ -54,6 +54,12 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
         value_fn=lambda state: state.filter_change_due,
     ),
     MeltemBinarySensorDescription(
+        key="intensive_active",
+        icon="mdi:fan-clock",
+        supported_profiles=ALL_PROFILES,
+        value_fn=lambda state: state.intensive_active,
+    ),
+    MeltemBinarySensorDescription(
         key="rf_comm_status",
         icon="mdi:wifi-alert",
         device_class=BinarySensorDeviceClass.PROBLEM,
@@ -61,24 +67,6 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
         entity_registry_enabled_default=False,
         supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.rf_comm_status,
-    ),
-    MeltemBinarySensorDescription(
-        key="fault_status",
-        icon="mdi:alert-outline",
-        device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-        supported_profiles=ALL_PROFILES,
-        value_fn=lambda state: state.fault_status,
-    ),
-    MeltemBinarySensorDescription(
-        key="value_error_status",
-        icon="mdi:alert-decagram-outline",
-        device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-        supported_profiles=ALL_PROFILES,
-        value_fn=lambda state: state.value_error_status,
     ),
 )
 

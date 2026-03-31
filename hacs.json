@@ -1,5 +1,5 @@
 {
-  "name": "Meltem",
+  "name": "Meltem Modbus",
   "homeassistant": "2024.8.0",
   "hacs": "2.0.0",
   "render_readme": true

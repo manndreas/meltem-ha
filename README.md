@@ -1,8 +1,8 @@
-# Meltem Ventilation Home Assistant Custom Integration
+# Meltem Modbus Home Assistant Custom Integration
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/v/release/neon-vector/meltem-ha)](https://github.com/neon-vector/meltem-ha/releases)
-[![License](https://img.shields.io/github/license/neon-vector/meltem-ha)](https://github.com/neon-vector/meltem-ha/blob/main/LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/manndreas/meltem-ha)](https://github.com/manndreas/meltem-ha/releases)
+[![License](https://img.shields.io/github/license/manndreas/meltem-ha)](https://github.com/manndreas/meltem-ha/blob/main/LICENSE)
 
 Home Assistant custom integration for Meltem `M-WRG-S` and `M-WRG-II`
 ventilation units via the Meltem `M-WRG-GW` gateway and Modbus RTU over USB.
@@ -35,8 +35,8 @@ gateways, Home Assistant hosts, or other connected equipment.
 
 1. Open HACS in Home Assistant
 2. Open the top-right menu -> `Custom repositories`
-3. Add `https://github.com/neon-vector/meltem-ha` as type `Integration`
-4. Search for `Meltem`
+3. Add `https://github.com/manndreas/meltem-ha` as type `Integration`
+4. Search for `Meltem Modbus`
 5. Install the integration
 6. Restart Home Assistant
 
@@ -49,7 +49,7 @@ directory and restart Home Assistant.
 
 1. Open `Settings` -> `Devices & Services`
 2. Click `Add Integration`
-3. Search for `Meltem`
+3. Search for `Meltem Modbus`
 4. Select the serial port of the `M-WRG-GW` gateway
 5. Let the integration read the configured unit list from the gateway
 6. Assign the correct profile to each detected unit
@@ -70,7 +70,7 @@ During setup, choose the exact profile manually.
 
 ## Options
 
-Open the integration options via `Settings` -> `Devices & Services` -> `Meltem`
+Open the integration options via `Settings` -> `Devices & Services` -> `Meltem Modbus`
 -> `Configure`.
 
 - **Change serial connection** — update the serial port or the maximum request
@@ -82,9 +82,9 @@ Open the integration options via `Settings` -> `Devices & Services` -> `Meltem`
 
 ## Diagnostic entities
 
-Some diagnostic entities such as software version, RF communication status,
-fault status and value error status are created but disabled by default. To
-enable them, open the entity in Home Assistant and toggle the `Enabled` switch.
+Some diagnostic entities such as operating hours remain disabled by default.
+Firmware and hardware details are shown on the device card instead of as
+separate version sensors.
 
 ## Troubleshooting
 
@@ -122,3 +122,4 @@ Additional project docs:
 - [SUPPORT.md](./SUPPORT.md)
 - [docs/MELTEM.md](./docs/MELTEM.md)
 - [docs/DEVELOPER.md](./docs/DEVELOPER.md)
+- [docs/SETTING_RE_BACKLOG.md](./docs/SETTING_RE_BACKLOG.md)

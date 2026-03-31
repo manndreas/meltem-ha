@@ -1,4 +1,4 @@
-"""Runtime Modbus client for Meltem ventilation units.
+"""Runtime Modbus client for Meltem Modbus ventilation units.
 
 This module contains only the long-lived :class:`MeltemModbusClient` that the
 coordinator uses for all reads and writes during normal operation.
@@ -18,6 +18,7 @@ from typing import cast
 from pymodbus.client import ModbusSerialClient
 
 from .const import (
+    APP_UNBALANCED_PRESET_BASE,
     MODE_AUTOMATIC_VALUE,
     MODE_CO2_CONTROL_VALUE,
     MODE_HUMIDITY_CONTROL_VALUE,
@@ -25,6 +26,12 @@ from .const import (
     MODE_OFF,
     MODE_SENSOR_CONTROL,
     MODE_UNBALANCED,
+    PRESET_MODE_EXTRACT_ONLY,
+    PRESET_MODE_CODE_INTENSIVE,
+    PRESET_MODE_INTENSIVE,
+    PRESET_MODE_SUPPLY_ONLY,
+    PRESET_MODE_TO_RAW_CODE,
+    RAW_CODE_TO_PRESET_MODE,
     REGISTER_CO2_MAX_LEVEL,
     REGISTER_CO2_MIN_LEVEL,
     REGISTER_CO2_STARTING_POINT,
@@ -39,7 +46,6 @@ from .const import (
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
     REGISTER_FILTER_CHANGE_DUE,
     REGISTER_FROST_PROTECTION_ACTIVE,
-    REGISTER_FAULT_STATUS,
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_MAX_LEVEL,
     REGISTER_HUMIDITY_MIN_LEVEL,
@@ -49,11 +55,12 @@ from .const import (
     REGISTER_OUTDOOR_AIR_TEMPERATURE,
     REGISTER_OPERATING_HOURS,
     REGISTER_APPLY,
+    REGISTER_PRESET_MODE,
+    REGISTER_PRESET_VALUE,
     REGISTER_RF_COMM_STATUS,
     REGISTER_SOFTWARE_VERSION,
     REGISTER_SUPPLY_AIR_TEMPERATURE,
     REGISTER_SUPPLY_AIR_FLOW,
-    REGISTER_VALUE_ERROR_STATUS,
     REGISTER_VOC_SUPPLY_AIR,
     CO2_PROFILES,
     HUMIDITY_PROFILES,
@@ -195,11 +202,13 @@ class MeltemModbusClient:
                     previous_state.operating_hours,
                     refresh_plan.refresh_operating_hours,
                 )
-                software_version = self._read_uint16_if_due(
-                    client, room, "software_version",
-                    REGISTER_SOFTWARE_VERSION,
-                    previous_state.software_version,
-                    refresh_plan.refresh_operating_hours,
+                software_version = (
+                    self._coalesce(
+                        self._read_optional_uint16(client, room.slave, REGISTER_SOFTWARE_VERSION),
+                        previous_state.software_version,
+                    )
+                    if refresh_plan.refresh_operating_hours
+                    else previous_state.software_version
                 )
                 (
                     humidity_starting_point,
@@ -220,68 +229,97 @@ class MeltemModbusClient:
                     previous_state.rf_comm_status,
                     refresh_plan.refresh_status,
                 )
-                fault_status = self._read_uint16_if_due(
-                    client, room, "fault_status",
-                    REGISTER_FAULT_STATUS,
-                    previous_state.fault_status,
-                    refresh_plan.refresh_status,
-                )
-                value_error_status = self._read_uint16_if_due(
-                    client, room, "value_error_status",
-                    REGISTER_VALUE_ERROR_STATUS,
-                    previous_state.value_error_status,
-                    refresh_plan.refresh_status,
-                )
                 if refresh_plan.refresh_airflow:
                     client = self._ensure_client()
                     mode_block = None
-                    if self._supports(room, "operation_mode"):
+                    full_mode_block_available = False
+                    needs_full_mode_block = (
+                        self._supports(room, "operation_mode")
+                        or self._supports(room, "preset_mode")
+                        or self._supports(room, "intensive_active")
+                    )
+                    if needs_full_mode_block:
                         mode_block = self._read_optional_airflow_uint16_block(
                             client,
                             room.slave,
                             REGISTER_MODE,
-                            2,
+                            5,
                         )
-                    raw_current_level = self._read_optional_airflow_uint16(
-                        client,
-                        room.slave,
-                        REGISTER_CURRENT_LEVEL,
-                    )
-                    # On the tested gateway, REGISTER_CURRENT_LEVEL behaves as
-                    # a fast target readback after balanced writes even though
-                    # the vendor docs describe it primarily as a write path.
-                    # The airflow registers can lag noticeably behind after a
-                    # write, so use 41121 for target confirmation when it looks
-                    # like a valid raw level and fall back to derived airflow
-                    # otherwise.
-                    current_level = self._decode_balanced_target_readback(
-                        room,
-                        raw_current_level,
-                        extract_air_flow,
-                        supply_air_flow,
-                    )
+                        if mode_block is not None and len(mode_block) >= 5:
+                            full_mode_block_available = True
+                        elif self._supports(room, "operation_mode") or self._supports(
+                            room, "preset_mode"
+                        ):
+                            mode_block = self._read_optional_airflow_uint16_block(
+                                client,
+                                room.slave,
+                                REGISTER_MODE,
+                                2,
+                            )
                     operation_mode = (
                         self._decode_operation_mode(mode_block[0], mode_block[1])
                         if mode_block is not None and len(mode_block) >= 2
                         else previous_state.operation_mode
                     )
+                    raw_current_level = self._read_optional_airflow_uint16(
+                        client,
+                        room.slave,
+                        REGISTER_CURRENT_LEVEL,
+                    )
                     if operation_mode == "unbalanced":
+                        target_level = self._decode_unbalanced_target_readback(
+                            room,
+                            raw_current_level,
+                        )
                         raw_extract_target = self._read_optional_airflow_uint16(
                             client,
                             room.slave,
                             REGISTER_EXTRACT_AIR_TARGET_LEVEL,
                         )
                         extract_target_level = (
-                            self._scale_raw_level_to_airflow(room, raw_extract_target)
+                            self._decode_unbalanced_target_readback(
+                                room,
+                                raw_extract_target,
+                            )
                             if raw_extract_target is not None
                             else previous_state.extract_target_level
                         )
                     else:
+                        # On the tested gateway, REGISTER_CURRENT_LEVEL behaves
+                        # as a fast target readback after balanced writes even
+                        # though the vendor docs describe it primarily as a
+                        # write path. The airflow registers can lag noticeably
+                        # behind after a write, so use 41121 for target
+                        # confirmation when it looks like a valid balanced raw
+                        # level and fall back to derived airflow otherwise.
+                        target_level = self._decode_balanced_target_readback(
+                            room,
+                            raw_current_level,
+                            extract_air_flow,
+                            supply_air_flow,
+                        )
                         extract_target_level = None
+                    preset_mode = self._decode_preset_mode_with_fallback(
+                        mode_block=mode_block,
+                        full_mode_block_available=full_mode_block_available,
+                        operation_mode=operation_mode,
+                        raw_current_level=raw_current_level,
+                        raw_extract_target=(
+                            raw_extract_target if operation_mode == "unbalanced" else None
+                        ),
+                        previous_preset_mode=previous_state.preset_mode,
+                    )
+                    intensive_active = self._decode_intensive_active(
+                        mode_block=mode_block,
+                        full_mode_block_available=full_mode_block_available,
+                        previous_intensive_active=previous_state.intensive_active,
+                    )
                 else:
-                    current_level = previous_state.current_level
+                    target_level = previous_state.target_level
                     extract_target_level = previous_state.extract_target_level
                     operation_mode = previous_state.operation_mode
+                    preset_mode = previous_state.preset_mode
+                    intensive_active = previous_state.intensive_active
         except MeltemModbusError:
             self.close()
             raise
@@ -300,8 +338,6 @@ class MeltemModbusClient:
             filter_change_due=_to_optional_bool(filter_due),
             frost_protection_active=_to_optional_bool(frost),
             rf_comm_status=_to_optional_bool(rf_comm_status),
-            fault_status=_to_optional_bool(fault_status),
-            value_error_status=_to_optional_bool(value_error_status),
             humidity_extract_air=state.humidity_extract_air,
             humidity_supply_air=state.humidity_supply_air,
             co2_extract_air=state.co2_extract_air,
@@ -309,10 +345,12 @@ class MeltemModbusClient:
             extract_air_flow=extract_air_flow,
             supply_air_flow=supply_air_flow,
             operation_mode=operation_mode,
+            preset_mode=preset_mode,
+            intensive_active=intensive_active,
             days_until_filter_change=days,
             operating_hours=hours,
             software_version=software_version,
-            current_level=current_level,
+            target_level=target_level,
             extract_target_level=extract_target_level,
             humidity_starting_point=humidity_starting_point,
             humidity_min_level=humidity_min_level,
@@ -442,6 +480,77 @@ class MeltemModbusClient:
             self.close()
             raise MeltemModbusError(
                 f"Unexpected error while writing operating mode for room {room.key}: {err!r}"
+            ) from err
+
+    def write_preset_mode(
+        self,
+        room: RoomConfig,
+        preset_mode: str,
+        preferred_level: int | None = None,
+    ) -> None:
+        """Write one confirmed app-style preset mode."""
+
+        raw_code = PRESET_MODE_TO_RAW_CODE.get(preset_mode)
+        if raw_code is None and preset_mode not in (
+            PRESET_MODE_EXTRACT_ONLY,
+            PRESET_MODE_SUPPLY_ONLY,
+        ):
+            raise MeltemModbusError(
+                f"Unsupported preset mode {preset_mode!r} for room {room.key}"
+            )
+
+        try:
+            with self._lock:
+                client = self._ensure_client()
+                if preset_mode == PRESET_MODE_INTENSIVE:
+                    self._write_uint16(client, room.slave, REGISTER_PRESET_MODE, MODE_MANUAL)
+                    self._write_uint16(client, room.slave, REGISTER_PRESET_VALUE, raw_code)
+                elif preset_mode == PRESET_MODE_EXTRACT_ONLY:
+                    self._clear_secondary_preset_registers(client, room.slave)
+                    raw_unbalanced_level = self._encode_app_unbalanced_preset_level(
+                        room,
+                        preferred_level,
+                    )
+                    self._write_uint16(client, room.slave, REGISTER_MODE, MODE_UNBALANCED)
+                    self._write_uint16(client, room.slave, REGISTER_CURRENT_LEVEL, 0)
+                    self._write_uint16(
+                        client,
+                        room.slave,
+                        REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+                        raw_unbalanced_level,
+                    )
+                elif preset_mode == PRESET_MODE_SUPPLY_ONLY:
+                    self._clear_secondary_preset_registers(client, room.slave)
+                    raw_unbalanced_level = self._encode_app_unbalanced_preset_level(
+                        room,
+                        preferred_level,
+                    )
+                    self._write_uint16(client, room.slave, REGISTER_MODE, MODE_UNBALANCED)
+                    self._write_uint16(
+                        client,
+                        room.slave,
+                        REGISTER_CURRENT_LEVEL,
+                        raw_unbalanced_level,
+                    )
+                    self._write_uint16(
+                        client,
+                        room.slave,
+                        REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+                        0,
+                    )
+                else:
+                    self._clear_secondary_preset_registers(client, room.slave)
+                    self._write_uint16(client, room.slave, REGISTER_MODE, MODE_MANUAL)
+                    self._write_uint16(client, room.slave, REGISTER_CURRENT_LEVEL, raw_code)
+                self._write_uint16(client, room.slave, REGISTER_APPLY, 0)
+                self._clear_optional_airflow_read_backoff(room.slave)
+        except MeltemModbusError:
+            self.close()
+            raise
+        except Exception as err:
+            self.close()
+            raise MeltemModbusError(
+                f"Unexpected error while writing preset mode for room {room.key}: {err!r}"
             ) from err
 
     def write_control_setting(
@@ -740,6 +849,7 @@ class MeltemModbusClient:
 
         for key in (
             (slave, REGISTER_MODE, 2),
+            (slave, REGISTER_MODE, 5),
             (slave, REGISTER_CURRENT_LEVEL, 1),
             (slave, REGISTER_EXTRACT_AIR_TARGET_LEVEL, 1),
         ):
@@ -926,11 +1036,13 @@ class MeltemModbusClient:
         if block is None:
             return previous_values
 
-        return tuple(
-            self._coalesce(block[index], previous_values[index])
-            if self._supports(room, keys[index])
-            else previous_values[index]
-            for index in range(6)
+        return (
+            self._coalesce(block[0], previous_values[0]) if self._supports(room, keys[0]) else previous_values[0],
+            self._coalesce(block[1], previous_values[1]) if self._supports(room, keys[1]) else previous_values[1],
+            self._coalesce(block[2], previous_values[2]) if self._supports(room, keys[2]) else previous_values[2],
+            self._coalesce(block[3], previous_values[3]) if self._supports(room, keys[3]) else previous_values[3],
+            self._coalesce(block[4], previous_values[4]) if self._supports(room, keys[4]) else previous_values[4],
+            self._coalesce(block[5], previous_values[5]) if self._supports(room, keys[5]) else previous_values[5],
         )
 
     def _read_profile_state(
@@ -1145,6 +1257,16 @@ class MeltemModbusClient:
             f"Write failed for slave {slave} register {address}: {last_error!r}"
         )
 
+    def _clear_secondary_preset_registers(
+        self,
+        client: ModbusSerialClient,
+        slave: int,
+    ) -> None:
+        """Clear the dedicated intensive-preset shadow registers before other presets."""
+
+        self._write_uint16(client, slave, REGISTER_PRESET_MODE, 0)
+        self._write_uint16(client, slave, REGISTER_PRESET_VALUE, 0)
+
     # ------------------------------------------------------------------
     #  Tiny helpers
     # ------------------------------------------------------------------
@@ -1200,6 +1322,24 @@ class MeltemModbusClient:
         # directions are effectively balanced.
         return derive_balanced_airflow(extract_air_flow, supply_air_flow)
 
+    def _decode_unbalanced_target_readback(
+        self,
+        room: RoomConfig,
+        raw_level: int | None,
+    ) -> int | None:
+        """Decode one unbalanced target, including app-side preset encodings."""
+
+        if raw_level is None:
+            return None
+        if 0 <= raw_level <= 200:
+            return self._scale_raw_level_to_airflow(room, raw_level)
+        if raw_level >= APP_UNBALANCED_PRESET_BASE:
+            return min(
+                profile_max_airflow(room.profile),
+                (raw_level - APP_UNBALANCED_PRESET_BASE) * 10,
+            )
+        return None
+
     def _decode_operation_mode(
         self,
         mode_value: int | None,
@@ -1220,6 +1360,100 @@ class MeltemModbusClient:
         if current_value == MODE_AUTOMATIC_VALUE:
             return "automatic"
         return None
+
+    def _decode_preset_mode(self, mode_block: list[int] | None) -> str | None:
+        """Return one confirmed app-like preset mode from the optional mode block."""
+
+        if mode_block is None:
+            return None
+        if len(mode_block) >= 5:
+            if (
+                mode_block[3] == MODE_MANUAL
+                and mode_block[4] == PRESET_MODE_CODE_INTENSIVE
+            ):
+                return PRESET_MODE_INTENSIVE
+        if len(mode_block) < 2:
+            return None
+        if mode_block[0] == MODE_UNBALANCED and len(mode_block) >= 3:
+            if mode_block[1] == 0 and mode_block[2] > APP_UNBALANCED_PRESET_BASE:
+                return PRESET_MODE_EXTRACT_ONLY
+            if mode_block[2] == 0 and mode_block[1] > APP_UNBALANCED_PRESET_BASE:
+                return PRESET_MODE_SUPPLY_ONLY
+        if mode_block[0] != MODE_MANUAL:
+            return None
+        return RAW_CODE_TO_PRESET_MODE.get(mode_block[1])
+
+    def _decode_preset_mode_with_fallback(
+        self,
+        *,
+        mode_block: list[int] | None,
+        full_mode_block_available: bool,
+        operation_mode: str | None,
+        raw_current_level: int | None,
+        raw_extract_target: int | None,
+        previous_preset_mode: str | None,
+    ) -> str | None:
+        """Decode preset mode without keeping stale values after known non-preset states."""
+
+        if full_mode_block_available:
+            decoded = self._decode_preset_mode(mode_block)
+            if decoded == PRESET_MODE_INTENSIVE:
+                return previous_preset_mode
+            return decoded
+
+        if mode_block is None:
+            return previous_preset_mode
+
+        if operation_mode in ("off", "humidity_control", "co2_control", "automatic"):
+            return None
+
+        if operation_mode == "manual":
+            return RAW_CODE_TO_PRESET_MODE.get(raw_current_level)
+
+        if operation_mode == "unbalanced":
+            if (
+                raw_current_level == 0
+                and raw_extract_target is not None
+                and raw_extract_target > APP_UNBALANCED_PRESET_BASE
+            ):
+                return PRESET_MODE_EXTRACT_ONLY
+            if (
+                raw_extract_target == 0
+                and raw_current_level is not None
+                and raw_current_level > APP_UNBALANCED_PRESET_BASE
+            ):
+                return PRESET_MODE_SUPPLY_ONLY
+        return None
+
+    def _decode_intensive_active(
+        self,
+        *,
+        mode_block: list[int] | None,
+        full_mode_block_available: bool,
+        previous_intensive_active: bool | None,
+    ) -> bool | None:
+        """Return whether the temporary intensive override is currently active."""
+
+        if full_mode_block_available and mode_block is not None:
+            return (
+                mode_block[3] == MODE_MANUAL
+                and mode_block[4] == PRESET_MODE_CODE_INTENSIVE
+            )
+        if mode_block is None or len(mode_block) < 5:
+            return previous_intensive_active
+        return None
+
+    def _encode_app_unbalanced_preset_level(
+        self,
+        room: RoomConfig,
+        preferred_level: int | None,
+    ) -> int:
+        """Encode one app-style single-direction shortcut airflow."""
+
+        if preferred_level is None:
+            preferred_level = 50
+        clamped = max(0, min(profile_max_airflow(room.profile), int(round(preferred_level))))
+        return APP_UNBALANCED_PRESET_BASE + max(0, round(clamped / 10))
 
     def _supports(self, room: RoomConfig, entity_key: str) -> bool:
         if room.supported_entity_keys is None:

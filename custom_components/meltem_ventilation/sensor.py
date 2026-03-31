@@ -29,28 +29,6 @@ class MeltemSensorDescription(SensorEntityDescription):
     value_fn: Callable[[RoomState], int | float | None]
 
 
-def _average_air_flow(state: RoomState) -> float | None:
-    """Return the average airflow across supply and extract."""
-
-    if state.extract_air_flow is None and state.supply_air_flow is None:
-        return None
-    if state.extract_air_flow is None:
-        return float(state.supply_air_flow)
-    if state.supply_air_flow is None:
-        return float(state.extract_air_flow)
-    return float(round((state.extract_air_flow + state.supply_air_flow) / 2))
-
-
-def _common_air_flow(state: RoomState) -> float | None:
-    """Return one shared airflow only when both measured directions still match."""
-
-    if state.extract_air_flow is None or state.supply_air_flow is None:
-        return None
-    if abs(state.extract_air_flow - state.supply_air_flow) > 1:
-        return None
-    return float(round((state.extract_air_flow + state.supply_air_flow) / 2))
-
-
 SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     MeltemSensorDescription(
         key="exhaust_temperature",
@@ -122,7 +100,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     ),
     MeltemSensorDescription(
         key="extract_air_flow",
-        icon="mdi:fan-chevron-up",
+        icon="mdi:fan-chevron-down",
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement="m³/h",
         supported_profiles=ALL_PROFILES,
@@ -130,7 +108,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     ),
     MeltemSensorDescription(
         key="supply_air_flow",
-        icon="mdi:fan-chevron-down",
+        icon="mdi:fan-chevron-up",
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement="m³/h",
         supported_profiles=ALL_PROFILES,
@@ -153,30 +131,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         entity_registry_enabled_default=False,
         supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.operating_hours,
-    ),
-    MeltemSensorDescription(
-        key="software_version",
-        icon="mdi:information-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-        supported_profiles=ALL_PROFILES,
-        value_fn=lambda state: state.software_version,
-    ),
-    MeltemSensorDescription(
-        key="current_level",
-        icon="mdi:fan",
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement="m³/h",
-        supported_profiles=ALL_PROFILES,
-        value_fn=_common_air_flow,
-    ),
-    MeltemSensorDescription(
-        key="average_air_flow",
-        icon="mdi:fan-auto",
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement="m³/h",
-        supported_profiles=ALL_PROFILES,
-        value_fn=_average_air_flow,
     ),
 )
 

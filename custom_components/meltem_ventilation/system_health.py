@@ -54,7 +54,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
 
     return {
         "loaded_entries": len(entries),
-        "serial_port": entry.data.get("port"),
+        "serial_port": "**REDACTED**",
         "configured_units": len(coordinator.rooms),
         "state_units": len(coordinator.safe_data),
         "last_update_success": coordinator.last_update_success,

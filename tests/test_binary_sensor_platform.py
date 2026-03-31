@@ -20,7 +20,13 @@ from custom_components.meltem_ventilation.models import RoomConfig, RoomState
 #  Helpers
 # ---------------------------------------------------------------------------
 
-_ROOM = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+_ROOM = RoomConfig(
+    key="unit_1",
+    name="Unit 1",
+    profile="ii_plain",
+    slave=2,
+    preview="ID 116852 | basic",
+)
 _ROOM_CONSTRAINED = RoomConfig(
     key="unit_2",
     name="Unit 2",
@@ -58,12 +64,14 @@ class TestBinarySensorEntityCreation:
         assert entity.unique_id == f"{DOMAIN}_unit_1_error_status"
 
     def test_device_info(self) -> None:
-        coordinator = _fake_coordinator()
+        coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=7)})
         desc = _find_desc("error_status")
         entity = MeltemBinarySensorEntity(coordinator, _ROOM, desc)
         info = entity.device_info
         assert (DOMAIN, "unit_1") in info["identifiers"]
         assert info["manufacturer"] == "Meltem"
+        assert info["sw_version"] == "Version 7"
+        assert info["hw_version"] == "Produkt-ID 116852"
 
 
 # ---------------------------------------------------------------------------
@@ -82,9 +90,9 @@ class TestBinarySensorIsOn:
             ("frost_protection_active", {"frost_protection_active": False}, False),
             ("filter_change_due", {"filter_change_due": True}, True),
             ("filter_change_due", {"filter_change_due": False}, False),
+            ("intensive_active", {"intensive_active": True}, True),
+            ("intensive_active", {"intensive_active": False}, False),
             ("rf_comm_status", {"rf_comm_status": True}, True),
-            ("fault_status", {"fault_status": False}, False),
-            ("value_error_status", {"value_error_status": None}, None),
         ],
     )
     def test_is_on_reflects_state(
