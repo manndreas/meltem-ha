@@ -1,4 +1,4 @@
-"""Shared fixtures for Meltem ventilation tests."""
+"""Shared fixtures for Meltem Modbus tests."""
 
 from __future__ import annotations
 

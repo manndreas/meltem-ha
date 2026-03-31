@@ -99,7 +99,7 @@ class TestBalancedLevelReadState:
         coordinator = _fake_coordinator(
             data={
                 "unit_1": RoomState(
-                    current_level=20,
+                    target_level=20,
                     extract_target_level=50,
                     supply_air_flow=20,
                     extract_air_flow=20,
@@ -115,9 +115,9 @@ class TestBalancedLevelReadState:
         assert supply._read_state_value() == 20.0
         assert extract._read_state_value() == 20.0
 
-    def test_reads_current_level(self) -> None:
+    def test_reads_target_level(self) -> None:
         coordinator = _fake_coordinator(
-            data={"unit_1": RoomState(current_level=42)}
+            data={"unit_1": RoomState(target_level=42)}
         )
         entity = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
         assert entity._read_state_value() == 42.0
@@ -148,14 +148,14 @@ class TestBalancedLevelReadState:
         coordinator = _fake_coordinator(
             data={
                 "unit_1": RoomState(
-                    current_level=55,
+                    target_level=55,
                     extract_target_level=40,
                     operation_mode="unbalanced",
                 )
             }
         )
         entity = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
-        assert entity._read_state_value() is None
+        assert entity._read_state_value() == 0.0
 
     def test_returns_none_when_all_missing(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState()})
@@ -169,9 +169,13 @@ class TestBalancedLevelReadState:
 
 
 class TestSupplyLevelReadState:
-    def test_reads_current_level(self) -> None:
+    def test_entity_is_disabled_by_default(self) -> None:
+        entity = MeltemSupplyLevelNumber(_fake_coordinator(), _ROOM_ALL)
+        assert entity.entity_registry_enabled_default is False
+
+    def test_reads_target_level(self) -> None:
         coordinator = _fake_coordinator(
-            data={"unit_1": RoomState(current_level=33)}
+            data={"unit_1": RoomState(target_level=33)}
         )
         entity = MeltemSupplyLevelNumber(coordinator, _ROOM_ALL)
         assert entity._read_state_value() == 33.0
@@ -187,7 +191,7 @@ class TestSupplyLevelReadState:
         coordinator = _fake_coordinator(
             data={
                 "unit_1": RoomState(
-                    current_level=48,
+                    target_level=48,
                     extract_target_level=48,
                 )
             }
@@ -207,11 +211,15 @@ class TestSupplyLevelReadState:
 
 
 class TestExtractLevelReadState:
+    def test_entity_is_disabled_by_default(self) -> None:
+        entity = MeltemExtractLevelNumber(_fake_coordinator(), _ROOM_ALL)
+        assert entity.entity_registry_enabled_default is False
+
     def test_reads_extract_target_level(self) -> None:
         coordinator = _fake_coordinator(
             data={
                 "unit_1": RoomState(
-                    current_level=60,
+                    target_level=60,
                     extract_target_level=50,
                     operation_mode="unbalanced",
                 )
@@ -224,7 +232,7 @@ class TestExtractLevelReadState:
         coordinator = _fake_coordinator(
             data={
                 "unit_1": RoomState(
-                    current_level=60,
+                    target_level=60,
                     extract_target_level=50,
                     operation_mode="manual",
                 )
@@ -237,7 +245,7 @@ class TestExtractLevelReadState:
         coordinator = _fake_coordinator(
             data={
                 "unit_1": RoomState(
-                    current_level=52,
+                    target_level=52,
                     extract_target_level=52,
                 )
             }
@@ -283,7 +291,7 @@ class TestMaxValueFromProfile:
 class TestOptimisticValue:
     def test_other_sliders_keep_optimistic_value_during_stale_gateway_read(self) -> None:
         coordinator = _fake_coordinator(
-            data={"unit_1": RoomState(current_level=20, extract_target_level=20)}
+            data={"unit_1": RoomState(target_level=20, extract_target_level=20)}
         )
         balanced = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
         supply = MeltemSupplyLevelNumber(coordinator, _ROOM_ALL)
@@ -292,7 +300,7 @@ class TestOptimisticValue:
         balanced._set_room_optimistic_targets(55)
         coordinator.data = {
             "unit_1": RoomState(
-                current_level=20,
+                target_level=20,
                 extract_target_level=20,
                 supply_air_flow=20,
                 extract_air_flow=20,
@@ -303,6 +311,17 @@ class TestOptimisticValue:
         assert supply._read_state_value() == 55.0
         assert extract._read_state_value() == 55.0
 
+    def test_balanced_slider_shows_zero_immediately_for_optimistic_split_targets(self) -> None:
+        coordinator = _fake_coordinator(
+            data={"unit_1": RoomState(target_level=30, extract_target_level=40)}
+        )
+        balanced = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
+        supply = MeltemSupplyLevelNumber(coordinator, _ROOM_ALL)
+
+        supply._set_room_optimistic_targets(55)
+
+        assert balanced._read_state_value() == 0.0
+
 
 # ---------------------------------------------------------------------------
 #  Coordinator update clears optimistic overlay
@@ -312,7 +331,7 @@ class TestOptimisticValue:
 class TestHandleCoordinatorUpdate:
     def test_clears_optimistic_targets_when_coordinator_matches(self) -> None:
         coordinator = _fake_coordinator(
-            data={"unit_1": RoomState(current_level=50, extract_target_level=50)}
+            data={"unit_1": RoomState(target_level=50, extract_target_level=50)}
         )
         entity = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
         entity._set_room_optimistic_targets(50)
@@ -323,7 +342,7 @@ class TestHandleCoordinatorUpdate:
 
     def test_keeps_optimistic_targets_when_coordinator_diverges(self) -> None:
         coordinator = _fake_coordinator(
-            data={"unit_1": RoomState(current_level=30, extract_target_level=30)}
+            data={"unit_1": RoomState(target_level=30, extract_target_level=30)}
         )
         entity = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
         entity._set_room_optimistic_targets(50)
@@ -344,7 +363,7 @@ class TestSetNativeValue:
     ) -> None:
         coordinator = _fake_coordinator(
             hass=hass,
-            data={"unit_1": RoomState(current_level=30)},
+            data={"unit_1": RoomState(target_level=30)},
         )
         entity = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
         entity.hass = hass
@@ -363,7 +382,7 @@ class TestSetNativeValue:
     ) -> None:
         coordinator = _fake_coordinator(
             hass=hass,
-            data={"unit_1": RoomState(current_level=30)},
+            data={"unit_1": RoomState(target_level=30)},
         )
         entity = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
         entity.hass = hass
@@ -385,7 +404,7 @@ class TestSetNativeValue:
     ) -> None:
         coordinator = _fake_coordinator(
             hass=hass,
-            data={"unit_1": RoomState(current_level=30)},
+            data={"unit_1": RoomState(target_level=30)},
         )
         entity = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
         entity.hass = hass
@@ -403,7 +422,7 @@ class TestSetNativeValue:
     ) -> None:
         coordinator = _fake_coordinator(
             hass=hass,
-            data={"unit_1": RoomState(current_level=30, extract_target_level=20)},
+            data={"unit_1": RoomState(target_level=30, extract_target_level=20)},
         )
         entity = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
         entity.hass = hass
@@ -424,7 +443,7 @@ class TestSetNativeValue:
             hass=hass,
             data={
                 "unit_1": RoomState(
-                    current_level=30,
+                    target_level=30,
                     extract_target_level=40,
                     operation_mode="unbalanced",
                 )
@@ -454,7 +473,7 @@ class TestApplyValue:
     ) -> None:
         coordinator = _fake_coordinator(
             hass=hass,
-            data={"unit_1": RoomState(current_level=30)},
+            data={"unit_1": RoomState(target_level=30)},
         )
         entity = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
         entity.hass = hass
@@ -469,7 +488,7 @@ class TestApplyValue:
     ) -> None:
         coordinator = _fake_coordinator(
             hass=hass,
-            data={"unit_1": RoomState(current_level=30, extract_target_level=40)},
+            data={"unit_1": RoomState(target_level=30, extract_target_level=40)},
         )
         entity = MeltemSupplyLevelNumber(coordinator, _ROOM_ALL)
         entity.hass = hass
@@ -519,7 +538,7 @@ class TestApplyValue:
     ) -> None:
         coordinator = _fake_coordinator(
             hass=hass,
-            data={"unit_1": RoomState(current_level=60)},
+            data={"unit_1": RoomState(target_level=60)},
         )
         entity = MeltemExtractLevelNumber(coordinator, _ROOM_ALL)
         entity.hass = hass
@@ -531,7 +550,7 @@ class TestApplyValue:
             "unit_1", 60, 35
         )
 
-    async def test_extract_uses_supply_airflow_when_current_level_missing(
+    async def test_extract_uses_supply_airflow_when_target_level_missing(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator = _fake_coordinator(
@@ -548,11 +567,11 @@ class TestApplyValue:
             "unit_1", 72, 35
         )
 
-    def test_supply_prefers_current_level_before_measured_airflow(self) -> None:
+    def test_supply_prefers_target_level_before_measured_airflow(self) -> None:
         coordinator = _fake_coordinator(
             data={
                 "unit_1": RoomState(
-                    current_level=55,
+                    target_level=55,
                     supply_air_flow=70,
                     extract_air_flow=40,
                 )
@@ -574,7 +593,7 @@ class TestQueuedWriteWorker:
     ) -> None:
         coordinator = _fake_coordinator(
             hass=hass,
-            data={"unit_1": RoomState(current_level=30)},
+            data={"unit_1": RoomState(target_level=30)},
         )
         coordinator.async_set_level = AsyncMock(side_effect=Exception("boom"))
         entity = MeltemBalancedLevelNumber(coordinator, _ROOM_ALL)
@@ -599,7 +618,7 @@ class TestQueuedWriteWorker:
     ) -> None:
         coordinator = _fake_coordinator(
             hass=hass,
-            data={"unit_1": RoomState(current_level=30, extract_target_level=40)},
+            data={"unit_1": RoomState(target_level=30, extract_target_level=40)},
         )
         supply = MeltemSupplyLevelNumber(coordinator, _ROOM_ALL)
         extract = MeltemExtractLevelNumber(coordinator, _ROOM_ALL)

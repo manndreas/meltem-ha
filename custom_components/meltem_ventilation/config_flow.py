@@ -48,6 +48,7 @@ from .const import (
     FIXED_PARITY,
     FIXED_STOPBITS,
     FIXED_TIMEOUT,
+    GATEWAY_NAME,
     INTEGRATION_NAME,
     MAX_MAX_REQUESTS_PER_SECOND,
     MIN_MAX_REQUESTS_PER_SECOND,
@@ -122,14 +123,26 @@ def _profile_label(
     index: int,
     slave: int,
     previews_by_slave: Mapping[int, str],
+    existing_rooms_by_slave: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> str:
     """Build a user-facing profile label with an optional preview."""
 
     base = _profile_field_key(index)
+    existing_rooms_by_slave = existing_rooms_by_slave or {}
+    existing_name = existing_rooms_by_slave.get(slave, {}).get("name")
     preview = previews_by_slave.get(slave)
-    if not preview:
+    details: list[str] = []
+    if (
+        isinstance(existing_name, str)
+        and existing_name
+        and existing_name != _default_room_name(index)
+    ):
+        details.append(existing_name)
+    if preview:
+        details.append(preview.replace("ID ", "Hardware ID "))
+    if not details:
         return base
-    return f"{base} ({preview})"
+    return f"{base} ({', '.join(details)})"
 
 
 def _detected_profile_default(
@@ -269,7 +282,7 @@ async def _async_probe_discovered_slaves(
 
 
 class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Meltem ventilation."""
+    """Handle a config flow for Meltem Modbus."""
 
     VERSION = 1
 
@@ -467,7 +480,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             return self.async_create_entry(
-                title=INTEGRATION_NAME,
+                title=GATEWAY_NAME,
                 data={
                     CONF_PORT: resolve_preferred_port_path(self._port),
                     CONF_MAX_REQUESTS_PER_SECOND: self._max_requests_per_second,
@@ -674,6 +687,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                 index,
                 slave,
                 self._preview_by_slave,
+                existing_rooms,
             )
             for index, slave in enumerate(slaves, start=1)
         }
@@ -770,6 +784,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                 index,
                 slave,
                 self._preview_by_slave,
+                existing_rooms,
             )
             for index, slave in enumerate(self._discovered_slaves, start=1)
         }

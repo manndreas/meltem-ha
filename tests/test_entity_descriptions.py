@@ -197,6 +197,7 @@ class TestSelectSupportsRoom:
     def test_select_allowed_without_supported_keys(self) -> None:
         room = RoomConfig(key="u1", name="U1", profile="ii_plain", slave=2)
         assert select_supports_room(room, "operation_mode")
+        assert select_supports_room(room, "preset_mode")
 
     def test_select_filtered_by_supported_keys(self) -> None:
         room = RoomConfig(
@@ -207,6 +208,7 @@ class TestSelectSupportsRoom:
             supported_entity_keys=frozenset({"level"}),
         )
         assert not select_supports_room(room, "operation_mode")
+        assert not select_supports_room(room, "preset_mode")
 
 
 # ---------------------------------------------------------------------------
@@ -251,16 +253,15 @@ class TestSensorDescriptionMetadata:
         assert desc.device_class == "duration"
         assert desc.entity_category == "diagnostic"
 
-    @pytest.mark.parametrize(
-        "key", ["extract_air_flow", "supply_air_flow", "current_level", "average_air_flow"]
-    )
+    @pytest.mark.parametrize("key", ["extract_air_flow", "supply_air_flow"])
     def test_airflow_sensors_have_state_class(self, key: str) -> None:
         assert _sensor_desc(key).state_class == "measurement"
 
-    def test_diagnostic_sensors_lack_state_class(self) -> None:
-        desc = _sensor_desc("software_version")
-        assert desc.state_class is None
-        assert desc.entity_category == "diagnostic"
+    def test_removed_derived_airflow_sensors_are_absent(self) -> None:
+        sensor_keys = {desc.key for desc in SENSOR_DESCRIPTIONS}
+        assert "current_level" not in sensor_keys
+        assert "average_air_flow" not in sensor_keys
+        assert "software_version" not in sensor_keys
 
 
 # ---------------------------------------------------------------------------
@@ -269,16 +270,14 @@ class TestSensorDescriptionMetadata:
 
 
 class TestBinarySensorDescriptionMetadata:
-    @pytest.mark.parametrize(
-        "key", ["rf_comm_status", "fault_status", "value_error_status"]
-    )
+    @pytest.mark.parametrize("key", ["rf_comm_status"])
     def test_diagnostic_binary_sensors_have_entity_category(
         self, key: str,
     ) -> None:
         assert _binary_desc(key).entity_category == "diagnostic"
 
     @pytest.mark.parametrize(
-        "key", ["error_status", "frost_protection_active", "filter_change_due"]
+        "key", ["error_status", "frost_protection_active", "filter_change_due", "intensive_active"]
     )
     def test_operational_binary_sensors_have_no_category(
         self, key: str,

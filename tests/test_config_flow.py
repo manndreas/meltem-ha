@@ -169,11 +169,11 @@ class TestConfigFlowProfiles:
             # Now at profiles step — select a profile.
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"],
-                {"Unit 1 profile (ID 2 | CO2)": "ii_fc"},
+                {"Unit 1 profile (Hardware ID 2 | CO2)": "ii_fc"},
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["title"] == "Meltem"
+        assert result["title"] == "Meltem Gateway M-WRG-GW"
         assert result["data"][CONF_PORT] == "/dev/serial/by-id/test"
         assert result["data"][CONF_MAX_REQUESTS_PER_SECOND] == DEFAULT_MAX_REQUESTS_PER_SECOND
         rooms = result["data"][CONF_ROOMS]
@@ -203,8 +203,8 @@ class TestConfigFlowProfiles:
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"],
                 {
-                    "Unit 1 profile (ID 2 | basic)": "ii_plain",
-                    "Unit 2 profile (ID 2 | basic)": "ii_f",
+                    "Unit 1 profile (Hardware ID 2 | basic)": "ii_plain",
+                    "Unit 2 profile (Hardware ID 2 | basic)": "ii_f",
                 },
             )
 
@@ -236,7 +236,7 @@ class TestConfigFlowProfiles:
             )
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"],
-                {"Unit 1 profile (ID 2 | CO2)": "ii_fc"},
+                {"Unit 1 profile (Hardware ID 2 | CO2)": "ii_fc"},
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -347,8 +347,8 @@ class TestConfigFlowEndToEnd:
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"],
                 {
-                    "Unit 1 profile (ID 2 | VOC)": "ii_fc_voc",
-                    "Unit 2 profile (ID 2 | VOC)": "ii_fc",
+                    "Unit 1 profile (Hardware ID 2 | VOC)": "ii_fc_voc",
+                    "Unit 2 profile (Hardware ID 2 | VOC)": "ii_fc",
                 },
             )
 
@@ -486,6 +486,7 @@ class TestOptionsFlow:
         self, hass: HomeAssistant
     ) -> None:
         entry = self._setup_entry(hass)
+        entry.data[CONF_ROOMS][0]["name"] = "Living Room"
         entry.runtime_data = type(
             "RuntimeData",
             (),
@@ -512,7 +513,7 @@ class TestOptionsFlow:
             )
             result = await hass.config_entries.options.async_configure(
                 result["flow_id"],
-                {"Unit 1 profile (ID 99 | CO2)": "ii_fc"},
+                {"Unit 1 profile (Living Room, Hardware ID 99 | CO2)": "ii_fc"},
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -526,6 +527,7 @@ class TestOptionsFlow:
         self, hass: HomeAssistant
     ) -> None:
         entry = self._setup_entry(hass)
+        entry.data[CONF_ROOMS][0]["name"] = "Living Room"
         probe = AsyncMock(
             side_effect=[
                 ("fc", "ID 99 | CO2", ["level", "co2_extract_air"]),
@@ -547,7 +549,7 @@ class TestOptionsFlow:
             )
             result = await hass.config_entries.options.async_configure(
                 result["flow_id"],
-                {"Unit 1 profile (ID 99 | CO2)": "ii_fc"},
+                {"Unit 1 profile (Living Room, Hardware ID 99 | CO2)": "ii_fc"},
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY

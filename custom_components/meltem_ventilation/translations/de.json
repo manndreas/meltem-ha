@@ -2,14 +2,14 @@
   "config": {
     "step": {
       "user": {
-        "title": "Meltem",
+        "title": "Meltem Modbus",
         "description": "Ein M-WRG-GW Gateway ist erforderlich. Es muss bereits mit allen unterstützten Meltem M-WRG Geräten in der Meltem App eingerichtet und per USB mit dem Home-Assistant-Rechner verbunden sein. Die Integration scannt danach die eingerichteten Geräte und fragt das genaue Profil jedes erkannten Geräts ab.",
         "data": {
           "port": "Serieller Port"
         }
       },
       "confirm_usb": {
-        "title": "Meltem-Gateway erkannt",
+        "title": "Meltem Modbus Gateway erkannt",
         "description": "Home Assistant hat ein USB-Gerät an {port} gefunden ({manufacturer}, {description}). Erforderlich ist ein M-WRG-GW Gateway, das bereits mit allen unterstützten Meltem M-WRG Geräten in der Meltem App eingerichtet und per USB mit dem Home-Assistant-Rechner verbunden ist.",
         "data": {
           "port": "Serieller Port"
@@ -28,7 +28,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Meltem konfigurieren",
+        "title": "Meltem Modbus konfigurieren",
         "description": "Wähle aus, ob du die seriellen Verbindungseinstellungen ändern, Profile bestehender Geräte ändern oder nach neuen Geräten suchen möchtest.",
         "menu_options": {
           "edit_connection": "Serielle Verbindung anpassen",
@@ -99,20 +99,11 @@
       },
       "operating_hours": {
         "name": "Betriebsstunden"
-      },
-      "software_version": {
-        "name": "Software-Version"
-      },
-      "current_level": {
-        "name": "Gemeinsamer Volumenstrom"
-      },
-      "average_air_flow": {
-        "name": "Durchschnittlicher Volumenstrom"
       }
     },
     "binary_sensor": {
       "error_status": {
-        "name": "Fehlerstatus"
+        "name": "Geräte-Fehlerstatus"
       },
       "frost_protection_active": {
         "name": "Frostschutz aktiv"
@@ -120,25 +111,27 @@
       "filter_change_due": {
         "name": "Filterwechsel fällig"
       },
+      "intensive_active": {
+        "name": "Intensivlüftung aktiv"
+      },
       "rf_comm_status": {
         "name": "RF-Kommunikationsstatus"
-      },
-      "fault_status": {
-        "name": "Fehlerstatus intern"
-      },
-      "value_error_status": {
-        "name": "Wertefehlerstatus"
+      }
+    },
+    "button": {
+      "activate_intensive": {
+        "name": "Intensivlüftung starten"
       }
     },
     "number": {
       "level": {
-        "name": "Volumenstrom"
+        "name": "Gemeinsamer Volumenstrom"
       },
       "supply_level": {
-        "name": "Zuluft-Sollwert"
+        "name": "Zuluftvolumenstrom"
       },
       "extract_level": {
-        "name": "Abluft-Sollwert"
+        "name": "Abluftvolumenstrom"
       },
       "humidity_starting_point": {
         "name": "Feuchte-Startpunkt"
@@ -161,7 +154,7 @@
     },
     "select": {
       "operation_mode": {
-        "name": "Betriebsmodus",
+        "name": "Regelmodus",
         "state": {
           "off": "Aus",
           "manual": "Manuell",
@@ -169,6 +162,16 @@
           "humidity_control": "Feuchtegesteuert",
           "co2_control": "CO2-gesteuert",
           "automatic": "Automatik"
+        }
+      },
+      "preset_mode": {
+        "name": "Schnellmodus",
+        "state": {
+          "low": "Niedrig",
+          "medium": "Mittel",
+          "high": "Hoch",
+          "extract_only": "Abluft",
+          "supply_only": "Zuluft"
         }
       }
     }

@@ -12,11 +12,13 @@ from __future__ import annotations
 from homeassistant.const import Platform
 
 DOMAIN = "meltem_ventilation"
-INTEGRATION_NAME = "Meltem"
+INTEGRATION_NAME = "Meltem Modbus"
+GATEWAY_NAME = "Meltem Gateway M-WRG-GW"
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.NUMBER,
     Platform.SELECT,
 ]
@@ -111,6 +113,35 @@ PLAIN_PROFILES: frozenset[str] = frozenset(
     key for key, metadata in PROFILE_METADATA.items() if not metadata["capabilities"]
 )
 
+PRESET_MODE_LOW = "low"
+PRESET_MODE_MEDIUM = "medium"
+PRESET_MODE_HIGH = "high"
+PRESET_MODE_INTENSIVE = "intensive"
+PRESET_MODE_EXTRACT_ONLY = "extract_only"
+PRESET_MODE_SUPPLY_ONLY = "supply_only"
+PRESET_MODE_OPTIONS: tuple[str, ...] = (
+    PRESET_MODE_LOW,
+    PRESET_MODE_MEDIUM,
+    PRESET_MODE_HIGH,
+    PRESET_MODE_EXTRACT_ONLY,
+    PRESET_MODE_SUPPLY_ONLY,
+)
+
+PRESET_MODE_CODE_LOW = 228
+PRESET_MODE_CODE_MEDIUM = 229
+PRESET_MODE_CODE_HIGH = 230
+PRESET_MODE_CODE_INTENSIVE = 227
+PRESET_MODE_TO_RAW_CODE: dict[str, int] = {
+    PRESET_MODE_LOW: PRESET_MODE_CODE_LOW,
+    PRESET_MODE_MEDIUM: PRESET_MODE_CODE_MEDIUM,
+    PRESET_MODE_HIGH: PRESET_MODE_CODE_HIGH,
+    PRESET_MODE_INTENSIVE: PRESET_MODE_CODE_INTENSIVE,
+}
+RAW_CODE_TO_PRESET_MODE: dict[int, str] = {
+    code: preset_mode for preset_mode, code in PRESET_MODE_TO_RAW_CODE.items()
+}
+APP_UNBALANCED_PRESET_BASE = 200
+
 DEBOUNCE_SECONDS = 0.8
 WRITE_SETTLE_SECONDS = 1.5
 POST_WRITE_REFRESH_RETRIES = 2
@@ -139,12 +170,12 @@ REGISTER_GATEWAY_NODE_ADDRESS_1 = 43902
 REGISTER_CURRENT_LEVEL = 41121
 REGISTER_MODE = 41120
 REGISTER_EXTRACT_AIR_TARGET_LEVEL = 41122
+REGISTER_PRESET_MODE = 41123
+REGISTER_PRESET_VALUE = 41124
 REGISTER_APPLY = 41132
 REGISTER_SOFTWARE_VERSION = 40004
 REGISTER_PRODUCT_ID = 40002
 REGISTER_RF_COMM_STATUS = 40101
-REGISTER_FAULT_STATUS = 40103
-REGISTER_VALUE_ERROR_STATUS = 40104
 REGISTER_HUMIDITY_STARTING_POINT = 42000
 REGISTER_HUMIDITY_MIN_LEVEL = 42001
 REGISTER_HUMIDITY_MAX_LEVEL = 42002
@@ -184,13 +215,11 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
         "error_status",
         "frost_protection_active",
         "filter_change_due",
+        "intensive_active",
         "rf_comm_status",
-        "fault_status",
-        "value_error_status",
-        "software_version",
+        "activate_intensive",
         "operation_mode",
-        "current_level",
-        "average_air_flow",
+        "preset_mode",
         "level",
         "supply_level",
         "extract_level",

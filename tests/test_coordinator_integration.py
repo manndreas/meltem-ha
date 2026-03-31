@@ -34,9 +34,10 @@ class _FakeClient:
         self.read_calls: list[tuple[str, RefreshPlan]] = []
         self.write_level_calls: list[tuple[str, int]] = []
         self.write_unbalanced_calls: list[tuple[str, int, int]] = []
+        self.write_preset_mode_calls: list[tuple[str, str]] = []
         self.reset_calls = 0
         self.close_calls = 0
-        self.next_read_state = RoomState(current_level=42)
+        self.next_read_state = RoomState(target_level=42)
         self._fail_rooms: set[str] = set()
 
     def read_room_state(
@@ -57,6 +58,14 @@ class _FakeClient:
         self, room: RoomConfig, supply_level: int, extract_level: int
     ) -> None:
         self.write_unbalanced_calls.append((room.key, supply_level, extract_level))
+
+    def write_preset_mode(
+        self,
+        room: RoomConfig,
+        preset_mode: str,
+        preferred_level: int | None = None,
+    ) -> None:
+        self.write_preset_mode_calls.append((room.key, preset_mode))
 
     def reset_connection(self) -> None:
         self.reset_calls += 1
@@ -95,13 +104,13 @@ class TestFirstRefresh:
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass, rooms=[_ROOM_1, _ROOM_2])
-        client.next_read_state = RoomState(current_level=42)
+        client.next_read_state = RoomState(target_level=42)
 
         data = await hass.async_add_executor_job(coordinator._read_all_rooms_full)
 
         assert "unit_1" in data
         assert "unit_2" in data
-        assert data["unit_1"].current_level == 42
+        assert data["unit_1"].target_level == 42
         # Two rooms read with full RefreshPlan.
         assert len(client.read_calls) == 2
 
@@ -111,7 +120,7 @@ class TestFirstRefresh:
         """When one room fails during startup, it gets an empty state and the other succeeds."""
         coordinator, client = _build(hass, rooms=[_ROOM_1, _ROOM_2])
         client._fail_rooms = {"unit_1"}
-        client.next_read_state = RoomState(current_level=50)
+        client.next_read_state = RoomState(target_level=50)
 
         with patch("custom_components.meltem_ventilation.coordinator.time.sleep"):
             data = await hass.async_add_executor_job(
@@ -121,7 +130,7 @@ class TestFirstRefresh:
         # Failed room gets empty state.
         assert data["unit_1"] == RoomState()
         # Successful room gets the mock state.
-        assert data["unit_2"].current_level == 50
+        assert data["unit_2"].target_level == 50
         assert client.reset_calls == 1
         # Empty startup rooms should be pulled to the front of the incremental queue.
         assert all(
@@ -166,7 +175,7 @@ class TestAsyncUpdateData:
 
         data = await coordinator._async_update_data()
 
-        assert data["unit_1"].current_level == 42
+        assert data["unit_1"].target_level == 42
         # Should call _read_all_rooms_full which reads all rooms.
         assert len(client.read_calls) == 1
 
@@ -174,7 +183,7 @@ class TestAsyncUpdateData:
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
-        coordinator.data = {"unit_1": RoomState(current_level=10)}
+        coordinator.data = {"unit_1": RoomState(target_level=10)}
 
         # Make all jobs due now.
         for job in coordinator._jobs:
@@ -189,7 +198,7 @@ class TestAsyncUpdateData:
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
-        existing = {"unit_1": RoomState(current_level=99)}
+        existing = {"unit_1": RoomState(target_level=99)}
         coordinator.data = existing
 
         # Push all jobs far into the future.
@@ -227,7 +236,7 @@ class TestCoordinatorLoggerProxy:
 
         proxy.debug(
             "Finished fetching %s data in %.3f seconds (success: %s)",
-            "Meltem ventilation",
+            "Meltem Modbus",
             0.0,
             True,
         )
@@ -262,15 +271,36 @@ class TestCoordinatorFailureHandling:
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
-        coordinator.data = {"unit_1": RoomState(current_level=10)}
+        coordinator.data = {"unit_1": RoomState(target_level=10)}
         client._fail_rooms = {"unit_1"}
         for job in coordinator._jobs:
             job.next_due = 0.0
 
         data = await coordinator._async_update_data()
 
-        assert data["unit_1"].current_level == 10
+        assert data["unit_1"].target_level == 10
         assert client.reset_calls == 1
+
+    async def test_transient_outer_transport_failures_keep_cached_state_before_unavailable(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _client = _build(hass)
+        coordinator.data = {"unit_1": RoomState(target_level=10)}
+
+        with patch.object(
+            hass,
+            "async_add_executor_job",
+            side_effect=MeltemModbusError("transport down"),
+        ):
+            first = await coordinator._async_update_data()
+            second = await coordinator._async_update_data()
+            third = await coordinator._async_update_data()
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+        assert first["unit_1"].target_level == 10
+        assert second["unit_1"].target_level == 10
+        assert third["unit_1"].target_level == 10
 
 
 # ---------------------------------------------------------------------------
@@ -316,19 +346,19 @@ class TestJobScheduling:
         assert not coordinator._room_needs_job(room, "hours")
         assert not coordinator._room_needs_job(room, "status")
 
-    def test_room_needs_hours_job_for_software_version_only(
+    def test_room_without_hours_entities_skips_hours_job(
         self, hass: HomeAssistant,
     ) -> None:
         room = RoomConfig(
-            key="version_only",
-            name="Version Only",
+            key="no_hours",
+            name="No Hours",
             profile="ii_plain",
             slave=6,
-            supported_entity_keys=frozenset({"software_version"}),
+            supported_entity_keys=frozenset({"error_status"}),
         )
         coordinator, _ = _build(hass, rooms=[room])
 
-        assert coordinator._room_needs_job(room, "hours")
+        assert not coordinator._room_needs_job(room, "hours")
 
 
 # ---------------------------------------------------------------------------
@@ -341,29 +371,61 @@ class TestPostWriteRefresh:
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
-        coordinator.data = {"unit_1": RoomState(current_level=10)}
+        coordinator.data = {"unit_1": RoomState(target_level=10)}
         client.next_read_state = RoomState(
-            current_level=50, extract_air_flow=50, supply_air_flow=50
+            target_level=50, extract_air_flow=50, supply_air_flow=50
         )
 
         await coordinator._async_refresh_room_after_write(_ROOM_1)
 
-        assert coordinator.data["unit_1"].current_level == 50
+        assert coordinator.data["unit_1"].target_level == 50
+
+    async def test_refresh_after_write_honors_minimum_attempt_count_without_expected_targets(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator.data = {"unit_1": RoomState(target_level=10)}
+
+        stale = RoomState(
+            target_level=10,
+            extract_air_flow=10,
+            supply_air_flow=10,
+        )
+        updated = RoomState(
+            target_level=50,
+            extract_air_flow=50,
+            supply_air_flow=50,
+        )
+
+        with (
+            patch.object(client, "read_room_state", side_effect=[stale, updated]) as read_mock,
+            patch(
+                "custom_components.meltem_ventilation.coordinator.asyncio.sleep",
+                new=AsyncMock(),
+            ),
+        ):
+            await coordinator._async_refresh_room_after_write(
+                _ROOM_1,
+                min_refresh_attempts=2,
+            )
+
+        assert read_mock.call_count == 2
+        assert coordinator.data["unit_1"].target_level == 50
 
     async def test_refresh_after_write_retries_until_new_airflow_is_visible(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
-        coordinator.data = {"unit_1": RoomState(current_level=10, extract_target_level=10)}
+        coordinator.data = {"unit_1": RoomState(target_level=10, extract_target_level=10)}
 
         stale = RoomState(
-            current_level=10,
+            target_level=10,
             extract_target_level=10,
             extract_air_flow=10,
             supply_air_flow=10,
         )
         updated = RoomState(
-            current_level=50,
+            target_level=50,
             extract_target_level=50,
             extract_air_flow=50,
             supply_air_flow=50,
@@ -382,20 +444,20 @@ class TestPostWriteRefresh:
                 expected_extract_level=50,
             )
 
-        assert coordinator.data["unit_1"].current_level == 50
+        assert coordinator.data["unit_1"].target_level == 50
 
     async def test_refresh_after_write_failure_resets_connection(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
-        coordinator.data = {"unit_1": RoomState(current_level=10)}
+        coordinator.data = {"unit_1": RoomState(target_level=10)}
         client._fail_rooms = {"unit_1"}
 
         await coordinator._async_refresh_room_after_write(_ROOM_1)
 
         assert client.reset_calls == 1
         # Data should be preserved on failure.
-        assert coordinator.data["unit_1"].current_level == 10
+        assert coordinator.data["unit_1"].target_level == 10
 
 
 # ---------------------------------------------------------------------------
@@ -408,10 +470,10 @@ class TestReadOneJob:
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass, rooms=[_ROOM_1, _ROOM_2])
-        client.next_read_state = RoomState(current_level=77)
+        client.next_read_state = RoomState(target_level=77)
         previous = {
-            "unit_1": RoomState(current_level=10),
-            "unit_2": RoomState(current_level=20),
+            "unit_1": RoomState(target_level=10),
+            "unit_2": RoomState(target_level=20),
         }
         job = PollJob(
             "flow", "unit_1", RefreshPlan.only(refresh_airflow=True), 10, 0.0
@@ -419,22 +481,22 @@ class TestReadOneJob:
 
         result = coordinator._read_one_job(previous, job)
 
-        assert result["unit_1"].current_level == 77
-        assert result["unit_2"].current_level == 20
+        assert result["unit_1"].target_level == 77
+        assert result["unit_2"].target_level == 20
 
     def test_failed_read_preserves_previous(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
         client._fail_rooms = {"unit_1"}
-        previous = {"unit_1": RoomState(current_level=55)}
+        previous = {"unit_1": RoomState(target_level=55)}
         job = PollJob(
             "flow", "unit_1", RefreshPlan.only(refresh_airflow=True), 10, 0.0
         )
 
         result = coordinator._read_one_job(previous, job)
 
-        assert result["unit_1"].current_level == 55
+        assert result["unit_1"].target_level == 55
         assert client.reset_calls == 1
 
 

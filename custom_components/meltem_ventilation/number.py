@@ -170,9 +170,9 @@ def _targets_are_synchronized(state: RoomState) -> bool:
 
     if state.operation_mode == "unbalanced":
         if (
-            state.current_level is not None
+            state.target_level is not None
             and state.extract_target_level is not None
-            and abs(state.current_level - state.extract_target_level) > 1
+            and abs(state.target_level - state.extract_target_level) > 1
         ):
             return False
 
@@ -185,8 +185,8 @@ def _balanced_target_value(state: RoomState) -> float | None:
     if not _targets_are_synchronized(state):
         return None
 
-    if state.current_level is not None:
-        return float(state.current_level)
+    if state.target_level is not None:
+        return float(state.target_level)
 
     if state.supply_air_flow is not None and state.extract_air_flow is not None:
         if abs(state.supply_air_flow - state.extract_air_flow) > 1:
@@ -209,8 +209,8 @@ def _supply_target_value(state: RoomState) -> float | None:
     if balanced_target is not None:
         return balanced_target
 
-    if state.current_level is not None:
-        return float(state.current_level)
+    if state.target_level is not None:
+        return float(state.target_level)
 
     if state.supply_air_flow is not None:
         return float(state.supply_air_flow)
@@ -222,7 +222,7 @@ def _extract_target_candidate(state: RoomState) -> int | None:
 
     if state.operation_mode == "unbalanced" and state.extract_target_level is not None:
         return state.extract_target_level
-    return state.current_level
+    return state.target_level
 
 
 def _extract_target_value(state: RoomState) -> float | None:
@@ -306,9 +306,14 @@ class MeltemBaseLevelNumber(MeltemEntity, NumberEntity):
         if optimistic is None:
             return self._raw_room_state
 
+        operation_mode = self._raw_room_state.operation_mode
+        if optimistic.supply_level != optimistic.extract_level:
+            operation_mode = "unbalanced"
+
         return replace(
             self._raw_room_state,
-            current_level=optimistic.supply_level,
+            operation_mode=operation_mode,
+            target_level=optimistic.supply_level,
             extract_target_level=optimistic.extract_level,
         )
 
@@ -438,9 +443,11 @@ class MeltemBalancedLevelNumber(MeltemBaseLevelNumber):
 
     def __init__(self, coordinator, room) -> None:
         super().__init__(coordinator, room, "level", "level")
-        self._attr_icon = "mdi:fan"
+        self._attr_icon = "mdi:fan-auto"
 
     def _read_state_value(self) -> float | None:
+        if not _targets_are_synchronized(self._effective_room_state):
+            return 0.0
         return _balanced_target_value(self._effective_room_state)
 
     def _build_optimistic_targets(
@@ -452,9 +459,11 @@ class MeltemBalancedLevelNumber(MeltemBaseLevelNumber):
 class MeltemSupplyLevelNumber(MeltemBaseLevelNumber):
     """Writable number entity for unbalanced supply air level."""
 
+    _attr_entity_registry_enabled_default = False
+
     def __init__(self, coordinator, room) -> None:
         super().__init__(coordinator, room, "supply_level", "supply_level")
-        self._attr_icon = "mdi:fan-chevron-down"
+        self._attr_icon = "mdi:fan-chevron-up"
 
     def _read_state_value(self) -> float | None:
         return _supply_target_value(self._effective_room_state)
@@ -473,9 +482,11 @@ class MeltemSupplyLevelNumber(MeltemBaseLevelNumber):
 class MeltemExtractLevelNumber(MeltemBaseLevelNumber):
     """Writable number entity for unbalanced extract air level."""
 
+    _attr_entity_registry_enabled_default = False
+
     def __init__(self, coordinator, room) -> None:
         super().__init__(coordinator, room, "extract_level", "extract_level")
-        self._attr_icon = "mdi:fan-chevron-up"
+        self._attr_icon = "mdi:fan-chevron-down"
 
     def _read_state_value(self) -> float | None:
         return _extract_target_value(self._effective_room_state)
@@ -483,7 +494,7 @@ class MeltemExtractLevelNumber(MeltemBaseLevelNumber):
     def _build_optimistic_targets(
         self, level: int, state: RoomState
     ) -> tuple[int, int]:
-        supply_level = state.current_level
+        supply_level = state.target_level
         if supply_level is None:
             supply_level = _balanced_target_value(state)
         if supply_level is None:

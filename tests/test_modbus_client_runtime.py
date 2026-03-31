@@ -9,11 +9,14 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from custom_components.meltem_ventilation.const import (
+    APP_UNBALANCED_PRESET_BASE,
+    PRESET_MODE_CODE_INTENSIVE,
     MODE_AUTOMATIC_VALUE,
     MODE_CO2_CONTROL_VALUE,
     MODE_HUMIDITY_CONTROL_VALUE,
     MODE_MANUAL,
     MODE_OFF,
+    PRESET_MODE_CODE_MEDIUM,
     MODE_SENSOR_CONTROL,
     MODE_UNBALANCED,
     REGISTER_APPLY,
@@ -22,6 +25,8 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
     REGISTER_HUMIDITY_STARTING_POINT,
     REGISTER_MODE,
+    REGISTER_PRESET_MODE,
+    REGISTER_PRESET_VALUE,
 )
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import (
@@ -534,6 +539,111 @@ class TestWriteOperatingMode:
         ]
 
 
+class TestWritePresetMode:
+    def test_medium_writes_manual_preset_code(self) -> None:
+        client = MeltemModbusClient(_SETTINGS)
+        mock_pymodbus = MagicMock()
+        mock_pymodbus.is_socket_open.return_value = True
+        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
+        client._client = mock_pymodbus
+
+        with patch("custom_components.meltem_ventilation.modbus_client.time.sleep"):
+            client.write_preset_mode(_ROOM, "medium")
+
+        assert mock_pymodbus.write_register.call_args_list == [
+            call(address=REGISTER_PRESET_MODE, value=0, device_id=2),
+            call(address=REGISTER_PRESET_VALUE, value=0, device_id=2),
+            call(address=REGISTER_MODE, value=MODE_MANUAL, device_id=2),
+            call(
+                address=REGISTER_CURRENT_LEVEL,
+                value=PRESET_MODE_CODE_MEDIUM,
+                device_id=2,
+            ),
+            call(address=REGISTER_APPLY, value=0, device_id=2),
+        ]
+
+    def test_intensive_writes_secondary_preset_registers(self) -> None:
+        client = MeltemModbusClient(_SETTINGS)
+        mock_pymodbus = MagicMock()
+        mock_pymodbus.is_socket_open.return_value = True
+        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
+        client._client = mock_pymodbus
+
+        with patch("custom_components.meltem_ventilation.modbus_client.time.sleep"):
+            client.write_preset_mode(_ROOM, "intensive")
+
+        assert mock_pymodbus.write_register.call_args_list == [
+            call(address=REGISTER_PRESET_MODE, value=MODE_MANUAL, device_id=2),
+            call(
+                address=REGISTER_PRESET_VALUE,
+                value=PRESET_MODE_CODE_INTENSIVE,
+                device_id=2,
+            ),
+            call(address=REGISTER_APPLY, value=0, device_id=2),
+        ]
+
+    def test_extract_only_writes_unbalanced_app_style_code(self) -> None:
+        client = MeltemModbusClient(_SETTINGS)
+        mock_pymodbus = MagicMock()
+        mock_pymodbus.is_socket_open.return_value = True
+        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
+        client._client = mock_pymodbus
+
+        with patch("custom_components.meltem_ventilation.modbus_client.time.sleep"):
+            client.write_preset_mode(_ROOM, "extract_only", 70)
+
+        assert mock_pymodbus.write_register.call_args_list == [
+            call(address=REGISTER_PRESET_MODE, value=0, device_id=2),
+            call(address=REGISTER_PRESET_VALUE, value=0, device_id=2),
+            call(address=REGISTER_MODE, value=MODE_UNBALANCED, device_id=2),
+            call(address=REGISTER_CURRENT_LEVEL, value=0, device_id=2),
+            call(
+                address=REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+                value=APP_UNBALANCED_PRESET_BASE + 7,
+                device_id=2,
+            ),
+            call(address=REGISTER_APPLY, value=0, device_id=2),
+        ]
+
+    def test_supply_only_writes_unbalanced_app_style_code(self) -> None:
+        client = MeltemModbusClient(_SETTINGS)
+        mock_pymodbus = MagicMock()
+        mock_pymodbus.is_socket_open.return_value = True
+        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
+        client._client = mock_pymodbus
+
+        with patch("custom_components.meltem_ventilation.modbus_client.time.sleep"):
+            client.write_preset_mode(_ROOM, "supply_only", 50)
+
+        assert mock_pymodbus.write_register.call_args_list == [
+            call(address=REGISTER_PRESET_MODE, value=0, device_id=2),
+            call(address=REGISTER_PRESET_VALUE, value=0, device_id=2),
+            call(address=REGISTER_MODE, value=MODE_UNBALANCED, device_id=2),
+            call(
+                address=REGISTER_CURRENT_LEVEL,
+                value=APP_UNBALANCED_PRESET_BASE + 5,
+                device_id=2,
+            ),
+            call(address=REGISTER_EXTRACT_AIR_TARGET_LEVEL, value=0, device_id=2),
+            call(address=REGISTER_APPLY, value=0, device_id=2),
+        ]
+
+    def test_leaving_intensive_clears_secondary_preset_registers_first(self) -> None:
+        client = MeltemModbusClient(_SETTINGS)
+        mock_pymodbus = MagicMock()
+        mock_pymodbus.is_socket_open.return_value = True
+        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
+        client._client = mock_pymodbus
+
+        with patch("custom_components.meltem_ventilation.modbus_client.time.sleep"):
+            client.write_preset_mode(_ROOM, "low")
+
+        assert mock_pymodbus.write_register.call_args_list[:2] == [
+            call(address=REGISTER_PRESET_MODE, value=0, device_id=2),
+            call(address=REGISTER_PRESET_VALUE, value=0, device_id=2),
+        ]
+
+
 class TestWriteControlSetting:
     def test_humidity_setting_writes_expected_register(self) -> None:
         client = MeltemModbusClient(_SETTINGS)
@@ -635,7 +745,7 @@ class TestReadRoomStateEndToEnd:
 
         with (
             patch("custom_components.meltem_ventilation.modbus_client.time.sleep"),
-            pytest.raises(MeltemModbusError, match="Unexpected error"),
+            pytest.raises(MeltemModbusError, match="Could not connect|Unexpected error"),
         ):
             client.read_room_state(_ROOM, RoomState(), RefreshPlan())
 

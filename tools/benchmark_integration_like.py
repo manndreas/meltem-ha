@@ -319,7 +319,7 @@ def run_write_refresh(
         RoomState(),
         RefreshPlan.only(refresh_airflow=True),
     )
-    baseline_flow = baseline_state.current_level or baseline_state.supply_air_flow
+    baseline_flow = baseline_state.target_level or baseline_state.supply_air_flow
     if baseline_flow is None:
         raise RuntimeError(f"Could not determine baseline airflow for slave {room.slave}")
 
@@ -334,7 +334,7 @@ def run_write_refresh(
                 baseline_state,
                 RefreshPlan.only(refresh_airflow=True),
             )
-            airflow = state.current_level or state.supply_air_flow
+            airflow = state.target_level or state.supply_air_flow
             elapsed_ms = (time.perf_counter() - start) * 1000
             ok = airflow == expected
             detail = f"slave {room.slave} {phase} poll {attempt}: airflow={airflow}, expected={expected}"
@@ -410,7 +410,7 @@ def run_write_idle_check(
             RoomState(),
             RefreshPlan.only(refresh_airflow=True),
         )
-        return state.current_level or state.supply_air_flow
+        return state.target_level or state.supply_air_flow
 
     baseline_flow = read_airflow()
     if baseline_flow is None:

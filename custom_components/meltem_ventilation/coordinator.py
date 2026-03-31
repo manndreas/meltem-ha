@@ -25,6 +25,8 @@ from .const import (
     FILTER_REFRESH_SECONDS,
     FLOW_REFRESH_SECONDS,
     OPERATING_HOURS_REFRESH_SECONDS,
+    PRESET_MODE_EXTRACT_ONLY,
+    PRESET_MODE_SUPPLY_ONLY,
     POST_WRITE_REFRESH_INTERVAL_SECONDS,
     POST_WRITE_REFRESH_RETRIES,
     REQUEST_GAP_SECONDS,
@@ -69,6 +71,18 @@ class _CoordinatorLoggerProxy:
             return
         self._logger.debug(msg, *args, **kwargs)
 
+    def info(self, msg, *args, **kwargs) -> None:
+        self._logger.info(msg, *args, **kwargs)
+
+    def warning(self, msg, *args, **kwargs) -> None:
+        self._logger.warning(msg, *args, **kwargs)
+
+    def error(self, msg, *args, **kwargs) -> None:
+        self._logger.error(msg, *args, **kwargs)
+
+    def exception(self, msg, *args, **kwargs) -> None:
+        self._logger.exception(msg, *args, **kwargs)
+
     def __getattr__(self, name: str):
         return getattr(self._logger, name)
 
@@ -102,10 +116,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._tick_seconds = 1.0 / self._max_requests_per_second
         self._gateway_lock = asyncio.Lock()
         self._last_job_error: MeltemModbusError | None = None
+        self._consecutive_transport_failures = 0
         self._optimistic_targets_by_room: dict = {}
         self._pending_writes_by_room: dict = {}
         self._write_tasks_by_room: dict = {}
         self._active_write_rooms: set[str] = set()
+        self._last_preset_levels_by_room: dict[str, dict[str, int]] = {}
         self._suppress_finished_fetch_log = False
         # Jobs are precomputed once and then executed in a due-time round robin.
         self._jobs = self._build_jobs()
@@ -116,7 +132,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 _LOGGER,
                 lambda: self._suppress_finished_fetch_log,
             )),
-            name="Meltem ventilation",
+            name="Meltem Modbus",
             update_interval=timedelta(seconds=self._tick_seconds),
         )
 
@@ -160,7 +176,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         try:
             async with self._gateway_lock:
                 if not self._safe_data:
-                    return await self.hass.async_add_executor_job(self._read_all_rooms_full)
+                    states = await self.hass.async_add_executor_job(self._read_all_rooms_full)
+                    self._consecutive_transport_failures = 0
+                    self._remember_preset_shortcut_levels(states)
+                    return states
 
                 now = time.monotonic()
                 job = self._select_due_job(now)
@@ -177,8 +196,21 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     self.data,
                     job,
                 )
+                self._consecutive_transport_failures = 0
+                self._remember_preset_shortcut_levels(updated_data)
                 return updated_data
         except MeltemModbusError as err:
+            self._consecutive_transport_failures += 1
+            if self._safe_data and self._consecutive_transport_failures <= 3:
+                self._last_job_error = err
+                self.client.reset_connection()
+                _LOGGER.warning(
+                    "Keeping cached Meltem state after transient transport error (%s/%s): %s",
+                    self._consecutive_transport_failures,
+                    3,
+                    err,
+                )
+                return self.data
             raise UpdateFailed(str(err)) from err
 
     async def async_set_level(self, room_key: str, level: int) -> None:
@@ -220,8 +252,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         room = self._rooms_by_key[room_key]
         state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
         balanced_level = (
-            state.current_level
-            if state.current_level is not None
+            state.target_level
+            if state.target_level is not None
             else state.supply_air_flow
             if state.supply_air_flow is not None
             else state.extract_air_flow
@@ -246,6 +278,60 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             )
             await asyncio.sleep(WRITE_SETTLE_SECONDS)
             await self._async_refresh_room_after_write(room)
+
+    async def async_set_preset_mode(self, room_key: str, preset_mode: str) -> None:
+        """Write one app-style preset mode and refresh afterwards."""
+
+        room = self._rooms_by_key[room_key]
+        state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
+        preferred_level = (
+            self._last_preset_levels_by_room.get(room.key, {}).get(preset_mode)
+            if preset_mode in (PRESET_MODE_EXTRACT_ONLY, PRESET_MODE_SUPPLY_ONLY)
+            else None
+        )
+        if preferred_level is None:
+            preferred_level = (
+            state.target_level
+            if state.target_level is not None and state.target_level > 0
+            else state.extract_target_level
+            if state.extract_target_level is not None and state.extract_target_level > 0
+            else state.supply_air_flow
+            if state.supply_air_flow is not None and state.supply_air_flow > 0
+            else state.extract_air_flow
+            if state.extract_air_flow is not None and state.extract_air_flow > 0
+            else None
+            )
+
+        async with self._gateway_lock:
+            await self.hass.async_add_executor_job(
+                self.client.write_preset_mode,
+                room,
+                preset_mode,
+                preferred_level,
+            )
+            await asyncio.sleep(WRITE_SETTLE_SECONDS)
+            await self._async_refresh_room_after_write(
+                room,
+                min_refresh_attempts=2,
+            )
+
+    async def async_activate_intensive(self, room_key: str) -> None:
+        """Start temporary intensive ventilation without changing the base preset."""
+
+        room = self._rooms_by_key[room_key]
+
+        async with self._gateway_lock:
+            await self.hass.async_add_executor_job(
+                self.client.write_preset_mode,
+                room,
+                "intensive",
+                None,
+            )
+            await asyncio.sleep(WRITE_SETTLE_SECONDS)
+            await self._async_refresh_room_after_write(
+                room,
+                min_refresh_attempts=2,
+            )
 
     async def async_set_control_setting(
         self,
@@ -332,6 +418,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         *,
         expected_supply_level: int | None = None,
         expected_extract_level: int | None = None,
+        min_refresh_attempts: int = 1,
     ) -> None:
         """Refresh the changed room after a write settles.
 
@@ -363,13 +450,15 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             if refreshed_room != previous_state:
                 updated_states = dict(self._safe_data)
                 updated_states[room.key] = refreshed_room
+                self._remember_preset_shortcut_level(room.key, refreshed_room)
                 self.async_set_updated_data(updated_states)
 
-            if self._post_write_refresh_reached_target(
+            reached_target = self._post_write_refresh_reached_target(
                 refreshed_room,
                 expected_supply_level=expected_supply_level,
                 expected_extract_level=expected_extract_level,
-            ):
+            )
+            if reached_target and attempt + 1 >= max(1, min_refresh_attempts):
                 return
 
             if attempt < POST_WRITE_REFRESH_RETRIES:
@@ -388,7 +477,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             return True
 
         supply_value = (
-            state.current_level if state.current_level is not None else state.supply_air_flow
+            state.target_level if state.target_level is not None else state.supply_air_flow
         )
         extract_value = (
             state.extract_target_level
@@ -405,6 +494,40 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 return False
 
         return True
+
+    def _remember_preset_shortcut_level(self, room_key: str, state: RoomState) -> None:
+        """Remember the last observed app-style single-direction shortcut level."""
+
+        if state.preset_mode == PRESET_MODE_EXTRACT_ONLY:
+            level = (
+                state.extract_target_level
+                if state.extract_target_level is not None and state.extract_target_level > 0
+                else state.extract_air_flow
+                if state.extract_air_flow is not None and state.extract_air_flow > 0
+                else None
+            )
+            if level is not None:
+                self._last_preset_levels_by_room.setdefault(room_key, {})[
+                    PRESET_MODE_EXTRACT_ONLY
+                ] = level
+        elif state.preset_mode == PRESET_MODE_SUPPLY_ONLY:
+            level = (
+                state.target_level
+                if state.target_level is not None and state.target_level > 0
+                else state.supply_air_flow
+                if state.supply_air_flow is not None and state.supply_air_flow > 0
+                else None
+            )
+            if level is not None:
+                self._last_preset_levels_by_room.setdefault(room_key, {})[
+                    PRESET_MODE_SUPPLY_ONLY
+                ] = level
+
+    def _remember_preset_shortcut_levels(self, states: dict[str, RoomState]) -> None:
+        """Update remembered shortcut levels from a room-state map."""
+
+        for room_key, state in states.items():
+            self._remember_preset_shortcut_level(room_key, state)
 
     def _read_all_rooms_full(self) -> dict[str, RoomState]:
         """Read a full initial state for all configured rooms."""
@@ -602,8 +725,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             "flow": {
                 "extract_air_flow",
                 "supply_air_flow",
-                "current_level",
+                "level",
+                "supply_level",
+                "extract_level",
                 "operation_mode",
+                "preset_mode",
+                "intensive_active",
             },
             "status": {"error_status", "frost_protection_active"},
             "temperature": {
@@ -619,7 +746,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             "filter": {"filter_change_due", "days_until_filter_change"},
             "hours": {
                 "operating_hours",
-                "software_version",
             },
             "control_settings": {
                 "humidity_starting_point",

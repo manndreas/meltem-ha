@@ -31,7 +31,7 @@ def main() -> int:
                 t.RoomState(),
                 t.RefreshPlan.only(refresh_airflow=True),
             )
-            baseline_flow = baseline_state.current_level or baseline_state.supply_air_flow
+            baseline_flow = baseline_state.target_level or baseline_state.supply_air_flow
             if baseline_flow is None:
                 print("  baseline airflow unavailable, skipping")
                 continue

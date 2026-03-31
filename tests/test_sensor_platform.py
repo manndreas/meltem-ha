@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -21,7 +21,7 @@ from custom_components.meltem_ventilation.sensor import (
 # ---------------------------------------------------------------------------
 
 _ROOM_FC_VOC = RoomConfig(
-    key="unit_1", name="Living Room", profile="ii_fc_voc", slave=2
+    key="unit_1", name="Living Room", profile="ii_fc_voc", slave=2, preview="ID 116852 | VOC"
 )
 _ROOM_PLAIN = RoomConfig(
     key="unit_2", name="Bedroom", profile="ii_plain", slave=3
@@ -75,13 +75,35 @@ class TestSensorEntityCreation:
         assert entity.has_entity_name is True
 
     def test_device_info(self) -> None:
-        coordinator = _fake_coordinator()
+        coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=42)})
         desc = _find_desc("exhaust_temperature")
         entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
         info = entity.device_info
         assert (DOMAIN, "unit_1") in info["identifiers"]
         assert info["manufacturer"] == "Meltem"
         assert "Living Room" in info["name"]
+        assert info["sw_version"] == "Version 42"
+        assert info["hw_version"] == "Produkt-ID 116852"
+
+    def test_handle_coordinator_update_pushes_versions_to_device_registry(self) -> None:
+        coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=42)})
+        desc = _find_desc("exhaust_temperature")
+        entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
+        entity.hass = object()
+        fake_registry = MagicMock()
+        fake_registry.async_get_device.return_value = type("Device", (), {"id": "device-1"})()
+
+        with (
+            patch("custom_components.meltem_ventilation.entity.dr.async_get", return_value=fake_registry),
+            patch("homeassistant.helpers.update_coordinator.CoordinatorEntity._handle_coordinator_update"),
+        ):
+            entity._handle_coordinator_update()
+
+        fake_registry.async_update_device.assert_called_once_with(
+            "device-1",
+            sw_version="Version 42",
+            hw_version="Produkt-ID 116852",
+        )
 
     def test_entity_attributes_from_description(self) -> None:
         coordinator = _fake_coordinator()
@@ -138,47 +160,12 @@ class TestSensorNativeValue:
         entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
         assert entity.native_value == 65
 
-    def test_current_level(self) -> None:
-        state = RoomState(extract_air_flow=42, supply_air_flow=42, current_level=77)
-        coordinator = _fake_coordinator(data={"unit_1": state})
-        desc = _find_desc("current_level")
-        entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
-        assert entity.native_value == 42
-
-    def test_current_level_is_none_when_flows_diverge(self) -> None:
-        state = RoomState(extract_air_flow=60, supply_air_flow=40, current_level=40)
-        coordinator = _fake_coordinator(data={"unit_1": state})
-        desc = _find_desc("current_level")
-        entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
-        assert entity.native_value is None
-
-    def test_average_air_flow_uses_both_flows(self) -> None:
-        state = RoomState(extract_air_flow=40, supply_air_flow=50)
-        coordinator = _fake_coordinator(data={"unit_1": state})
-        desc = _find_desc("average_air_flow")
-        entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
-        assert entity.native_value == 45.0
-
-    def test_average_air_flow_falls_back_to_single_flow(self) -> None:
-        state = RoomState(supply_air_flow=44)
-        coordinator = _fake_coordinator(data={"unit_1": state})
-        desc = _find_desc("average_air_flow")
-        entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
-        assert entity.native_value == 44.0
-
     def test_operating_hours(self) -> None:
         state = RoomState(operating_hours=12345)
         coordinator = _fake_coordinator(data={"unit_1": state})
         desc = _find_desc("operating_hours")
         entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
         assert entity.native_value == 12345
-
-    def test_software_version(self) -> None:
-        state = RoomState(software_version=42)
-        coordinator = _fake_coordinator(data={"unit_1": state})
-        desc = _find_desc("software_version")
-        entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
-        assert entity.native_value == 42
 
     def test_days_until_filter_change(self) -> None:
         state = RoomState(days_until_filter_change=90)
@@ -210,14 +197,14 @@ class TestRoomStateFallback:
 
 class TestSensorStateUpdate:
     def test_value_changes_when_coordinator_data_changes(self) -> None:
-        state = RoomState(extract_air_flow=10, supply_air_flow=10, current_level=10)
+        state = RoomState(extract_air_flow=10)
         coordinator = _fake_coordinator(data={"unit_1": state})
-        desc = _find_desc("current_level")
+        desc = _find_desc("extract_air_flow")
         entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
         assert entity.native_value == 10
 
         # Simulate coordinator updating data.
         coordinator.data = {
-            "unit_1": RoomState(extract_air_flow=80, supply_air_flow=60, current_level=80)
+            "unit_1": RoomState(extract_air_flow=80)
         }
-        assert entity.native_value is None
+        assert entity.native_value == 80

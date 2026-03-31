@@ -1,4 +1,4 @@
-"""Set up the Meltem integration entry and runtime objects.
+"""Set up the Meltem Modbus integration entry and runtime objects.
 
 This module keeps the config-entry setup path intentionally small:
 - normalize the selected serial port
@@ -49,7 +49,7 @@ REQUIRED_ENTITY_KEYS = BASE_SUPPORTED_ENTITY_KEYS
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Meltem ventilation from a config entry."""
+    """Set up Meltem Modbus from a config entry."""
 
     entry_data = dict(entry.data)
     normalized_port = resolve_preferred_port_path(entry.data[CONF_PORT])

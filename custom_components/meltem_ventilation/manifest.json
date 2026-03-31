@@ -1,14 +1,14 @@
 {
   "domain": "meltem_ventilation",
-  "name": "Meltem",
+  "name": "Meltem Modbus",
   "codeowners": [
-    "@neon-vector"
+    "@manndreas"
   ],
   "config_flow": true,
-  "documentation": "https://github.com/neon-vector/meltem-ha#readme",
+  "documentation": "https://github.com/manndreas/meltem-ha#readme",
   "integration_type": "hub",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/neon-vector/meltem-ha/issues",
+  "issue_tracker": "https://github.com/manndreas/meltem-ha/issues",
   "loggers": [
     "custom_components.meltem_ventilation",
     "pymodbus"
@@ -25,5 +25,5 @@
       "vid": "10AC"
     }
   ],
-  "version": "1.1.0"
+  "version": "2.0.0"
 }
