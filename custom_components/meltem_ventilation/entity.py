@@ -55,8 +55,8 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
             manufacturer="Meltem",
             model=profile_label(self.room.profile),
             name=f"{INTEGRATION_NAME} {self.room.name}",
-            hw_version=f"Produkt-ID {product_id}" if product_id is not None else None,
-            sw_version=f"Version {sw_version}" if sw_version is not None else None,
+            hw_version=product_id,
+            sw_version=str(sw_version) if sw_version is not None else None,
         )
 
     @property
@@ -74,12 +74,12 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
             return
 
         sw_version = (
-            f"Version {self.room_state.software_version}"
+            str(self.room_state.software_version)
             if self.room_state.software_version is not None
             else None
         )
         product_id = _product_id_from_preview(self.room.preview)
-        hw_version = f"Produkt-ID {product_id}" if product_id is not None else None
+        hw_version = product_id
         if (
             sw_version == self._last_exported_sw_version
             and hw_version == self._last_exported_hw_version

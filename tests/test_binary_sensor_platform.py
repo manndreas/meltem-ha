@@ -70,8 +70,8 @@ class TestBinarySensorEntityCreation:
         info = entity.device_info
         assert (DOMAIN, "unit_1") in info["identifiers"]
         assert info["manufacturer"] == "Meltem"
-        assert info["sw_version"] == "Version 7"
-        assert info["hw_version"] == "Produkt-ID 116852"
+        assert info["sw_version"] == "7"
+        assert info["hw_version"] == "116852"
 
 
 # ---------------------------------------------------------------------------

@@ -82,8 +82,8 @@ class TestSensorEntityCreation:
         assert (DOMAIN, "unit_1") in info["identifiers"]
         assert info["manufacturer"] == "Meltem"
         assert "Living Room" in info["name"]
-        assert info["sw_version"] == "Version 42"
-        assert info["hw_version"] == "Produkt-ID 116852"
+        assert info["sw_version"] == "42"
+        assert info["hw_version"] == "116852"
 
     def test_handle_coordinator_update_pushes_versions_to_device_registry(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=42)})
@@ -101,8 +101,8 @@ class TestSensorEntityCreation:
 
         fake_registry.async_update_device.assert_called_once_with(
             "device-1",
-            sw_version="Version 42",
-            hw_version="Produkt-ID 116852",
+            sw_version="42",
+            hw_version="116852",
         )
 
     def test_entity_attributes_from_description(self) -> None:
