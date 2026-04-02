@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from custom_components.meltem_ventilation.const import PRESET_MODE_INACTIVE
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
 from custom_components.meltem_ventilation.select import (
     MeltemOperationModeSelect,
@@ -36,6 +37,7 @@ def _build_preset_entity(
 ) -> MeltemPresetModeSelect:
     coordinator = MagicMock()
     coordinator.async_set_preset_mode = AsyncMock()
+    coordinator.async_clear_preset_mode = AsyncMock()
     coordinator.optimistic_targets_by_room = {}
     coordinator.safe_data = {
         "unit_1": state or RoomState(preset_mode="medium"),
@@ -88,6 +90,7 @@ class TestMeltemPresetModeSelect:
     def test_ii_profile_exposes_documented_defaults(self) -> None:
         entity = _build_preset_entity("ii_plain")
         assert entity.options == [
+            "inactive",
             "low",
             "medium",
             "high",
@@ -107,7 +110,7 @@ class TestMeltemPresetModeSelect:
             "ii_plain",
             state=RoomState(operation_mode="unbalanced"),
         )
-        assert entity.current_option is None
+        assert entity.current_option == PRESET_MODE_INACTIVE
 
     def test_manual_slider_override_hides_preset_optimistically(self) -> None:
         entity = _build_preset_entity(
@@ -116,7 +119,7 @@ class TestMeltemPresetModeSelect:
         )
         entity.coordinator.optimistic_targets_by_room["unit_1"] = object()
 
-        assert entity.current_option is None
+        assert entity.current_option == PRESET_MODE_INACTIVE
 
     @pytest.mark.asyncio
     async def test_select_option_sets_preset_mode(self) -> None:
@@ -125,6 +128,15 @@ class TestMeltemPresetModeSelect:
         entity.coordinator.async_set_preset_mode.assert_awaited_once_with(
             "unit_1", "high"
         )
+
+    @pytest.mark.asyncio
+    async def test_select_option_can_clear_preset_mode(self) -> None:
+        entity = _build_preset_entity("ii_plain")
+
+        await entity.async_select_option(PRESET_MODE_INACTIVE)
+
+        entity.coordinator.async_clear_preset_mode.assert_awaited_once_with("unit_1")
+        entity.coordinator.async_set_preset_mode.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_select_option_updates_ui_optimistically(self) -> None:

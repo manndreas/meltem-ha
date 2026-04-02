@@ -167,6 +167,7 @@
       "preset_mode": {
         "name": "Quick mode",
         "state": {
+          "inactive": "Individual",
           "low": "Low",
           "medium": "Medium",
           "high": "High",

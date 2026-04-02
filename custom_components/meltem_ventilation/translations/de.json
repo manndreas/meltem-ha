@@ -167,6 +167,7 @@
       "preset_mode": {
         "name": "Schnellmodus",
         "state": {
+          "inactive": "Individuell",
           "low": "Niedrig",
           "medium": "Mittel",
           "high": "Hoch",

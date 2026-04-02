@@ -10,7 +10,12 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CO2_PROFILES, HUMIDITY_PROFILES, PRESET_MODE_OPTIONS
+from .const import (
+    CO2_PROFILES,
+    HUMIDITY_PROFILES,
+    PRESET_MODE_INACTIVE,
+    PRESET_MODE_OPTIONS,
+)
 from .entity import MeltemEntity, room_supports_entity
 from .models import MeltemRuntimeData, RoomConfig
 
@@ -78,11 +83,11 @@ class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
     @property
     def current_option(self) -> str | None:
         if self.room.key in self._optimistic_targets_by_room:
-            return None
+            return PRESET_MODE_INACTIVE
         if self._optimistic_option is not None and time.monotonic() < self._optimistic_until:
             return self._optimistic_option
         self._optimistic_option = None
-        return self.room_state.preset_mode
+        return self.room_state.preset_mode or PRESET_MODE_INACTIVE
 
     async def async_select_option(self, option: str) -> None:
         self._optimistic_option = option
@@ -90,7 +95,10 @@ class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
         if self.hass is not None:
             self.async_write_ha_state()
         try:
-            await self.coordinator.async_set_preset_mode(self.room.key, option)
+            if option == PRESET_MODE_INACTIVE:
+                await self.coordinator.async_clear_preset_mode(self.room.key)
+            else:
+                await self.coordinator.async_set_preset_mode(self.room.key, option)
         except Exception:
             self._optimistic_option = None
             self._optimistic_until = 0.0

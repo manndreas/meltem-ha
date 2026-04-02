@@ -26,6 +26,7 @@ from .const import (
     FLOW_REFRESH_SECONDS,
     OPERATING_HOURS_REFRESH_SECONDS,
     PRESET_MODE_EXTRACT_ONLY,
+    PRESET_MODE_INACTIVE,
     PRESET_MODE_SUPPLY_ONLY,
     POST_WRITE_REFRESH_INTERVAL_SECONDS,
     POST_WRITE_REFRESH_RETRIES,
@@ -314,6 +315,20 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 room,
                 min_refresh_attempts=2,
             )
+
+    async def async_clear_preset_mode(self, room_key: str) -> None:
+        """Leave the quick-mode shortcut and keep the current airflow behavior."""
+
+        state = self._safe_data.get(room_key, EMPTY_ROOM_STATE)
+        if state.preset_mode is None or state.preset_mode == PRESET_MODE_INACTIVE:
+            return
+
+        operation_mode = (
+            "unbalanced"
+            if state.preset_mode in (PRESET_MODE_EXTRACT_ONLY, PRESET_MODE_SUPPLY_ONLY)
+            else "manual"
+        )
+        await self.async_set_operation_mode(room_key, operation_mode)
 
     async def async_activate_intensive(self, room_key: str) -> None:
         """Start temporary intensive ventilation without changing the base preset."""
