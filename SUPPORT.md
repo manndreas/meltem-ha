@@ -10,6 +10,8 @@ If you open an issue, please include enough detail to reproduce the problem.
 - whether you use `M-WRG-S` or `M-WRG-II`
 - whether the issue happens during setup, discovery, reading, or writing
 - relevant Home Assistant logs
+- the integration diagnostics download when the entry is available; the serial
+	port is redacted automatically
 
 ## Helpful logs
 
@@ -24,6 +26,11 @@ With the `Terminal & SSH` add-on:
 ```bash
 ha core logs | grep meltem_ventilation
 ```
+
+Download diagnostics from `Settings` -> `Devices & Services` ->
+`Meltem Modbus` -> the three-dot menu -> `Download diagnostics`. It includes
+configured units, current room states, availability, scheduler status and a
+best-effort gateway unit list.
 
 ## Good issue reports
 

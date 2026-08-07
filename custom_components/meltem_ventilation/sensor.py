@@ -10,7 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorEntityDescription, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
@@ -18,7 +23,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ALL_PROFILES, CO2_PROFILES, HUMIDITY_PROFILES, VOC_PROFILES
 from .entity import MeltemEntity, room_supports_entity
-from .models import MeltemRuntimeData, RoomConfig, RoomState
+from .models import MeltemRuntimeData, RoomState
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -45,7 +50,8 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         suggested_display_precision=1,
-        supported_profiles=ALL_PROFILES,
+        # Only the -F and -FC variants carry this sensor, see docs/MELTEM.md.
+        supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.outdoor_air_temperature,
     ),
     MeltemSensorDescription(
@@ -54,7 +60,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         suggested_display_precision=1,
-        supported_profiles=ALL_PROFILES,
+        supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.extract_air_temperature,
     ),
     MeltemSensorDescription(
@@ -149,17 +155,8 @@ async def async_setup_entry(
         MeltemSensorEntity(coordinator, room, description)
         for room in coordinator.rooms
         for description in SENSOR_DESCRIPTIONS
-        if _supports_profile(room, description)
+        if room_supports_entity(room, description.key, description.supported_profiles)
     )
-
-
-def _supports_profile(
-    room: RoomConfig, description: MeltemSensorDescription
-) -> bool:
-    """Return whether one sensor description should exist for one room."""
-    if room.profile not in description.supported_profiles:
-        return False
-    return room_supports_entity(room, description.key)
 
 
 class MeltemSensorEntity(MeltemEntity, SensorEntity):

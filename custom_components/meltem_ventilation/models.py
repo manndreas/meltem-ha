@@ -83,16 +83,7 @@ class RefreshPlan:
 
             RefreshPlan.only(refresh_airflow=True)
         """
-        base = {
-            "refresh_airflow": False,
-            "refresh_temperatures": False,
-            "refresh_environment": False,
-            "refresh_status": False,
-            "refresh_filter_change_due": False,
-            "refresh_filter_days": False,
-            "refresh_operating_hours": False,
-            "refresh_control_settings": False,
-        }
+        base = dict.fromkeys(cls.__dataclass_fields__, False)
         base.update(kwargs)
         return cls(**base)
 

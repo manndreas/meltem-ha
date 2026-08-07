@@ -2,24 +2,41 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from custom_components.meltem_ventilation.binary_sensor import (
     BINARY_SENSOR_DESCRIPTIONS,
-    _supports_profile as binary_sensor_supports_profile,
 )
+from custom_components.meltem_ventilation.const import (
+    OPERATION_MODE_INACTIVE,
+    PRESET_MODE_OPTIONS,
+    SENSOR_OPERATION_MODES,
+)
+from custom_components.meltem_ventilation.entity import room_supports_entity
 from custom_components.meltem_ventilation.models import RoomConfig
 from custom_components.meltem_ventilation.number import (
     CONTROL_SETTING_DESCRIPTIONS,
-    _room_supports,
-    _supports_control_setting,
 )
 from custom_components.meltem_ventilation.sensor import (
     SENSOR_DESCRIPTIONS,
-    _supports_profile as sensor_supports_profile,
 )
-from custom_components.meltem_ventilation.select import _room_supports as select_supports_room
 
+
+def _supports(room: RoomConfig, description) -> bool:
+    """Return whether one entity description applies to one room."""
+    return room_supports_entity(room, description.key, description.supported_profiles)
+
+
+# The per-platform filters collapsed into room_supports_entity; the aliases keep
+# the test names below tied to the platform they cover.
+binary_sensor_supports_profile = _supports
+sensor_supports_profile = _supports
+_supports_control_setting = _supports
+_room_supports = room_supports_entity
+select_supports_room = room_supports_entity
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -53,11 +70,30 @@ def _control_setting_desc(key: str):
 
 
 class TestNumberFilter:
+    @pytest.mark.parametrize(
+        ("key", "minimum", "maximum", "step"),
+        [
+            ("humidity_starting_point", 40, 80, 1),
+            ("humidity_min_level", 0, 100, 10),
+            ("humidity_max_level", 10, 100, 10),
+            ("co2_starting_point", 500, 1200, 1),
+            ("co2_min_level", 0, 100, 10),
+            ("co2_max_level", 10, 100, 10),
+        ],
+    )
+    def test_control_setting_limits_match_the_manufacturer_table(
+        self, key: str, minimum: int, maximum: int, step: int,
+    ) -> None:
+        description = _control_setting_desc(key)
+
+        assert description.native_min_value == minimum
+        assert description.native_max_value == maximum
+        assert description.native_step == step
+
     def test_room_without_supported_keys_allows_all(self) -> None:
         room = RoomConfig(key="u1", name="U1", profile="ii_plain", slave=2)
         assert _room_supports(room, "level")
-        assert _room_supports(room, "supply_level")
-        assert _room_supports(room, "extract_level")
+        assert _room_supports(room, "humidity_starting_point")
 
     def test_room_with_supported_keys_filters_correctly(self) -> None:
         room = RoomConfig(
@@ -65,11 +101,11 @@ class TestNumberFilter:
             name="U1",
             profile="ii_plain",
             slave=2,
-            supported_entity_keys=frozenset({"level", "extract_level"}),
+            supported_entity_keys=frozenset({"level", "co2_min_level"}),
         )
         assert _room_supports(room, "level")
-        assert not _room_supports(room, "supply_level")
-        assert _room_supports(room, "extract_level")
+        assert not _room_supports(room, "humidity_starting_point")
+        assert _room_supports(room, "co2_min_level")
 
     def test_room_with_empty_supported_keys_blocks_all(self) -> None:
         room = RoomConfig(
@@ -80,7 +116,7 @@ class TestNumberFilter:
             supported_entity_keys=frozenset(),
         )
         assert not _room_supports(room, "level")
-        assert not _room_supports(room, "supply_level")
+        assert not _room_supports(room, "humidity_starting_point")
 
     def test_humidity_control_setting_requires_humidity_profile(self) -> None:
         room = RoomConfig(key="u1", name="U1", profile="ii_plain", slave=2)
@@ -277,9 +313,67 @@ class TestBinarySensorDescriptionMetadata:
         assert _binary_desc(key).entity_category == "diagnostic"
 
     @pytest.mark.parametrize(
-        "key", ["error_status", "frost_protection_active", "filter_change_due", "intensive_active"]
+        "key", ["error_status", "frost_protection_active", "filter_change_due"]
     )
     def test_operational_binary_sensors_have_no_category(
         self, key: str,
     ) -> None:
         assert _binary_desc(key).entity_category is None
+
+
+# ---------------------------------------------------------------------------
+#  Translations
+# ---------------------------------------------------------------------------
+
+
+_COMPONENT_DIR = Path(__file__).parent.parent / "custom_components" / "meltem_ventilation"
+
+
+def _load_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _flatten_keys(payload: object, prefix: str = "") -> set[str]:
+    keys: set[str] = set()
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            path = f"{prefix}/{key}"
+            keys.add(path)
+            keys |= _flatten_keys(value, path)
+    return keys
+
+
+class TestTranslations:
+    def test_english_translation_file_exists(self) -> None:
+        # Custom integrations do not get strings.json compiled by HA core.
+        assert (_COMPONENT_DIR / "translations" / "en.json").is_file()
+
+    @pytest.mark.parametrize("language", ["en", "de"])
+    def test_translation_files_match_strings_json(self, language: str) -> None:
+        expected = _flatten_keys(_load_json(_COMPONENT_DIR / "strings.json"))
+        actual = _flatten_keys(
+            _load_json(_COMPONENT_DIR / "translations" / f"{language}.json")
+        )
+        assert actual == expected
+
+    def test_translations_cover_all_entity_keys(self) -> None:
+        strings = _load_json(_COMPONENT_DIR / "strings.json")["entity"]
+        assert {desc.key for desc in SENSOR_DESCRIPTIONS} == set(strings["sensor"])
+        assert {desc.key for desc in BINARY_SENSOR_DESCRIPTIONS} == set(
+            strings["binary_sensor"]
+        )
+        assert {desc.key for desc in CONTROL_SETTING_DESCRIPTIONS} == set(
+            strings["number"]
+        )
+        assert {"supply_level", "extract_level"} == set(strings["fan"])
+        assert {"operation_mode", "preset_mode"} == set(strings["select"])
+        assert {"intensive"} == set(strings["switch"])
+
+    def test_select_option_translations_match_the_offered_options(self) -> None:
+        strings = _load_json(_COMPONENT_DIR / "strings.json")["entity"]["select"]
+
+        assert set(strings["preset_mode"]["state"]) == set(PRESET_MODE_OPTIONS)
+        assert set(strings["operation_mode"]["state"]) == {
+            OPERATION_MODE_INACTIVE,
+            *SENSOR_OPERATION_MODES,
+        }

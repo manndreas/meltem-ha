@@ -20,13 +20,40 @@ def _serialize_room_state(state: Any) -> dict[str, Any]:
     return asdict(state)
 
 
+def _serialize_room(room: Any) -> dict[str, Any]:
+    """Convert a room config to plain diagnostics data.
+
+    ``supported_entity_keys`` is a frozenset, which the diagnostics JSON encoder
+    would otherwise render as an opaque type marker.
+    """
+
+    data = asdict(room)
+    keys = data.get("supported_entity_keys")
+    if keys is not None:
+        data["supported_entity_keys"] = sorted(keys)
+    return data
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant,
     entry: ConfigEntry,
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
 
-    runtime_data: MeltemRuntimeData = entry.runtime_data
+    runtime_data: MeltemRuntimeData | None = getattr(entry, "runtime_data", None)
+    if runtime_data is None:
+        return {
+            "entry": {
+                "entry_id": entry.entry_id,
+                "title": entry.title,
+                "version": entry.version,
+                "state": str(entry.state),
+                "data": async_redact_data(dict(entry.data), TO_REDACT),
+                "options": async_redact_data(dict(entry.options), TO_REDACT),
+            },
+            "coordinator": None,
+        }
+
     coordinator = runtime_data.coordinator
 
     try:
@@ -46,6 +73,7 @@ async def async_get_config_entry_diagnostics(
             "entry_id": entry.entry_id,
             "title": entry.title,
             "version": entry.version,
+            "state": str(entry.state),
             "data": async_redact_data(dict(entry.data), TO_REDACT),
             "options": async_redact_data(dict(entry.options), TO_REDACT),
         },
@@ -57,7 +85,7 @@ async def async_get_config_entry_diagnostics(
                 else None
             ),
             "configured_room_count": len(coordinator.rooms),
-            "state_room_count": len(room_states),
+            "state_room_count": coordinator.state_room_count,
             "gateway_units": gateway_units,
             "gateway_probe_error": gateway_probe_error,
             "last_job_error": (
@@ -65,7 +93,12 @@ async def async_get_config_entry_diagnostics(
                 if coordinator.last_job_error is not None
                 else None
             ),
-            "rooms": [asdict(room) for room in coordinator.rooms],
+            "unavailable_rooms": [
+                room.key
+                for room in coordinator.rooms
+                if not coordinator.room_available(room.key)
+            ],
+            "rooms": [_serialize_room(room) for room in coordinator.rooms],
             "room_states": room_states,
         },
     }

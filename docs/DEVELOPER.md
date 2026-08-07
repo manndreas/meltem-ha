@@ -6,11 +6,11 @@ learned while developing the `Meltem M-WRG` Home Assistant integration.
 For the consolidated manufacturer reference we transcribed into Markdown, see
 `docs/MELTEM.md`.
 
-For the separate mobile app cloud API reverse-engineering notes, see
-`docs/CLOUD_API.md`.
-
 For the local Modbus-side settings reverse-engineering backlog, see
 `docs/SETTING_RE_BACKLOG.md`.
+
+For review findings that need a live gateway before they can be decided, see
+`docs/HARDWARE_BACKLOG.md`.
 
 ## Safety and liability
 
@@ -35,9 +35,14 @@ These are the most important practical findings from the latest hardware tests:
 - many devices return Modbus exceptions for `41120/41121/41122` until a write
   has occurred
 - immediate write confirmation polling created unnecessary bus load and was
-  removed for slider writes
-- cached values remain visible in Home Assistant when the gateway disappears
-  because failed polls preserve the previous state instead of clearing entities
+  removed for airflow writes
+- short read failures preserve the previous state, but a unit that keeps
+  failing or stays silent is marked unavailable instead of showing frozen
+  values
+- room entities stay unavailable until the first poll returns at least one
+  state value
+- unloading waits for an active serial operation before closing the shared
+  client, so a background read cannot reopen the port after shutdown
 
 ## Scope
 
@@ -136,8 +141,8 @@ Implementation rules:
 
 ## Pymodbus quirk in Home Assistant
 
-In the Home Assistant environment used for this integration, `pymodbus`
-expects `device_id=...`, not `slave=...`.
+The integration requires `pymodbus >= 3.14`, where the client calls used here
+expect `device_id=...`, not `slave=...`.
 
 This is important for:
 
@@ -222,16 +227,19 @@ Registers probed locally but not available on the tested setup:
 
 ## Polling strategy
 
-The integration uses a serialized scheduler with an adjustable maximum request
-rate.
+The integration uses a serialized scheduler with an adjustable maximum
+poll-job start rate.
 
 Current design:
 
 - each read operation is scheduled as one room-scoped job
 - jobs use block reads where possible
 - only one job runs at a time
-- scheduler cadence is derived from `max_requests_per_second`
-- slider writes are optimistic and rely on the normal scheduler for later
+- scheduler cadence is derived from `max_requests_per_second`; despite the
+  legacy option name, this limits job starts, not individual wire requests
+- one job can perform several grouped or optional Modbus reads, each still
+  separated by `REQUEST_GAP_SECONDS`
+- airflow writes are optimistic and rely on the normal scheduler for later
   convergence instead of forcing an immediate confirmation poll
 
 Current job groups:
@@ -241,6 +249,7 @@ Current job groups:
 - status
 - filter data
 - operating hours
+- humidity and CO2 control settings
 
 Current target intervals:
 
@@ -249,6 +258,7 @@ Current target intervals:
 - status: `60s`
 - filter data: `1h`
 - operating hours: `1h`
+- control settings: `1h`
 
 Local benchmark results on the tested gateway so far:
 
@@ -481,10 +491,13 @@ Practical implication:
   surface
 - document deeper app settings first unless a concrete register mapping has
   been reproduced locally
-- for Home Assistant writes, `Abluft` / `Zuluft` can already use the observed
-  app-style `200 + airflow / 10` encoding, but the integration currently
-  chooses that airflow from the room's live known target/flow because the
-  dedicated app shortcut storage is still unknown
+- for Home Assistant writes, `Abluft` / `Zuluft` are no longer written as
+  app-style shortcuts at all: since the dedicated app shortcut storage is
+  still unknown, the integration would have had to guess the airflow. Both
+  states are now expressed by setting one of the two fan entities to zero,
+  which uses the documented unbalanced write sequence. The observed
+  `200 + airflow / 10` encoding is still decoded on read so a shortcut
+  activated by the device or app remains visible.
 
 Additional panel-side hardware findings on `2026-03-31` for `slave 2`:
 
@@ -619,21 +632,26 @@ Current approach:
 
 - use `41121` to confirm a newly written balanced target when available
 - keep `41020/41021` as the authoritative current/actual airflow view
-- if supply and extract airflow diverge, the single balanced value becomes
-  unavailable by design
+- if supply and extract airflow diverge, the unit is driven in unbalanced mode
+  and both directions are read back from their own target registers
 
-### Cached values after disconnect are expected with the current strategy
+### Per-unit availability on read failures
 
 When the gateway is unplugged or otherwise unavailable, the integration keeps
-the previous entity state in memory and logs read failures. This is intentional
-for now:
+the previous entity state in memory for a short while and logs read failures.
+This avoids flapping on transient outages.
 
-- running entities do not disappear immediately on transient gateway outages
-- the UI continues to show the last known values
+Beyond that grace period the entities of an affected unit are marked
+unavailable rather than showing frozen values:
+
+- before the first successful state read, room entities are unavailable rather
+  than accepting commands built from unknown fallback values
+- a unit is considered unavailable after `ROOM_UNAVAILABLE_AFTER_FAILURES`
+  consecutive failures, or after `ROOM_SILENT_AFTER_SECONDS` without any
+  successful read, even if the gateway itself still answers
+- units that still respond keep working independently
+- polling backs off progressively while the gateway stays unreachable
 - writes fail until communication is restored
-
-If desired later, this behavior could be changed to mark entities unavailable
-after a configurable number of consecutive failures.
 
 ### Retry strategy
 
@@ -652,7 +670,7 @@ Current implementation direction:
 
 - retry lock/transport errors
 - avoid repeated retries on plain `ExceptionResponse(...)`
-- do not force immediate readback confirmation after normal slider writes
+- do not force immediate readback confirmation after normal airflow writes
 
 ### Temperatures are not identical conceptually
 
@@ -750,18 +768,22 @@ Known UX caveat:
 - previews may be missing if the setup probe times out or a register does not
   answer quickly enough
 
-## Existing config entries vs clean setup
+## Existing config entries and profile changes
 
-For major model/profile logic changes, a fully fresh setup is often more
-reliable than trying to migrate partial intermediate states.
+Setup repairs stored room metadata before creating entities:
 
-Recommended clean reset:
+- missing setup metadata is re-probed, with profile-derived temperature and
+  control-setting keys merged into the best-effort sensor probe result
+- older probe-only metadata is augmented from the selected profile on startup
+- changing to a profile with fewer capabilities removes registry entities that
+  the new profile no longer creates
+- globally removed entities from older releases are handled by the same
+  platform-aware registry cleanup
 
-1. Remove the entire integration config entry in Home Assistant.
-2. Restart Home Assistant.
-3. Re-add the integration.
-
-Removing only the gateway device is not enough.
+A fresh setup should therefore not be needed for normal profile changes or
+upgrades. Remove and re-add the config entry only when its stored data is
+actually corrupt or when debugging a setup problem that cannot be reproduced
+otherwise. Removing only the gateway device does not reset the config entry.
 
 ## USB discovery
 
@@ -778,40 +800,53 @@ bridge in some environments.
 ## Important files
 
 - `custom_components/meltem_ventilation/config_flow.py`
-- `tests/test_modbus_client.py`
-
-## Tests
-
-The current test coverage starts with pure-Python unit tests for the Modbus
-helper layer plus scheduler/config helper tests. These tests intentionally avoid
-requiring a full Home Assistant test environment and currently cover:
-
-- gateway-backed discovery via `43901` / `43902..`
-- minimal setup-time capability probing
-- balanced airflow derivation
-- target-level scaling during room-state reads
-- `NaN` filtering for float temperature reads
-- scheduler job construction and due-job selection
-- coordinator passthrough methods for discovery/probing
-- coordinator write-then-refresh behavior
-- config-flow helper functions for defaults and room mapping
-
-Run them with:
-
-```bash
-python3 -m unittest -v \
-  tests/test_modbus_client.py \
-  tests/test_coordinator_and_config_helpers.py
-```
   setup, USB discovery, gateway-backed unit discovery, profile selection
 - `custom_components/meltem_ventilation/modbus_client.py`
   low-level Modbus reads/writes and timing behavior
 - `custom_components/meltem_ventilation/coordinator.py`
-  rotating refresh plan
+  rotating refresh plan, optimistic state, write orchestration
 - `custom_components/meltem_ventilation/const.py`
-  timing, profile metadata, register constants
+  timing, profile metadata, register constants, entity-key groupings
+- `custom_components/meltem_ventilation/fan.py`
+  the two directional airflow controls, which are the primary control path
 - `custom_components/meltem_ventilation/number.py`
-  airflow controls and per-series scaling
+  per-series control settings such as humidity and CO2 thresholds
+
+## Tests
+
+The test suite runs against a real Home Assistant test environment provided by
+`pytest-homeassistant-custom-component`, which requires Python 3.14. It covers
+the Modbus helper layer, the coordinator, and every entity platform, including:
+
+- gateway-backed discovery via `43901` / `43902..`
+- minimal setup-time capability probing
+- balanced airflow derivation and per-profile scaling
+- target-level scaling during room-state reads
+- `NaN` filtering for float temperature reads
+- scheduler job construction and due-job selection
+- coordinator write-then-refresh behavior, optimistic state, transport backoff
+- setup metadata repair, profile-aware entity cleanup, and serial unload
+  synchronization
+- control-setting range and manufacturer-step normalization
+- config-flow helper functions for defaults and room mapping
+- entity creation per model profile across all platforms
+
+Run the whole suite with:
+
+```bash
+pytest
+```
+
+Focused runs are usually enough while iterating:
+
+```bash
+pytest tests/test_modbus_client.py
+pytest tests/test_config_flow.py
+pytest tests/test_entity_descriptions.py
+```
+
+See `CONTRIBUTING.md` for environment setup, including the Windows-specific
+workarounds.
 
 ## Suggested debugging workflow
 

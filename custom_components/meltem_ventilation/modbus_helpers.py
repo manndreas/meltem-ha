@@ -26,8 +26,6 @@ from .const import (
     BASE_SUPPORTED_ENTITY_KEYS,
     DEFAULT_GATEWAY_DEVICE_ID,
     PROFILE_METADATA,
-    REQUEST_GAP_SECONDS,
-    SCAN_TIMEOUT,
     REGISTER_CO2_EXTRACT_AIR,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
@@ -35,10 +33,13 @@ from .const import (
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_PRODUCT_ID,
     REGISTER_VOC_SUPPLY_AIR,
+    REQUEST_GAP_SECONDS,
+    SCAN_TIMEOUT,
     SETUP_PROBE_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
+sync_sleep = time.sleep
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +49,14 @@ _LOGGER = logging.getLogger(__name__)
 
 class MeltemModbusError(Exception):
     """Raised when Meltem Modbus communication fails."""
+
+
+class MeltemConnectionError(MeltemModbusError):
+    """Raised when the serial connection to the gateway cannot be established.
+
+    Optional reads swallow ordinary Modbus errors, but never this one: a dead
+    transport must reach the coordinator instead of looking like "no change".
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -279,42 +288,63 @@ def scan_available_slaves(
         client.close()
 
 
+def _read_gateway_registers(
+    client: ModbusSerialClient,
+    port: str,
+    address: int,
+    count: int,
+    what: str,
+) -> list[int] | None:
+    """Read one gateway bridge register block, logging why it failed."""
+
+    try:
+        response = client.read_holding_registers(
+            address=address,
+            count=count,
+            device_id=DEFAULT_GATEWAY_DEVICE_ID,
+        )
+    except Exception as err:
+        _LOGGER.warning(
+            "Meltem gateway discovery on %s via device %s raised %r while reading %s",
+            port,
+            DEFAULT_GATEWAY_DEVICE_ID,
+            err,
+            what,
+        )
+        sync_sleep(REQUEST_GAP_SECONDS)
+        return None
+
+    sync_sleep(REQUEST_GAP_SECONDS)
+
+    registers = getattr(response, "registers", None) if response is not None else None
+    if response is None or response.isError() or not registers:
+        _LOGGER.warning(
+            "Meltem gateway discovery on %s via device %s returned no readable %s",
+            port,
+            DEFAULT_GATEWAY_DEVICE_ID,
+            what,
+        )
+        return None
+
+    return [int(value) for value in registers]
+
+
 def discover_gateway_nodes(
     client: ModbusSerialClient, port: str, *, start: int, end: int
 ) -> list[int]:
     """Try to discover configured units via Airios-style bridge registers."""
 
-    try:
-        count_response = client.read_holding_registers(
-            address=REGISTER_GATEWAY_NUMBER_OF_NODES,
-            count=1,
-            device_id=DEFAULT_GATEWAY_DEVICE_ID,
-        )
-    except Exception as err:
-        _LOGGER.warning(
-            "Meltem gateway discovery on %s via device %s raised %r while reading node count",
-            port,
-            DEFAULT_GATEWAY_DEVICE_ID,
-            err,
-        )
-        time.sleep(REQUEST_GAP_SECONDS)
+    node_counts = _read_gateway_registers(
+        client,
+        port,
+        REGISTER_GATEWAY_NUMBER_OF_NODES,
+        1,
+        "node count",
+    )
+    if node_counts is None:
         return []
 
-    time.sleep(REQUEST_GAP_SECONDS)
-
-    if (
-        count_response is None
-        or count_response.isError()
-        or not getattr(count_response, "registers", None)
-    ):
-        _LOGGER.warning(
-            "Meltem gateway discovery on %s via device %s returned no readable node count",
-            port,
-            DEFAULT_GATEWAY_DEVICE_ID,
-        )
-        return []
-
-    node_count = int(count_response.registers[0])
+    node_count = node_counts[0]
     if node_count <= 0:
         _LOGGER.warning(
             "Meltem gateway discovery on %s via device %s reported zero configured units",
@@ -323,41 +353,18 @@ def discover_gateway_nodes(
         )
         return []
 
-    address_count = max(1, min(32, node_count))
-
-    try:
-        addresses_response = client.read_holding_registers(
-            address=REGISTER_GATEWAY_NODE_ADDRESS_1,
-            count=address_count,
-            device_id=DEFAULT_GATEWAY_DEVICE_ID,
-        )
-    except Exception as err:
-        _LOGGER.warning(
-            "Meltem gateway discovery on %s via device %s raised %r while reading node addresses",
-            port,
-            DEFAULT_GATEWAY_DEVICE_ID,
-            err,
-        )
-        time.sleep(REQUEST_GAP_SECONDS)
-        return []
-
-    time.sleep(REQUEST_GAP_SECONDS)
-
-    if (
-        addresses_response is None
-        or addresses_response.isError()
-        or not getattr(addresses_response, "registers", None)
-    ):
-        _LOGGER.warning(
-            "Meltem gateway discovery on %s via device %s returned no readable node address list",
-            port,
-            DEFAULT_GATEWAY_DEVICE_ID,
-        )
+    addresses = _read_gateway_registers(
+        client,
+        port,
+        REGISTER_GATEWAY_NODE_ADDRESS_1,
+        max(1, min(32, node_count)),
+        "node address list",
+    )
+    if addresses is None:
         return []
 
     discovered: list[int] = []
-    for raw_address in addresses_response.registers:
-        address = int(raw_address)
+    for address in addresses:
         if address == 0:
             continue
         if not (start <= address <= end):
@@ -380,16 +387,16 @@ def discover_gateway_nodes(
 # ---------------------------------------------------------------------------
 
 
-def _safe_read_uint16(
-    client: ModbusSerialClient, slave: int, address: int
-) -> int | None:
-    """Best-effort uint16 read for setup previews."""
+def _safe_read_registers(
+    client: ModbusSerialClient, slave: int, address: int, count: int
+) -> list[int] | None:
+    """Best-effort register read for setup previews."""
 
     try:
         response = client.read_holding_registers(
-            address=address, count=1, device_id=slave
+            address=address, count=count, device_id=slave
         )
-        time.sleep(REQUEST_GAP_SECONDS)
+        sync_sleep(REQUEST_GAP_SECONDS)
     except Exception:
         return None
 
@@ -397,10 +404,19 @@ def _safe_read_uint16(
         return None
 
     registers = getattr(response, "registers", None)
-    if not registers or len(registers) < 1:
+    if not registers or len(registers) < count:
         return None
 
-    return registers[0]
+    return list(registers[:count])
+
+
+def _safe_read_uint16(
+    client: ModbusSerialClient, slave: int, address: int
+) -> int | None:
+    """Best-effort uint16 read for setup previews."""
+
+    registers = _safe_read_registers(client, slave, address, 1)
+    return registers[0] if registers else None
 
 
 def _safe_read_uint32_word_swap(
@@ -408,25 +424,10 @@ def _safe_read_uint32_word_swap(
 ) -> int | None:
     """Best-effort uint32 read for setup previews."""
 
-    try:
-        response = client.read_holding_registers(
-            address=address, count=2, device_id=slave
-        )
-        time.sleep(REQUEST_GAP_SECONDS)
-    except Exception:
+    registers = _safe_read_registers(client, slave, address, 2)
+    if registers is None:
         return None
-
-    if response is None or response.isError():
-        return None
-
-    registers = getattr(response, "registers", None)
-    if not registers or len(registers) < 2:
-        return None
-
-    try:
-        return struct.unpack(">I", struct.pack(">HH", registers[1], registers[0]))[0]
-    except Exception:
-        return None
+    return struct.unpack(">I", struct.pack(">HH", registers[1], registers[0]))[0]
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +445,8 @@ def supported_entity_keys_for_profile(profile: str) -> list[str]:
     """Return the supported entity keys implied by one selected profile."""
 
     supported_entity_keys = set(_base_supported_entity_keys())
-    capabilities = PROFILE_METADATA.get(profile, {}).get("capabilities", frozenset())
+    metadata = PROFILE_METADATA.get(profile)
+    capabilities = metadata.capabilities if metadata is not None else frozenset()
 
     if capabilities:
         supported_entity_keys.update(

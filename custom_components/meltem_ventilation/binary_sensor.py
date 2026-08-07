@@ -21,7 +21,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ALL_PROFILES
 from .entity import MeltemEntity, room_supports_entity
-from .models import MeltemRuntimeData, RoomConfig, RoomState
+from .models import MeltemRuntimeData, RoomState
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -54,12 +54,6 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
         value_fn=lambda state: state.filter_change_due,
     ),
     MeltemBinarySensorDescription(
-        key="intensive_active",
-        icon="mdi:fan-clock",
-        supported_profiles=ALL_PROFILES,
-        value_fn=lambda state: state.intensive_active,
-    ),
-    MeltemBinarySensorDescription(
         key="rf_comm_status",
         icon="mdi:wifi-alert",
         device_class=BinarySensorDeviceClass.PROBLEM,
@@ -85,17 +79,8 @@ async def async_setup_entry(
         MeltemBinarySensorEntity(coordinator, room, description)
         for room in coordinator.rooms
         for description in BINARY_SENSOR_DESCRIPTIONS
-        if _supports_profile(room, description)
+        if room_supports_entity(room, description.key, description.supported_profiles)
     )
-
-
-def _supports_profile(
-    room: RoomConfig, description: MeltemBinarySensorDescription
-) -> bool:
-    """Return whether one binary sensor description should exist for one room."""
-    if room.profile not in description.supported_profiles:
-        return False
-    return room_supports_entity(room, description.key)
 
 
 class MeltemBinarySensorEntity(MeltemEntity, BinarySensorEntity):

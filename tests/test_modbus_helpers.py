@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import struct
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,7 +25,6 @@ from custom_components.meltem_ventilation.modbus_helpers import (
     resolve_preferred_port_path,
     validate_serial_connection,
 )
-
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -65,8 +66,11 @@ class TestResolvePreferredPortPath:
         ):
             assert resolve_preferred_port_path("/dev/ttyACM0") == "/dev/ttyACM0"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="creating symlinks requires elevated rights on Windows",
+    )
     def test_resolves_symlink_to_by_id(self, tmp_path) -> None:
-        # Create a fake /dev/serial/by-id structure.
         serial_dir = tmp_path / "dev" / "serial" / "by-id"
         serial_dir.mkdir(parents=True)
         real_device = tmp_path / "dev" / "ttyACM0"
@@ -74,28 +78,27 @@ class TestResolvePreferredPortPath:
         link = serial_dir / "usb-honeywell-123"
         link.symlink_to(real_device)
 
+        # Redirect the hard-coded by-id lookup into the temporary tree.
+        real_path_cls = Path
+        redirects = {
+            "/dev/serial/by-id": serial_dir,
+            "/dev/ttyACM0": real_device,
+        }
+
+        def _redirected_path(argument):
+            return real_path_cls(redirects.get(str(argument), argument))
+
         with patch(
             "custom_components.meltem_ventilation.modbus_helpers.Path",
-        ) as MockPath:
-            # We need the real Path behavior but override the "/dev/serial/by-id" iteration.
-            # Simpler: test the logic directly with real paths.
-            pass
-
-        # Functional test using the real filesystem:
-        from pathlib import Path
-
-        with (
-            patch(
-                "custom_components.meltem_ventilation.modbus_helpers.Path",
-                wraps=Path,
-            ) as FakePath,
+            side_effect=_redirected_path,
         ):
-            # Override the by-id dir constant
-            pass
+            assert resolve_preferred_port_path("/dev/ttyACM0") == str(link)
 
-        # This is hard to mock cleanly due to Path usage.
-        # Instead, just verify the contract: already-by-id paths are stable.
-        assert resolve_preferred_port_path("/dev/serial/by-id/whatever") == "/dev/serial/by-id/whatever"
+    def test_keeps_by_id_paths_untouched(self) -> None:
+        assert (
+            resolve_preferred_port_path("/dev/serial/by-id/whatever")
+            == "/dev/serial/by-id/whatever"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +211,7 @@ class TestDetectSlaveDetails:
                 return_value=mock_client,
             ),
             patch(
-                "custom_components.meltem_ventilation.modbus_helpers.time.sleep",
+                "custom_components.meltem_ventilation.modbus_helpers.sync_sleep",
             ),
         ):
             profile, preview, keys = detect_slave_details(_SETTINGS, 2)
@@ -297,14 +300,14 @@ class TestSafeReadUint16:
         mock_client.read_holding_registers.return_value = _FakeResponse(
             registers=[42]
         )
-        with patch("custom_components.meltem_ventilation.modbus_helpers.time.sleep"):
+        with patch("custom_components.meltem_ventilation.modbus_helpers.sync_sleep"):
             result = _safe_read_uint16(mock_client, 2, 41000)
         assert result == 42
 
     def test_returns_none_on_error_response(self) -> None:
         mock_client = MagicMock()
         mock_client.read_holding_registers.return_value = _FakeResponse(error=True)
-        with patch("custom_components.meltem_ventilation.modbus_helpers.time.sleep"):
+        with patch("custom_components.meltem_ventilation.modbus_helpers.sync_sleep"):
             result = _safe_read_uint16(mock_client, 2, 41000)
         assert result is None
 
@@ -317,7 +320,7 @@ class TestSafeReadUint16:
     def test_returns_none_on_none_response(self) -> None:
         mock_client = MagicMock()
         mock_client.read_holding_registers.return_value = None
-        with patch("custom_components.meltem_ventilation.modbus_helpers.time.sleep"):
+        with patch("custom_components.meltem_ventilation.modbus_helpers.sync_sleep"):
             result = _safe_read_uint16(mock_client, 2, 41000)
         assert result is None
 
@@ -326,7 +329,7 @@ class TestSafeReadUint16:
         resp = _FakeResponse(registers=[])
         # Override the attr so getattr returns empty list.
         mock_client.read_holding_registers.return_value = resp
-        with patch("custom_components.meltem_ventilation.modbus_helpers.time.sleep"):
+        with patch("custom_components.meltem_ventilation.modbus_helpers.sync_sleep"):
             result = _safe_read_uint16(mock_client, 2, 41000)
         assert result is None
 
@@ -344,7 +347,7 @@ class TestSafeReadUint32:
         mock_client.read_holding_registers.return_value = _FakeResponse(
             registers=[lo, hi]
         )
-        with patch("custom_components.meltem_ventilation.modbus_helpers.time.sleep"):
+        with patch("custom_components.meltem_ventilation.modbus_helpers.sync_sleep"):
             result = _safe_read_uint32_word_swap(mock_client, 2, 41000)
         assert result == 123456
 
@@ -357,7 +360,7 @@ class TestSafeReadUint32:
     def test_returns_none_on_error_response(self) -> None:
         mock_client = MagicMock()
         mock_client.read_holding_registers.return_value = _FakeResponse(error=True)
-        with patch("custom_components.meltem_ventilation.modbus_helpers.time.sleep"):
+        with patch("custom_components.meltem_ventilation.modbus_helpers.sync_sleep"):
             result = _safe_read_uint32_word_swap(mock_client, 2, 41000)
         assert result is None
 
@@ -372,7 +375,7 @@ class TestBuildClient:
         with patch(
             "custom_components.meltem_ventilation.modbus_helpers.ModbusSerialClient"
         ) as MockClient:
-            result = build_client(_SETTINGS)
+            build_client(_SETTINGS)
             MockClient.assert_called_once_with(
                 port="/dev/ttyACM0",
                 baudrate=19200,

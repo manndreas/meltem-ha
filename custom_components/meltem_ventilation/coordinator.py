@@ -8,30 +8,37 @@ polls it schedules small refresh jobs per room and per data group.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import timedelta
 import logging
+import operator
 import time
-from typing import cast
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from datetime import timedelta
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
+    CONTROL_SETTING_REGISTERS,
     CONTROL_SETTINGS_REFRESH_SECONDS,
     DEFAULT_SCAN_SLAVE_END,
     DEFAULT_SCAN_SLAVE_START,
     FILTER_REFRESH_SECONDS,
     FLOW_REFRESH_SECONDS,
     OPERATING_HOURS_REFRESH_SECONDS,
-    PRESET_MODE_EXTRACT_ONLY,
-    PRESET_MODE_INACTIVE,
-    PRESET_MODE_SUPPLY_ONLY,
+    OPERATION_MODE_MANUAL,
+    OPERATION_MODE_OFF,
+    OPERATION_MODE_UNBALANCED,
     POST_WRITE_REFRESH_INTERVAL_SECONDS,
     POST_WRITE_REFRESH_RETRIES,
-    REQUEST_GAP_SECONDS,
+    PRESET_MODE_EXTRACT_ONLY,
+    PRESET_MODE_INACTIVE,
+    PRESET_MODE_INTENSIVE,
+    PRESET_MODE_SUPPLY_ONLY,
+    SENSOR_OPERATION_MODES,
     STATUS_REFRESH_SECONDS,
+    TARGET_OPTIMISTIC_SECONDS,
     TEMPERATURE_REFRESH_SECONDS,
     WRITE_SETTLE_SECONDS,
 )
@@ -40,52 +47,105 @@ from .modbus_helpers import MeltemModbusError
 from .models import EMPTY_ROOM_STATE, RefreshPlan, RoomConfig, RoomState
 
 _LOGGER = logging.getLogger(__name__)
+async_sleep = asyncio.sleep
+sync_sleep = time.sleep
 
 FULL_REFRESH_PLAN = RefreshPlan()
-AIRFLOW_REFRESH_PLAN = RefreshPlan.only(refresh_airflow=True)
-STATUS_REFRESH_PLAN = RefreshPlan.only(refresh_status=True)
-TEMPERATURE_REFRESH_PLAN = RefreshPlan.only(
-    refresh_temperatures=True,
-    refresh_environment=True,
+
+
+@dataclass(frozen=True, slots=True)
+class JobGroup:
+    """One refresh group: which registers it covers and how often it runs."""
+
+    key: str
+    interval_seconds: int
+    refresh_plan: RefreshPlan
+    entity_keys: frozenset[str]
+
+
+JOB_GROUPS: tuple[JobGroup, ...] = (
+    JobGroup(
+        key="flow",
+        interval_seconds=FLOW_REFRESH_SECONDS,
+        refresh_plan=RefreshPlan.only(refresh_airflow=True),
+        entity_keys=frozenset(
+            {
+                "extract_air_flow",
+                "supply_air_flow",
+                "supply_level",
+                "extract_level",
+                "operation_mode",
+                "preset_mode",
+                "intensive",
+            }
+        ),
+    ),
+    JobGroup(
+        key="status",
+        interval_seconds=STATUS_REFRESH_SECONDS,
+        refresh_plan=RefreshPlan.only(refresh_status=True),
+        entity_keys=frozenset(
+            {"error_status", "frost_protection_active", "rf_comm_status"}
+        ),
+    ),
+    JobGroup(
+        key="temperature",
+        interval_seconds=TEMPERATURE_REFRESH_SECONDS,
+        refresh_plan=RefreshPlan.only(
+            refresh_temperatures=True,
+            refresh_environment=True,
+        ),
+        entity_keys=frozenset(
+            {
+                "exhaust_temperature",
+                "outdoor_air_temperature",
+                "extract_air_temperature",
+                "supply_air_temperature",
+                "humidity_extract_air",
+                "humidity_supply_air",
+                "co2_extract_air",
+                "voc_supply_air",
+            }
+        ),
+    ),
+    JobGroup(
+        key="filter",
+        interval_seconds=FILTER_REFRESH_SECONDS,
+        refresh_plan=RefreshPlan.only(
+            refresh_filter_change_due=True,
+            refresh_filter_days=True,
+        ),
+        entity_keys=frozenset({"filter_change_due", "days_until_filter_change"}),
+    ),
+    JobGroup(
+        key="hours",
+        interval_seconds=OPERATING_HOURS_REFRESH_SECONDS,
+        refresh_plan=RefreshPlan.only(refresh_operating_hours=True),
+        entity_keys=frozenset({"operating_hours"}),
+    ),
+    JobGroup(
+        key="control_settings",
+        interval_seconds=CONTROL_SETTINGS_REFRESH_SECONDS,
+        refresh_plan=RefreshPlan.only(refresh_control_settings=True),
+        entity_keys=frozenset(CONTROL_SETTING_REGISTERS),
+    ),
 )
-FILTER_REFRESH_PLAN = RefreshPlan.only(
-    refresh_filter_change_due=True,
-    refresh_filter_days=True,
-)
-OPERATING_HOURS_REFRESH_PLAN = RefreshPlan.only(refresh_operating_hours=True)
-CONTROL_SETTINGS_REFRESH_PLAN = RefreshPlan.only(refresh_control_settings=True)
 
+AIRFLOW_REFRESH_PLAN = JOB_GROUPS[0].refresh_plan
+CONTROL_SETTINGS_REFRESH_PLAN = JOB_GROUPS[-1].refresh_plan
 
-class _CoordinatorLoggerProxy:
-    """Proxy HA coordinator logs so idle scheduler ticks do not spam debug output."""
-
-    def __init__(self, logger: logging.Logger, should_suppress_finished_fetch: Callable[[], bool]) -> None:
-        self._logger = logger
-        self._should_suppress_finished_fetch = should_suppress_finished_fetch
-
-    def debug(self, msg, *args, **kwargs) -> None:
-        if (
-            isinstance(msg, str)
-            and msg.startswith("Finished fetching ")
-            and self._should_suppress_finished_fetch()
-        ):
-            return
-        self._logger.debug(msg, *args, **kwargs)
-
-    def info(self, msg, *args, **kwargs) -> None:
-        self._logger.info(msg, *args, **kwargs)
-
-    def warning(self, msg, *args, **kwargs) -> None:
-        self._logger.warning(msg, *args, **kwargs)
-
-    def error(self, msg, *args, **kwargs) -> None:
-        self._logger.error(msg, *args, **kwargs)
-
-    def exception(self, msg, *args, **kwargs) -> None:
-        self._logger.exception(msg, *args, **kwargs)
-
-    def __getattr__(self, name: str):
-        return getattr(self._logger, name)
+TRANSPORT_BACKOFF_AFTER_FAILURES = 3
+TRANSPORT_BACKOFF_START_SECONDS = 5.0
+TRANSPORT_BACKOFF_MAX_SECONDS = 60.0
+ROOM_UNAVAILABLE_AFTER_FAILURES = 3
+# The slowest job runs hourly, but the airflow job polls every 10 s, so a unit
+# that answers nothing for this long is genuinely silent.
+ROOM_SILENT_AFTER_SECONDS = 120.0
+PRESET_OPTIMISTIC_SECONDS = 15.0
+# Rounding between m3/h and the raw 0..200 register costs at most 1 m3/h.
+LEVEL_CONFIRM_TOLERANCE = 2
+# Fallback wake-up for the degenerate case of a gateway without any poll job.
+IDLE_TICK_SECONDS = 60.0
 
 
 @dataclass(slots=True)
@@ -99,6 +159,57 @@ class PollJob:
     next_due: float
 
 
+class _OptimisticOverlay[T]:
+    """Pending write shown until the gateway confirms it or the window expires.
+
+    Writes settle slowly, so without this the UI would jump back to the old
+    value for a few seconds after every user action.
+    """
+
+    def __init__(
+        self,
+        ttl_seconds: float,
+        matches: Callable[[T, T], bool] = operator.eq,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._matches = matches
+        self._pending: dict[str, tuple[T, float]] = {}
+
+    def set(self, room_key: str, value: T) -> None:
+        self._pending[room_key] = (value, time.monotonic() + self._ttl_seconds)
+
+    def clear(self, room_key: str) -> bool:
+        """Drop the overlay and report whether there was one."""
+
+        return self._pending.pop(room_key, None) is not None
+
+    def get(self, room_key: str, confirmed: T | None) -> T | None:
+        """Return the pending value, or ``None`` once it is confirmed or stale."""
+
+        pending = self._pending.get(room_key)
+        if pending is None:
+            return None
+
+        value, expires_at = pending
+        if time.monotonic() >= expires_at or (
+            confirmed is not None and self._matches(confirmed, value)
+        ):
+            del self._pending[room_key]
+            return None
+        return value
+
+
+def _levels_reached(
+    confirmed: tuple[int | None, int | None], expected: tuple[int, int]
+) -> bool:
+    """Return whether both directions reached their pending target."""
+
+    return all(
+        actual is not None and abs(actual - target) <= LEVEL_CONFIRM_TOLERANCE
+        for actual, target in zip(confirmed, expected)
+    )
+
+
 class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     """Coordinate polling and writes for all configured rooms."""
 
@@ -106,6 +217,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self,
         hass: HomeAssistant,
         *,
+        config_entry: ConfigEntry,
         client: MeltemModbusClient,
         rooms: list[RoomConfig],
         max_requests_per_second: float,
@@ -118,21 +230,22 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._gateway_lock = asyncio.Lock()
         self._last_job_error: MeltemModbusError | None = None
         self._consecutive_transport_failures = 0
-        self._optimistic_targets_by_room: dict = {}
-        self._pending_writes_by_room: dict = {}
-        self._write_tasks_by_room: dict = {}
-        self._active_write_rooms: set[str] = set()
-        self._last_preset_levels_by_room: dict[str, dict[str, int]] = {}
-        self._suppress_finished_fetch_log = False
+        self._backoff_seconds: float | None = None
+        self._room_failures: dict[str, int] = {}
+        self._optimistic_presets = _OptimisticOverlay[str](PRESET_OPTIMISTIC_SECONDS)
+        self._optimistic_intensive = _OptimisticOverlay[bool](
+            PRESET_OPTIMISTIC_SECONDS, matches=operator.is_
+        )
+        self._optimistic_levels = _OptimisticOverlay[tuple[int, int]](
+            TARGET_OPTIMISTIC_SECONDS, matches=_levels_reached
+        )
         # Jobs are precomputed once and then executed in a due-time round robin.
         self._jobs = self._build_jobs()
 
         super().__init__(
             hass,
-            cast(logging.Logger, _CoordinatorLoggerProxy(
-                _LOGGER,
-                lambda: self._suppress_finished_fetch_log,
-            )),
+            _LOGGER,
+            config_entry=config_entry,
             name="Meltem Modbus",
             update_interval=timedelta(seconds=self._tick_seconds),
         )
@@ -148,44 +261,129 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         return self._safe_data
 
     @property
+    def state_room_count(self) -> int:
+        """Return how many rooms currently contain at least one state value."""
+
+        return sum(self._room_state_has_data(state) for state in self._safe_data.values())
+
+    @property
     def last_job_error(self) -> MeltemModbusError | None:
         """Return the last scheduler job error, if any."""
         return self._last_job_error
 
-    @property
-    def optimistic_targets_by_room(self) -> dict:
-        """Return the shared optimistic target store."""
-        return self._optimistic_targets_by_room
+    def room_available(self, room_key: str) -> bool:
+        """Return whether one room still delivers usable data.
 
-    @property
-    def pending_writes_by_room(self) -> dict:
-        """Return the pending write command store."""
-        return self._pending_writes_by_room
+        A single unreachable unit must not make the other units look healthy
+        while showing frozen values, so availability is tracked per room.
+        """
 
-    @property
-    def write_tasks_by_room(self) -> dict:
-        """Return the write task store."""
-        return self._write_tasks_by_room
+        if self._room_failures.get(room_key, 0) >= ROOM_UNAVAILABLE_AFTER_FAILURES:
+            return False
 
-    @property
-    def active_write_rooms(self) -> set[str]:
-        """Return the set of rooms with active write tasks."""
-        return self._active_write_rooms
+        room = self._rooms_by_key.get(room_key)
+        if room is not None:
+            silent_for = self.client.seconds_since_successful_read(room.slave)
+            if silent_for is not None and silent_for > ROOM_SILENT_AFTER_SECONDS:
+                return False
+
+        state = self._safe_data.get(room_key)
+        if state is None:
+            return False
+        return self._room_state_has_data(state)
+
+    def optimistic_preset_mode(self, room_key: str) -> str | None:
+        """Return the pending preset selection while the gateway confirms it.
+
+        The overlay is shared so the fan and the select entity never disagree.
+        """
+        state = self._safe_data.get(room_key)
+        confirmed = (state.preset_mode or PRESET_MODE_INACTIVE) if state else None
+        return self._optimistic_presets.get(room_key, confirmed)
+
+    def _set_optimistic_preset_mode(self, room_key: str, preset_mode: str) -> None:
+        self._optimistic_presets.set(room_key, preset_mode)
+        self.async_update_listeners()
+
+    def _clear_optimistic_preset_mode(self, room_key: str) -> None:
+        if self._optimistic_presets.clear(room_key):
+            self.async_update_listeners()
+
+    def optimistic_intensive(self, room_key: str) -> bool | None:
+        """Return the pending intensive override while the gateway confirms it."""
+
+        state = self._safe_data.get(room_key)
+        return self._optimistic_intensive.get(
+            room_key, state.intensive_active if state else None
+        )
+
+    def _set_optimistic_intensive(self, room_key: str, intensive_active: bool) -> None:
+        self._optimistic_intensive.set(room_key, intensive_active)
+        self.async_update_listeners()
+
+    def _clear_optimistic_intensive(self, room_key: str) -> None:
+        if self._optimistic_intensive.clear(room_key):
+            self.async_update_listeners()
+
+    def effective_levels(self, room_key: str) -> tuple[int | None, int | None]:
+        """Return the supply/extract targets a fan entity should act on.
+
+        Falls back to the pending write while the gateway confirms it, so the
+        two directional fans never rebuild each other from a stale cache.
+        """
+
+        confirmed = self._confirmed_levels(self._safe_data.get(room_key, EMPTY_ROOM_STATE))
+        return self._optimistic_levels.get(room_key, confirmed) or confirmed
+
+    @staticmethod
+    def _confirmed_levels(state: RoomState) -> tuple[int | None, int | None]:
+        """Split the room state into a supply/extract target pair."""
+
+        if state.operation_mode == OPERATION_MODE_OFF:
+            return 0, 0
+
+        if state.operation_mode == OPERATION_MODE_UNBALANCED:
+            supply = state.target_level if state.target_level is not None else state.supply_air_flow
+            extract = (
+                state.extract_target_level
+                if state.extract_target_level is not None
+                else state.extract_air_flow
+            )
+            return supply, extract
+
+        if state.operation_mode in SENSOR_OPERATION_MODES:
+            # The unit picks the airflow itself and exposes no target register.
+            return state.supply_air_flow, state.extract_air_flow
+
+        # Balanced modes drive both fans from a single register.
+        common = state.target_level
+        if common is None:
+            common = state.supply_air_flow
+        if common is None:
+            common = state.extract_air_flow
+        return common, common
+
+    def _set_optimistic_levels(self, room_key: str, supply: int, extract: int) -> None:
+        self._optimistic_levels.set(room_key, (supply, extract))
+        self.async_update_listeners()
+
+    def _clear_optimistic_levels(self, room_key: str) -> None:
+        if self._optimistic_levels.clear(room_key):
+            self.async_update_listeners()
 
     async def _async_update_data(self) -> dict[str, RoomState]:
-        self._suppress_finished_fetch_log = False
         try:
             async with self._gateway_lock:
                 if not self._safe_data:
                     states = await self.hass.async_add_executor_job(self._read_all_rooms_full)
-                    self._consecutive_transport_failures = 0
-                    self._remember_preset_shortcut_levels(states)
+                    self._on_transport_success()
+                    self._schedule_next_tick()
                     return states
 
                 now = time.monotonic()
                 job = self._select_due_job(now)
                 if job is None:
-                    self._suppress_finished_fetch_log = True
+                    self._schedule_next_tick()
                     return self.data
 
                 # Move the job forward before running it so a failing read
@@ -197,11 +395,18 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     self.data,
                     job,
                 )
-                self._consecutive_transport_failures = 0
-                self._remember_preset_shortcut_levels(updated_data)
+                # _read_one_job swallows transport errors to keep cached state,
+                # so success has to be derived from the recorded job error.
+                if self._last_job_error is None:
+                    self._on_transport_success()
+                else:
+                    self._consecutive_transport_failures += 1
+                    self._apply_transport_backoff()
+                self._schedule_next_tick()
                 return updated_data
         except MeltemModbusError as err:
             self._consecutive_transport_failures += 1
+            self._apply_transport_backoff()
             if self._safe_data and self._consecutive_transport_failures <= 3:
                 self._last_job_error = err
                 self.client.reset_connection()
@@ -214,38 +419,104 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 return self.data
             raise UpdateFailed(str(err)) from err
 
+    def _schedule_next_tick(self) -> None:
+        """Sleep until the next job is due instead of waking up on every tick.
+
+        The configured request rate still caps how closely two jobs can follow
+        each other.
+        """
+
+        if self._backoff_seconds is not None:
+            return
+
+        if not self._jobs:
+            self.update_interval = timedelta(seconds=IDLE_TICK_SECONDS)
+            return
+
+        earliest_due = min(job.next_due for job in self._jobs)
+        seconds = max(self._tick_seconds, earliest_due - time.monotonic())
+        self.update_interval = timedelta(seconds=seconds)
+
+    def _on_transport_success(self) -> None:
+        """Reset failure tracking and any active polling backoff."""
+
+        self._consecutive_transport_failures = 0
+        if self._backoff_seconds is None:
+            return
+        self._backoff_seconds = None
+        self._schedule_next_tick()
+        _LOGGER.info("Meltem gateway reachable again, resuming normal polling rate")
+
+    def _apply_transport_backoff(self) -> None:
+        """Slow down polling while the gateway keeps failing.
+
+        Without this the scheduler would retry every tick forever, and each
+        retry costs a full reconnect cycle on the serial port.
+        """
+
+        if self._consecutive_transport_failures < TRANSPORT_BACKOFF_AFTER_FAILURES:
+            return
+
+        exponent = self._consecutive_transport_failures - TRANSPORT_BACKOFF_AFTER_FAILURES
+        seconds = min(
+            TRANSPORT_BACKOFF_MAX_SECONDS,
+            TRANSPORT_BACKOFF_START_SECONDS * (2**exponent),
+        )
+        if seconds == self._backoff_seconds:
+            return
+
+        self._backoff_seconds = seconds
+        self.update_interval = timedelta(seconds=seconds)
+        _LOGGER.warning(
+            "Backing off Meltem gateway polling to %.0f s after %s consecutive transport failures",
+            seconds,
+            self._consecutive_transport_failures,
+        )
+
     async def async_set_level(self, room_key: str, level: int) -> None:
         """Write a new target level for one room.
 
-        Number entities keep an optimistic overlay locally, so there is no need
-        to force an immediate confirmation poll here. The normal scheduler will
-        pick up the later readback/current airflow state.
+        No confirmation poll is forced here: the fast airflow job picks up the
+        readback within a few seconds and an extra read only adds bus load.
         """
 
         room = self._rooms_by_key[room_key]
 
-        async with self._gateway_lock:
-            await self.hass.async_add_executor_job(self.client.write_level, room, level)
+        # A manual airflow change leaves any quick mode behind.
+        self._clear_optimistic_preset_mode(room_key)
+        self._set_optimistic_levels(room_key, level, level)
+        try:
+            async with self._gateway_lock:
+                await self.hass.async_add_executor_job(self.client.write_level, room, level)
+        except Exception:
+            self._clear_optimistic_levels(room_key)
+            raise
 
     async def async_set_unbalanced_levels(
         self, room_key: str, supply_level: int, extract_level: int
     ) -> None:
         """Write separate supply and extract levels for one room.
 
-        Number entities keep an optimistic overlay locally, so there is no need
-        to force an immediate confirmation poll here. The normal scheduler will
-        pick up the later readback/current airflow state.
+        No confirmation poll is forced here: the fast airflow job picks up the
+        readback within a few seconds and an extra read only adds bus load.
         """
 
         room = self._rooms_by_key[room_key]
 
-        async with self._gateway_lock:
-            await self.hass.async_add_executor_job(
-                self.client.write_unbalanced_levels,
-                room,
-                supply_level,
-                extract_level,
-            )
+        # A manual airflow change leaves any quick mode behind.
+        self._clear_optimistic_preset_mode(room_key)
+        self._set_optimistic_levels(room_key, supply_level, extract_level)
+        try:
+            async with self._gateway_lock:
+                await self.hass.async_add_executor_job(
+                    self.client.write_unbalanced_levels,
+                    room,
+                    supply_level,
+                    extract_level,
+                )
+        except Exception:
+            self._clear_optimistic_levels(room_key)
+            raise
 
     async def async_set_operation_mode(self, room_key: str, operation_mode: str) -> None:
         """Write a new operating mode for one room and refresh afterwards."""
@@ -269,6 +540,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             else balanced_level
         )
 
+        self._clear_optimistic_levels(room_key)
         async with self._gateway_lock:
             await self.hass.async_add_executor_job(
                 self.client.write_operating_mode,
@@ -277,76 +549,96 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 int(balanced_level),
                 int(extract_level),
             )
-            await asyncio.sleep(WRITE_SETTLE_SECONDS)
+            await async_sleep(WRITE_SETTLE_SECONDS)
             await self._async_refresh_room_after_write(room)
 
     async def async_set_preset_mode(self, room_key: str, preset_mode: str) -> None:
         """Write one app-style preset mode and refresh afterwards."""
 
         room = self._rooms_by_key[room_key]
-        state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
-        preferred_level = (
-            self._last_preset_levels_by_room.get(room.key, {}).get(preset_mode)
-            if preset_mode in (PRESET_MODE_EXTRACT_ONLY, PRESET_MODE_SUPPLY_ONLY)
-            else None
-        )
-        if preferred_level is None:
-            preferred_level = (
-            state.target_level
-            if state.target_level is not None and state.target_level > 0
-            else state.extract_target_level
-            if state.extract_target_level is not None and state.extract_target_level > 0
-            else state.supply_air_flow
-            if state.supply_air_flow is not None and state.supply_air_flow > 0
-            else state.extract_air_flow
-            if state.extract_air_flow is not None and state.extract_air_flow > 0
-            else None
-            )
 
-        async with self._gateway_lock:
-            await self.hass.async_add_executor_job(
-                self.client.write_preset_mode,
-                room,
-                preset_mode,
-                preferred_level,
-            )
-            await asyncio.sleep(WRITE_SETTLE_SECONDS)
-            await self._async_refresh_room_after_write(
-                room,
-                min_refresh_attempts=2,
-            )
+        self._set_optimistic_preset_mode(room_key, preset_mode)
+        self._clear_optimistic_levels(room_key)
+        try:
+            async with self._gateway_lock:
+                await self.hass.async_add_executor_job(
+                    self.client.write_preset_mode,
+                    room,
+                    preset_mode,
+                )
+                await async_sleep(WRITE_SETTLE_SECONDS)
+                await self._async_refresh_room_after_write(
+                    room,
+                    min_refresh_attempts=2,
+                )
+        except Exception:
+            self._clear_optimistic_preset_mode(room_key)
+            raise
 
     async def async_clear_preset_mode(self, room_key: str) -> None:
         """Leave the quick-mode shortcut and keep the current airflow behavior."""
 
         state = self._safe_data.get(room_key, EMPTY_ROOM_STATE)
-        if state.preset_mode is None or state.preset_mode == PRESET_MODE_INACTIVE:
+        pending_preset_mode = self.optimistic_preset_mode(room_key)
+        effective_preset_mode = pending_preset_mode or state.preset_mode
+        if effective_preset_mode is None or effective_preset_mode == PRESET_MODE_INACTIVE:
+            self._clear_optimistic_preset_mode(room_key)
             return
 
         operation_mode = (
-            "unbalanced"
-            if state.preset_mode in (PRESET_MODE_EXTRACT_ONLY, PRESET_MODE_SUPPLY_ONLY)
-            else "manual"
+            OPERATION_MODE_UNBALANCED
+            if effective_preset_mode in (PRESET_MODE_EXTRACT_ONLY, PRESET_MODE_SUPPLY_ONLY)
+            else OPERATION_MODE_MANUAL
         )
-        await self.async_set_operation_mode(room_key, operation_mode)
+        self._set_optimistic_preset_mode(room_key, PRESET_MODE_INACTIVE)
+        try:
+            await self.async_set_operation_mode(room_key, operation_mode)
+        except Exception:
+            self._clear_optimistic_preset_mode(room_key)
+            raise
 
     async def async_activate_intensive(self, room_key: str) -> None:
         """Start temporary intensive ventilation without changing the base preset."""
 
         room = self._rooms_by_key[room_key]
 
-        async with self._gateway_lock:
-            await self.hass.async_add_executor_job(
-                self.client.write_preset_mode,
-                room,
-                "intensive",
-                None,
-            )
-            await asyncio.sleep(WRITE_SETTLE_SECONDS)
-            await self._async_refresh_room_after_write(
-                room,
-                min_refresh_attempts=2,
-            )
+        self._set_optimistic_intensive(room_key, True)
+        try:
+            async with self._gateway_lock:
+                await self.hass.async_add_executor_job(
+                    self.client.write_preset_mode,
+                    room,
+                    PRESET_MODE_INTENSIVE,
+                )
+                await async_sleep(WRITE_SETTLE_SECONDS)
+                await self._async_refresh_room_after_write(
+                    room,
+                    min_refresh_attempts=2,
+                )
+        except Exception:
+            self._clear_optimistic_intensive(room_key)
+            raise
+
+    async def async_deactivate_intensive(self, room_key: str) -> None:
+        """Cancel a running intensive override and keep the base preset."""
+
+        room = self._rooms_by_key[room_key]
+
+        self._set_optimistic_intensive(room_key, False)
+        try:
+            async with self._gateway_lock:
+                await self.hass.async_add_executor_job(
+                    self.client.clear_intensive,
+                    room,
+                )
+                await async_sleep(WRITE_SETTLE_SECONDS)
+                await self._async_refresh_room_after_write(
+                    room,
+                    min_refresh_attempts=2,
+                )
+        except Exception:
+            self._clear_optimistic_intensive(room_key)
+            raise
 
     async def async_set_control_setting(
         self,
@@ -359,23 +651,42 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         room = self._rooms_by_key[room_key]
 
         async with self._gateway_lock:
-            await self.hass.async_add_executor_job(
+            written_value = await self.hass.async_add_executor_job(
                 self.client.write_control_setting,
                 room,
                 setting_key,
                 value,
             )
-            await asyncio.sleep(WRITE_SETTLE_SECONDS)
+
             previous_states = self._safe_data
             previous_state = previous_states.get(room.key, EMPTY_ROOM_STATE)
-            refreshed_room = await self.hass.async_add_executor_job(
-                self.client.read_room_state,
-                room,
-                previous_state,
-                CONTROL_SETTINGS_REFRESH_PLAN,
+            optimistic_state = replace(
+                previous_state, **{setting_key: written_value}
             )
-            if refreshed_room != previous_state:
-                updated_states = dict(previous_states)
+            optimistic_states = dict(previous_states)
+            optimistic_states[room.key] = optimistic_state
+            self.async_set_updated_data(optimistic_states)
+
+            await async_sleep(WRITE_SETTLE_SECONDS)
+            try:
+                refreshed_room = await self.hass.async_add_executor_job(
+                    self.client.read_room_state,
+                    room,
+                    optimistic_state,
+                    CONTROL_SETTINGS_REFRESH_PLAN,
+                )
+            except MeltemModbusError as err:
+                self.client.reset_connection()
+                _LOGGER.warning(
+                    "Failed to confirm control setting %s for room %s: %s",
+                    setting_key,
+                    room.key,
+                    err,
+                )
+                return
+
+            if refreshed_room != optimistic_state:
+                updated_states = dict(self._safe_data)
                 updated_states[room.key] = refreshed_room
                 self.async_set_updated_data(updated_states)
 
@@ -384,26 +695,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         self._max_requests_per_second = max(0.1, max_requests_per_second)
         self._tick_seconds = 1.0 / self._max_requests_per_second
-        self.update_interval = timedelta(seconds=self._tick_seconds)
-
-    async def async_cancel_room_write_tasks(self) -> None:
-        """Cancel any queued number-entity write tasks owned by this coordinator."""
-
-        tasks_by_room = self._write_tasks_by_room
-        pending_writes_by_room = self._pending_writes_by_room
-        optimistic_targets_by_room = self._optimistic_targets_by_room
-
-        tasks = [task for task in tasks_by_room.values() if not task.done()]
-        for task in tasks:
-            task.cancel()
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        tasks_by_room.clear()
-        pending_writes_by_room.clear()
-        optimistic_targets_by_room.clear()
-        self._active_write_rooms.clear()
+        if self._backoff_seconds is None:
+            self._schedule_next_tick()
 
     async def async_discover_gateway_units(self) -> list[int]:
         """Discover configured units using the active gateway client."""
@@ -431,8 +724,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self,
         room: RoomConfig,
         *,
-        expected_supply_level: int | None = None,
-        expected_extract_level: int | None = None,
         min_refresh_attempts: int = 1,
     ) -> None:
         """Refresh the changed room after a write settles.
@@ -440,9 +731,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         Writes only change one device, so the follow-up refresh only reads the
         airflow-related state of that same room.
         """
-
-        previous_states = self._safe_data
-        refreshed_room = previous_states.get(room.key, EMPTY_ROOM_STATE)
 
         for attempt in range(POST_WRITE_REFRESH_RETRIES + 1):
             previous_state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
@@ -465,84 +753,13 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             if refreshed_room != previous_state:
                 updated_states = dict(self._safe_data)
                 updated_states[room.key] = refreshed_room
-                self._remember_preset_shortcut_level(room.key, refreshed_room)
                 self.async_set_updated_data(updated_states)
 
-            reached_target = self._post_write_refresh_reached_target(
-                refreshed_room,
-                expected_supply_level=expected_supply_level,
-                expected_extract_level=expected_extract_level,
-            )
-            if reached_target and attempt + 1 >= max(1, min_refresh_attempts):
+            if attempt + 1 >= max(1, min_refresh_attempts):
                 return
 
             if attempt < POST_WRITE_REFRESH_RETRIES:
-                await asyncio.sleep(POST_WRITE_REFRESH_INTERVAL_SECONDS)
-
-    def _post_write_refresh_reached_target(
-        self,
-        state: RoomState,
-        *,
-        expected_supply_level: int | None = None,
-        expected_extract_level: int | None = None,
-    ) -> bool:
-        """Return whether a post-write airflow refresh reflects the requested targets."""
-
-        if expected_supply_level is None and expected_extract_level is None:
-            return True
-
-        supply_value = (
-            state.target_level if state.target_level is not None else state.supply_air_flow
-        )
-        extract_value = (
-            state.extract_target_level
-            if state.extract_target_level is not None
-            else state.extract_air_flow
-        )
-
-        if expected_supply_level is not None:
-            if supply_value is None or abs(supply_value - expected_supply_level) > 3:
-                return False
-
-        if expected_extract_level is not None:
-            if extract_value is None or abs(extract_value - expected_extract_level) > 3:
-                return False
-
-        return True
-
-    def _remember_preset_shortcut_level(self, room_key: str, state: RoomState) -> None:
-        """Remember the last observed app-style single-direction shortcut level."""
-
-        if state.preset_mode == PRESET_MODE_EXTRACT_ONLY:
-            level = (
-                state.extract_target_level
-                if state.extract_target_level is not None and state.extract_target_level > 0
-                else state.extract_air_flow
-                if state.extract_air_flow is not None and state.extract_air_flow > 0
-                else None
-            )
-            if level is not None:
-                self._last_preset_levels_by_room.setdefault(room_key, {})[
-                    PRESET_MODE_EXTRACT_ONLY
-                ] = level
-        elif state.preset_mode == PRESET_MODE_SUPPLY_ONLY:
-            level = (
-                state.target_level
-                if state.target_level is not None and state.target_level > 0
-                else state.supply_air_flow
-                if state.supply_air_flow is not None and state.supply_air_flow > 0
-                else None
-            )
-            if level is not None:
-                self._last_preset_levels_by_room.setdefault(room_key, {})[
-                    PRESET_MODE_SUPPLY_ONLY
-                ] = level
-
-    def _remember_preset_shortcut_levels(self, states: dict[str, RoomState]) -> None:
-        """Update remembered shortcut levels from a room-state map."""
-
-        for room_key, state in states.items():
-            self._remember_preset_shortcut_level(room_key, state)
+                await async_sleep(POST_WRITE_REFRESH_INTERVAL_SECONDS)
 
     def _read_all_rooms_full(self) -> dict[str, RoomState]:
         """Read a full initial state for all configured rooms."""
@@ -558,13 +775,15 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     FULL_REFRESH_PLAN,
                 )
                 successful_reads += 1
+                self._room_failures.pop(room.key, None)
             except MeltemModbusError as err:
                 _LOGGER.warning("Failed to read room %s during startup: %s", room.key, err)
                 states[room.key] = EMPTY_ROOM_STATE
                 last_error = err
+                self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
                 # Reset after a failure so the next room starts with a clean connection.
                 self.client.reset_connection()
-                time.sleep(0.5)
+                sync_sleep(0.5)
 
         if successful_reads == 0 and last_error is not None:
             raise last_error
@@ -611,9 +830,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             _LOGGER.warning("Failed to read room %s for job %s: %s", room.key, job.key, err)
             self.client.reset_connection()
             self._last_job_error = err
+            self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
             return previous_states
         else:
             self._last_job_error = None
+            self._room_failures.pop(room.key, None)
             if refreshed_state == previous_state:
                 return previous_states
             state_map = dict(previous_states)
@@ -642,133 +863,38 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """
 
         now = time.monotonic()
-        jobs: list[PollJob] = []
+        return [
+            job
+            for group in JOB_GROUPS
+            for job in self._build_group_jobs(group, now)
+        ]
 
-        jobs.extend(
-            self._build_group_jobs(
-                "flow",
-                FLOW_REFRESH_SECONDS,
-                AIRFLOW_REFRESH_PLAN,
-                now,
-            )
-        )
-        jobs.extend(
-            self._build_group_jobs(
-                "status",
-                STATUS_REFRESH_SECONDS,
-                STATUS_REFRESH_PLAN,
-                now,
-            )
-        )
-        jobs.extend(
-            self._build_group_jobs(
-                "temperature",
-                TEMPERATURE_REFRESH_SECONDS,
-                TEMPERATURE_REFRESH_PLAN,
-                now,
-            )
-        )
-        jobs.extend(
-            self._build_group_jobs(
-                "filter",
-                FILTER_REFRESH_SECONDS,
-                FILTER_REFRESH_PLAN,
-                now,
-            )
-        )
-        jobs.extend(
-            self._build_group_jobs(
-                "hours",
-                OPERATING_HOURS_REFRESH_SECONDS,
-                OPERATING_HOURS_REFRESH_PLAN,
-                now,
-            )
-        )
-        jobs.extend(
-            self._build_group_jobs(
-                "control_settings",
-                CONTROL_SETTINGS_REFRESH_SECONDS,
-                CONTROL_SETTINGS_REFRESH_PLAN,
-                now,
-            )
-        )
-
-        return jobs
-
-    def _build_group_jobs(
-        self,
-        key: str,
-        interval_seconds: int,
-        refresh_plan: RefreshPlan,
-        now: float,
-    ) -> list[PollJob]:
+    def _build_group_jobs(self, group: JobGroup, now: float) -> list[PollJob]:
         """Create one staggered job per room for one refresh group."""
 
-        rooms = [
-            room
-            for room in self.rooms
-            if self._room_needs_job(room, key)
-        ]
+        rooms = [room for room in self.rooms if self._room_needs_job(room, group)]
         if not rooms:
             return []
 
         # Spread jobs of one group across their full interval so a group does
         # not fire for every room at the same moment.
-        spacing = interval_seconds / len(rooms)
-        jobs: list[PollJob] = []
-        for index, room in enumerate(rooms):
-            jobs.append(
-                PollJob(
-                    key=key,
-                    room_key=room.key,
-                    refresh_plan=refresh_plan,
-                    interval_seconds=interval_seconds,
-                    next_due=now + (index * spacing),
-                )
+        spacing = group.interval_seconds / len(rooms)
+        return [
+            PollJob(
+                key=group.key,
+                room_key=room.key,
+                refresh_plan=group.refresh_plan,
+                interval_seconds=group.interval_seconds,
+                next_due=now + (index * spacing),
             )
-        return jobs
+            for index, room in enumerate(rooms)
+        ]
 
-    def _room_needs_job(self, room: RoomConfig, job_key: str) -> bool:
+    @staticmethod
+    def _room_needs_job(room: RoomConfig, group: JobGroup) -> bool:
         """Check whether a room has any entities covered by a job."""
 
-        supported = set(room.supported_entity_keys or ())
-
+        supported = room.supported_entity_keys
         if not supported:
             return True
-
-        job_entities: dict[str, set[str]] = {
-            "flow": {
-                "extract_air_flow",
-                "supply_air_flow",
-                "level",
-                "supply_level",
-                "extract_level",
-                "operation_mode",
-                "preset_mode",
-                "intensive_active",
-            },
-            "status": {"error_status", "frost_protection_active"},
-            "temperature": {
-                "exhaust_temperature",
-                "outdoor_air_temperature",
-                "extract_air_temperature",
-                "supply_air_temperature",
-                "humidity_extract_air",
-                "humidity_supply_air",
-                "co2_extract_air",
-                "voc_supply_air",
-            },
-            "filter": {"filter_change_due", "days_until_filter_change"},
-            "hours": {
-                "operating_hours",
-            },
-            "control_settings": {
-                "humidity_starting_point",
-                "humidity_min_level",
-                "humidity_max_level",
-                "co2_starting_point",
-                "co2_min_level",
-                "co2_max_level",
-            },
-        }
-        return bool(job_entities[job_key] & supported)
+        return bool(group.entity_keys & supported)
