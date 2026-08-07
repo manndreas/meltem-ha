@@ -14,7 +14,7 @@
     "pymodbus"
   ],
   "requirements": [
-    "pymodbus>=3.6.9,<4.0.0"
+    "pymodbus[serial]>=3.14.0,<4.0.0"
   ],
   "single_config_entry": true,
   "usb": [
@@ -25,5 +25,5 @@
       "vid": "10AC"
     }
   ],
-  "version": "2.0.0"
+  "version": "3.0.0"
 }

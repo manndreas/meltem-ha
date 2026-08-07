@@ -1,0 +1,233 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meltem Modbus",
+        "description": "An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB. The integration then scans the configured units and asks for the exact profile of each detected unit.",
+        "data": {
+          "port": "Serial port"
+        }
+      },
+      "confirm_usb": {
+        "title": "Discovered Meltem Modbus gateway",
+        "description": "Home Assistant found a USB device on {port} ({manufacturer}, {description}). An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB.",
+        "data": {
+          "port": "Serial port"
+        }
+      },
+      "profiles": {
+        "title": "Detected Meltem M-WRG units",
+        "description": "The integration found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Unit at Modbus address 2",
+          "slave_3": "Unit at Modbus address 3",
+          "slave_4": "Unit at Modbus address 4",
+          "slave_5": "Unit at Modbus address 5",
+          "slave_6": "Unit at Modbus address 6",
+          "slave_7": "Unit at Modbus address 7",
+          "slave_8": "Unit at Modbus address 8",
+          "slave_9": "Unit at Modbus address 9",
+          "slave_10": "Unit at Modbus address 10",
+          "slave_11": "Unit at Modbus address 11",
+          "slave_12": "Unit at Modbus address 12",
+          "slave_13": "Unit at Modbus address 13",
+          "slave_14": "Unit at Modbus address 14",
+          "slave_15": "Unit at Modbus address 15",
+          "slave_16": "Unit at Modbus address 16"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Meltem gateway.",
+      "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure Meltem Modbus",
+        "description": "Choose whether to change the serial connection settings, update profiles for existing units, or scan for new units.",
+        "menu_options": {
+          "edit_connection": "Change serial connection",
+          "edit_profiles": "Change profiles for existing units",
+          "rescan_units": "Scan for new units"
+        }
+      },
+      "edit_connection": {
+        "title": "Change serial connection",
+        "description": "Update the serial device path and scheduler request rate used for the Meltem gateway.",
+        "data": {
+          "port": "Serial port",
+          "max_requests_per_second": "Maximum requests per second"
+        }
+      },
+      "edit_profiles": {
+        "title": "Change Meltem device profiles",
+        "description": "Update the selected profile for each configured Meltem M-WRG unit.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Unit at Modbus address 2",
+          "slave_3": "Unit at Modbus address 3",
+          "slave_4": "Unit at Modbus address 4",
+          "slave_5": "Unit at Modbus address 5",
+          "slave_6": "Unit at Modbus address 6",
+          "slave_7": "Unit at Modbus address 7",
+          "slave_8": "Unit at Modbus address 8",
+          "slave_9": "Unit at Modbus address 9",
+          "slave_10": "Unit at Modbus address 10",
+          "slave_11": "Unit at Modbus address 11",
+          "slave_12": "Unit at Modbus address 12",
+          "slave_13": "Unit at Modbus address 13",
+          "slave_14": "Unit at Modbus address 14",
+          "slave_15": "Unit at Modbus address 15",
+          "slave_16": "Unit at Modbus address 16"
+        }
+      },
+      "rescan_units": {
+        "title": "Scan for new Meltem M-WRG units",
+        "description": "Scan the Meltem gateway for configured Meltem M-WRG units and update the stored profiles."
+      },
+      "profiles": {
+        "title": "Detected Meltem M-WRG units",
+        "description": "The rescan found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Unit at Modbus address 2",
+          "slave_3": "Unit at Modbus address 3",
+          "slave_4": "Unit at Modbus address 4",
+          "slave_5": "Unit at Modbus address 5",
+          "slave_6": "Unit at Modbus address 6",
+          "slave_7": "Unit at Modbus address 7",
+          "slave_8": "Unit at Modbus address 8",
+          "slave_9": "Unit at Modbus address 9",
+          "slave_10": "Unit at Modbus address 10",
+          "slave_11": "Unit at Modbus address 11",
+          "slave_12": "Unit at Modbus address 12",
+          "slave_13": "Unit at Modbus address 13",
+          "slave_14": "Unit at Modbus address 14",
+          "slave_15": "Unit at Modbus address 15",
+          "slave_16": "Unit at Modbus address 16"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Meltem gateway.",
+      "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "exhaust_temperature": {
+        "name": "Exhaust temperature"
+      },
+      "outdoor_air_temperature": {
+        "name": "Outdoor air temperature"
+      },
+      "extract_air_temperature": {
+        "name": "Extract air temperature"
+      },
+      "supply_air_temperature": {
+        "name": "Supply air temperature"
+      },
+      "humidity_extract_air": {
+        "name": "Extract air humidity"
+      },
+      "humidity_supply_air": {
+        "name": "Supply air humidity"
+      },
+      "co2_extract_air": {
+        "name": "Extract air CO2"
+      },
+      "voc_supply_air": {
+        "name": "Supply air VOC"
+      },
+      "extract_air_flow": {
+        "name": "Extract air flow"
+      },
+      "supply_air_flow": {
+        "name": "Supply air flow"
+      },
+      "days_until_filter_change": {
+        "name": "Days until filter change"
+      },
+      "operating_hours": {
+        "name": "Operating hours"
+      }
+    },
+    "binary_sensor": {
+      "error_status": {
+        "name": "Device error"
+      },
+      "frost_protection_active": {
+        "name": "Frost protection active"
+      },
+      "filter_change_due": {
+        "name": "Filter change due"
+      },
+      "rf_comm_status": {
+        "name": "RF communication status"
+      }
+    },
+    "switch": {
+      "intensive": {
+        "name": "Intensive ventilation"
+      }
+    },
+    "number": {
+      "humidity_starting_point": {
+        "name": "Humidity starting point"
+      },
+      "humidity_min_level": {
+        "name": "Humidity minimum level"
+      },
+      "humidity_max_level": {
+        "name": "Humidity maximum level"
+      },
+      "co2_starting_point": {
+        "name": "CO2 starting point"
+      },
+      "co2_min_level": {
+        "name": "CO2 minimum level"
+      },
+      "co2_max_level": {
+        "name": "CO2 maximum level"
+      }
+    },
+    "fan": {
+      "supply_level": {
+        "name": "Supply air"
+      },
+      "extract_level": {
+        "name": "Extract air"
+      }
+    },
+    "select": {
+      "operation_mode": {
+        "name": "Sensor control",
+        "state": {
+          "inactive": "Off",
+          "humidity_control": "Humidity control",
+          "co2_control": "CO2 control",
+          "automatic": "Automatic"
+        }
+      },
+      "preset_mode": {
+        "name": "Quick mode",
+        "state": {
+          "inactive": "Individual",
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      }
+    }
+  },
+  "system_health": {
+    "info": {
+      "loaded_entries": "Loaded config entries",
+      "configured_units": "Configured units",
+      "state_units": "Units with live state",
+      "last_update_success": "Last update successful",
+      "last_job_error": "Last scheduler error",
+      "unavailable_units": "Currently unavailable units"
+    }
+  }
+}

@@ -7,39 +7,26 @@ The heavier runtime reads happen only after the config entry is created.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
-from functools import partial
 import logging
+from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import selector
-try:
-    from homeassistant.helpers.service_info import UsbServiceInfo
-except ImportError:  # pragma: no cover - compatibility with older HA layouts
-    @dataclass(slots=True)
-    class UsbServiceInfo:
-        """Fallback USB discovery payload for test/runtime compatibility."""
-
-        device: str
-        vid: str | None = None
-        pid: str | None = None
-        serial_number: str | None = None
-        manufacturer: str | None = None
-        description: str | None = None
+from homeassistant.helpers.service_info.usb import UsbServiceInfo
 
 from .const import (
     CONF_MAX_REQUESTS_PER_SECOND,
     CONF_PORT,
     CONF_ROOMS,
-    DEFAULT_PORT,
     DEFAULT_MAX_REQUESTS_PER_SECOND,
+    DEFAULT_PORT,
     DEFAULT_SCAN_SLAVE_END,
     DEFAULT_SCAN_SLAVE_START,
     DOMAIN,
@@ -49,11 +36,11 @@ from .const import (
     FIXED_STOPBITS,
     FIXED_TIMEOUT,
     GATEWAY_NAME,
-    INTEGRATION_NAME,
     MAX_MAX_REQUESTS_PER_SECOND,
     MIN_MAX_REQUESTS_PER_SECOND,
     MODEL_PROFILE_LABELS,
 )
+from .coordinator import MeltemDataUpdateCoordinator
 from .modbus_helpers import (
     MeltemModbusError,
     SerialSettings,
@@ -71,13 +58,40 @@ _LOGGER = logging.getLogger(__name__)
 
 
 
-def _build_options_result_data(config_entry: ConfigEntry, **updates: object) -> dict[str, object]:
+def _build_options_result_data(
+    config_entry: ConfigEntry, request_rate: float
+) -> dict[str, object]:
     """Return the persisted options payload for finishing an options flow."""
 
     return {
         **config_entry.options,
-        **updates,
+        CONF_MAX_REQUESTS_PER_SECOND: request_rate,
     }
+
+
+def _profiles_form(
+    slaves: list[int],
+    defaults_by_slave: Mapping[int, str],
+    previews_by_slave: Mapping[int, str],
+    names_by_slave: Mapping[int, str] | None = None,
+) -> tuple[vol.Schema, dict[str, str]]:
+    """Build the schema and description placeholders for one profile step."""
+
+    profile_selector = _build_profile_selector()
+    data_schema = vol.Schema(
+        {
+            vol.Required(
+                _profile_field_key(slave),
+                default=defaults_by_slave[slave],
+            ): profile_selector
+            for slave in slaves
+        }
+    )
+    placeholders = {
+        "device_count": str(len(slaves)),
+        "unit_details": _unit_details(slaves, previews_by_slave, names_by_slave),
+    }
+    return data_schema, placeholders
 
 
 def _build_profile_selector() -> selector.SelectSelector:
@@ -107,10 +121,14 @@ def _build_max_request_rate_selector() -> selector.NumberSelector:
     )
 
 
-def _profile_field_key(index: int) -> str:
-    """Build a human-friendly field label for one detected unit."""
+def _profile_field_key(slave: int) -> str:
+    """Build the stable schema key for one detected unit.
 
-    return f"Unit {index} profile"
+    The key is derived from the Modbus address so it survives rescans and can
+    be translated in ``strings.json``.
+    """
+
+    return f"slave_{slave}"
 
 
 def _default_room_name(index: int) -> str:
@@ -119,30 +137,43 @@ def _default_room_name(index: int) -> str:
     return f"Unit {index}"
 
 
-def _profile_label(
-    index: int,
-    slave: int,
+def _unit_details(
+    slaves: list[int],
     previews_by_slave: Mapping[int, str],
-    existing_rooms_by_slave: Mapping[int, Mapping[str, Any]] | None = None,
+    names_by_slave: Mapping[int, str] | None = None,
 ) -> str:
-    """Build a user-facing profile label with an optional preview."""
+    """Build the markdown list that identifies each unit in the step description."""
 
-    base = _profile_field_key(index)
-    existing_rooms_by_slave = existing_rooms_by_slave or {}
-    existing_name = existing_rooms_by_slave.get(slave, {}).get("name")
-    preview = previews_by_slave.get(slave)
-    details: list[str] = []
-    if (
-        isinstance(existing_name, str)
-        and existing_name
-        and existing_name != _default_room_name(index)
-    ):
-        details.append(existing_name)
-    if preview:
-        details.append(preview.replace("ID ", "Hardware ID "))
-    if not details:
-        return base
-    return f"{base} ({', '.join(details)})"
+    names_by_slave = names_by_slave or {}
+    lines: list[str] = []
+    for slave in slaves:
+        details: list[str] = []
+        name = names_by_slave.get(slave)
+        if name:
+            details.append(name)
+        preview = previews_by_slave.get(slave)
+        if preview:
+            details.append(preview.replace("ID ", "Hardware ID "))
+        suffix = f": {', '.join(details)}" if details else ""
+        lines.append(f"- **{slave}**{suffix}")
+    return "\n".join(lines)
+
+
+@callback
+def _device_names_by_slave(hass, rooms: list[Mapping[str, Any]]) -> dict[int, str]:
+    """Map unit addresses to the device names the user set in Home Assistant.
+
+    Naming belongs to the device registry, so the stored room name is only ever
+    the initial value and is not shown here.
+    """
+
+    registry = dr.async_get(hass)
+    names: dict[int, str] = {}
+    for room in rooms:
+        device = registry.async_get_device(identifiers={(DOMAIN, str(room["key"]))})
+        if device is not None and device.name_by_user:
+            names[int(room["slave"])] = device.name_by_user
+    return names
 
 
 def _detected_profile_default(
@@ -169,24 +200,17 @@ def _build_rooms_from_profiles(
     selected_profiles: Mapping[str, Any],
     previews_by_slave: Mapping[int, str] | None = None,
     existing_rooms_by_slave: Mapping[int, Mapping[str, Any]] | None = None,
-    *,
-    profile_fields_by_slave: Mapping[int, str] | None = None,
 ) -> list[dict[str, object]]:
     """Build room config entries from selected per-device profiles."""
 
     rooms: list[dict[str, object]] = []
     previews_by_slave = previews_by_slave or {}
     existing_rooms_by_slave = existing_rooms_by_slave or {}
-    profile_fields_by_slave = profile_fields_by_slave or {}
     used_room_keys: set[str] = set()
 
     for index, slave in enumerate(slaves, start=1):
         existing_room = existing_rooms_by_slave.get(slave, {})
-        field_key = profile_fields_by_slave.get(
-            slave,
-            _profile_label(index, slave, previews_by_slave),
-        )
-        selected_profile = str(selected_profiles[field_key])
+        selected_profile = str(selected_profiles[_profile_field_key(slave)])
         preferred_room_key = str(existing_room.get("key") or f"slave_{slave}")
         room_key = preferred_room_key
         suffix = 2
@@ -197,6 +221,7 @@ def _build_rooms_from_profiles(
         rooms.append(
             {
                 "key": room_key,
+                # Only the initial device name; renaming happens in the device registry.
                 "name": existing_room.get("name", _default_room_name(index)),
                 "slave": slave,
                 "profile": selected_profile,
@@ -237,24 +262,36 @@ def _build_serial_settings(port: str) -> SerialSettings:
     )
 
 
+async def _async_resolve_port(hass, port: str) -> str:
+    """Resolve the stable serial path off the event loop.
+
+    Resolution walks ``/dev/serial/by-id``, which is blocking filesystem I/O.
+    """
+
+    return await hass.async_add_executor_job(resolve_preferred_port_path, port)
+
+
 async def _async_probe_discovered_slaves(
     hass,
     settings: SerialSettings,
     discovered_slaves: list[int],
-) -> tuple[dict[int, str], dict[int, str], dict[int, list[str]]]:
-    """Probe discovered units for previews, detected profiles, and entity keys."""
+) -> tuple[dict[int, str], dict[int, str]]:
+    """Probe discovered units for previews and detected profiles.
+
+    The probed entity keys are intentionally not returned: the stored keys are
+    always derived from the profile the user picks afterwards.
+    """
 
     probe_settings = build_setup_probe_settings(settings)
     preview_by_slave: dict[int, str] = {}
     detected_profile_by_slave: dict[int, str] = {}
-    supported_entity_keys_by_slave: dict[int, list[str]] = {}
 
     for slave in discovered_slaves:
         try:
             (
                 detected_profile,
                 preview,
-                supported_entity_keys,
+                _supported_entity_keys,
             ) = await hass.async_add_executor_job(
                 detect_slave_details,
                 probe_settings,
@@ -268,17 +305,11 @@ async def _async_probe_discovered_slaves(
             )
             detected_profile = "plain"
             preview = None
-            supported_entity_keys = supported_entity_keys_for_profile("ii_plain")
         detected_profile_by_slave[slave] = detected_profile
         if preview:
             preview_by_slave[slave] = preview
-        supported_entity_keys_by_slave[slave] = supported_entity_keys
 
-    return (
-        preview_by_slave,
-        detected_profile_by_slave,
-        supported_entity_keys_by_slave,
-    )
+    return preview_by_slave, detected_profile_by_slave
 
 
 class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -292,8 +323,6 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._discovered_slaves: list[int] = []
         self._preview_by_slave: dict[int, str] = {}
         self._detected_profile_by_slave: dict[int, str] = {}
-        self._supported_entity_keys_by_slave: dict[int, list[str]] = {}
-        self._profile_fields_by_slave: dict[int, str] = {}
         self._usb_title_placeholders: dict[str, str] | None = None
 
     @staticmethod
@@ -303,7 +332,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> MeltemVentilationOptionsFlow:
         """Return the options flow handler."""
 
-        return MeltemVentilationOptionsFlow(config_entry)
+        return MeltemVentilationOptionsFlow()
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
         """Collect the serial port and scan for connected units."""
@@ -312,7 +341,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             selected_port = user_input[CONF_PORT]
-            normalized_port = resolve_preferred_port_path(selected_port)
+            normalized_port = await _async_resolve_port(self.hass, selected_port)
             settings = _build_serial_settings(selected_port)
 
             try:
@@ -335,7 +364,6 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     (
                         self._preview_by_slave,
                         self._detected_profile_by_slave,
-                        self._supported_entity_keys_by_slave,
                     ) = await _async_probe_discovered_slaves(
                         self.hass,
                         settings,
@@ -365,14 +393,15 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle USB discovery for a Meltem gateway."""
 
         port = discovery_info.device
-        serial_number = discovery_info.serial_number or port
+        normalized_port = await _async_resolve_port(self.hass, port)
 
-        await self.async_set_unique_id(serial_number)
-        self._abort_if_unique_id_configured(updates={CONF_PORT: port})
+        # Same unique ID scheme as the manual step so both paths deduplicate.
+        await self.async_set_unique_id(normalized_port)
+        self._abort_if_unique_id_configured(updates={CONF_PORT: normalized_port})
 
-        self._port = port
+        self._port = normalized_port
         self._usb_title_placeholders = {
-            "port": port,
+            "port": normalized_port,
             "manufacturer": discovery_info.manufacturer or "Unknown",
             "description": discovery_info.description or "Unknown USB device",
         }
@@ -432,7 +461,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "Read configured Meltem units from gateway on %s and found no configured addresses",
                 self._port,
             )
-            self._port = resolve_preferred_port_path(self._port)
+            self._port = await _async_resolve_port(self.hass, self._port)
             return self._show_confirm_usb_form(
                 errors={"base": "no_devices_found"},
             )
@@ -440,13 +469,13 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         (
             self._preview_by_slave,
             self._detected_profile_by_slave,
-            self._supported_entity_keys_by_slave,
         ) = await _async_probe_discovered_slaves(
             self.hass,
             settings,
             discovered_slaves,
         )
         self._discovered_slaves = discovered_slaves
+        self._port = await _async_resolve_port(self.hass, self._port)
         return await self.async_step_profiles()
 
     async def async_step_profiles(
@@ -457,42 +486,25 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not self._discovered_slaves:
             return await self.async_step_user()
 
-        profile_selector = _build_profile_selector()
-        self._profile_fields_by_slave = {
-            slave: _profile_label(
-                index,
-                slave,
-                self._preview_by_slave,
-            )
-            for index, slave in enumerate(self._discovered_slaves, start=1)
-        }
-        data_schema = vol.Schema(
+        data_schema, placeholders = _profiles_form(
+            self._discovered_slaves,
             {
-                vol.Required(
-                    self._profile_fields_by_slave[slave],
-                    default=_detected_profile_default(
-                        slave, self._detected_profile_by_slave
-                    ),
-                ): profile_selector
-                for index, slave in enumerate(self._discovered_slaves, start=1)
-            }
+                slave: _detected_profile_default(slave, self._detected_profile_by_slave)
+                for slave in self._discovered_slaves
+            },
+            self._preview_by_slave,
         )
 
         if user_input is not None:
             return self.async_create_entry(
                 title=GATEWAY_NAME,
                 data={
-                    CONF_PORT: resolve_preferred_port_path(self._port),
+                    CONF_PORT: self._port,
                     CONF_MAX_REQUESTS_PER_SECOND: self._max_requests_per_second,
                     CONF_ROOMS: _build_rooms_from_profiles(
                         self._discovered_slaves,
                         user_input,
                         self._preview_by_slave,
-                        {
-                            slave: {}
-                            for slave in self._discovered_slaves
-                        },
-                        profile_fields_by_slave=self._profile_fields_by_slave,
                     ),
                 },
             )
@@ -500,9 +512,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="profiles",
             data_schema=data_schema,
-            description_placeholders={
-                "device_count": str(len(self._discovered_slaves)),
-            },
+            description_placeholders=placeholders,
         )
 
 
@@ -514,22 +524,40 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
     setup, runtime, and options changes.
     """
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        self._config_entry = config_entry
-        self._max_requests_per_second = float(
-            config_entry.options.get(
+    def __init__(self) -> None:
+        self._request_rate_override: float | None = None
+        self._discovered_slaves: list[int] = []
+        self._preview_by_slave: dict[int, str] = {}
+        self._detected_profile_by_slave: dict[int, str] = {}
+
+    @property
+    def _max_requests_per_second(self) -> float:
+        """Return the pending or currently stored scheduler request rate."""
+
+        if self._request_rate_override is not None:
+            return self._request_rate_override
+        return float(
+            self.config_entry.options.get(
                 CONF_MAX_REQUESTS_PER_SECOND,
-                config_entry.data.get(
+                self.config_entry.data.get(
                     CONF_MAX_REQUESTS_PER_SECOND,
                     DEFAULT_MAX_REQUESTS_PER_SECOND,
                 ),
             )
         )
-        self._discovered_slaves: list[int] = []
-        self._preview_by_slave: dict[int, str] = {}
-        self._detected_profile_by_slave: dict[int, str] = {}
-        self._supported_entity_keys_by_slave: dict[int, list[str]] = {}
-        self._profile_fields_by_slave: dict[int, str] = {}
+
+    @property
+    def _coordinator(self) -> MeltemDataUpdateCoordinator | None:
+        """Return the running coordinator, or ``None`` if setup never completed.
+
+        Home Assistant offers the options flow regardless of entry state, and
+        deletes ``runtime_data`` whenever the entry is not loaded.
+        """
+
+        runtime_data: MeltemRuntimeData | None = getattr(
+            self.config_entry, "runtime_data", None
+        )
+        return runtime_data.coordinator if runtime_data is not None else None
 
     async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
         """Choose which configuration action to perform."""
@@ -549,14 +577,18 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         """Change serial connection settings used by the integration."""
 
         errors: dict[str, str] = {}
-        current_port = str(self._config_entry.data.get(CONF_PORT, DEFAULT_PORT))
+        current_port = str(self.config_entry.data.get(CONF_PORT, DEFAULT_PORT))
         current_request_rate = self._max_requests_per_second
 
         if user_input is not None:
             selected_port = str(user_input[CONF_PORT])
-            normalized_port = resolve_preferred_port_path(selected_port)
+            normalized_port = await _async_resolve_port(self.hass, selected_port)
             selected_request_rate = float(user_input[CONF_MAX_REQUESTS_PER_SECOND])
-            current_normalized_port = current_port
+            # The stored path may predate a /dev/serial/by-id symlink, so it has
+            # to be normalized too before deciding that the port changed.
+            current_normalized_port = await _async_resolve_port(
+                self.hass, current_port
+            )
 
             if normalized_port != current_normalized_port:
                 settings = _build_serial_settings(selected_port)
@@ -570,34 +602,36 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                     errors["base"] = "cannot_connect"
                 else:
                     self.hass.config_entries.async_update_entry(
-                        self._config_entry,
+                        self.config_entry,
                         data={
-                            **self._config_entry.data,
+                            **self.config_entry.data,
                             CONF_PORT: normalized_port,
                         },
+                        unique_id=normalized_port,
                     )
 
             if not errors:
                 self.hass.config_entries.async_update_entry(
-                    self._config_entry,
+                    self.config_entry,
                     options={
-                        **self._config_entry.options,
+                        **self.config_entry.options,
                         CONF_MAX_REQUESTS_PER_SECOND: selected_request_rate,
                     },
                 )
-                self._max_requests_per_second = selected_request_rate
+                self._request_rate_override = selected_request_rate
 
                 if normalized_port != current_normalized_port:
-                    await self.hass.config_entries.async_reload(self._config_entry.entry_id)
+                    await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                elif (coordinator := self._coordinator) is not None:
+                    coordinator.update_request_rate(selected_request_rate)
                 else:
-                    runtime_data: MeltemRuntimeData = self._config_entry.runtime_data
-                    runtime_data.coordinator.update_request_rate(selected_request_rate)
+                    # Entry never finished setup, so there is no scheduler to retune.
+                    await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
                 return self.async_create_entry(
                     title="",
                     data=_build_options_result_data(
-                        self._config_entry,
-                        **{CONF_MAX_REQUESTS_PER_SECOND: self._max_requests_per_second},
+                        self.config_entry, self._max_requests_per_second
                     ),
                 )
 
@@ -623,9 +657,9 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Edit the profiles for already known units without rescanning."""
 
-        runtime_data: MeltemRuntimeData = self._config_entry.runtime_data
+        coordinator = self._coordinator
         existing_rooms = {
-            int(room["slave"]): room for room in self._config_entry.data[CONF_ROOMS]
+            int(room["slave"]): room for room in self.config_entry.data[CONF_ROOMS]
         }
         slaves = sorted(existing_rooms)
 
@@ -634,77 +668,59 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is None:
             self._preview_by_slave = {}
-            self._detected_profile_by_slave = {}
-            self._supported_entity_keys_by_slave = {}
             for slave in slaves:
-                try:
-                    detected_profile, preview, supported_entity_keys = (
-                        await runtime_data.coordinator.async_probe_slave_details(slave)
-                    )
-                except MeltemModbusError:
-                    preview = existing_rooms[slave].get("preview")
-                    supported_entity_keys = supported_entity_keys_for_profile(
-                        str(existing_rooms[slave].get("profile", "ii_plain"))
-                    )
-                    detected_profile = str(existing_rooms[slave].get("profile", "ii_plain"))
-                self._detected_profile_by_slave[slave] = detected_profile
+                preview = existing_rooms[slave].get("preview")
+                if coordinator is not None:
+                    try:
+                        _detected_profile, preview, _keys = (
+                            await coordinator.async_probe_slave_details(slave)
+                        )
+                    except MeltemModbusError:
+                        preview = existing_rooms[slave].get("preview")
                 if preview:
                     self._preview_by_slave[slave] = str(preview)
-                self._supported_entity_keys_by_slave[slave] = list(supported_entity_keys)
 
         if user_input is not None:
-            updated_data = {
-                **self._config_entry.data,
-                CONF_ROOMS: _build_rooms_from_profiles(
-                    slaves,
-                    user_input,
-                    self._preview_by_slave,
-                    {
-                        slave: {
-                            **existing_rooms[slave],
-                        }
-                        for slave in slaves
-                    },
-                    profile_fields_by_slave=self._profile_fields_by_slave,
-                ),
-            }
-            self.hass.config_entries.async_update_entry(
-                self._config_entry,
-                data=updated_data,
-            )
-            await self.hass.config_entries.async_reload(self._config_entry.entry_id)
-            return self.async_create_entry(
-                title="",
-                data=_build_options_result_data(
-                    self._config_entry,
-                    **{CONF_MAX_REQUESTS_PER_SECOND: self._max_requests_per_second},
-                ),
+            return await self._async_apply_profiles(
+                {
+                    **self.config_entry.data,
+                    CONF_ROOMS: _build_rooms_from_profiles(
+                        slaves,
+                        user_input,
+                        self._preview_by_slave,
+                        existing_rooms,
+                    ),
+                }
             )
 
-        profile_selector = _build_profile_selector()
-        self._profile_fields_by_slave = {
-            slave: _profile_label(
-                index,
-                slave,
-                self._preview_by_slave,
-                existing_rooms,
-            )
-            for index, slave in enumerate(slaves, start=1)
-        }
+        data_schema, placeholders = _profiles_form(
+            slaves,
+            {slave: str(existing_rooms[slave]["profile"]) for slave in slaves},
+            self._preview_by_slave,
+            _device_names_by_slave(self.hass, self.config_entry.data[CONF_ROOMS]),
+        )
         return self.async_show_form(
             step_id="edit_profiles",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        self._profile_fields_by_slave[slave],
-                        default=str(existing_rooms[slave]["profile"]),
-                    ): profile_selector
-                    for index, slave in enumerate(slaves, start=1)
-                }
+            data_schema=data_schema,
+            description_placeholders=placeholders,
+        )
+
+    async def _async_apply_profiles(self, updated_data: dict) -> FlowResult:
+        """Persist changed room profiles and reload the entry."""
+
+        self.hass.config_entries.async_update_entry(
+            self.config_entry,
+            data=updated_data,
+            options=_build_options_result_data(
+                self.config_entry, self._max_requests_per_second
             ),
-            description_placeholders={
-                "device_count": str(len(slaves)),
-            },
+        )
+        await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+        return self.async_create_entry(
+            title="",
+            data=_build_options_result_data(
+                self.config_entry, self._max_requests_per_second
+            ),
         )
 
     async def async_step_rescan_units(
@@ -715,33 +731,39 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            # Reuse the live coordinator/client so options changes do not race a
+            # second serial connection against the running one.
+            coordinator = self._coordinator
+            if coordinator is None:
+                errors["base"] = "cannot_connect"
+                return self.async_show_form(
+                    step_id="rescan_units",
+                    data_schema=vol.Schema({}),
+                    errors=errors,
+                )
             try:
-                runtime_data: MeltemRuntimeData = self._config_entry.runtime_data
-                # Reuse the live coordinator/client so options changes do not
-                # race a second serial connection against the running one.
-                discovered_slaves = await runtime_data.coordinator.async_discover_gateway_units()
+                discovered_slaves = await coordinator.async_discover_gateway_units()
             except MeltemModbusError:
                 errors["base"] = "cannot_connect"
             else:
                 _LOGGER.info(
                     "Rescanned Meltem gateway on %s and found slaves: %s",
-                    self._config_entry.data[CONF_PORT],
+                    self.config_entry.data[CONF_PORT],
                     discovered_slaves,
                 )
                 if not discovered_slaves:
                     _LOGGER.warning(
                         "No supported Meltem M-WRG units found on gateway at %s during rescan",
-                        self._config_entry.data[CONF_PORT],
+                        self.config_entry.data[CONF_PORT],
                     )
                     errors["base"] = "no_devices_found"
                 else:
                     self._preview_by_slave = {}
                     self._detected_profile_by_slave = {}
-                    self._supported_entity_keys_by_slave = {}
                     for slave in discovered_slaves:
                         try:
-                            detected_profile, preview, supported_entity_keys = (
-                                await runtime_data.coordinator.async_probe_slave_details(slave)
+                            detected_profile, preview, _keys = (
+                                await coordinator.async_probe_slave_details(slave)
                             )
                         except MeltemModbusError as err:
                             _LOGGER.warning(
@@ -751,13 +773,9 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                             )
                             detected_profile = "plain"
                             preview = None
-                            supported_entity_keys = supported_entity_keys_for_profile(
-                                "ii_plain"
-                            )
                         self._detected_profile_by_slave[slave] = detected_profile
                         if preview:
                             self._preview_by_slave[slave] = preview
-                        self._supported_entity_keys_by_slave[slave] = supported_entity_keys
                     self._discovered_slaves = discovered_slaves
                     return await self.async_step_profiles()
 
@@ -776,73 +794,43 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             return await self.async_step_init()
 
         existing_rooms = {
-            int(room["slave"]): room for room in self._config_entry.data[CONF_ROOMS]
+            int(room["slave"]): room for room in self.config_entry.data[CONF_ROOMS]
         }
-        profile_selector = _build_profile_selector()
-        self._profile_fields_by_slave = {
-            slave: _profile_label(
-                index,
-                slave,
-                self._preview_by_slave,
-                existing_rooms,
-            )
-            for index, slave in enumerate(self._discovered_slaves, start=1)
-        }
-        data_schema = vol.Schema(
-            {
-                vol.Required(
-                    self._profile_fields_by_slave[slave],
-                    default=str(
-                        existing_rooms.get(slave, {}).get(
-                            "profile",
-                            _detected_profile_default(
-                                slave, self._detected_profile_by_slave
-                            ),
-                        )
-                    ),
-                ): profile_selector
-                for index, slave in enumerate(self._discovered_slaves, start=1)
-            }
-        )
 
         if user_input is not None:
-            updated_data = {
-                **self._config_entry.data,
-                CONF_PORT: resolve_preferred_port_path(self._config_entry.data[CONF_PORT]),
-                CONF_ROOMS: _build_rooms_from_profiles(
-                    self._discovered_slaves,
-                    user_input,
-                    self._preview_by_slave,
-                    {
-                        slave: {
-                            **existing_rooms.get(slave, {}),
-                        }
-                        for slave in self._discovered_slaves
-                    },
-                    profile_fields_by_slave=self._profile_fields_by_slave,
-                ),
-            }
-            self.hass.config_entries.async_update_entry(
-                self._config_entry,
-                data=updated_data,
-                options={
-                    **self._config_entry.options,
-                    CONF_MAX_REQUESTS_PER_SECOND: self._max_requests_per_second,
-                },
-            )
-            await self.hass.config_entries.async_reload(self._config_entry.entry_id)
-            return self.async_create_entry(
-                title="",
-                data=_build_options_result_data(
-                    self._config_entry,
-                    **{CONF_MAX_REQUESTS_PER_SECOND: self._max_requests_per_second},
-                ),
+            return await self._async_apply_profiles(
+                {
+                    **self.config_entry.data,
+                    CONF_PORT: await _async_resolve_port(
+                        self.hass, self.config_entry.data[CONF_PORT]
+                    ),
+                    CONF_ROOMS: _build_rooms_from_profiles(
+                        self._discovered_slaves,
+                        user_input,
+                        self._preview_by_slave,
+                        existing_rooms,
+                    ),
+                }
             )
 
+        data_schema, placeholders = _profiles_form(
+            self._discovered_slaves,
+            {
+                slave: str(
+                    existing_rooms.get(slave, {}).get(
+                        "profile",
+                        _detected_profile_default(
+                            slave, self._detected_profile_by_slave
+                        ),
+                    )
+                )
+                for slave in self._discovered_slaves
+            },
+            self._preview_by_slave,
+            _device_names_by_slave(self.hass, self.config_entry.data[CONF_ROOMS]),
+        )
         return self.async_show_form(
             step_id="profiles",
             data_schema=data_schema,
-            description_placeholders={
-                "device_count": str(len(self._discovered_slaves)),
-            },
+            description_placeholders=placeholders,
         )

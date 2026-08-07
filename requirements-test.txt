@@ -1,0 +1,9 @@
+# Test and lint dependencies.
+#
+# pytest-homeassistant-custom-component pins the matching homeassistant,
+# pytest and pytest-asyncio versions, so those must NOT be installed
+# separately - doing so silently breaks the pinned combination.
+# It also dictates the minimum Python version used in CI.
+pytest-homeassistant-custom-component==0.13.354
+pymodbus[serial]>=3.14.0,<4.0.0
+ruff==0.15.20

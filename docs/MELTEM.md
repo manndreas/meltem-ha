@@ -276,6 +276,56 @@ Write sequence:
 | --- | --- | --- | --- | --- |
 | Ventilation level | 4 | The range from `0` to `200` corresponds to an air flow of `0` to `100 m³/h` (`M-WRG-S`: `97 m³/h`).<br><br>Example:<br>`70` corresponds to `35 m³/h`<br>`100` corresponds to `50 m³/h` | The range from `0` to `200` corresponds to an air flow of `0` to `100 m³/h` (`M-WRG-S`: `97 m³/h`).<br><br>Example:<br>`70` corresponds to `35 m³/h`<br>`100` corresponds to `50 m³/h` | 0 |
 
+## Sensor equipment per unit type
+
+Source: section `16.6 Sensorausstattung der unterschiedlichen Lüftungsgerätetypen`
+in the Modbus manuals `BA-IA_M-WRG-II_P-M_E-M` and `BA-IA_M-WRG-S_M`
+(`docs/Meltem/`). The two manuals list the same matrix.
+
+| Sensor | base (`-M`) | `-F` | `-FC` |
+| --- | :--: | :--: | :--: |
+| Exhaust air temperature (`Fortluft`) | X | X | X |
+| Outdoor air temperature (`Außenluft`) |  | X | X |
+| Extract air temperature (`Abluft`) |  | X | X |
+| Supply air temperature (`Zuluft`) |  | X | X |
+| Relative humidity extract air |  | X | X |
+| Relative humidity supply air |  | X | X |
+| CO2 extract air |  |  | X |
+
+Consequences for this integration:
+
+- A unit without humidity/CO2 sensors exposes **only** the exhaust air
+  temperature. It has no outdoor, extract or supply air temperature sensor.
+- All four temperatures and both humidity sensors arrive together with the
+  `-F` variant. There is no intermediate step with temperatures but no humidity.
+- The register table lists every register regardless of unit type, so it is not
+  an equipment statement. What a base unit answers on `41002`/`41004`/`41009`
+  is not documented and still has to be probed.
+
+The frost protection explains why the exhaust sensor is always present:
+
+> Um eine Vereisung des Wärmeübertragers zu verhindern, ist fortluftseitig ein
+> Temperaturfühler zur ständigen Temperaturüberwachung montiert.
+
+## Model suffixes
+
+Not documented as a formal type key; derived from the manual titles and
+technical data sections.
+
+| Suffix | Meaning |
+| --- | --- |
+| `P` | cross-counterflow plate heat exchanger |
+| `E` | enthalpy heat exchanger (moisture recovery) |
+| `M` | Modbus operating variant |
+| `T` | `InControl` touch sensor operating variant |
+| `-F` | humidity sensors plus all four temperature sensors |
+| `-FC` | humidity and CO2 |
+
+Sensor control modes follow the same split:
+
+> Feuchteregelung (*) · CO2-Regelung (**) · Automatikbetrieb (**)
+> (*) bei F- und FC-Gerätevariante — (**) bei FC-Gerätevariante
+
 ## Feature matrix
 
 Sources:

@@ -9,12 +9,10 @@ import pytest
 from custom_components.meltem_ventilation.binary_sensor import (
     BINARY_SENSOR_DESCRIPTIONS,
     MeltemBinarySensorEntity,
-    _supports_profile,
 )
 from custom_components.meltem_ventilation.const import DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
-
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -90,8 +88,6 @@ class TestBinarySensorIsOn:
             ("frost_protection_active", {"frost_protection_active": False}, False),
             ("filter_change_due", {"filter_change_due": True}, True),
             ("filter_change_due", {"filter_change_due": False}, False),
-            ("intensive_active", {"intensive_active": True}, True),
-            ("intensive_active", {"intensive_active": False}, False),
             ("rf_comm_status", {"rf_comm_status": True}, True),
         ],
     )

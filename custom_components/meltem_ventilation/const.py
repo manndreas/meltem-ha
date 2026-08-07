@@ -9,6 +9,8 @@ This file keeps protocol details in one place:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from homeassistant.const import Platform
 
 DOMAIN = "meltem_ventilation"
@@ -18,9 +20,10 @@ GATEWAY_NAME = "Meltem Gateway M-WRG-GW"
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
-    Platform.BUTTON,
+    Platform.FAN,
     Platform.NUMBER,
     Platform.SELECT,
+    Platform.SWITCH,
 ]
 
 CONF_MAX_REQUESTS_PER_SECOND = "max_requests_per_second"
@@ -50,67 +53,49 @@ OPERATING_HOURS_REFRESH_SECONDS = 3600
 CONTROL_SETTINGS_REFRESH_SECONDS = 3600
 FILTER_REFRESH_SECONDS = 3600
 
-PROFILE_METADATA: dict[str, dict[str, object]] = {
-    "s_plain": {
-        "label": "M-WRG-S",
-        "series": "s",
-        "max_airflow": 97,
-        "capabilities": frozenset(),
-    },
-    "s_f": {
-        "label": "M-WRG-S (-F)",
-        "series": "s",
-        "max_airflow": 97,
-        "capabilities": frozenset({"humidity"}),
-    },
-    "s_fc": {
-        "label": "M-WRG-S (-FC)",
-        "series": "s",
-        "max_airflow": 97,
-        "capabilities": frozenset({"humidity", "co2"}),
-    },
-    "ii_plain": {
-        "label": "M-WRG-II",
-        "series": "ii",
-        "max_airflow": 100,
-        "capabilities": frozenset(),
-    },
-    "ii_f": {
-        "label": "M-WRG-II (-F)",
-        "series": "ii",
-        "max_airflow": 100,
-        "capabilities": frozenset({"humidity"}),
-    },
-    "ii_fc": {
-        "label": "M-WRG-II (-FC)",
-        "series": "ii",
-        "max_airflow": 100,
-        "capabilities": frozenset({"humidity", "co2"}),
-    },
-    "ii_fc_voc": {
-        "label": "M-WRG-II (O/VOC-AUL)",
-        "series": "ii",
-        "max_airflow": 100,
-        "capabilities": frozenset({"humidity", "co2", "voc"}),
-    },
+@dataclass(frozen=True, slots=True)
+class ProfileMetadata:
+    """User-facing and protocol-relevant facts about one supported unit family."""
+
+    label: str
+    series: str
+    max_airflow: int
+    capabilities: frozenset[str]
+
+
+PROFILE_METADATA: dict[str, ProfileMetadata] = {
+    "s_plain": ProfileMetadata("M-WRG-S", "s", 97, frozenset()),
+    "s_f": ProfileMetadata("M-WRG-S (-F)", "s", 97, frozenset({"humidity"})),
+    "s_fc": ProfileMetadata("M-WRG-S (-FC)", "s", 97, frozenset({"humidity", "co2"})),
+    "ii_plain": ProfileMetadata("M-WRG-II", "ii", 100, frozenset()),
+    "ii_f": ProfileMetadata("M-WRG-II (-F)", "ii", 100, frozenset({"humidity"})),
+    "ii_fc": ProfileMetadata(
+        "M-WRG-II (-FC)", "ii", 100, frozenset({"humidity", "co2"})
+    ),
+    "ii_fc_voc": ProfileMetadata(
+        "M-WRG-II (O/VOC-AUL)", "ii", 100, frozenset({"humidity", "co2", "voc"})
+    ),
 }
 
+
+def _profiles_with(capability: str) -> frozenset[str]:
+    return frozenset(
+        key
+        for key, metadata in PROFILE_METADATA.items()
+        if capability in metadata.capabilities
+    )
+
+
 MODEL_PROFILE_LABELS: dict[str, str] = {
-    key: str(metadata["label"]) for key, metadata in PROFILE_METADATA.items()
+    key: metadata.label for key, metadata in PROFILE_METADATA.items()
 }
 MODEL_PROFILES: tuple[str, ...] = tuple(MODEL_PROFILE_LABELS)
 ALL_PROFILES: frozenset[str] = frozenset(MODEL_PROFILES)
-HUMIDITY_PROFILES: frozenset[str] = frozenset(
-    key for key, metadata in PROFILE_METADATA.items() if "humidity" in metadata["capabilities"]
-)
-CO2_PROFILES: frozenset[str] = frozenset(
-    key for key, metadata in PROFILE_METADATA.items() if "co2" in metadata["capabilities"]
-)
-VOC_PROFILES: frozenset[str] = frozenset(
-    key for key, metadata in PROFILE_METADATA.items() if "voc" in metadata["capabilities"]
-)
+HUMIDITY_PROFILES: frozenset[str] = _profiles_with("humidity")
+CO2_PROFILES: frozenset[str] = _profiles_with("co2")
+VOC_PROFILES: frozenset[str] = _profiles_with("voc")
 PLAIN_PROFILES: frozenset[str] = frozenset(
-    key for key, metadata in PROFILE_METADATA.items() if not metadata["capabilities"]
+    key for key, metadata in PROFILE_METADATA.items() if not metadata.capabilities
 )
 
 PRESET_MODE_LOW = "low"
@@ -118,6 +103,8 @@ PRESET_MODE_MEDIUM = "medium"
 PRESET_MODE_HIGH = "high"
 PRESET_MODE_INTENSIVE = "intensive"
 PRESET_MODE_INACTIVE = "inactive"
+# Still decoded from the device, but no longer selectable: the separate supply
+# and extract fans express these states directly.
 PRESET_MODE_EXTRACT_ONLY = "extract_only"
 PRESET_MODE_SUPPLY_ONLY = "supply_only"
 PRESET_MODE_OPTIONS: tuple[str, ...] = (
@@ -125,8 +112,6 @@ PRESET_MODE_OPTIONS: tuple[str, ...] = (
     PRESET_MODE_LOW,
     PRESET_MODE_MEDIUM,
     PRESET_MODE_HIGH,
-    PRESET_MODE_EXTRACT_ONLY,
-    PRESET_MODE_SUPPLY_ONLY,
 )
 
 PRESET_MODE_CODE_LOW = 228
@@ -144,8 +129,24 @@ RAW_CODE_TO_PRESET_MODE: dict[int, str] = {
 }
 APP_UNBALANCED_PRESET_BASE = 200
 
-DEBOUNCE_SECONDS = 0.8
+OPERATION_MODE_INACTIVE = "inactive"
+OPERATION_MODE_OFF = "off"
+OPERATION_MODE_MANUAL = "manual"
+OPERATION_MODE_UNBALANCED = "unbalanced"
+# Modes in which the user sets the airflow directly.
+DIRECT_OPERATION_MODES: tuple[str, ...] = (
+    OPERATION_MODE_OFF,
+    OPERATION_MODE_MANUAL,
+    OPERATION_MODE_UNBALANCED,
+)
+SENSOR_OPERATION_MODES: tuple[str, ...] = (
+    "humidity_control",
+    "co2_control",
+    "automatic",
+)
+
 WRITE_SETTLE_SECONDS = 1.5
+TARGET_OPTIMISTIC_SECONDS = 15.0
 POST_WRITE_REFRESH_RETRIES = 2
 POST_WRITE_REFRESH_INTERVAL_SECONDS = 2.5
 
@@ -185,6 +186,26 @@ REGISTER_CO2_STARTING_POINT = 42003
 REGISTER_CO2_MIN_LEVEL = 42004
 REGISTER_CO2_MAX_LEVEL = 42005
 
+# Contiguous 42000..42005 block, so the order also defines the block layout.
+CONTROL_SETTING_REGISTERS: dict[str, int] = {
+    "humidity_starting_point": REGISTER_HUMIDITY_STARTING_POINT,
+    "humidity_min_level": REGISTER_HUMIDITY_MIN_LEVEL,
+    "humidity_max_level": REGISTER_HUMIDITY_MAX_LEVEL,
+    "co2_starting_point": REGISTER_CO2_STARTING_POINT,
+    "co2_min_level": REGISTER_CO2_MIN_LEVEL,
+    "co2_max_level": REGISTER_CO2_MAX_LEVEL,
+}
+
+# Minimum, maximum and step from the manufacturer register table.
+CONTROL_SETTING_LIMITS: dict[str, tuple[int, int, int]] = {
+    "humidity_starting_point": (40, 80, 1),
+    "humidity_min_level": (0, 100, 10),
+    "humidity_max_level": (10, 100, 10),
+    "co2_starting_point": (500, 1200, 1),
+    "co2_min_level": (0, 100, 10),
+    "co2_max_level": (10, 100, 10),
+}
+
 MODE_OFF = 1
 MODE_SENSOR_CONTROL = 2
 MODE_MANUAL = 3
@@ -192,6 +213,17 @@ MODE_UNBALANCED = 4
 MODE_HUMIDITY_CONTROL_VALUE = 112
 MODE_CO2_CONTROL_VALUE = 144
 MODE_AUTOMATIC_VALUE = 16
+
+# In sensor control the selector lives in REGISTER_CURRENT_LEVEL, not the mode
+# register, so read and write share this mapping.
+SENSOR_MODE_TO_RAW_VALUE: dict[str, int] = {
+    "humidity_control": MODE_HUMIDITY_CONTROL_VALUE,
+    "co2_control": MODE_CO2_CONTROL_VALUE,
+    "automatic": MODE_AUTOMATIC_VALUE,
+}
+RAW_VALUE_TO_SENSOR_MODE: dict[int, str] = {
+    value: mode for mode, value in SENSOR_MODE_TO_RAW_VALUE.items()
+}
 
 
 def profile_label(profile: str) -> str:
@@ -203,8 +235,8 @@ def profile_label(profile: str) -> str:
 def profile_max_airflow(profile: str) -> int:
     """Return the max airflow in m³/h for one supported profile."""
 
-    metadata = PROFILE_METADATA.get(profile, {})
-    return int(metadata.get("max_airflow", 100))
+    metadata = PROFILE_METADATA.get(profile)
+    return metadata.max_airflow if metadata is not None else 100
 
 
 BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
@@ -217,13 +249,46 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
         "error_status",
         "frost_protection_active",
         "filter_change_due",
-        "intensive_active",
+        "intensive",
         "rf_comm_status",
-        "activate_intensive",
         "operation_mode",
         "preset_mode",
-        "level",
         "supply_level",
         "extract_level",
     }
 )
+
+ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
+    **dict.fromkeys(
+        {
+            "exhaust_temperature",
+            "outdoor_air_temperature",
+            "extract_air_temperature",
+            "supply_air_temperature",
+            "humidity_extract_air",
+            "humidity_supply_air",
+            "co2_extract_air",
+            "voc_supply_air",
+            "extract_air_flow",
+            "supply_air_flow",
+            "days_until_filter_change",
+            "operating_hours",
+        },
+        Platform.SENSOR,
+    ),
+    **dict.fromkeys(
+        {
+            "error_status",
+            "frost_protection_active",
+            "filter_change_due",
+            "rf_comm_status",
+        },
+        Platform.BINARY_SENSOR,
+    ),
+    "supply_level": Platform.FAN,
+    "extract_level": Platform.FAN,
+    **dict.fromkeys(CONTROL_SETTING_REGISTERS, Platform.NUMBER),
+    "operation_mode": Platform.SELECT,
+    "preset_mode": Platform.SELECT,
+    "intensive": Platform.SWITCH,
+}
