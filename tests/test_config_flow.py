@@ -2,26 +2,14 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.service_info.usb import UsbServiceInfo
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-try:
-    from homeassistant.helpers.service_info import UsbServiceInfo
-except ImportError:  # pragma: no cover - compatibility with older HA layouts
-    @dataclass(slots=True)
-    class UsbServiceInfo:
-        device: str
-        vid: str | None = None
-        pid: str | None = None
-        serial_number: str | None = None
-        manufacturer: str | None = None
-        description: str | None = None
 
 from custom_components.meltem_ventilation.const import (
     CONF_MAX_REQUESTS_PER_SECOND,
@@ -30,9 +18,7 @@ from custom_components.meltem_ventilation.const import (
     DEFAULT_MAX_REQUESTS_PER_SECOND,
     DOMAIN,
 )
-
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
-
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -169,7 +155,7 @@ class TestConfigFlowProfiles:
             # Now at profiles step — select a profile.
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"],
-                {"Unit 1 profile (Hardware ID 2 | CO2)": "ii_fc"},
+                {"slave_2": "ii_fc"},
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -203,8 +189,8 @@ class TestConfigFlowProfiles:
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"],
                 {
-                    "Unit 1 profile (Hardware ID 2 | basic)": "ii_plain",
-                    "Unit 2 profile (Hardware ID 2 | basic)": "ii_f",
+                    "slave_2": "ii_plain",
+                    "slave_3": "ii_f",
                 },
             )
 
@@ -214,7 +200,7 @@ class TestConfigFlowProfiles:
         assert rooms[0]["profile"] == "ii_plain"
         assert rooms[1]["profile"] == "ii_f"
 
-    async def test_profiles_step_uses_english_label_regardless_of_language(
+    async def test_profiles_step_uses_stable_field_keys_regardless_of_language(
         self, hass: HomeAssistant
     ) -> None:
         hass.config.language = "de"
@@ -236,13 +222,13 @@ class TestConfigFlowProfiles:
             )
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"],
-                {"Unit 1 profile (Hardware ID 2 | CO2)": "ii_fc"},
+                {"slave_2": "ii_fc"},
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["data"][CONF_ROOMS][0]["profile"] == "ii_fc"
 
-    async def test_usb_flow_populates_profile_preview_labels(
+    async def test_usb_flow_shows_unit_previews_in_the_description(
         self, hass: HomeAssistant
     ) -> None:
         discovery_info = UsbServiceInfo(
@@ -276,8 +262,8 @@ class TestConfigFlowProfiles:
 
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "profiles"
-        schema_fields = list(result["data_schema"].schema.keys())
-        assert any("ID 2 | CO2" in str(field) for field in schema_fields)
+        assert list(result["data_schema"].schema.keys()) == ["slave_2"]
+        assert "Hardware ID 2 | CO2" in result["description_placeholders"]["unit_details"]
 
     async def test_usb_flow_returns_to_confirm_usb_on_scan_error(
         self, hass: HomeAssistant
@@ -347,8 +333,8 @@ class TestConfigFlowEndToEnd:
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"],
                 {
-                    "Unit 1 profile (Hardware ID 2 | VOC)": "ii_fc_voc",
-                    "Unit 2 profile (Hardware ID 2 | VOC)": "ii_fc",
+                    "slave_2": "ii_fc_voc",
+                    "slave_3": "ii_fc",
                 },
             )
 
@@ -401,6 +387,62 @@ class TestOptionsFlow:
         assert result["type"] == FlowResultType.MENU
         assert result["step_id"] == "init"
 
+    async def test_options_survive_an_entry_that_never_finished_setup(
+        self, hass: HomeAssistant
+    ) -> None:
+        """A retrying entry has no runtime_data, but options must stay usable."""
+        entry = self._setup_entry(hass)
+        assert not hasattr(entry, "runtime_data")
+
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        edit_profiles = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"next_step_id": "edit_profiles"},
+        )
+        assert edit_profiles["step_id"] == "edit_profiles"
+        assert "Hardware ID 2 | basic" in (
+            edit_profiles["description_placeholders"]["unit_details"]
+        )
+
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"next_step_id": "rescan_units"},
+        )
+        rescan = await hass.config_entries.options.async_configure(
+            result["flow_id"], {}
+        )
+        assert rescan["step_id"] == "rescan_units"
+        assert rescan["errors"] == {"base": "cannot_connect"}
+
+    async def test_options_edit_connection_reloads_without_a_coordinator(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = self._setup_entry(hass)
+
+        with patch(
+            "custom_components.meltem_ventilation.config_flow.resolve_preferred_port_path",
+            side_effect=lambda port: port,
+        ), patch.object(
+            hass.config_entries, "async_reload", new=AsyncMock()
+        ) as mock_reload:
+            result = await hass.config_entries.options.async_init(entry.entry_id)
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"],
+                {"next_step_id": "edit_connection"},
+            )
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"],
+                {
+                    CONF_PORT: "/dev/serial/by-id/test",
+                    CONF_MAX_REQUESTS_PER_SECOND: 5.0,
+                },
+            )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
+        mock_reload.assert_awaited_once_with(entry.entry_id)
+
     async def test_options_init_routes_to_edit_connection(
         self, hass: HomeAssistant
     ) -> None:
@@ -429,7 +471,9 @@ class TestOptionsFlow:
             "custom_components.meltem_ventilation.config_flow.validate_serial_connection"
         ) as validate_connection, patch(
             "custom_components.meltem_ventilation.config_flow.resolve_preferred_port_path",
-            return_value="/dev/serial/by-id/new-port",
+            side_effect=lambda port: (
+                "/dev/serial/by-id/new-port" if port == "/dev/ttyACM1" else port
+            ),
         ):
             result = await hass.config_entries.options.async_init(entry.entry_id)
             result = await hass.config_entries.options.async_configure(
@@ -446,8 +490,47 @@ class TestOptionsFlow:
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert entry.data[CONF_PORT] == "/dev/serial/by-id/new-port"
+        assert entry.unique_id == "/dev/serial/by-id/new-port"
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
         validate_connection.assert_called_once()
+
+    async def test_options_edit_connection_ignores_an_equivalent_port_path(
+        self, hass: HomeAssistant
+    ) -> None:
+        """A stored raw path that resolves to the stored by-id path is no change."""
+        entry = self._setup_entry(hass)
+        coordinator = type(
+            "Coordinator",
+            (),
+            {"update_request_rate": MagicMock()},
+        )()
+        entry.runtime_data = type("RuntimeData", (), {"coordinator": coordinator})()
+
+        with patch(
+            "custom_components.meltem_ventilation.config_flow.validate_serial_connection"
+        ) as validate_connection, patch(
+            "custom_components.meltem_ventilation.config_flow.resolve_preferred_port_path",
+            return_value="/dev/serial/by-id/test",
+        ), patch.object(
+            hass.config_entries, "async_reload", new=AsyncMock()
+        ) as mock_reload:
+            result = await hass.config_entries.options.async_init(entry.entry_id)
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"],
+                {"next_step_id": "edit_connection"},
+            )
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"],
+                {
+                    CONF_PORT: "/dev/ttyACM0",
+                    CONF_MAX_REQUESTS_PER_SECOND: 5.0,
+                },
+            )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        validate_connection.assert_not_called()
+        mock_reload.assert_not_awaited()
+        assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
 
     async def test_options_edit_connection_updates_request_rate_without_reload(
         self, hass: HomeAssistant
@@ -513,7 +596,7 @@ class TestOptionsFlow:
             )
             result = await hass.config_entries.options.async_configure(
                 result["flow_id"],
-                {"Unit 1 profile (Living Room, Hardware ID 99 | CO2)": "ii_fc"},
+                {"slave_2": "ii_fc"},
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -523,7 +606,46 @@ class TestOptionsFlow:
         assert "co2_extract_air" in entry.data[CONF_ROOMS][0]["supported_entity_keys"]
         assert "humidity_extract_air" in entry.data[CONF_ROOMS][0]["supported_entity_keys"]
 
-    async def test_options_edit_profiles_uses_rendered_field_mapping_on_submit(
+    async def test_options_edit_profiles_shows_the_device_name_from_the_registry(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = self._setup_entry(hass)
+        entry.runtime_data = type(
+            "RuntimeData",
+            (),
+            {
+                "coordinator": type(
+                    "Coordinator",
+                    (),
+                    {
+                        "async_probe_slave_details": AsyncMock(
+                            return_value=("fc", "ID 99 | CO2", ["level"])
+                        )
+                    },
+                )()
+            },
+        )()
+
+        registry = dr.async_get(hass)
+        device = registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, "unit_1")},
+            name="Meltem Modbus Unit 1",
+        )
+        registry.async_update_device(device.id, name_by_user="Bad")
+
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"next_step_id": "edit_profiles"},
+        )
+
+        assert result["step_id"] == "edit_profiles"
+        assert result["description_placeholders"]["unit_details"] == (
+            "- **2**: Bad, Hardware ID 99 | CO2"
+        )
+
+    async def test_options_edit_profiles_probes_each_unit_once(
         self, hass: HomeAssistant
     ) -> None:
         entry = self._setup_entry(hass)
@@ -549,7 +671,7 @@ class TestOptionsFlow:
             )
             result = await hass.config_entries.options.async_configure(
                 result["flow_id"],
-                {"Unit 1 profile (Living Room, Hardware ID 99 | CO2)": "ii_fc"},
+                {"slave_2": "ii_fc"},
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY

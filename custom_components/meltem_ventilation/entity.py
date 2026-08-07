@@ -15,8 +15,19 @@ from .models import EMPTY_ROOM_STATE, RoomConfig, RoomState
 _PREVIEW_PRODUCT_ID_RE = re.compile(r"\bID\s+(\d+)\b")
 
 
-def room_supports_entity(room: RoomConfig, entity_key: str) -> bool:
-    """Return whether an entity key is supported for one room."""
+def room_supports_entity(
+    room: RoomConfig,
+    entity_key: str,
+    profiles: frozenset[str] | None = None,
+) -> bool:
+    """Return whether an entity should exist for one room.
+
+    ``profiles`` additionally restricts the entity to the unit families that
+    carry the underlying hardware.
+    """
+
+    if profiles is not None and room.profile not in profiles:
+        return False
     if room.supported_entity_keys is None:
         return True
     return entity_key in room.supported_entity_keys
@@ -43,25 +54,29 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
         self.room = room
         self._attr_unique_id = f"{DOMAIN}_{room.key}_{object_key}"
         self._attr_translation_key = translation_key
+        self._hw_version = _product_id_from_preview(room.preview)
         self._last_exported_sw_version: str | None = None
         self._last_exported_hw_version: str | None = None
 
     @property
     def device_info(self) -> DeviceInfo:
         sw_version = self.room_state.software_version
-        product_id = _product_id_from_preview(self.room.preview)
         return DeviceInfo(
             identifiers={(DOMAIN, self.room.key)},
             manufacturer="Meltem",
             model=profile_label(self.room.profile),
             name=f"{INTEGRATION_NAME} {self.room.name}",
-            hw_version=product_id,
+            hw_version=self._hw_version,
             sw_version=str(sw_version) if sw_version is not None else None,
         )
 
     @property
     def room_state(self) -> RoomState:
         return self.coordinator.safe_data.get(self.room.key, EMPTY_ROOM_STATE)
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.room_available(self.room.key)
 
     def _handle_coordinator_update(self) -> None:
         self._async_update_device_registry_versions()
@@ -78,11 +93,9 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
             if self.room_state.software_version is not None
             else None
         )
-        product_id = _product_id_from_preview(self.room.preview)
-        hw_version = product_id
         if (
             sw_version == self._last_exported_sw_version
-            and hw_version == self._last_exported_hw_version
+            and self._hw_version == self._last_exported_hw_version
         ):
             return
 
@@ -94,10 +107,10 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
         device_registry.async_update_device(
             device.id,
             sw_version=sw_version,
-            hw_version=hw_version,
+            hw_version=self._hw_version,
         )
         self._last_exported_sw_version = sw_version
-        self._last_exported_hw_version = hw_version
+        self._last_exported_hw_version = self._hw_version
 
 
 def _product_id_from_preview(preview: str | None) -> str | None:

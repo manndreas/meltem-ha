@@ -17,7 +17,24 @@
       },
       "profiles": {
         "title": "Detected Meltem M-WRG units",
-        "description": "The integration found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit."
+        "description": "The integration found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Unit at Modbus address 2",
+          "slave_3": "Unit at Modbus address 3",
+          "slave_4": "Unit at Modbus address 4",
+          "slave_5": "Unit at Modbus address 5",
+          "slave_6": "Unit at Modbus address 6",
+          "slave_7": "Unit at Modbus address 7",
+          "slave_8": "Unit at Modbus address 8",
+          "slave_9": "Unit at Modbus address 9",
+          "slave_10": "Unit at Modbus address 10",
+          "slave_11": "Unit at Modbus address 11",
+          "slave_12": "Unit at Modbus address 12",
+          "slave_13": "Unit at Modbus address 13",
+          "slave_14": "Unit at Modbus address 14",
+          "slave_15": "Unit at Modbus address 15",
+          "slave_16": "Unit at Modbus address 16"
+        }
       }
     },
     "error": {
@@ -46,7 +63,24 @@
       },
       "edit_profiles": {
         "title": "Change Meltem device profiles",
-        "description": "Update the selected profile for each configured Meltem M-WRG unit."
+        "description": "Update the selected profile for each configured Meltem M-WRG unit.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Unit at Modbus address 2",
+          "slave_3": "Unit at Modbus address 3",
+          "slave_4": "Unit at Modbus address 4",
+          "slave_5": "Unit at Modbus address 5",
+          "slave_6": "Unit at Modbus address 6",
+          "slave_7": "Unit at Modbus address 7",
+          "slave_8": "Unit at Modbus address 8",
+          "slave_9": "Unit at Modbus address 9",
+          "slave_10": "Unit at Modbus address 10",
+          "slave_11": "Unit at Modbus address 11",
+          "slave_12": "Unit at Modbus address 12",
+          "slave_13": "Unit at Modbus address 13",
+          "slave_14": "Unit at Modbus address 14",
+          "slave_15": "Unit at Modbus address 15",
+          "slave_16": "Unit at Modbus address 16"
+        }
       },
       "rescan_units": {
         "title": "Scan for new Meltem M-WRG units",
@@ -54,7 +88,24 @@
       },
       "profiles": {
         "title": "Detected Meltem M-WRG units",
-        "description": "The rescan found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit."
+        "description": "The rescan found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Unit at Modbus address 2",
+          "slave_3": "Unit at Modbus address 3",
+          "slave_4": "Unit at Modbus address 4",
+          "slave_5": "Unit at Modbus address 5",
+          "slave_6": "Unit at Modbus address 6",
+          "slave_7": "Unit at Modbus address 7",
+          "slave_8": "Unit at Modbus address 8",
+          "slave_9": "Unit at Modbus address 9",
+          "slave_10": "Unit at Modbus address 10",
+          "slave_11": "Unit at Modbus address 11",
+          "slave_12": "Unit at Modbus address 12",
+          "slave_13": "Unit at Modbus address 13",
+          "slave_14": "Unit at Modbus address 14",
+          "slave_15": "Unit at Modbus address 15",
+          "slave_16": "Unit at Modbus address 16"
+        }
       }
     },
     "error": {
@@ -111,28 +162,16 @@
       "filter_change_due": {
         "name": "Filter change due"
       },
-      "intensive_active": {
-        "name": "Intensive ventilation active"
-      },
       "rf_comm_status": {
         "name": "RF communication status"
       }
     },
-    "button": {
-      "activate_intensive": {
-        "name": "Start intensive ventilation"
+    "switch": {
+      "intensive": {
+        "name": "Intensive ventilation"
       }
     },
     "number": {
-      "level": {
-        "name": "Common airflow"
-      },
-      "supply_level": {
-        "name": "Supply air flow"
-      },
-      "extract_level": {
-        "name": "Extract air flow"
-      },
       "humidity_starting_point": {
         "name": "Humidity starting point"
       },
@@ -152,13 +191,19 @@
         "name": "CO2 maximum level"
       }
     },
+    "fan": {
+      "supply_level": {
+        "name": "Supply air"
+      },
+      "extract_level": {
+        "name": "Extract air"
+      }
+    },
     "select": {
       "operation_mode": {
-        "name": "Control mode",
+        "name": "Sensor control",
         "state": {
-          "off": "Off",
-          "manual": "Manual",
-          "unbalanced": "Unbalanced",
+          "inactive": "Off",
           "humidity_control": "Humidity control",
           "co2_control": "CO2 control",
           "automatic": "Automatic"
@@ -170,9 +215,7 @@
           "inactive": "Individual",
           "low": "Low",
           "medium": "Medium",
-          "high": "High",
-          "extract_only": "Extract",
-          "supply_only": "Supply"
+          "high": "High"
         }
       }
     }
@@ -180,12 +223,11 @@
   "system_health": {
     "info": {
       "loaded_entries": "Loaded config entries",
-      "serial_port": "Serial port",
       "configured_units": "Configured units",
       "state_units": "Units with live state",
       "last_update_success": "Last update successful",
       "last_job_error": "Last scheduler error",
-      "gateway_units": "Gateway-discovered unit addresses"
+      "unavailable_units": "Currently unavailable units"
     }
   }
 }

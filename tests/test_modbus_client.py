@@ -6,13 +6,15 @@ import pytest
 
 from custom_components.meltem_ventilation.const import (
     MODE_AUTOMATIC_VALUE,
+    MODE_CO2_CONTROL_VALUE,
+    MODE_HUMIDITY_CONTROL_VALUE,
     MODE_MANUAL,
     MODE_SENSOR_CONTROL,
     MODE_UNBALANCED,
     REGISTER_CO2_EXTRACT_AIR,
     REGISTER_CURRENT_LEVEL,
-    REGISTER_EXTRACT_AIR_TEMPERATURE,
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+    REGISTER_EXTRACT_AIR_TEMPERATURE,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
     REGISTER_HUMIDITY_EXTRACT_AIR,
@@ -30,7 +32,6 @@ from custom_components.meltem_ventilation.modbus_helpers import (
     discover_gateway_nodes,
 )
 from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
-
 
 # ---------------------------------------------------------------------------
 #  Test doubles
@@ -184,7 +185,7 @@ class TestFloatRead:
             lambda *_args, **_kwargs: _FakeResponse([0x0000, 0x7FC0])
         )
 
-        value = client._read_float32_word_swap(object(), 2, 41009)
+        value = client._read_float32_word_swap(2, 41009)
 
         assert value is None
 
@@ -258,7 +259,7 @@ class TestReadRoomState:
         client._read_airflow_pair = lambda *_a, **_kw: (65, 65)
         client._supports = lambda _room, _key: True
         client._read_uint16 = (
-            lambda _client, _slave, address: (
+            lambda _slave, address: (
                 120
                 if address == REGISTER_CURRENT_LEVEL
                 else None
@@ -333,7 +334,7 @@ class TestReadRoomState:
         client._supports = lambda _room, _key: True
         calls: list[int] = []
 
-        def _patched_read_uint16(_client, _slave, address):
+        def _patched_read_uint16(_slave, address):
             calls.append(address)
             if address == REGISTER_CURRENT_LEVEL:
                 raise MeltemModbusError("unsupported current level readback")
@@ -366,7 +367,7 @@ class TestReadRoomState:
         client._supports = lambda _room, _key: True
         read_addresses: list[int] = []
 
-        def _patched_read_uint16(_client, _slave, address):
+        def _patched_read_uint16(_slave, address):
             read_addresses.append(address)
             if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL:
                 return 120
@@ -404,7 +405,7 @@ class TestReadRoomState:
         client._read_airflow_pair = lambda *_a, **_kw: (30, 0)
         client._supports = lambda _room, _key: True
 
-        def _patched_read_uint16(_client, _slave, address):
+        def _patched_read_uint16(_slave, address):
             if address == REGISTER_CURRENT_LEVEL:
                 return 0
             if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL:
@@ -425,6 +426,32 @@ class TestReadRoomState:
 
         assert state.target_level == 0
         assert state.extract_target_level == 30
+
+    def test_quick_mode_code_is_not_decoded_as_an_unbalanced_target(self) -> None:
+        """227..230 share the >200 range but decode far above the rated airflow."""
+        client = self._build_client()
+        client._read_airflow_pair = lambda *_a, **_kw: (30, 0)
+        client._supports = lambda _room, _key: True
+
+        def _patched_read_uint16(_slave, address):
+            if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL:
+                return 229
+            return None
+
+        client._read_uint16 = _patched_read_uint16
+        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
+            registers=[MODE_UNBALANCED, 229, 229, 0, 0]
+        )
+        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+
+        state = client.read_room_state(
+            room,
+            RoomState(operation_mode="unbalanced"),
+            RefreshPlan.only(refresh_airflow=True),
+        )
+
+        assert state.target_level is None
+        assert state.extract_target_level is None
 
     def test_preset_mode_is_decoded_from_app_preset_code(self) -> None:
         client = self._build_client()
@@ -449,7 +476,7 @@ class TestReadRoomState:
         client._read_airflow_pair = lambda *_a, **_kw: (50, 0)
         client._supports = lambda _room, _key: True
 
-        def _patched_read_uint16(_client, _slave, address):
+        def _patched_read_uint16(_slave, address):
             if address == REGISTER_CURRENT_LEVEL:
                 return 0
             if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL:
@@ -475,7 +502,7 @@ class TestReadRoomState:
         client._read_airflow_pair = lambda *_a, **_kw: (100, 0)
         client._supports = lambda _room, _key: True
 
-        def _patched_read_uint16(_client, _slave, address):
+        def _patched_read_uint16(_slave, address):
             if address == REGISTER_CURRENT_LEVEL:
                 return 0
             if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL:
@@ -515,6 +542,37 @@ class TestReadRoomState:
 
         assert state.operation_mode == "automatic"
         assert state.preset_mode is None
+
+    @pytest.mark.parametrize(
+        ("mode_value", "expected_mode"),
+        [
+            (MODE_HUMIDITY_CONTROL_VALUE, "humidity_control"),
+            (MODE_CO2_CONTROL_VALUE, "co2_control"),
+            (MODE_AUTOMATIC_VALUE, "automatic"),
+        ],
+    )
+    def test_sensor_mode_selector_is_not_decoded_as_a_target_level(
+        self, mode_value: int, expected_mode: str,
+    ) -> None:
+        """41121 carries 112/144/16 there, which would scale to 56/72/8 m3/h."""
+        client = self._build_client()
+        client._read_airflow_pair = lambda *_a, **_kw: (24, 24)
+        client._supports = lambda _room, _key: True
+        client._read_uint16 = lambda *_a, **_kw: mode_value
+        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
+            registers=[MODE_SENSOR_CONTROL, mode_value, 0, 0, 0]
+        )
+        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc", slave=2)
+
+        state = client.read_room_state(
+            room,
+            RoomState(),
+            RefreshPlan.only(refresh_airflow=True),
+        )
+
+        assert state.operation_mode == expected_mode
+        # Derived from the measured airflow, not from the mode selector.
+        assert state.target_level == 24
 
     def test_non_intensive_preset_decodes_normally_when_secondary_registers_are_cleared(self) -> None:
         client = self._build_client()
@@ -644,7 +702,7 @@ class TestReadRoomState:
         client._supports = lambda _room, _key: True
         client._read_uint16 = lambda *_a, **_kw: 229
 
-        def _patched_read_block(_client, _slave, address, count):
+        def _patched_read_block(_slave, address, count):
             if address == REGISTER_MODE and count == 5:
                 raise MeltemModbusError("five-register mode block unavailable")
             if address == REGISTER_MODE and count == 2:
@@ -670,7 +728,7 @@ class TestReadRoomState:
         client._supports = lambda _room, _key: True
         client._read_uint16 = lambda *_a, **_kw: 229
 
-        def _patched_read_block(_client, _slave, address, count):
+        def _patched_read_block(_slave, address, count):
             if address == REGISTER_MODE and count == 5:
                 raise MeltemModbusError("five-register mode block unavailable")
             if address == REGISTER_MODE and count == 2:
@@ -694,7 +752,7 @@ class TestReadRoomState:
         client._supports = lambda _room, _key: True
         client._read_uint16 = lambda *_a, **_kw: MODE_AUTOMATIC_VALUE
 
-        def _patched_read_block(_client, _slave, address, count):
+        def _patched_read_block(_slave, address, count):
             if address == REGISTER_MODE and count == 5:
                 raise MeltemModbusError("five-register mode block unavailable")
             if address == REGISTER_MODE and count == 2:
@@ -734,14 +792,13 @@ class TestReadRoomState:
     def test_plain_profile_reads_only_exhaust_temperature(self) -> None:
         client = self._build_client()
         client._read_temperature_if_due = (
-            lambda _client, _room, key, _reg, _prev, _should: {
+            lambda _room, key, _reg, _prev, _should: {
                 "exhaust_temperature": 21.0,
             }.get(key)
         )
         room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 
         state = client._read_profile_state(
-            object(),
             room,
             RoomState(),
             RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),
@@ -754,7 +811,7 @@ class TestReadRoomState:
 
     def test_fc_voc_profile_reads_environment_values(self) -> None:
         client = self._build_client()
-        client._read_optional_uint16_block = lambda _client, _slave, reg, _count: {
+        client._read_optional_uint16_block = lambda _slave, reg, _count: {
             REGISTER_EXTRACT_AIR_TEMPERATURE: [220, 1800, 50, 1900, 0, 0],
             REGISTER_HUMIDITY_EXTRACT_AIR: [44, 780],
             REGISTER_HUMIDITY_SUPPLY_AIR: [46, 0, 120],
@@ -762,7 +819,6 @@ class TestReadRoomState:
         room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc_voc", slave=2)
 
         state = client._read_profile_state(
-            object(),
             room,
             RoomState(),
             RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),

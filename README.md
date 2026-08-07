@@ -17,15 +17,48 @@ gateways, Home Assistant hosts, or other connected equipment.
 - automatic discovery of configured units via the `M-WRG-GW` gateway
 - per-unit profile selection during setup
 - temperature, airflow, filter and operating-hour sensors
-- balanced and unbalanced airflow control
-- operating mode selection
+- separate supply air and extract air fan entities per unit
+- app-style quick modes and sensor-driven control modes
 - writable humidity and CO2 control thresholds for supported profiles
 - USB discovery for the Meltem gateway
+
+## Controlling a unit
+
+Each unit is exposed as two `fan` entities:
+
+- **Supply air** — target airflow of the supply fan
+- **Extract air** — target airflow of the extract fan
+
+Setting both to the same value runs the unit balanced. Setting them to
+different values switches it to unbalanced operation, and setting one to zero
+reproduces the extract-only or supply-only shortcuts of the Meltem app. When
+both are zero, the unit is switched off; turning it back on starts both
+directions again.
+
+Two further controls complement the fans:
+
+- **Quick mode** — the app shortcuts `Low`, `Medium` and `High`. The airflow
+  behind these is configured in the Meltem app and cannot be read over Modbus.
+  `Individual` means no shortcut is active, which also covers the extract-only
+  and supply-only states set from the Meltem app.
+- **Sensor control** — humidity, CO2 or automatic regulation, where supported.
+  Selecting `Off` ends a running sensor mode and returns the unit to manual
+  airflow; it does nothing when no sensor mode is active. While a sensor mode
+  is active the unit chooses the airflow itself, so the fans show measured
+  values instead of targets. Setting a non-zero fan speed leaves sensor control
+  with a balanced airflow; setting one direction to zero selects one-sided
+  operation without stopping the whole unit.
+
+Intensive ventilation stays a separate control because it is a temporary
+override that does not replace the active quick mode. It is exposed as a
+switch, so it can be cancelled before the runtime configured in the Meltem app
+has elapsed.
 
 ## Installation
 
 ### Requirements
 
+- Home Assistant `2025.1` or newer
 - a Meltem `M-WRG-GW` gateway
 - supported `M-WRG-S` / `M-WRG-II` units already added in the Meltem app
 - the gateway connected to the Home Assistant host via USB
@@ -54,6 +87,10 @@ directory and restart Home Assistant.
 5. Let the integration read the configured unit list from the gateway
 6. Assign the correct profile to each detected unit
 
+Units are listed by their Modbus address and initially named `Unit 1`, `Unit 2`
+and so on. Rename them like any other Home Assistant device; the new name is
+also shown when you edit the profiles later.
+
 ## Supported profiles
 
 - `M-WRG-S`
@@ -73,8 +110,9 @@ During setup, choose the exact profile manually.
 Open the integration options via `Settings` -> `Devices & Services` -> `Meltem Modbus`
 -> `Configure`.
 
-- **Change serial connection** — update the serial port or the maximum request
-  rate used by the scheduler
+- **Change serial connection** — update the serial port or the maximum poll-job
+  start rate used by the scheduler. One job can contain several serialized
+  Modbus requests; the option is not a wire-level request limit.
 - **Change profiles for existing units** — reassign profiles without rescanning
   the gateway
 - **Scan for new units** — discover units that were added to the gateway after
@@ -122,4 +160,6 @@ Additional project docs:
 - [SUPPORT.md](./SUPPORT.md)
 - [docs/MELTEM.md](./docs/MELTEM.md)
 - [docs/DEVELOPER.md](./docs/DEVELOPER.md)
+- [docs/HARDWARE_BACKLOG.md](./docs/HARDWARE_BACKLOG.md)
 - [docs/SETTING_RE_BACKLOG.md](./docs/SETTING_RE_BACKLOG.md)
+- [docs/TODO.md](./docs/TODO.md)

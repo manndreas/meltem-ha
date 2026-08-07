@@ -17,7 +17,24 @@
       },
       "profiles": {
         "title": "Erkannte Meltem M-WRG Geräte",
-        "description": "Die Integration hat {device_count} Meltem M-WRG Geräte gefunden. Wähle für jedes erkannte Gerät das passende Profil aus."
+        "description": "Die Integration hat {device_count} Meltem M-WRG Geräte gefunden. Wähle für jedes erkannte Gerät das passende Profil aus.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Gerät an Modbus-Adresse 2",
+          "slave_3": "Gerät an Modbus-Adresse 3",
+          "slave_4": "Gerät an Modbus-Adresse 4",
+          "slave_5": "Gerät an Modbus-Adresse 5",
+          "slave_6": "Gerät an Modbus-Adresse 6",
+          "slave_7": "Gerät an Modbus-Adresse 7",
+          "slave_8": "Gerät an Modbus-Adresse 8",
+          "slave_9": "Gerät an Modbus-Adresse 9",
+          "slave_10": "Gerät an Modbus-Adresse 10",
+          "slave_11": "Gerät an Modbus-Adresse 11",
+          "slave_12": "Gerät an Modbus-Adresse 12",
+          "slave_13": "Gerät an Modbus-Adresse 13",
+          "slave_14": "Gerät an Modbus-Adresse 14",
+          "slave_15": "Gerät an Modbus-Adresse 15",
+          "slave_16": "Gerät an Modbus-Adresse 16"
+        }
       }
     },
     "error": {
@@ -46,7 +63,24 @@
       },
       "edit_profiles": {
         "title": "Meltem Geräteprofile ändern",
-        "description": "Aktualisiere das ausgewählte Profil für jedes eingerichtete Meltem M-WRG Gerät."
+        "description": "Aktualisiere das ausgewählte Profil für jedes eingerichtete Meltem M-WRG Gerät.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Gerät an Modbus-Adresse 2",
+          "slave_3": "Gerät an Modbus-Adresse 3",
+          "slave_4": "Gerät an Modbus-Adresse 4",
+          "slave_5": "Gerät an Modbus-Adresse 5",
+          "slave_6": "Gerät an Modbus-Adresse 6",
+          "slave_7": "Gerät an Modbus-Adresse 7",
+          "slave_8": "Gerät an Modbus-Adresse 8",
+          "slave_9": "Gerät an Modbus-Adresse 9",
+          "slave_10": "Gerät an Modbus-Adresse 10",
+          "slave_11": "Gerät an Modbus-Adresse 11",
+          "slave_12": "Gerät an Modbus-Adresse 12",
+          "slave_13": "Gerät an Modbus-Adresse 13",
+          "slave_14": "Gerät an Modbus-Adresse 14",
+          "slave_15": "Gerät an Modbus-Adresse 15",
+          "slave_16": "Gerät an Modbus-Adresse 16"
+        }
       },
       "rescan_units": {
         "title": "Nach neuen Meltem M-WRG Geräten suchen",
@@ -54,7 +88,24 @@
       },
       "profiles": {
         "title": "Erkannte Meltem M-WRG Geräte",
-        "description": "Der erneute Scan hat {device_count} Meltem M-WRG Geräte gefunden. Wähle für jedes erkannte Gerät das passende Profil aus."
+        "description": "Der erneute Scan hat {device_count} Meltem M-WRG Geräte gefunden. Wähle für jedes erkannte Gerät das passende Profil aus.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Gerät an Modbus-Adresse 2",
+          "slave_3": "Gerät an Modbus-Adresse 3",
+          "slave_4": "Gerät an Modbus-Adresse 4",
+          "slave_5": "Gerät an Modbus-Adresse 5",
+          "slave_6": "Gerät an Modbus-Adresse 6",
+          "slave_7": "Gerät an Modbus-Adresse 7",
+          "slave_8": "Gerät an Modbus-Adresse 8",
+          "slave_9": "Gerät an Modbus-Adresse 9",
+          "slave_10": "Gerät an Modbus-Adresse 10",
+          "slave_11": "Gerät an Modbus-Adresse 11",
+          "slave_12": "Gerät an Modbus-Adresse 12",
+          "slave_13": "Gerät an Modbus-Adresse 13",
+          "slave_14": "Gerät an Modbus-Adresse 14",
+          "slave_15": "Gerät an Modbus-Adresse 15",
+          "slave_16": "Gerät an Modbus-Adresse 16"
+        }
       }
     },
     "error": {
@@ -111,28 +162,16 @@
       "filter_change_due": {
         "name": "Filterwechsel fällig"
       },
-      "intensive_active": {
-        "name": "Intensivlüftung aktiv"
-      },
       "rf_comm_status": {
         "name": "RF-Kommunikationsstatus"
       }
     },
-    "button": {
-      "activate_intensive": {
-        "name": "Intensivlüftung starten"
+    "switch": {
+      "intensive": {
+        "name": "Intensivlüftung"
       }
     },
     "number": {
-      "level": {
-        "name": "Gemeinsamer Volumenstrom"
-      },
-      "supply_level": {
-        "name": "Zuluftvolumenstrom"
-      },
-      "extract_level": {
-        "name": "Abluftvolumenstrom"
-      },
       "humidity_starting_point": {
         "name": "Feuchte-Startpunkt"
       },
@@ -152,13 +191,19 @@
         "name": "CO2-Maximalstufe"
       }
     },
+    "fan": {
+      "supply_level": {
+        "name": "Zuluft"
+      },
+      "extract_level": {
+        "name": "Abluft"
+      }
+    },
     "select": {
       "operation_mode": {
-        "name": "Regelmodus",
+        "name": "Sensorregelung",
         "state": {
-          "off": "Aus",
-          "manual": "Manuell",
-          "unbalanced": "Unsymmetrisch",
+          "inactive": "Aus",
           "humidity_control": "Feuchtegesteuert",
           "co2_control": "CO2-gesteuert",
           "automatic": "Automatik"
@@ -170,11 +215,19 @@
           "inactive": "Individuell",
           "low": "Niedrig",
           "medium": "Mittel",
-          "high": "Hoch",
-          "extract_only": "Abluft",
-          "supply_only": "Zuluft"
+          "high": "Hoch"
         }
       }
+    }
+  },
+  "system_health": {
+    "info": {
+      "loaded_entries": "Geladene Konfigurationseinträge",
+      "configured_units": "Eingerichtete Geräte",
+      "state_units": "Geräte mit Live-Status",
+      "last_update_success": "Letzte Aktualisierung erfolgreich",
+      "last_job_error": "Letzter Scheduler-Fehler",
+      "unavailable_units": "Aktuell nicht verfügbare Geräte"
     }
   }
 }

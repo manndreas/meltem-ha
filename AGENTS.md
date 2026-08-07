@@ -16,6 +16,7 @@
 - `custom_components/meltem_ventilation/translations/de.json`: German translations
 - `docs/MELTEM.md`: handwritten manufacturer reference extracted into Markdown
 - `docs/DEVELOPER.md`: implementation notes, caveats, and hardware findings
+- `docs/HARDWARE_BACKLOG.md`: open findings that require live-gateway testing
 - `CHANGELOG.md`: release history
 
 ## Working rules

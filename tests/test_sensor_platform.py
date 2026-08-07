@@ -4,17 +4,13 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+from custom_components.meltem_ventilation.const import DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
-from custom_components.meltem_ventilation.const import DOMAIN, INTEGRATION_NAME
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
 from custom_components.meltem_ventilation.sensor import (
     SENSOR_DESCRIPTIONS,
     MeltemSensorEntity,
-    _supports_profile,
 )
-
 
 # ---------------------------------------------------------------------------
 #  Helpers

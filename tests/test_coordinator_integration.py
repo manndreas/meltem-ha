@@ -3,21 +3,24 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.update_coordinator import UpdateFailed
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.meltem_ventilation.const import DOMAIN
 from custom_components.meltem_ventilation.coordinator import (
-    _CoordinatorLoggerProxy,
+    JOB_GROUPS,
+    TRANSPORT_BACKOFF_MAX_SECONDS,
+    JobGroup,
     MeltemDataUpdateCoordinator,
     PollJob,
 )
-from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
-
+from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -63,7 +66,6 @@ class _FakeClient:
         self,
         room: RoomConfig,
         preset_mode: str,
-        preferred_level: int | None = None,
     ) -> None:
         self.write_preset_mode_calls.append((room.key, preset_mode))
 
@@ -80,6 +82,12 @@ class _FakeClient:
         return ("plain", None, ["level"])
 
 
+def _mock_entry(hass: HomeAssistant) -> MockConfigEntry:
+    entry = MockConfigEntry(domain=DOMAIN, title="Meltem", version=1, source="user")
+    entry.add_to_hass(hass)
+    return entry
+
+
 def _build(
     hass: HomeAssistant,
     rooms: list[RoomConfig] | None = None,
@@ -87,6 +95,7 @@ def _build(
     client = _FakeClient()
     coordinator = MeltemDataUpdateCoordinator(
         hass,
+        config_entry=_mock_entry(hass),
         client=client,
         rooms=rooms or [_ROOM_1],
         max_requests_per_second=2.0,
@@ -122,7 +131,7 @@ class TestFirstRefresh:
         client._fail_rooms = {"unit_1"}
         client.next_read_state = RoomState(target_level=50)
 
-        with patch("custom_components.meltem_ventilation.coordinator.time.sleep"):
+        with patch("custom_components.meltem_ventilation.coordinator.sync_sleep"):
             data = await hass.async_add_executor_job(
                 coordinator._read_all_rooms_full
             )
@@ -151,7 +160,7 @@ class TestFirstRefresh:
         client._fail_rooms = {"unit_1"}
 
         with (
-            patch("custom_components.meltem_ventilation.coordinator.time.sleep"),
+            patch("custom_components.meltem_ventilation.coordinator.sync_sleep"),
             pytest.raises(MeltemModbusError),
         ):
             await hass.async_add_executor_job(
@@ -189,7 +198,7 @@ class TestAsyncUpdateData:
         for job in coordinator._jobs:
             job.next_due = 0.0
 
-        data = await coordinator._async_update_data()
+        await coordinator._async_update_data()
 
         # Should run exactly one job (the earliest due).
         assert len(client.read_calls) == 1
@@ -229,27 +238,42 @@ class TestAsyncUpdateData:
             await coordinator._async_update_data()
 
 
-class TestCoordinatorLoggerProxy:
-    def test_suppresses_finished_fetch_debug_for_idle_ticks(self) -> None:
-        logger = MagicMock()
-        proxy = _CoordinatorLoggerProxy(logger, lambda: True)
+class TestSchedulerWakeups:
+    async def test_idle_tick_sleeps_until_the_next_job_is_due(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build(hass)
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        now = time.monotonic()
+        for job in coordinator._jobs:
+            job.next_due = now + 30.0
 
-        proxy.debug(
-            "Finished fetching %s data in %.3f seconds (success: %s)",
-            "Meltem Modbus",
-            0.0,
-            True,
-        )
+        await coordinator._async_update_data()
 
-        logger.debug.assert_not_called()
+        assert coordinator.update_interval is not None
+        assert 25.0 < coordinator.update_interval.total_seconds() <= 30.0
 
-    def test_keeps_other_debug_messages(self) -> None:
-        logger = MagicMock()
-        proxy = _CoordinatorLoggerProxy(logger, lambda: True)
+    async def test_next_tick_never_undercuts_the_request_rate(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build(hass)
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        for job in coordinator._jobs:
+            job.next_due = time.monotonic() - 1.0
 
-        proxy.debug("Something else happened: %s", "ok")
+        await coordinator._async_update_data()
 
-        logger.debug.assert_called_once()
+        assert coordinator.update_interval is not None
+        assert coordinator.update_interval.total_seconds() == coordinator._tick_seconds
+
+    def test_backoff_interval_survives_rescheduling(self, hass: HomeAssistant) -> None:
+        coordinator, _ = _build(hass)
+        coordinator._backoff_seconds = TRANSPORT_BACKOFF_MAX_SECONDS
+        coordinator.update_interval = timedelta(seconds=TRANSPORT_BACKOFF_MAX_SECONDS)
+
+        coordinator._schedule_next_tick()
+
+        assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_MAX_SECONDS
 
 
 class TestCoordinatorFailureHandling:
@@ -262,7 +286,7 @@ class TestCoordinatorFailureHandling:
         client._fail_rooms = {"unit_1", "unit_2"}
 
         with (
-            patch("custom_components.meltem_ventilation.coordinator.time.sleep"),
+            patch("custom_components.meltem_ventilation.coordinator.sync_sleep"),
             pytest.raises(UpdateFailed),
         ):
             await coordinator._async_update_data()
@@ -309,6 +333,10 @@ class TestCoordinatorFailureHandling:
 
 
 class TestJobScheduling:
+    @staticmethod
+    def _group(key: str) -> JobGroup:
+        return next(group for group in JOB_GROUPS if group.key == key)
+
     def test_build_group_jobs_stagger(
         self, hass: HomeAssistant,
     ) -> None:
@@ -325,11 +353,8 @@ class TestJobScheduling:
     ) -> None:
         coordinator, _ = _build(hass)
         # Room without supported_entity_keys → needs all jobs.
-        assert coordinator._room_needs_job(_ROOM_1, "flow")
-        assert coordinator._room_needs_job(_ROOM_1, "status")
-        assert coordinator._room_needs_job(_ROOM_1, "temperature")
-        assert coordinator._room_needs_job(_ROOM_1, "filter")
-        assert coordinator._room_needs_job(_ROOM_1, "hours")
+        for group in JOB_GROUPS:
+            assert coordinator._room_needs_job(_ROOM_1, group)
 
     def test_room_needs_job_with_constrained_keys(
         self, hass: HomeAssistant,
@@ -342,9 +367,9 @@ class TestJobScheduling:
             supported_entity_keys=frozenset({"extract_air_flow"}),
         )
         coordinator, _ = _build(hass, rooms=[room])
-        assert coordinator._room_needs_job(room, "flow")
-        assert not coordinator._room_needs_job(room, "hours")
-        assert not coordinator._room_needs_job(room, "status")
+        assert coordinator._room_needs_job(room, self._group("flow"))
+        assert not coordinator._room_needs_job(room, self._group("hours"))
+        assert not coordinator._room_needs_job(room, self._group("status"))
 
     def test_room_without_hours_entities_skips_hours_job(
         self, hass: HomeAssistant,
@@ -358,7 +383,7 @@ class TestJobScheduling:
         )
         coordinator, _ = _build(hass, rooms=[room])
 
-        assert not coordinator._room_needs_job(room, "hours")
+        assert not coordinator._room_needs_job(room, self._group("hours"))
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +405,7 @@ class TestPostWriteRefresh:
 
         assert coordinator.data["unit_1"].target_level == 50
 
-    async def test_refresh_after_write_honors_minimum_attempt_count_without_expected_targets(
+    async def test_refresh_after_write_honors_minimum_attempt_count(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
@@ -400,7 +425,7 @@ class TestPostWriteRefresh:
         with (
             patch.object(client, "read_room_state", side_effect=[stale, updated]) as read_mock,
             patch(
-                "custom_components.meltem_ventilation.coordinator.asyncio.sleep",
+                "custom_components.meltem_ventilation.coordinator.async_sleep",
                 new=AsyncMock(),
             ),
         ):
@@ -410,40 +435,6 @@ class TestPostWriteRefresh:
             )
 
         assert read_mock.call_count == 2
-        assert coordinator.data["unit_1"].target_level == 50
-
-    async def test_refresh_after_write_retries_until_new_airflow_is_visible(
-        self, hass: HomeAssistant,
-    ) -> None:
-        coordinator, client = _build(hass)
-        coordinator.data = {"unit_1": RoomState(target_level=10, extract_target_level=10)}
-
-        stale = RoomState(
-            target_level=10,
-            extract_target_level=10,
-            extract_air_flow=10,
-            supply_air_flow=10,
-        )
-        updated = RoomState(
-            target_level=50,
-            extract_target_level=50,
-            extract_air_flow=50,
-            supply_air_flow=50,
-        )
-
-        with (
-            patch.object(client, "read_room_state", side_effect=[stale, updated]),
-            patch(
-                "custom_components.meltem_ventilation.coordinator.asyncio.sleep",
-                new=AsyncMock(),
-            ),
-        ):
-            await coordinator._async_refresh_room_after_write(
-                _ROOM_1,
-                expected_supply_level=50,
-                expected_extract_level=50,
-            )
-
         assert coordinator.data["unit_1"].target_level == 50
 
     async def test_refresh_after_write_failure_resets_connection(
@@ -519,6 +510,7 @@ class TestTickInterval:
         client = _FakeClient()
         coordinator = MeltemDataUpdateCoordinator(
             hass,
+            config_entry=_mock_entry(hass),
             client=client,
             rooms=[_ROOM_1],
             max_requests_per_second=0.2,
