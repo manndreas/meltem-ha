@@ -71,7 +71,7 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         super().__init__(coordinator, room, entity_key, entity_key)
         self._direction = direction
         self._attr_icon = (
-            "mdi:fan-chevron-up" if direction == DIRECTION_SUPPLY else "mdi:fan-chevron-down"
+            "mdi:home-import-outline" if direction == DIRECTION_SUPPLY else "mdi:home-export-outline"
         )
         # One step per m3/h, so the slider cannot land between device values.
         self._attr_speed_count = int_states_in_range(_level_range(room.profile))
