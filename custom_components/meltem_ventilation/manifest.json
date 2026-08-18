@@ -14,7 +14,7 @@
     "pymodbus"
   ],
   "requirements": [
-    "pymodbus[serial]>=3.14.0,<4.0.0"
+    "pymodbus[serial]>=3.13,<4.0.0"
   ],
   "single_config_entry": true,
   "usb": [
