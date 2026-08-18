@@ -5,5 +5,5 @@
 # separately - doing so silently breaks the pinned combination.
 # It also dictates the minimum Python version used in CI.
 pytest-homeassistant-custom-component==0.13.354
-pymodbus[serial]>=3.14.0,<4.0.0
+pymodbus[serial]>=3.13,<4.0.0
 ruff==0.15.20
