@@ -1,6 +1,6 @@
 [project]
 name = "meltem-modbus"
-version = "3.0.1"
+version = "3.0.2"
 requires-python = ">=3.13"
 
 [tool.pytest.ini_options]
