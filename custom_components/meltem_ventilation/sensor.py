@@ -106,7 +106,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     ),
     MeltemSensorDescription(
         key="extract_air_flow",
-        icon="mdi:fan-chevron-down",
+        icon="mdi:home-export-outline",
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement="m³/h",
         supported_profiles=ALL_PROFILES,
@@ -114,7 +114,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     ),
     MeltemSensorDescription(
         key="supply_air_flow",
-        icon="mdi:fan-chevron-up",
+        icon="mdi:home-import-outline",
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement="m³/h",
         supported_profiles=ALL_PROFILES,
@@ -131,6 +131,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     ),
     MeltemSensorDescription(
         key="operating_hours",
+        icon="mdi:fan-clock",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement="h",
         entity_category=EntityCategory.DIAGNOSTIC,
