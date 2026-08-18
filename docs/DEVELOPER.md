@@ -141,7 +141,7 @@ Implementation rules:
 
 ## Pymodbus quirk in Home Assistant
 
-The integration requires `pymodbus >= 3.14`, where the client calls used here
+The integration requires `pymodbus >= 3.13`, where the client calls used here
 expect `device_id=...`, not `slave=...`.
 
 This is important for:

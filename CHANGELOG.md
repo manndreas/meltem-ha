@@ -37,7 +37,7 @@ first start after the update.
 ### Breaking changes
 
 - The minimum supported Home Assistant version is now `2025.1`, and `pymodbus`
-  `3.14` or newer is required.
+  `3.13` or newer is required.
 - Airflow control now uses two dedicated `fan` entities per unit, `Supply air`
   and `Extract air`, instead of a single shared ventilation slider.
   - The previous combined fan entity is removed. Its registry entry is cleaned
