@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.1
+
+- Changed python version requirement to be compatible with Home Assistant.
+
 ## 3.0.0
 
 ### Migrating your automations
