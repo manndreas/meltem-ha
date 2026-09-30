@@ -160,7 +160,9 @@ def _unit_details(
 
 
 @callback
-def _device_names_by_slave(hass, rooms: list[Mapping[str, Any]]) -> dict[int, str]:
+def _device_names_by_slave(
+    hass, config_entry_id: str, rooms: list[Mapping[str, Any]]
+) -> dict[int, str]:
     """Map unit addresses to the device names the user set in Home Assistant.
 
     Naming belongs to the device registry, so the stored room name is only ever
@@ -170,7 +172,9 @@ def _device_names_by_slave(hass, rooms: list[Mapping[str, Any]]) -> dict[int, st
     registry = dr.async_get(hass)
     names: dict[int, str] = {}
     for room in rooms:
-        device = registry.async_get_device(identifiers={(DOMAIN, str(room["key"]))})
+        device = registry.async_get_device_by_identifier(
+            (DOMAIN, str(room["key"])), config_entry_id
+        )
         if device is not None and device.name_by_user:
             names[int(room["slave"])] = device.name_by_user
     return names
@@ -697,7 +701,11 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             slaves,
             {slave: str(existing_rooms[slave]["profile"]) for slave in slaves},
             self._preview_by_slave,
-            _device_names_by_slave(self.hass, self.config_entry.data[CONF_ROOMS]),
+            _device_names_by_slave(
+                self.hass,
+                self.config_entry.entry_id,
+                self.config_entry.data[CONF_ROOMS],
+            ),
         )
         return self.async_show_form(
             step_id="edit_profiles",
@@ -827,7 +835,11 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                 for slave in self._discovered_slaves
             },
             self._preview_by_slave,
-            _device_names_by_slave(self.hass, self.config_entry.data[CONF_ROOMS]),
+            _device_names_by_slave(
+                self.hass,
+                self.config_entry.entry_id,
+                self.config_entry.data[CONF_ROOMS],
+            ),
         )
         return self.async_show_form(
             step_id="profiles",

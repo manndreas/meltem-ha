@@ -22,6 +22,10 @@ def _build_entity(
 ) -> MeltemOperationModeSelect:
     coordinator = MagicMock()
     coordinator.room_available.return_value = True
+    coordinator.read_group_for_entity.side_effect = lambda key: (
+        "flow_control" if key in {"operation_mode", "preset_mode"} else None
+    )
+    coordinator.read_group_available.return_value = True
     coordinator.async_set_operation_mode = AsyncMock()
     coordinator.safe_data = {
         "unit_1": state or RoomState(operation_mode="manual"),
@@ -58,6 +62,12 @@ def _build_preset_entity(
 
 
 class TestMeltemOperationModeSelect:
+    def test_unavailable_when_flow_control_is_stale(self) -> None:
+        entity = _build_entity("ii_fc")
+        entity.coordinator.read_group_available.return_value = False
+
+        assert entity.available is False
+
     def test_f_profile_offers_humidity_control_only(self) -> None:
         entity = _build_entity("ii_f")
         assert entity.options == ["inactive", "humidity_control"]
@@ -136,6 +146,15 @@ class TestOperationModeSelectCreation:
 
 
 class TestMeltemPresetModeSelect:
+    def test_unavailable_when_flow_control_is_stale(self) -> None:
+        entity = _build_preset_entity("ii_plain")
+        entity.coordinator.read_group_for_entity.side_effect = lambda key: (
+            "flow_control" if key == "preset_mode" else None
+        )
+        entity.coordinator.read_group_available.return_value = False
+
+        assert entity.available is False
+
     def test_only_app_quick_modes_are_selectable(self) -> None:
         entity = _build_preset_entity("ii_plain")
         assert entity.options == ["inactive", "low", "medium", "high"]

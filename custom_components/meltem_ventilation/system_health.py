@@ -61,4 +61,8 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
             if not coordinator.room_available(room.key)
         )
         or "none",
+        "read_health": {
+            room.key: coordinator.data_health_attributes(room.key)
+            for room in coordinator.rooms
+        },
     }

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import types
+from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.config_flow import (
@@ -32,9 +34,11 @@ from custom_components.meltem_ventilation.coordinator import (
 )
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
 from custom_components.meltem_ventilation.models import (
+    ReadHealth,
     RefreshPlan,
     RoomConfig,
     RoomState,
+    WriteConfirmation,
 )
 
 # ---------------------------------------------------------------------------
@@ -74,7 +78,30 @@ class _FakeClient:
         self.read_calls.append((room.key, refresh_plan))
         if room.key == "broken":
             raise MeltemModbusError("boom")
-        return self.next_read_state
+        state = self.next_read_state
+        groups = []
+        if refresh_plan.refresh_airflow:
+            groups.extend(("flow", "flow_control"))
+        if refresh_plan.refresh_status:
+            groups.append("status")
+        if refresh_plan.refresh_temperatures or refresh_plan.refresh_environment:
+            groups.append("temperature")
+        if refresh_plan.refresh_filter_change_due or refresh_plan.refresh_filter_days:
+            groups.append("filter")
+        if refresh_plan.refresh_operating_hours:
+            groups.append("hours")
+        if refresh_plan.refresh_control_settings:
+            groups.append("control_settings")
+        read_time = dt_util.utcnow()
+        for group_key in groups:
+            state = state.with_read_health(
+                group_key,
+                ReadHealth(
+                    last_attempt=read_time,
+                    last_successful_read=read_time,
+                ),
+            )
+        return state
 
     def write_level(self, room: RoomConfig, level: int) -> None:
         self.write_level_calls.append((room.key, level))
@@ -432,7 +459,7 @@ class TestEffectiveLevels:
 
         assert coordinator.effective_levels("unit_1") == (40, 40)
 
-    async def test_writes_publish_and_roll_back_the_overlay(
+    async def test_writes_keep_confirmed_state_and_reconcile_write_failures(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
@@ -441,16 +468,23 @@ class TestEffectiveLevels:
         }
 
         await coordinator.async_set_unbalanced_levels("unit_1", 70, 30)
-        assert coordinator.effective_levels("unit_1") == (70, 30)
+        assert coordinator.effective_levels("unit_1") == (40, 40)
+        assert (
+            coordinator._write_confirmations["unit_1"]["airflow_levels"].status
+            == "pending"
+        )
 
         def _raise(*args, **kwargs):
             raise MeltemModbusError("boom")
 
         client.write_unbalanced_levels = _raise
+        client.next_read_state = RoomState(operation_mode="manual", target_level=40)
         with pytest.raises(MeltemModbusError):
             await coordinator.async_set_unbalanced_levels("unit_1", 10, 90)
 
         assert coordinator.effective_levels("unit_1") == (40, 40)
+        assert client.read_calls[-1][1] == RefreshPlan.only(refresh_airflow=True)
+        assert coordinator._write_confirmations["unit_1"]["airflow_levels"].status == "failed"
 
     async def test_mode_change_discards_a_pending_overlay(
         self, hass: HomeAssistant,
@@ -813,7 +847,7 @@ class TestCoordinator:
 
         assert client.write_preset_mode_calls == [("unit_1", "intensive")]
 
-    async def test_control_setting_is_published_before_confirmation(
+    async def test_control_setting_keeps_confirmed_value_until_readback(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(
@@ -825,7 +859,7 @@ class TestCoordinator:
         }
         observed_during_settle: list[int | None] = []
 
-        async def _observe_optimistic_state(_seconds: float) -> None:
+        async def _observe_confirmed_state(_seconds: float) -> None:
             observed_during_settle.append(
                 coordinator.safe_data["unit_1"].humidity_starting_point
             )
@@ -833,18 +867,116 @@ class TestCoordinator:
         client.next_read_state = RoomState(humidity_starting_point=70)
         with patch(
             "custom_components.meltem_ventilation.coordinator.async_sleep",
-            side_effect=_observe_optimistic_state,
+            side_effect=_observe_confirmed_state,
         ):
             await coordinator.async_set_control_setting(
                 "unit_1", "humidity_starting_point", 70
             )
 
-        assert observed_during_settle == [70]
+        assert observed_during_settle == [50]
+        assert coordinator.safe_data["unit_1"].humidity_starting_point == 70
+        assert (
+            coordinator._write_confirmations["unit_1"][
+                "control_setting:humidity_starting_point"
+            ].status
+            == "confirmed"
+        )
         assert client.write_control_setting_calls == [
             ("unit_1", "humidity_starting_point", 70)
         ]
 
-    async def test_control_setting_keeps_optimistic_value_when_refresh_fails(
+    def test_write_confirmation_ignores_values_from_before_the_write(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _client = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_f", slave=2)],
+        )
+        started_at = dt_util.utcnow()
+        coordinator._write_confirmations["unit_1"] = {
+            "control_setting:humidity_starting_point": WriteConfirmation(
+                expected_value=70,
+                started_at=started_at,
+            )
+        }
+        old_read = started_at - timedelta(seconds=1)
+        state = RoomState(
+            humidity_starting_point=70,
+            group_read_health=(
+                (
+                    "control_settings",
+                    ReadHealth(
+                        last_attempt=old_read,
+                        last_successful_read=old_read,
+                    ),
+                ),
+            ),
+        )
+
+        coordinator._confirm_pending_writes({"unit_1": state})
+
+        confirmation = coordinator._write_confirmations["unit_1"][
+            "control_setting:humidity_starting_point"
+        ]
+        assert confirmation.status == "pending"
+        assert confirmation.actual_value is None
+
+        fresh_read = started_at + timedelta(seconds=1)
+        state = state.with_read_health(
+            "control_settings",
+            ReadHealth(
+                last_attempt=fresh_read,
+                last_successful_read=fresh_read,
+            ),
+        )
+        coordinator._confirm_pending_writes({"unit_1": state})
+
+        assert (
+            coordinator._write_confirmations["unit_1"][
+                "control_setting:humidity_starting_point"
+            ].status
+            == "confirmed"
+        )
+
+    def test_confirmed_write_is_not_downgraded_after_value_changes(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _client = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_f", slave=2)],
+        )
+        started_at = dt_util.utcnow()
+        coordinator._write_confirmations["unit_1"] = {
+            "control_setting:humidity_starting_point": WriteConfirmation(
+                expected_value=70,
+                started_at=started_at,
+                status="confirmed",
+                actual_value=70,
+            )
+        }
+        read_at = started_at + timedelta(seconds=5)
+        state = RoomState(
+            humidity_starting_point=60,
+            group_read_health=(
+                (
+                    "control_settings",
+                    ReadHealth(
+                        last_attempt=read_at,
+                        last_successful_read=read_at,
+                    ),
+                ),
+            ),
+        )
+
+        coordinator._confirm_pending_writes({"unit_1": state})
+
+        confirmation = coordinator._write_confirmations["unit_1"][
+            "control_setting:humidity_starting_point"
+        ]
+        assert confirmation.status == "confirmed"
+        assert confirmation.actual_value == 70
+
+    async def test_control_setting_keeps_confirmed_value_when_refresh_fails(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(
@@ -867,7 +999,13 @@ class TestCoordinator:
                 "unit_1", "humidity_starting_point", 70
             )
 
-        assert coordinator.safe_data["unit_1"].humidity_starting_point == 70
+        assert coordinator.safe_data["unit_1"].humidity_starting_point == 50
+        assert (
+            coordinator._write_confirmations["unit_1"][
+                "control_setting:humidity_starting_point"
+            ].status
+            == "unconfirmed"
+        )
 
     async def test_control_setting_publishes_the_actual_written_step(
         self, hass: HomeAssistant,
@@ -898,7 +1036,8 @@ class TestCoordinator:
                 "unit_1", "humidity_min_level", 15
             )
 
-        assert observed_during_settle == [20]
+        assert observed_during_settle == [10]
+        assert coordinator.safe_data["unit_1"].humidity_min_level == 20
 
     def test_build_jobs_only_includes_relevant_groups(
         self, hass: HomeAssistant,

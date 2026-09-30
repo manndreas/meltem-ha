@@ -75,12 +75,19 @@ async def async_setup_entry(
     runtime_data: MeltemRuntimeData = entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    async_add_entities(
+    entities: list[BinarySensorEntity] = [
         MeltemBinarySensorEntity(coordinator, room, description)
         for room in coordinator.rooms
         for description in BINARY_SENSOR_DESCRIPTIONS
         if room_supports_entity(room, description.key, description.supported_profiles)
+    ]
+    entities.extend(
+        MeltemDataHealthBinarySensor(coordinator, room)
+        for room in coordinator.rooms
+        if room_supports_entity(room, "supply_air_flow")
+        or room_supports_entity(room, "extract_air_flow")
     )
+    async_add_entities(entities)
 
 
 class MeltemBinarySensorEntity(MeltemEntity, BinarySensorEntity):
@@ -95,3 +102,29 @@ class MeltemBinarySensorEntity(MeltemEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         return self.entity_description.value_fn(self.room_state)
+
+
+class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
+    """Report stale read groups and expose their last outcomes."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:fan-alert"
+
+    def __init__(self, coordinator, room) -> None:
+        super().__init__(coordinator, room, "data_health", "data_health")
+
+    @property
+    def available(self) -> bool:
+        return (
+            self.coordinator.last_update_success
+            and self.room.key in self.coordinator.safe_data
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        return self.coordinator.data_health_stale(self.room.key)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return self.coordinator.data_health_attributes(self.room.key)

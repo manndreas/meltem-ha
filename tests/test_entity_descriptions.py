@@ -4,13 +4,26 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
+from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import State
+from homeassistant.helpers.condition import ConditionConfig
+from homeassistant.helpers.trigger import TriggerConfig
 
+from custom_components.meltem_ventilation.automation import filter_change_due_entities
 from custom_components.meltem_ventilation.binary_sensor import (
     BINARY_SENSOR_DESCRIPTIONS,
 )
+from custom_components.meltem_ventilation.condition import (
+    FilterChangeDueCondition,
+    async_get_conditions,
+)
 from custom_components.meltem_ventilation.const import (
+    DOMAIN,
     OPERATION_MODE_INACTIVE,
     PRESET_MODE_OPTIONS,
     SENSOR_OPERATION_MODES,
@@ -24,6 +37,10 @@ from custom_components.meltem_ventilation.sensor import (
     MODBUS_DEVICE_PATH_DESCRIPTION,
     MODBUS_SLAVE_ID_DESCRIPTION,
     SENSOR_DESCRIPTIONS,
+)
+from custom_components.meltem_ventilation.trigger import (
+    FilterChangeDueTrigger,
+    async_get_triggers,
 )
 
 
@@ -323,6 +340,85 @@ class TestBinarySensorDescriptionMetadata:
         assert _binary_desc(key).entity_category is None
 
 
+class TestPurposeSpecificAutomation:
+    async def test_filter_change_platforms_register_the_expected_key(
+        self, hass
+    ) -> None:
+        assert set(await async_get_triggers(hass)) == {"filter_change_due"}
+        assert set(await async_get_conditions(hass)) == {"filter_change_due"}
+
+    def test_filter_change_targets_only_integration_devices(self) -> None:
+        for filename in ("conditions.yaml", "triggers.yaml"):
+            config = yaml.safe_load(
+                (_COMPONENT_DIR / filename).read_text(encoding="utf-8")
+            )["filter_change_due"]
+
+            assert config["target"] == {
+                "device": [{"integration": DOMAIN}],
+            }
+
+    def test_trigger_and_condition_match_filter_due_state(self) -> None:
+        hass = MagicMock()
+        entity_id = "binary_sensor.living_room_filter_change_due"
+        target = {"entity_id": [entity_id]}
+        trigger = FilterChangeDueTrigger(
+            hass,
+            TriggerConfig(
+                key=f"{DOMAIN}.filter_change_due",
+                target=target,
+                options={},
+            ),
+        )
+        condition = FilterChangeDueCondition(
+            hass,
+            ConditionConfig(target=target, options={"behavior": "any"}),
+        )
+        state_on = State(entity_id, STATE_ON, {"device_class": "problem"})
+        state_off = State(entity_id, STATE_OFF, {"device_class": "problem"})
+
+        assert trigger.is_valid_state(state_on, lambda _reason, **_data: None)
+        assert not trigger.is_valid_state(state_off, lambda _reason, **_data: None)
+        assert trigger.is_valid_transition(state_off, state_on)
+        assert not trigger.is_valid_transition(state_on, state_on)
+        assert condition.is_valid_state(state_on)
+        assert not condition.is_valid_state(state_off)
+
+    def test_filter_target_excludes_other_problem_sensors(self) -> None:
+        filter_entry = SimpleNamespace(
+            platform=DOMAIN,
+            unique_id=f"{DOMAIN}_unit_1_filter_change_due",
+        )
+        unrelated_entry = SimpleNamespace(
+            platform=DOMAIN,
+            unique_id=f"{DOMAIN}_unit_1_error_status",
+        )
+        foreign_entry = SimpleNamespace(
+            platform="other_integration",
+            unique_id="device_filter_change_due",
+        )
+        registry = MagicMock()
+        registry.async_get.side_effect = {
+            "binary_sensor.filter_due": filter_entry,
+            "binary_sensor.error": unrelated_entry,
+            "binary_sensor.foreign": foreign_entry,
+        }.get
+
+        with patch(
+            "custom_components.meltem_ventilation.automation.er.async_get",
+            return_value=registry,
+        ):
+            entities = filter_change_due_entities(
+                object(),
+                {
+                    "binary_sensor.filter_due",
+                    "binary_sensor.error",
+                    "binary_sensor.foreign",
+                },
+            )
+
+        assert entities == {"binary_sensor.filter_due"}
+
+
 # ---------------------------------------------------------------------------
 #  Translations
 # ---------------------------------------------------------------------------
@@ -368,9 +464,9 @@ class TestTranslations:
             }
         )
         assert sensor_keys == set(strings["sensor"])
-        assert {desc.key for desc in BINARY_SENSOR_DESCRIPTIONS} == set(
-            strings["binary_sensor"]
-        )
+        binary_sensor_keys = {desc.key for desc in BINARY_SENSOR_DESCRIPTIONS}
+        binary_sensor_keys.add("data_health")
+        assert binary_sensor_keys == set(strings["binary_sensor"])
         assert {desc.key for desc in CONTROL_SETTING_DESCRIPTIONS} == set(
             strings["number"]
         )

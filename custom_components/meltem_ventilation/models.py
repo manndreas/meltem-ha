@@ -6,7 +6,8 @@ the coordinator, entities, and Modbus client can share a stable contract.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,6 +24,30 @@ class RoomConfig:
     slave: int
     preview: str | None = None
     supported_entity_keys: frozenset[str] | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class ReadHealth:
+    """Freshness and failure state for one polled data group."""
+
+    last_attempt: datetime | None = None
+    last_successful_read: datetime | None = None
+    consecutive_failures: int = 0
+    last_error: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class WriteConfirmation:
+    """Outcome of one requested write and its device readback."""
+
+    expected_value: str | int | bool | tuple[int, int]
+    started_at: datetime
+    status: str = "pending"
+    actual_value: str | int | bool | tuple[int, int] | None = None
+    last_error: str | None = None
+
+
+EMPTY_READ_HEALTH = ReadHealth()
 
 
 @dataclass(slots=True, frozen=True)
@@ -43,6 +68,7 @@ class RoomState:
     voc_supply_air: int | None = None
     extract_air_flow: int | None = None
     supply_air_flow: int | None = None
+    group_read_health: tuple[tuple[str, ReadHealth], ...] = ()
     operation_mode: str | None = None
     preset_mode: str | None = None
     intensive_active: bool | None = None
@@ -57,6 +83,37 @@ class RoomState:
     co2_starting_point: int | None = None
     co2_min_level: int | None = None
     co2_max_level: int | None = None
+
+    def read_health_for(self, group_key: str) -> ReadHealth:
+        """Return the last recorded health for one read group."""
+
+        return dict(self.group_read_health).get(group_key, EMPTY_READ_HEALTH)
+
+    def with_read_health(self, group_key: str, health: ReadHealth) -> RoomState:
+        """Return a copy with one group's health replaced."""
+
+        group_health = dict(self.group_read_health)
+        group_health[group_key] = health
+        return replace(self, group_read_health=tuple(sorted(group_health.items())))
+
+    @property
+    def airflow_last_successful_read(self) -> datetime | None:
+        """Compatibility view for airflow freshness consumers."""
+
+        return self.read_health_for("flow").last_successful_read
+
+    @property
+    def airflow_consecutive_failures(self) -> int | None:
+        """Compatibility view for airflow freshness consumers."""
+
+        health = self.read_health_for("flow")
+        return health.consecutive_failures if health.last_attempt is not None else None
+
+    @property
+    def airflow_last_error(self) -> str | None:
+        """Compatibility view for airflow freshness consumers."""
+
+        return self.read_health_for("flow").last_error
 
 
 EMPTY_ROOM_STATE = RoomState()

@@ -1,4 +1,5 @@
 {
+  "title": "Meltem Modbus",
   "config": {
     "step": {
       "user": {
@@ -113,6 +114,34 @@
       "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest."
     }
   },
+  "triggers": {
+    "filter_change_due": {
+      "name": "Filterwechsel fällig",
+      "description": "Wird ausgelöst, wenn ein ausgewähltes Meltem-Gerät einen fälligen Filterwechsel meldet.",
+      "fields": {
+        "behavior": {
+          "name": "Auslösen, wenn"
+        },
+        "for": {
+          "name": "Für mindestens"
+        }
+      }
+    }
+  },
+  "conditions": {
+    "filter_change_due": {
+      "name": "Filterwechsel fällig",
+      "description": "Prüft, ob ein ausgewähltes Meltem-Gerät einen fälligen Filterwechsel meldet.",
+      "fields": {
+        "behavior": {
+          "name": "Bedingung erfüllt, wenn"
+        },
+        "for": {
+          "name": "Für mindestens"
+        }
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "exhaust_temperature": {
@@ -170,6 +199,9 @@
       },
       "rf_comm_status": {
         "name": "RF-Kommunikationsstatus"
+      },
+      "data_health": {
+        "name": "Datenlesestatus"
       }
     },
     "switch": {
@@ -233,7 +265,8 @@
       "state_units": "Geräte mit Live-Status",
       "last_update_success": "Letzte Aktualisierung erfolgreich",
       "last_job_error": "Letzter Scheduler-Fehler",
-      "unavailable_units": "Aktuell nicht verfügbare Geräte"
+      "unavailable_units": "Aktuell nicht verfügbare Geräte",
+      "read_health": "Lesestatus je Datengruppe"
     }
   }
 }

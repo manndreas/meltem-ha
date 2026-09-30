@@ -52,6 +52,7 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
     ) -> None:
         super().__init__(coordinator)
         self.room = room
+        self._entity_key = object_key
         self._attr_unique_id = f"{DOMAIN}_{room.key}_{object_key}"
         self._attr_translation_key = translation_key
         self._hw_version = _product_id_from_preview(room.preview)
@@ -76,7 +77,16 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
 
     @property
     def available(self) -> bool:
-        return super().available and self.coordinator.room_available(self.room.key)
+        is_available = super().available and self.coordinator.room_available(
+            self.room.key
+        )
+        if not is_available:
+            return False
+        read_group = self.coordinator.read_group_for_entity(self._entity_key)
+        return read_group is None or self.coordinator.read_group_available(
+            self.room.key,
+            read_group,
+        )
 
     def _handle_coordinator_update(self) -> None:
         self._async_update_device_registry_versions()
@@ -85,7 +95,8 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
     def _async_update_device_registry_versions(self) -> None:
         """Push late-discovered version fields into the device registry."""
 
-        if self.hass is None:
+        device = self.device_entry
+        if self.hass is None or device is None:
             return
 
         sw_version = (
@@ -99,12 +110,7 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
         ):
             return
 
-        device_registry = dr.async_get(self.hass)
-        device = device_registry.async_get_device(identifiers={(DOMAIN, self.room.key)})
-        if device is None:
-            return
-
-        device_registry.async_update_device(
+        dr.async_get(self.hass).async_update_device(
             device.id,
             sw_version=sw_version,
             hw_version=self._hw_version,

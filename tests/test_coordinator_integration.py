@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import DOMAIN
@@ -20,7 +21,12 @@ from custom_components.meltem_ventilation.coordinator import (
     PollJob,
 )
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
-from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
+from custom_components.meltem_ventilation.models import (
+    ReadHealth,
+    RefreshPlan,
+    RoomConfig,
+    RoomState,
+)
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -136,8 +142,11 @@ class TestFirstRefresh:
                 coordinator._read_all_rooms_full
             )
 
-        # Failed room gets empty state.
-        assert data["unit_1"] == RoomState()
+        # Failed rooms keep empty values while recording the affected groups.
+        failed_state = data["unit_1"]
+        assert not coordinator._room_state_has_data(failed_state)
+        assert failed_state.read_health_for("flow").last_error == "boom: unit_1"
+        assert failed_state.read_health_for("status").consecutive_failures == 1
         # Successful room gets the mock state.
         assert data["unit_2"].target_level == 50
         assert client.reset_calls == 1
@@ -489,6 +498,217 @@ class TestReadOneJob:
 
         assert result["unit_1"].target_level == 55
         assert client.reset_calls == 1
+        assert result["unit_1"].airflow_consecutive_failures == 1
+
+    def test_failed_status_job_only_increments_status_health(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build(hass)
+        client._fail_rooms = {"unit_1"}
+        flow_health = ReadHealth(
+            last_attempt=dt_util.utcnow(),
+            last_successful_read=dt_util.utcnow(),
+            consecutive_failures=1,
+        )
+        previous = {
+            "unit_1": RoomState(group_read_health=(("flow", flow_health),))
+        }
+        job = PollJob(
+            "status", "unit_1", RefreshPlan.only(refresh_status=True), 60, 0.0
+        )
+
+        result = coordinator._read_one_job(previous, job)
+        state = result["unit_1"]
+
+        assert state.read_health_for("flow") == flow_health
+        assert state.read_health_for("status").consecutive_failures == 1
+        assert state.read_health_for("status").last_error == "boom: unit_1"
+
+    @pytest.mark.parametrize(
+        "job_key,refresh_plan,read_groups",
+        [
+            (
+                "flow",
+                RefreshPlan.only(refresh_airflow=True),
+                ("flow", "flow_control"),
+            ),
+            ("status", RefreshPlan.only(refresh_status=True), ("status",)),
+            (
+                "temperature",
+                RefreshPlan.only(refresh_temperatures=True),
+                ("temperature",),
+            ),
+            (
+                "filter",
+                RefreshPlan.only(refresh_filter_change_due=True),
+                ("filter",),
+            ),
+            (
+                "hours",
+                RefreshPlan.only(refresh_operating_hours=True),
+                ("hours",),
+            ),
+            (
+                "control_settings",
+                RefreshPlan.only(refresh_control_settings=True),
+                ("control_settings",),
+            ),
+        ],
+        ids=("flow", "status", "temperature", "filter", "hours", "control-settings"),
+    )
+    def test_each_read_group_failure_is_isolated_and_recovers(
+        self,
+        hass: HomeAssistant,
+        job_key: str,
+        refresh_plan: RefreshPlan,
+        read_groups: tuple[str, ...],
+    ) -> None:
+        room = RoomConfig(
+            key="unit_1", name="Unit 1", profile="ii_fc_voc", slave=2
+        )
+        coordinator, client = _build(hass, rooms=[room])
+        neighbor_group = "status" if "status" not in read_groups else "flow"
+        previous_time = dt_util.utcnow()
+        neighbor_health = ReadHealth(
+            last_attempt=previous_time,
+            last_successful_read=previous_time,
+            consecutive_failures=1,
+            last_error="neighbor group failed",
+        )
+        group_health = {
+            group_key: ReadHealth(
+                last_attempt=previous_time,
+                last_successful_read=previous_time,
+            )
+            for group_key in read_groups
+        }
+        group_health[neighbor_group] = neighbor_health
+        previous_state = RoomState(
+            target_level=55,
+            group_read_health=tuple(sorted(group_health.items())),
+        )
+        job = PollJob(job_key, room.key, refresh_plan, 60, 0.0)
+        client._fail_rooms = {room.key}
+
+        failed_states = coordinator._read_one_job({room.key: previous_state}, job)
+        failed_state = failed_states[room.key]
+
+        assert failed_state.target_level == 55
+        for group_key in read_groups:
+            health = failed_state.read_health_for(group_key)
+            assert health.consecutive_failures == 1
+            assert health.last_error == f"boom: {room.key}"
+        assert failed_state.read_health_for(neighbor_group) == neighbor_health
+
+        client._fail_rooms.clear()
+        recovered_state = failed_state
+        recovery_time = dt_util.utcnow()
+        for group_key in read_groups:
+            recovered_state = recovered_state.with_read_health(
+                group_key,
+                ReadHealth(
+                    last_attempt=recovery_time,
+                    last_successful_read=recovery_time,
+                ),
+            )
+        client.next_read_state = recovered_state
+
+        recovered_states = coordinator._read_one_job(failed_states, job)
+        recovered_state = recovered_states[room.key]
+
+        for group_key in read_groups:
+            health = recovered_state.read_health_for(group_key)
+            assert health.consecutive_failures == 0
+            assert health.last_error is None
+            assert health.last_successful_read == recovery_time
+        assert recovered_state.read_health_for(neighbor_group) == neighbor_health
+        assert recovered_state.target_level == 55
+
+    def test_repeated_failed_flow_reads_mark_airflow_stale(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build(hass)
+        client._fail_rooms = {"unit_1"}
+        state_map = {"unit_1": RoomState(target_level=55)}
+        job = PollJob(
+            "flow", "unit_1", RefreshPlan.only(refresh_airflow=True), 10, 0.0
+        )
+
+        for _ in range(3):
+            state_map = coordinator._read_one_job(state_map, job)
+
+        state = state_map["unit_1"]
+        coordinator.data = state_map
+        assert state.airflow_consecutive_failures == 3
+        assert coordinator.airflow_data_stale("unit_1") is True
+        assert coordinator.airflow_data_available("unit_1") is False
+
+    def test_other_job_success_does_not_clear_airflow_failures(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build(hass)
+        flow_health = ReadHealth(
+            last_attempt=dt_util.utcnow(),
+            consecutive_failures=2,
+            last_error="airflow block read failed",
+        )
+        previous = RoomState(
+            group_read_health=(("flow", flow_health),),
+        )
+        client.next_read_state = RoomState(
+            error_status=False,
+            group_read_health=(("flow", flow_health),),
+        )
+        job = PollJob(
+            "status", "unit_1", RefreshPlan.only(refresh_status=True), 60, 0.0
+        )
+
+        result = coordinator._read_one_job({"unit_1": previous}, job)
+
+        assert result["unit_1"].airflow_consecutive_failures == 2
+
+    def test_airflow_data_becomes_stale_after_success_timestamp_expires(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _client = _build(hass)
+        coordinator.data = {
+            "unit_1": RoomState(
+                supply_air_flow=30,
+                group_read_health=(
+                    (
+                        "flow",
+                        ReadHealth(
+                            last_attempt=dt_util.utcnow() - timedelta(seconds=31),
+                            last_successful_read=dt_util.utcnow()
+                            - timedelta(seconds=31),
+                        ),
+                    ),
+                ),
+            )
+        }
+
+        assert coordinator.airflow_data_stale("unit_1") is True
+        assert coordinator.airflow_data_available("unit_1") is False
+
+    def test_airflow_health_metadata_does_not_count_as_room_data(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _client = _build(hass)
+
+        assert not coordinator._room_state_has_data(
+            RoomState(
+                group_read_health=(
+                    (
+                        "flow",
+                        ReadHealth(
+                            last_attempt=dt_util.utcnow(),
+                            consecutive_failures=1,
+                            last_error="read failed",
+                        ),
+                    ),
+                ),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

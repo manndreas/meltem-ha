@@ -20,6 +20,7 @@ from custom_components.meltem_ventilation.const import (
     DOMAIN,
     MODEL_PROFILES,
 )
+from custom_components.meltem_ventilation.coordinator import READ_GROUP_ENTITY_KEYS
 from custom_components.meltem_ventilation.modbus_helpers import (
     supported_entity_keys_for_profile,
 )
@@ -48,6 +49,7 @@ _BASE_BINARY_SENSORS = {
     "frost_protection_active",
     "filter_change_due",
     "rf_comm_status",
+    "data_health",
 }
 
 _HUMIDITY_NUMBERS = {
@@ -168,6 +170,29 @@ async def test_profile_creates_the_expected_entities(
         with_serial_stubs.undo()
 
     assert created == _expected(profile)
+
+
+@pytest.mark.parametrize("profile", MODEL_PROFILES)
+def test_profile_has_only_supported_read_health_groups(profile: str) -> None:
+    supported_entities = set(supported_entity_keys_for_profile(profile))
+    actual_groups = {
+        group_key
+        for group_key, entity_keys in READ_GROUP_ENTITY_KEYS.items()
+        if supported_entities & entity_keys
+    }
+    expected_groups = {
+        "flow",
+        "flow_control",
+        "intensive",
+        "status",
+        "temperature",
+        "filter",
+        "hours",
+    }
+    if _PROFILE_CAPABILITIES[profile] & {"humidity", "co2"}:
+        expected_groups.add("control_settings")
+
+    assert actual_groups == expected_groups
 
 
 async def test_diagnostic_connection_entities_are_created_once_and_disabled(

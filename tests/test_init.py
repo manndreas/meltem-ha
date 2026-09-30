@@ -480,6 +480,13 @@ class TestAsyncSetupEntry:
         kept = registry.async_get_or_create(
             "sensor", DOMAIN, f"{DOMAIN}_unit_1_operating_hours", config_entry=entry
         )
+        legacy_health = registry.async_get_or_create(
+            "binary_sensor",
+            DOMAIN,
+            f"{DOMAIN}_unit_1_airflow_data_stale",
+            config_entry=entry,
+        )
+        legacy_health_entity_id = legacy_health.entity_id
 
         with patch.object(
             hass.config_entries,
@@ -493,6 +500,9 @@ class TestAsyncSetupEntry:
         assert registry.async_get(obsolete_button.entity_id) is None
         assert registry.async_get(obsolete_binary_sensor.entity_id) is None
         assert registry.async_get(kept.entity_id) is not None
+        migrated_health = registry.async_get(legacy_health_entity_id)
+        assert migrated_health is not None
+        assert migrated_health.unique_id == f"{DOMAIN}_unit_1_data_health"
 
     @patch(
         "custom_components.meltem_ventilation.resolve_preferred_port_path",

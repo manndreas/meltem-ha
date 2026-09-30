@@ -25,6 +25,10 @@ def _make_coordinator(levels: tuple[int | None, int | None] = (40, 40)) -> Magic
     coordinator.hass = None
     coordinator.last_update_success = True
     coordinator.room_available.return_value = True
+    coordinator.read_group_for_entity.side_effect = lambda key: (
+        "flow_control" if key in {"supply_level", "extract_level"} else None
+    )
+    coordinator.read_group_available.return_value = True
     coordinator.effective_levels.return_value = levels
     coordinator.async_set_level = AsyncMock()
     coordinator.async_set_unbalanced_levels = AsyncMock()
@@ -70,6 +74,16 @@ class TestReadState:
 
         coordinator.room_available.return_value = False
         assert entity.available is False
+
+    def test_unavailable_when_flow_control_is_stale(self) -> None:
+        coordinator = _make_coordinator()
+        coordinator.read_group_for_entity.return_value = "flow_control"
+        coordinator.read_group_available.return_value = False
+
+        assert _supply(coordinator).available is False
+        coordinator.read_group_available.assert_called_once_with(
+            "unit_1", "flow_control"
+        )
 
 
 class TestWrites:
