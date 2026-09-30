@@ -361,6 +361,16 @@ class TestReadRoomState:
         assert second.target_level == 30
         assert calls.count(REGISTER_CURRENT_LEVEL) == 1
 
+    def test_optional_read_backoff_caps_failure_counter(self) -> None:
+        client = self._build_client()
+        key = (2, REGISTER_CURRENT_LEVEL, 1)
+        client._optional_read_failures[key] = 1024
+
+        client._mark_optional_read_failure(key)
+
+        assert client._optional_read_failures[key] == 5
+        assert client._is_optional_read_backed_off(key)
+
     def test_extract_target_is_only_read_in_unbalanced_mode(self) -> None:
         client = self._build_client()
         client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
