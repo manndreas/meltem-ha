@@ -52,6 +52,22 @@ class TestRoomSupports:
 
 
 class TestControlSettingNumber:
+    def test_unavailable_when_control_settings_are_stale(self) -> None:
+        coordinator = _fake_coordinator(data={"unit_1": RoomState(humidity_min_level=30)})
+        coordinator.last_update_success = True
+        coordinator.room_available.return_value = True
+        coordinator.read_group_for_entity.side_effect = lambda key: (
+            "control_settings" if key == "humidity_min_level" else None
+        )
+        coordinator.read_group_available.return_value = False
+        description = MagicMock()
+        description.key = "humidity_min_level"
+        description.value_fn = lambda state: state.humidity_min_level
+
+        entity = MeltemControlSettingNumber(coordinator, _ROOM_ALL, description)
+
+        assert entity.available is False
+
     def test_reads_config_value(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState(humidity_min_level=30)})
         description = MagicMock()

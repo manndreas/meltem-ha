@@ -9,6 +9,7 @@ import pytest
 from custom_components.meltem_ventilation.binary_sensor import (
     BINARY_SENSOR_DESCRIPTIONS,
     MeltemBinarySensorEntity,
+    MeltemDataHealthBinarySensor,
 )
 from custom_components.meltem_ventilation.const import DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
@@ -39,6 +40,13 @@ def _fake_coordinator(data: dict[str, RoomState] | None = None) -> MagicMock:
     coordinator.data = data or {}
     type(coordinator).safe_data = property(lambda self: self.data if isinstance(self.data, dict) else {})
     coordinator.async_add_listener = MagicMock(return_value=lambda: None)
+    coordinator.read_group_for_entity.side_effect = lambda key: {
+        "error_status": "status",
+        "frost_protection_active": "status",
+        "filter_change_due": "filter",
+        "rf_comm_status": "status",
+    }.get(key)
+    coordinator.read_group_available.return_value = True
     return coordinator
 
 
@@ -71,6 +79,27 @@ class TestBinarySensorEntityCreation:
         assert info["sw_version"] == "7"
         assert info["hw_version"] == "116852"
 
+    def test_data_health_entity_reports_group_details(self) -> None:
+        coordinator = _fake_coordinator(data={"unit_1": RoomState()})
+        coordinator.last_update_success = True
+        coordinator.data_health_stale.return_value = True
+        coordinator.data_health_attributes.return_value = {
+            "flow": {
+                "last_successful_read": "2026-09-30T12:00:00+00:00",
+                "consecutive_failures": 3,
+                "last_error": "airflow block read failed",
+            },
+            "writes": {},
+        }
+
+        entity = MeltemDataHealthBinarySensor(coordinator, _ROOM)
+
+        assert entity.unique_id == f"{DOMAIN}_unit_1_data_health"
+        assert entity.is_on is True
+        assert entity.available is True
+        assert entity.extra_state_attributes["flow"]["consecutive_failures"] == 3
+        assert entity.entity_category.value == "diagnostic"
+
 
 # ---------------------------------------------------------------------------
 #  is_on property
@@ -99,6 +128,14 @@ class TestBinarySensorIsOn:
         desc = _find_desc(key)
         entity = MeltemBinarySensorEntity(coordinator, _ROOM, desc)
         assert entity.is_on is expected
+
+    def test_status_binary_sensor_is_unavailable_when_its_group_is_stale(self) -> None:
+        coordinator = _fake_coordinator(data={"unit_1": RoomState(error_status=False)})
+        coordinator.last_update_success = True
+        coordinator.read_group_available.return_value = False
+        entity = MeltemBinarySensorEntity(coordinator, _ROOM, _find_desc("error_status"))
+
+        assert entity.available is False
 
 
 # ---------------------------------------------------------------------------

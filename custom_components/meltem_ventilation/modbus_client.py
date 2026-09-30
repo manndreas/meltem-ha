@@ -16,6 +16,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 
+from homeassistant.util import dt as dt_util
 from pymodbus.client import ModbusSerialClient
 from pymodbus.exceptions import ConnectionException, ModbusIOException
 
@@ -40,6 +41,7 @@ from .const import (
     PRESET_MODE_TO_RAW_CODE,
     RAW_CODE_TO_PRESET_MODE,
     RAW_VALUE_TO_SENSOR_MODE,
+    READ_FAILURE_THRESHOLD,
     REGISTER_APPLY,
     REGISTER_CO2_EXTRACT_AIR,
     REGISTER_CURRENT_LEVEL,
@@ -79,7 +81,7 @@ from .modbus_helpers import (
     detect_slave_details_with_client,
     discover_gateway_nodes,
 )
-from .models import RefreshPlan, RoomConfig, RoomState
+from .models import ReadHealth, RefreshPlan, RoomConfig, RoomState
 
 sync_sleep = time.sleep
 
@@ -157,7 +159,10 @@ class MeltemModbusClient:
         self._lock = threading.RLock()
         self._optional_read_backoff_until: dict[tuple[int, int, int], float] = {}
         self._optional_read_failures: dict[tuple[int, int, int], int] = {}
+        self._optional_read_errors: dict[tuple[int, int, int], str] = {}
         self._last_successful_read_by_slave: dict[int, float] = {}
+        self._last_airflow_read_error: str | None = None
+        self._read_group_errors: dict[str, str] = {}
 
     def seconds_since_successful_read(self, slave: int) -> float | None:
         """Return the age of the last answered register read for one unit.
@@ -248,6 +253,7 @@ class MeltemModbusClient:
         refresh_plan = refresh_plan or RefreshPlan()
 
         with self._gateway_operation(f"reading room {room.key}"):
+            self._read_group_errors = {}
             # Fail fast on a dead transport: every read below is optional
             # and would otherwise silently report "nothing changed".
             self._ensure_client()
@@ -255,6 +261,7 @@ class MeltemModbusClient:
             if refresh_plan.refresh_airflow:
                 # Airflow drives the UI and post-write confirmation, so it
                 # gets its own fast path.
+                self._last_airflow_read_error = None
                 extract_air_flow, supply_air_flow = self._read_airflow_pair(
                     room,
                     previous_state,
@@ -279,6 +286,7 @@ class MeltemModbusClient:
                 REGISTER_RF_COMM_STATUS,
                 previous_state.rf_comm_status,
                 refresh_plan.refresh_status,
+                read_group="status",
             )
 
             if refresh_plan.refresh_airflow:
@@ -290,6 +298,11 @@ class MeltemModbusClient:
                 )
             else:
                 mode = _ModeGroup.unchanged(previous_state)
+            group_read_health = self._updated_read_health(
+                room,
+                previous_state,
+                refresh_plan,
+            )
 
         # ``environment`` already carries the temperature and air-quality fields.
         return replace(
@@ -308,8 +321,80 @@ class MeltemModbusClient:
             software_version=software_version,
             target_level=mode.target_level,
             extract_target_level=mode.extract_target_level,
+            group_read_health=tuple(sorted(group_read_health.items())),
             **control_settings,
         )
+
+    def _updated_read_health(
+        self,
+        room: RoomConfig,
+        previous_state: RoomState,
+        refresh_plan: RefreshPlan,
+    ) -> dict[str, ReadHealth]:
+        """Update health only for expected groups selected by this read plan."""
+
+        group_entities = {
+            "flow": ("extract_air_flow", "supply_air_flow"),
+            "flow_control": (
+                "operation_mode",
+                "preset_mode",
+                "supply_level",
+                "extract_level",
+            ),
+            "intensive": ("intensive",),
+            "status": ("error_status", "frost_protection_active", "rf_comm_status"),
+            "temperature": (
+                "exhaust_temperature",
+                "outdoor_air_temperature",
+                "extract_air_temperature",
+                "supply_air_temperature",
+                "humidity_extract_air",
+                "humidity_supply_air",
+                "co2_extract_air",
+                "voc_supply_air",
+            ),
+            "filter": ("filter_change_due", "days_until_filter_change"),
+            "hours": ("operating_hours",),
+            "control_settings": tuple(CONTROL_SETTING_REGISTERS),
+        }
+        groups_to_update: list[str] = []
+        if refresh_plan.refresh_airflow:
+            groups_to_update.extend(("flow", "flow_control", "intensive"))
+        if refresh_plan.refresh_status:
+            groups_to_update.append("status")
+        if refresh_plan.refresh_temperatures or refresh_plan.refresh_environment:
+            groups_to_update.append("temperature")
+        if refresh_plan.refresh_filter_change_due or refresh_plan.refresh_filter_days:
+            groups_to_update.append("filter")
+        if refresh_plan.refresh_operating_hours:
+            groups_to_update.append("hours")
+        if refresh_plan.refresh_control_settings:
+            groups_to_update.append("control_settings")
+
+        group_health = dict(previous_state.group_read_health)
+        now = dt_util.utcnow()
+        for group_key in groups_to_update:
+            if not any(self._supports(room, key) for key in group_entities[group_key]):
+                continue
+
+            previous_health = previous_state.read_health_for(group_key)
+            error = self._read_group_errors.get(group_key)
+            if error is None:
+                group_health[group_key] = ReadHealth(
+                    last_attempt=now,
+                    last_successful_read=now,
+                )
+            else:
+                group_health[group_key] = ReadHealth(
+                    last_attempt=now,
+                    last_successful_read=previous_health.last_successful_read,
+                    consecutive_failures=min(
+                        previous_health.consecutive_failures + 1,
+                        READ_FAILURE_THRESHOLD,
+                    ),
+                    last_error=error,
+                )
+        return group_health
 
     def write_level(self, room: RoomConfig, level: int) -> None:
         """Write off/manual mode and target level for one room."""
@@ -633,57 +718,91 @@ class MeltemModbusClient:
     #  Optional reads (swallow errors, return None)
     # ------------------------------------------------------------------
 
-    def _read_optional_uint16(self, slave: int, address: int) -> int | None:
+    def _read_optional_uint16(
+        self,
+        slave: int,
+        address: int,
+        *,
+        read_group: str | tuple[str, ...] | None = None,
+    ) -> int | None:
         try:
             return self._read_uint16(slave, address)
         except MeltemConnectionError:
             raise
-        except MeltemModbusError:
+        except MeltemModbusError as err:
+            self._record_group_read_error(read_group, err)
             return None
 
     def _read_optional_uint16_block(
-        self, slave: int, address: int, count: int
+        self,
+        slave: int,
+        address: int,
+        count: int,
+        *,
+        read_group: str | tuple[str, ...] | None = None,
     ) -> list[int] | None:
         try:
             return self._read_uint16_block(slave, address, count)
         except MeltemConnectionError:
             raise
-        except MeltemModbusError:
+        except MeltemModbusError as err:
+            self._record_group_read_error(read_group, err)
             return None
 
-    def _read_optional_airflow_uint16(self, slave: int, address: int) -> int | None:
+    def _read_optional_airflow_uint16(
+        self,
+        slave: int,
+        address: int,
+        *,
+        read_group: str | tuple[str, ...] | None = None,
+    ) -> int | None:
         """Read one optional airflow-adjacent register with temporary backoff."""
 
         key = (slave, address, 1)
         if self._is_optional_read_backed_off(key):
+            self._record_group_read_error(
+                read_group,
+                self._optional_read_errors.get(key, "Read is temporarily backed off"),
+            )
             return None
 
         try:
             value = self._read_uint16(slave, address)
         except MeltemConnectionError:
             raise
-        except MeltemModbusError:
-            self._mark_optional_read_failure(key)
+        except MeltemModbusError as err:
+            self._mark_optional_read_failure(key, err)
+            self._record_group_read_error(read_group, err)
             return None
 
         self._clear_optional_read_failure(key)
         return value
 
     def _read_optional_airflow_uint16_block(
-        self, slave: int, address: int, count: int
+        self,
+        slave: int,
+        address: int,
+        count: int,
+        *,
+        read_group: str | tuple[str, ...] | None = None,
     ) -> list[int] | None:
         """Read one optional airflow-adjacent block with temporary backoff."""
 
         key = (slave, address, count)
         if self._is_optional_read_backed_off(key):
+            self._record_group_read_error(
+                read_group,
+                self._optional_read_errors.get(key, "Read is temporarily backed off"),
+            )
             return None
 
         try:
             value = self._read_uint16_block(slave, address, count)
         except MeltemConnectionError:
             raise
-        except MeltemModbusError:
-            self._mark_optional_read_failure(key)
+        except MeltemModbusError as err:
+            self._mark_optional_read_failure(key, err)
+            self._record_group_read_error(read_group, err)
             return None
 
         self._clear_optional_read_failure(key)
@@ -700,7 +819,11 @@ class MeltemModbusClient:
             return False
         return True
 
-    def _mark_optional_read_failure(self, key: tuple[int, int, int]) -> None:
+    def _mark_optional_read_failure(
+        self,
+        key: tuple[int, int, int],
+        error: MeltemModbusError,
+    ) -> None:
         """Increase backoff after one optional register read failed."""
 
         failures = min(
@@ -708,6 +831,7 @@ class MeltemModbusClient:
             _OPTIONAL_READ_BACKOFF_MAX_FAILURES,
         )
         self._optional_read_failures[key] = failures
+        self._optional_read_errors[key] = str(error)
         delay_seconds = min(
             _OPTIONAL_READ_BACKOFF_MAX_SECONDS,
             _OPTIONAL_READ_BACKOFF_START_SECONDS * (2 ** (failures - 1)),
@@ -719,6 +843,20 @@ class MeltemModbusClient:
 
         self._optional_read_failures.pop(key, None)
         self._optional_read_backoff_until.pop(key, None)
+        self._optional_read_errors.pop(key, None)
+
+    def _record_group_read_error(
+        self,
+        group_keys: str | tuple[str, ...] | None,
+        error: Exception | str,
+    ) -> None:
+        """Remember a swallowed optional-read error for each affected group."""
+
+        if group_keys is None:
+            return
+        keys = (group_keys,) if isinstance(group_keys, str) else group_keys
+        for group_key in keys:
+            self._read_group_errors.setdefault(group_key, str(error))
 
     def _clear_optional_airflow_read_backoff(self, slave: int) -> None:
         """Clear airflow-related optional read backoff after a successful write."""
@@ -732,23 +870,33 @@ class MeltemModbusClient:
             self._clear_optional_read_failure(key)
 
     def _read_optional_float32_word_swap(
-        self, slave: int, address: int
+        self,
+        slave: int,
+        address: int,
+        *,
+        read_group: str | tuple[str, ...] | None = None,
     ) -> float | None:
         try:
             return self._read_float32_word_swap(slave, address)
         except MeltemConnectionError:
             raise
-        except MeltemModbusError:
+        except MeltemModbusError as err:
+            self._record_group_read_error(read_group, err)
             return None
 
     def _read_optional_uint32_word_swap(
-        self, slave: int, address: int
+        self,
+        slave: int,
+        address: int,
+        *,
+        read_group: str | tuple[str, ...] | None = None,
     ) -> int | None:
         try:
             return self._read_uint32_word_swap(slave, address)
         except MeltemConnectionError:
             raise
-        except MeltemModbusError:
+        except MeltemModbusError as err:
+            self._record_group_read_error(read_group, err)
             return None
 
     # ------------------------------------------------------------------
@@ -762,12 +910,18 @@ class MeltemModbusClient:
         register: int,
         previous: int | None,
         should_refresh: bool,
+        *,
+        read_group: str | None = None,
     ) -> int | None:
         """Read one uint16 register if supported and due."""
         if not (self._supports(room, key) and should_refresh):
             return previous
         return self._coalesce(
-            self._read_optional_uint16(room.slave, register),
+            self._read_optional_uint16(
+                room.slave,
+                register,
+                read_group=read_group,
+            ),
             previous,
         )
 
@@ -778,12 +932,18 @@ class MeltemModbusClient:
         register: int,
         previous: int | None,
         should_refresh: bool,
+        *,
+        read_group: str | None = None,
     ) -> int | None:
         """Read one uint32 register if supported and due."""
         if not (self._supports(room, key) and should_refresh):
             return previous
         return self._coalesce(
-            self._read_optional_uint32_word_swap(room.slave, register),
+            self._read_optional_uint32_word_swap(
+                room.slave,
+                register,
+                read_group=read_group,
+            ),
             previous,
         )
 
@@ -794,12 +954,18 @@ class MeltemModbusClient:
         register: int,
         previous: float | None,
         should_refresh: bool,
+        *,
+        read_group: str | None = None,
     ) -> float | None:
         """Read one float32 temperature register if supported and due."""
         if not (self._supports(room, key) and should_refresh):
             return previous
         return self._coalesce(
-            self._read_optional_float32_word_swap(room.slave, register),
+            self._read_optional_float32_word_swap(
+                room.slave,
+                register,
+                read_group=read_group,
+            ),
             previous,
         )
 
@@ -819,11 +985,17 @@ class MeltemModbusClient:
         block = None
         if supports_extract or supports_supply:
             # These registers are adjacent and benchmark well as a single read.
-            block = self._read_optional_uint16_block(
-                room.slave,
-                REGISTER_EXTRACT_AIR_FLOW,
-                REGISTER_SUPPLY_AIR_FLOW - REGISTER_EXTRACT_AIR_FLOW + 1,
-            )
+            try:
+                block = self._read_uint16_block(
+                    room.slave,
+                    REGISTER_EXTRACT_AIR_FLOW,
+                    REGISTER_SUPPLY_AIR_FLOW - REGISTER_EXTRACT_AIR_FLOW + 1,
+                )
+            except MeltemConnectionError:
+                raise
+            except MeltemModbusError as err:
+                self._last_airflow_read_error = str(err)
+                self._record_group_read_error("flow", err)
 
         if supports_extract and block is not None:
             extract_air_flow = self._coalesce(
@@ -868,10 +1040,19 @@ class MeltemModbusClient:
         frost = previous_state.frost_protection_active
 
         if should_refresh_error or should_refresh_filter or should_refresh_frost:
+            read_groups = tuple(
+                group_key
+                for group_key, is_due in (
+                    ("status", should_refresh_error or should_refresh_frost),
+                    ("filter", should_refresh_filter),
+                )
+                if is_due
+            )
             block = self._read_optional_uint16_block(
                 room.slave,
                 REGISTER_ERROR_STATUS,
                 REGISTER_FROST_PROTECTION_ACTIVE - REGISTER_ERROR_STATUS + 1,
+                read_group=read_groups,
             )
             if block is not None:
                 if should_refresh_error:
@@ -926,6 +1107,7 @@ class MeltemModbusClient:
             room.slave,
             start_address,
             len(CONTROL_SETTING_REGISTERS),
+            read_group="control_settings",
         )
         if block is None:
             return previous_values
@@ -959,16 +1141,22 @@ class MeltemModbusClient:
             REGISTER_DAYS_UNTIL_FILTER_CHANGE,
             previous_state.days_until_filter_change,
             refresh_plan.refresh_filter_days,
+            read_group="filter",
         )
         hours = self._read_uint32_if_due(
             room, "operating_hours",
             REGISTER_OPERATING_HOURS,
             previous_state.operating_hours,
             refresh_plan.refresh_operating_hours,
+            read_group="hours",
         )
         software_version = (
             self._coalesce(
-                self._read_optional_uint16(room.slave, REGISTER_SOFTWARE_VERSION),
+                self._read_optional_uint16(
+                    room.slave,
+                    REGISTER_SOFTWARE_VERSION,
+                    read_group="hours",
+                ),
                 previous_state.software_version,
             )
             if refresh_plan.refresh_operating_hours
@@ -998,6 +1186,7 @@ class MeltemModbusClient:
             room.slave,
             REGISTER_MODE,
             5,
+            read_group=("flow_control", "intensive"),
         )
         if mode_block is not None and len(mode_block) >= 5:
             return mode_block, True
@@ -1007,7 +1196,10 @@ class MeltemModbusClient:
                 room.slave,
                 REGISTER_MODE,
                 2,
+                read_group="flow_control",
             )
+            if mode_block is not None:
+                self._read_group_errors.pop("flow_control", None)
         return mode_block, False
 
     def _read_mode_group(
@@ -1029,6 +1221,7 @@ class MeltemModbusClient:
         raw_current_level = self._read_optional_airflow_uint16(
             room.slave,
             REGISTER_CURRENT_LEVEL,
+            read_group="flow_control",
         )
 
         raw_extract_target: int | None = None
@@ -1040,6 +1233,7 @@ class MeltemModbusClient:
             raw_extract_target = self._read_optional_airflow_uint16(
                 room.slave,
                 REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+                read_group="flow_control",
             )
             extract_target_level = (
                 self._decode_unbalanced_target_readback(room, raw_extract_target)
@@ -1105,6 +1299,7 @@ class MeltemModbusClient:
                 REGISTER_EXHAUST_AIR_TEMPERATURE,
                 prev.exhaust_temperature,
                 do_temp,
+                read_group="temperature",
             )
             return RoomState(
                 exhaust_temperature=exhaust,
@@ -1130,6 +1325,7 @@ class MeltemModbusClient:
                 room.slave,
                 REGISTER_EXTRACT_AIR_TEMPERATURE,
                 6,
+                read_group="temperature",
             )
             if main_temp_block is not None:
                 if self._supports(room, "exhaust_temperature") and do_temp:
@@ -1165,6 +1361,7 @@ class MeltemModbusClient:
                 self._read_optional_float32_word_swap(
                     room.slave,
                     REGISTER_SUPPLY_AIR_TEMPERATURE,
+                    read_group="temperature",
                 ),
                 prev.supply_air_temperature,
             )
@@ -1185,6 +1382,7 @@ class MeltemModbusClient:
                 room.slave,
                 REGISTER_HUMIDITY_EXTRACT_AIR,
                 REGISTER_CO2_EXTRACT_AIR - REGISTER_HUMIDITY_EXTRACT_AIR + 1,
+                read_group="temperature",
             )
             if extract_env_block is not None:
                 if room.profile in HUMIDITY_PROFILES and self._supports(room, "humidity_extract_air") and do_env:
@@ -1217,6 +1415,7 @@ class MeltemModbusClient:
                 room.slave,
                 REGISTER_HUMIDITY_SUPPLY_AIR,
                 REGISTER_VOC_SUPPLY_AIR - REGISTER_HUMIDITY_SUPPLY_AIR + 1,
+                read_group="temperature",
             )
             if supply_env_block is not None:
                 if room.profile in HUMIDITY_PROFILES and self._supports(room, "humidity_supply_air") and do_env:

@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+from custom_components.meltem_ventilation.coordinator import (
+    MeltemDataUpdateCoordinator,
+)
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
 from custom_components.meltem_ventilation.switch import MeltemIntensiveSwitch
 
@@ -20,6 +23,10 @@ def _build_switch(
     coordinator.hass = None
     coordinator.last_update_success = True
     coordinator.room_available.return_value = True
+    coordinator.read_group_for_entity.side_effect = lambda key: (
+        "intensive" if key == "intensive" else None
+    )
+    coordinator.read_group_available.return_value = True
     coordinator.optimistic_intensive.return_value = optimistic
     coordinator.async_activate_intensive = AsyncMock()
     coordinator.async_deactivate_intensive = AsyncMock()
@@ -30,6 +37,19 @@ def _build_switch(
 def test_reports_the_running_override() -> None:
     assert _build_switch(RoomState(intensive_active=True)).is_on is True
     assert _build_switch(RoomState(intensive_active=False)).is_on is False
+
+
+def test_unavailable_when_intensive_status_is_stale() -> None:
+    entity = _build_switch(RoomState(intensive_active=True))
+    entity.coordinator.read_group_available.return_value = False
+
+    assert entity.available is False
+
+
+def test_intensive_status_has_its_own_read_health_group() -> None:
+    assert MeltemDataUpdateCoordinator.read_group_for_entity("intensive") == (
+        "intensive"
+    )
 
 
 def test_state_is_unknown_while_the_mode_block_is_unreadable() -> None:

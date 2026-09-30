@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
+
+from homeassistant.const import EntityCategory
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import CONF_PORT, DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
+from custom_components.meltem_ventilation.entity import MeltemEntity
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
 from custom_components.meltem_ventilation.sensor import (
+    SENSOR_DESCRIPTIONS,
     MeltemModbusDevicePathSensor,
     MeltemModbusSlaveSensor,
-    SENSOR_DESCRIPTIONS,
     MeltemSensorEntity,
 )
-from homeassistant.const import EntityCategory
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -38,6 +40,23 @@ _ROOM_CONSTRAINED = RoomConfig(
 def _fake_coordinator(data: dict[str, RoomState] | None = None) -> MagicMock:
     coordinator = MagicMock(spec=MeltemDataUpdateCoordinator)
     coordinator.data = data or {}
+    coordinator.last_update_success = True
+    coordinator.room_available.return_value = True
+    coordinator.read_group_for_entity.side_effect = lambda key: {
+        "extract_air_flow": "flow",
+        "supply_air_flow": "flow",
+        "exhaust_temperature": "temperature",
+        "outdoor_air_temperature": "temperature",
+        "extract_air_temperature": "temperature",
+        "supply_air_temperature": "temperature",
+        "humidity_extract_air": "temperature",
+        "humidity_supply_air": "temperature",
+        "co2_extract_air": "temperature",
+        "voc_supply_air": "temperature",
+        "days_until_filter_change": "filter",
+        "operating_hours": "hours",
+    }.get(key)
+    coordinator.read_group_available.return_value = True
     type(coordinator).safe_data = property(lambda self: self.data if isinstance(self.data, dict) else {})
     coordinator.async_add_listener = MagicMock(return_value=lambda: None)
     return coordinator
@@ -110,10 +129,16 @@ class TestSensorEntityCreation:
         desc = _find_desc("exhaust_temperature")
         entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
         entity.hass = object()
+        device = type("Device", (), {"id": "device-1"})()
         fake_registry = MagicMock()
-        fake_registry.async_get_device.return_value = type("Device", (), {"id": "device-1"})()
 
         with (
+            patch.object(
+                MeltemEntity,
+                "device_entry",
+                new_callable=PropertyMock,
+                return_value=device,
+            ),
             patch("custom_components.meltem_ventilation.entity.dr.async_get", return_value=fake_registry),
             patch("homeassistant.helpers.update_coordinator.CoordinatorEntity._handle_coordinator_update"),
         ):
@@ -193,6 +218,49 @@ class TestSensorNativeValue:
         desc = _find_desc("days_until_filter_change")
         entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
         assert entity.native_value == 90
+
+
+class TestAirflowSensorAvailability:
+    def test_airflow_sensor_is_unavailable_when_measurement_is_stale(self) -> None:
+        coordinator = _fake_coordinator(
+            data={"unit_1": RoomState(supply_air_flow=30)}
+        )
+        coordinator.read_group_available.return_value = False
+        entity = MeltemSensorEntity(
+            coordinator,
+            _ROOM_FC_VOC,
+            _find_desc("supply_air_flow"),
+        )
+
+        assert entity.native_value == 30
+        assert entity.available is False
+
+    def test_non_airflow_sensor_does_not_depend_on_airflow_freshness(self) -> None:
+        coordinator = _fake_coordinator(
+            data={"unit_1": RoomState(exhaust_temperature=22.5)}
+        )
+        coordinator.read_group_available.return_value = True
+        entity = MeltemSensorEntity(
+            coordinator,
+            _ROOM_FC_VOC,
+            _find_desc("exhaust_temperature"),
+        )
+
+        assert entity.available is True
+
+    def test_temperature_sensor_is_unavailable_when_its_group_is_stale(self) -> None:
+        coordinator = _fake_coordinator(
+            data={"unit_1": RoomState(exhaust_temperature=22.5)}
+        )
+        coordinator.read_group_available.return_value = False
+        entity = MeltemSensorEntity(
+            coordinator,
+            _ROOM_FC_VOC,
+            _find_desc("exhaust_temperature"),
+        )
+
+        assert entity.native_value == 22.5
+        assert entity.available is False
 
 
 # ---------------------------------------------------------------------------
