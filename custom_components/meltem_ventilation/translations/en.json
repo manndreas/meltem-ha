@@ -150,6 +150,12 @@
       },
       "operating_hours": {
         "name": "Operating hours"
+      },
+      "modbus_slave_id": {
+        "name": "Modbus slave ID"
+      },
+      "modbus_device_path": {
+        "name": "Modbus device path"
       }
     },
     "binary_sensor": {
