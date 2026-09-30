@@ -239,26 +239,46 @@ Current design:
   legacy option name, this limits job starts, not individual wire requests
 - one job can perform several grouped or optional Modbus reads, each still
   separated by `REQUEST_GAP_SECONDS`
-- airflow writes are optimistic and rely on the normal scheduler for later
-  convergence instead of forcing an immediate confirmation poll
+- airflow-level writes rely on the normal scheduler for later readback instead
+  of forcing an immediate confirmation poll
 
 Current job groups:
 
-- airflow
-- temperatures
-- status
-- filter data
-- operating hours
-- humidity and CO2 control settings
+- `flow`: airflow values
+- `flow_control`: mode and airflow controls
+- `status`: fault, frost, and RF status
+- `temperature`: temperature and environment values
+- `filter`: filter values
+- `hours`: operating hours and software version
+- `control_settings`: humidity and CO2 settings
 
 Current target intervals:
 
-- airflow: `10s`
-- temperatures: `60s`
-- status: `60s`
-- filter data: `1h`
-- operating hours: `1h`
-- control settings: `1h`
+- `flow` and `flow_control`: `10s`
+- `temperature` and `status`: `60s`
+- `filter`, `hours`, and `control_settings`: `1h`
+
+## Read health and write confirmation
+
+Each supported read group tracks its own last attempt, last successful read,
+consecutive failures, and most recent error. Optional Modbus failures preserve
+the last cached value, but only affect the health of the group that performed
+the read. A successful read in another group does not clear that failure.
+Expected groups are derived from each room's supported entities, so a register
+that a device profile does not expose is not reported as a failed read.
+
+Entities are available only while their own group's last successful read is
+fresh. Airflow uses a 30-second freshness limit; other groups use three times
+their polling interval. The `data_health` diagnostic binary sensor and the
+Home Assistant system-health page expose per-group read status and write
+confirmation details without issuing extra gateway requests.
+
+A successful Modbus write call confirms only that the write operation was
+accepted at the transport/protocol layer. Entity state remains at its last
+confirmed value until the associated group has been read after that write was
+started. A matching readback confirms the write; a different value is reported
+as a mismatch, and a failed readback remains unconfirmed. Cached values from
+before the write cannot confirm it.
 
 Local benchmark results on the tested gateway so far:
 

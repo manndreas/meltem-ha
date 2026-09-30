@@ -1,4 +1,5 @@
 {
+  "title": "Meltem Modbus",
   "config": {
     "step": {
       "user": {
@@ -113,6 +114,34 @@
       "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant."
     }
   },
+  "triggers": {
+    "filter_change_due": {
+      "name": "Filter change due",
+      "description": "Triggers when a selected Meltem unit reports a filter change due.",
+      "fields": {
+        "behavior": {
+          "name": "Trigger when"
+        },
+        "for": {
+          "name": "For at least"
+        }
+      }
+    }
+  },
+  "conditions": {
+    "filter_change_due": {
+      "name": "Filter change due",
+      "description": "Checks whether a selected Meltem unit reports a filter change due.",
+      "fields": {
+        "behavior": {
+          "name": "Condition passes if"
+        },
+        "for": {
+          "name": "For at least"
+        }
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "exhaust_temperature": {
@@ -170,6 +199,9 @@
       },
       "rf_comm_status": {
         "name": "RF communication status"
+      },
+      "data_health": {
+        "name": "Read health"
       }
     },
     "switch": {
@@ -233,7 +265,8 @@
       "state_units": "Units with live state",
       "last_update_success": "Last update successful",
       "last_job_error": "Last scheduler error",
-      "unavailable_units": "Currently unavailable units"
+      "unavailable_units": "Currently unavailable units",
+      "read_health": "Per-group read health"
     }
   }
 }

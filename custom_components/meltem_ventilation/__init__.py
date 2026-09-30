@@ -53,6 +53,38 @@ _LOGGER = logging.getLogger(__name__)
 
 REQUIRED_ENTITY_KEYS = BASE_SUPPORTED_ENTITY_KEYS
 
+
+def _async_migrate_data_health_entity(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    rooms: list[RoomConfig],
+) -> None:
+    """Rename the airflow-only diagnostic while preserving registry settings."""
+
+    registry = er.async_get(hass)
+    entry_entities = {
+        entity.unique_id: entity
+        for entity in registry.entities.values()
+        if entity.config_entry_id == entry.entry_id
+    }
+    for room in rooms:
+        if room.supported_entity_keys and not {
+            "extract_air_flow",
+            "supply_air_flow",
+        } & room.supported_entity_keys:
+            continue
+        old_unique_id = f"{DOMAIN}_{room.key}_airflow_data_stale"
+        new_unique_id = f"{DOMAIN}_{room.key}_data_health"
+        old_entity = entry_entities.get(old_unique_id)
+        if old_entity is None or new_unique_id in entry_entities:
+            continue
+        registry.async_update_entity(
+            old_entity.entity_id,
+            new_unique_id=new_unique_id,
+        )
+        entry_entities[new_unique_id] = old_entity
+
+
 def _async_remove_unsupported_entities(
     hass: HomeAssistant, entry: ConfigEntry, rooms: list[RoomConfig]
 ) -> None:
@@ -60,6 +92,7 @@ def _async_remove_unsupported_entities(
 
     registry = er.async_get(hass)
     expected: dict[str, str] = {}
+    _async_migrate_data_health_entity(hass, entry, rooms)
     for room in rooms:
         profile_keys = set(supported_entity_keys_for_profile(room.profile))
         supported_keys = set(room.supported_entity_keys or profile_keys) & profile_keys
@@ -68,6 +101,10 @@ def _async_remove_unsupported_entities(
         for object_key in supported_keys:
             if platform := ENTITY_PLATFORM_BY_KEY.get(object_key):
                 expected[f"{DOMAIN}_{room.key}_{object_key}"] = platform.value
+        if {"extract_air_flow", "supply_air_flow"} & supported_keys:
+            expected[f"{DOMAIN}_{room.key}_data_health"] = (
+                ENTITY_PLATFORM_BY_KEY["data_health"].value
+            )
 
     for existing in list(registry.entities.values()):
         if existing.config_entry_id != entry.entry_id:

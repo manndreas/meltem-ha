@@ -1,0 +1,16 @@
+filter_change_due:
+  target:
+    device:
+      - integration: meltem_ventilation
+  fields:
+    behavior:
+      required: true
+      default: each
+      selector:
+        automation_behavior:
+          mode: trigger
+    for:
+      required: true
+      default: 00:00:00
+      selector:
+        duration:
