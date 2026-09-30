@@ -30,6 +30,7 @@ _BASE_SENSORS = {
     "supply_air_flow",
     "days_until_filter_change",
     "operating_hours",
+    "modbus_slave_id",
 }
 # The -F variant adds all remaining temperatures together with humidity.
 _HUMIDITY_SENSORS = {
@@ -97,7 +98,9 @@ def _expected(profile: str) -> dict[Platform, set[str]]:
 
 @pytest.fixture(name="setup_profile")
 def setup_profile_fixture(hass: HomeAssistant):
-    async def _setup(profile: str) -> dict[Platform, set[str]]:
+    async def _setup(
+        profile: str, room_count: int = 1
+    ) -> tuple[dict[Platform, set[str]], str]:
         entry = MockConfigEntry(
             domain=DOMAIN,
             title="Meltem",
@@ -105,15 +108,16 @@ def setup_profile_fixture(hass: HomeAssistant):
                 CONF_PORT: "/dev/ttyACM0",
                 CONF_ROOMS: [
                     {
-                        "key": "unit_1",
-                        "name": "Unit 1",
-                        "slave": 2,
+                        "key": f"unit_{room_number}",
+                        "name": f"Unit {room_number}",
+                        "slave": room_number + 1,
                         "profile": profile,
                         "preview": "ID 1 | basic",
                         "supported_entity_keys": supported_entity_keys_for_profile(
                             profile
                         ),
                     }
+                    for room_number in range(1, room_count + 1)
                 ],
             },
             version=1,
@@ -126,15 +130,20 @@ def setup_profile_fixture(hass: HomeAssistant):
 
         registry = er.async_get(hass)
         created: dict[Platform, set[str]] = {}
-        prefix = f"{DOMAIN}_unit_1_"
+        prefixes = tuple(
+            f"{DOMAIN}_unit_{room_number}_"
+            for room_number in range(1, room_count + 1)
+        )
         for platform in _expected(profile):
-            created[platform] = {
-                entity.unique_id.removeprefix(prefix)
-                for entity in registry.entities.values()
-                if entity.config_entry_id == entry.entry_id
-                and entity.domain == platform
-            }
-        return created
+            created[platform] = set()
+            for entity in registry.entities.values():
+                if entity.config_entry_id != entry.entry_id or entity.domain != platform:
+                    continue
+                for prefix in prefixes:
+                    if entity.unique_id.startswith(prefix):
+                        created[platform].add(entity.unique_id.removeprefix(prefix))
+                        break
+        return created, entry.entry_id
 
     return _setup
 
@@ -154,11 +163,52 @@ async def test_profile_creates_the_expected_entities(
         _noop_refresh,
     )
     try:
-        created = await setup_profile(profile)
+        created, _ = await setup_profile(profile)
     finally:
         with_serial_stubs.undo()
 
     assert created == _expected(profile)
+
+
+async def test_diagnostic_connection_entities_are_created_once_and_disabled(
+    hass: HomeAssistant, setup_profile
+) -> None:
+    with_serial_stubs = pytest.MonkeyPatch()
+    with_serial_stubs.setattr(
+        "custom_components.meltem_ventilation.MeltemModbusClient.ensure_connected",
+        lambda self: None,
+    )
+    with_serial_stubs.setattr(
+        "custom_components.meltem_ventilation.coordinator."
+        "MeltemDataUpdateCoordinator.async_refresh",
+        _noop_refresh,
+    )
+    try:
+        _, entry_id = await setup_profile("ii_plain", room_count=2)
+    finally:
+        with_serial_stubs.undo()
+
+    registry = er.async_get(hass)
+    entities = [
+        entity
+        for entity in registry.entities.values()
+        if entity.config_entry_id == entry_id
+    ]
+    slave_entities = [
+        entity for entity in entities if entity.unique_id.endswith("_modbus_slave_id")
+    ]
+    path_entities = [
+        entity
+        for entity in entities
+        if entity.unique_id.endswith("_modbus_device_path")
+    ]
+
+    assert len(slave_entities) == 2
+    assert len(path_entities) == 1
+    assert all(
+        entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+        for entity in (*slave_entities, *path_entities)
+    )
 
 
 async def _noop_refresh(self) -> None:

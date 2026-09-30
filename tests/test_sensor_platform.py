@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from custom_components.meltem_ventilation.const import DOMAIN
+from custom_components.meltem_ventilation.const import CONF_PORT, DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
 from custom_components.meltem_ventilation.sensor import (
+    MeltemModbusDevicePathSensor,
+    MeltemModbusSlaveSensor,
     SENSOR_DESCRIPTIONS,
     MeltemSensorEntity,
 )
+from homeassistant.const import EntityCategory
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -52,6 +56,26 @@ def _find_desc(key: str):
 
 
 class TestSensorEntityCreation:
+    def test_modbus_slave_sensor_metadata_and_value(self) -> None:
+        entity = MeltemModbusSlaveSensor(_fake_coordinator(), _ROOM_FC_VOC)
+
+        assert entity.unique_id == f"{DOMAIN}_unit_1_modbus_slave_id"
+        assert entity.native_value == 2
+        assert entity.entity_category is EntityCategory.DIAGNOSTIC
+        assert entity.entity_registry_enabled_default is False
+
+    def test_modbus_device_path_sensor_metadata_and_value(self) -> None:
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={CONF_PORT: "/dev/serial/by-id/meltem-gateway"},
+        )
+        entity = MeltemModbusDevicePathSensor(entry)
+
+        assert entity.unique_id == f"{DOMAIN}_{entry.entry_id}_modbus_device_path"
+        assert entity.native_value == "/dev/serial/by-id/meltem-gateway"
+        assert entity.entity_category is EntityCategory.DIAGNOSTIC
+        assert entity.entity_registry_enabled_default is False
+
     def test_unique_id_format(self) -> None:
         coordinator = _fake_coordinator()
         desc = _find_desc("exhaust_temperature")

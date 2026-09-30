@@ -21,6 +21,8 @@ from custom_components.meltem_ventilation.number import (
     CONTROL_SETTING_DESCRIPTIONS,
 )
 from custom_components.meltem_ventilation.sensor import (
+    MODBUS_DEVICE_PATH_DESCRIPTION,
+    MODBUS_SLAVE_ID_DESCRIPTION,
     SENSOR_DESCRIPTIONS,
 )
 
@@ -358,7 +360,14 @@ class TestTranslations:
 
     def test_translations_cover_all_entity_keys(self) -> None:
         strings = _load_json(_COMPONENT_DIR / "strings.json")["entity"]
-        assert {desc.key for desc in SENSOR_DESCRIPTIONS} == set(strings["sensor"])
+        sensor_keys = {desc.key for desc in SENSOR_DESCRIPTIONS}
+        sensor_keys.update(
+            {
+                MODBUS_DEVICE_PATH_DESCRIPTION.key,
+                MODBUS_SLAVE_ID_DESCRIPTION.key,
+            }
+        )
+        assert sensor_keys == set(strings["sensor"])
         assert {desc.key for desc in BINARY_SENSOR_DESCRIPTIONS} == set(
             strings["binary_sensor"]
         )

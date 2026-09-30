@@ -21,7 +21,14 @@ from homeassistant.const import EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ALL_PROFILES, CO2_PROFILES, HUMIDITY_PROFILES, VOC_PROFILES
+from .const import (
+    ALL_PROFILES,
+    CO2_PROFILES,
+    CONF_PORT,
+    DOMAIN,
+    HUMIDITY_PROFILES,
+    VOC_PROFILES,
+)
 from .entity import MeltemEntity, room_supports_entity
 from .models import MeltemRuntimeData, RoomState
 
@@ -32,6 +39,19 @@ class MeltemSensorDescription(SensorEntityDescription):
 
     supported_profiles: frozenset[str]
     value_fn: Callable[[RoomState], int | float | None]
+
+
+MODBUS_SLAVE_ID_DESCRIPTION = SensorEntityDescription(
+    key="modbus_slave_id",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    entity_registry_enabled_default=False,
+)
+
+MODBUS_DEVICE_PATH_DESCRIPTION = SensorEntityDescription(
+    key="modbus_device_path",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    entity_registry_enabled_default=False,
+)
 
 
 SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
@@ -152,12 +172,19 @@ async def async_setup_entry(
     runtime_data: MeltemRuntimeData = entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    async_add_entities(
+    entities: list[SensorEntity] = [MeltemModbusDevicePathSensor(entry)]
+    entities.extend(
+        MeltemModbusSlaveSensor(coordinator, room)
+        for room in coordinator.rooms
+        if room_supports_entity(room, MODBUS_SLAVE_ID_DESCRIPTION.key)
+    )
+    entities.extend(
         MeltemSensorEntity(coordinator, room, description)
         for room in coordinator.rooms
         for description in SENSOR_DESCRIPTIONS
         if room_supports_entity(room, description.key, description.supported_profiles)
     )
+    async_add_entities(entities)
 
 
 class MeltemSensorEntity(MeltemEntity, SensorEntity):
@@ -177,3 +204,32 @@ class MeltemSensorEntity(MeltemEntity, SensorEntity):
     @property
     def native_value(self) -> int | float | None:
         return self.entity_description.value_fn(self.room_state)
+
+
+class MeltemModbusSlaveSensor(MeltemEntity, SensorEntity):
+    """Representation of one room's configured Modbus slave ID."""
+
+    entity_description = MODBUS_SLAVE_ID_DESCRIPTION
+
+    def __init__(self, coordinator, room) -> None:
+        super().__init__(coordinator, room, "modbus_slave_id", "modbus_slave_id")
+
+    @property
+    def native_value(self) -> int:
+        return self.room.slave
+
+
+class MeltemModbusDevicePathSensor(SensorEntity):
+    """Representation of the serial device path for one config entry."""
+
+    entity_description = MODBUS_DEVICE_PATH_DESCRIPTION
+    _attr_has_entity_name = True
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_modbus_device_path"
+        self._attr_translation_key = MODBUS_DEVICE_PATH_DESCRIPTION.key
+        self._device_path = entry.data[CONF_PORT]
+
+    @property
+    def native_value(self) -> str:
+        return self._device_path
