@@ -115,6 +115,10 @@ _RETRYABLE_MESSAGE_MARKERS = (
     "no response received",
 )
 
+_OPTIONAL_READ_BACKOFF_START_SECONDS = 30.0
+_OPTIONAL_READ_BACKOFF_MAX_SECONDS = 300.0
+_OPTIONAL_READ_BACKOFF_MAX_FAILURES = 5
+
 
 @dataclass(slots=True, frozen=True)
 class _ModeGroup:
@@ -699,9 +703,15 @@ class MeltemModbusClient:
     def _mark_optional_read_failure(self, key: tuple[int, int, int]) -> None:
         """Increase backoff after one optional register read failed."""
 
-        failures = self._optional_read_failures.get(key, 0) + 1
+        failures = min(
+            self._optional_read_failures.get(key, 0) + 1,
+            _OPTIONAL_READ_BACKOFF_MAX_FAILURES,
+        )
         self._optional_read_failures[key] = failures
-        delay_seconds = min(300.0, 30.0 * (2 ** (failures - 1)))
+        delay_seconds = min(
+            _OPTIONAL_READ_BACKOFF_MAX_SECONDS,
+            _OPTIONAL_READ_BACKOFF_START_SECONDS * (2 ** (failures - 1)),
+        )
         self._optional_read_backoff_until[key] = time.monotonic() + delay_seconds
 
     def _clear_optional_read_failure(self, key: tuple[int, int, int]) -> None:
