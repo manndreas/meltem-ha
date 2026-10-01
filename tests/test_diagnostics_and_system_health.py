@@ -17,7 +17,7 @@ from custom_components.meltem_ventilation.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
-from custom_components.meltem_ventilation.models import RoomConfig, RoomState
+from custom_components.meltem_ventilation.models import ReadHealth, RoomConfig, RoomState
 from custom_components.meltem_ventilation.system_health import (
     async_register,
     system_health_info,
@@ -79,6 +79,33 @@ class TestDiagnostics:
         assert "secret-device" not in dumped
         assert result["entry"]["data"][CONF_PORT] == "**REDACTED**"
         assert result["entry"]["options"][CONF_PORT] == "**REDACTED**"
+
+    async def test_serial_port_is_redacted_from_errors(
+        self, hass: HomeAssistant,
+    ) -> None:
+        entry = _entry(hass)
+        port = entry.data[CONF_PORT]
+        coordinator = entry.runtime_data.coordinator
+        coordinator.async_discover_gateway_units = AsyncMock(
+            side_effect=MeltemModbusError(f"Probe failed at {port}")
+        )
+        coordinator.last_job_error = MeltemModbusError(f"Job failed at {port}")
+        coordinator.safe_data = {
+            "unit_1": RoomState(
+                group_read_health=(("flow", ReadHealth(last_error=f"Read failed at {port}")),)
+            )
+        }
+
+        result = await async_get_config_entry_diagnostics(hass, entry)
+
+        assert "secret-device" not in json.dumps(result, cls=ExtendedJSONEncoder)
+        assert result["coordinator"]["gateway_probe_error"] == (
+            "MeltemModbusError: Probe failed at **REDACTED**"
+        )
+        assert result["coordinator"]["last_job_error"] == "Job failed at **REDACTED**"
+        assert result["coordinator"]["room_states"]["unit_1"]["group_read_health"][0][1][
+            "last_error"
+        ] == "Read failed at **REDACTED**"
 
     async def test_result_is_json_serialisable(self, hass: HomeAssistant) -> None:
         entry = _entry(hass)
