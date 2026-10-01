@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Send single requests to one unit and print the answer or exception class with latency.
 
 Without request options it reads the mode block the way the integration does:
@@ -16,7 +15,7 @@ from dataclasses import dataclass, field
 
 from modbus_connection import ModbusError, ModbusUnit
 
-from tools._link import DEFAULT_PORT, open_link, parse_register_range, run
+from tools._link import elapsed_ms, open_link, parse_register_range, run, tool_parser
 
 DEFAULT_READS = ("41120:5", "41120:2", "41121:1", "41122:1")
 INPUT_PREFIX = "input:"
@@ -50,11 +49,9 @@ def parse_read(value: str) -> Request:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Send single requests to one Meltem unit and time the answers."
+    parser = tool_parser(
+        "Send single requests to one Meltem unit and time the answers.", slave=True
     )
-    parser.add_argument("--port", default=DEFAULT_PORT)
-    parser.add_argument("--slave", type=int, required=True)
     parser.add_argument(
         "--read",
         dest="reads",
@@ -123,9 +120,9 @@ async def main() -> int:
                     tally.ok += 1
                     if isinstance(result, int):
                         result = f"{result} (0x{result:04X})"
-                elapsed_ms = (time.perf_counter() - start) * 1000
-                tally.total_ms += elapsed_ms
-                print(f"  {request.label:<14} {elapsed_ms:7.1f} ms  {result}")
+                latency_ms = elapsed_ms(start)
+                tally.total_ms += latency_ms
+                print(f"  {request.label:<14} {latency_ms:7.1f} ms  {result}")
             if round_number < args.rounds:
                 await asyncio.sleep(max(0.0, args.interval - (time.monotonic() - round_start)))
 
