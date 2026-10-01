@@ -193,6 +193,36 @@ class TestSystemHealth:
 
         assert info["unavailable_units"] == "unit_1"
 
+    async def test_summarizes_stale_read_groups_as_plain_text(
+        self, hass: HomeAssistant,
+    ) -> None:
+        """The system information dialog renders nested dicts as empty cells."""
+        entry = _entry(hass)
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        entry.runtime_data.coordinator.data_health_attributes.return_value = {
+            "flow": {"stale": True},
+            "status": {"stale": None},
+            "temperature": {"stale": True},
+            "writes": {},
+        }
+
+        info = await system_health_info(hass)
+
+        assert info["stale_read_groups"] == "unit_1: flow, temperature"
+        assert all(isinstance(value, (str, int, bool)) for value in info.values())
+
+    async def test_reports_no_stale_read_groups(self, hass: HomeAssistant) -> None:
+        entry = _entry(hass)
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        entry.runtime_data.coordinator.data_health_attributes.return_value = {
+            "flow": {"stale": False},
+            "writes": {},
+        }
+
+        info = await system_health_info(hass)
+
+        assert info["stale_read_groups"] == "none"
+
     async def test_keys_match_the_translations(self, hass: HomeAssistant) -> None:
         entry = _entry(hass)
         entry.mock_state(hass, ConfigEntryState.LOADED)

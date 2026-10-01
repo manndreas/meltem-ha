@@ -84,6 +84,29 @@ class TestConfigFlowUser:
         assert result["type"] == FlowResultType.FORM
         assert result["errors"] == {"base": "cannot_connect"}
 
+    async def test_user_step_unexpected_error_shows_unknown(
+        self, hass: HomeAssistant
+    ) -> None:
+        with (
+            patch(
+                f"{_PATCHES_BASE}.validate_serial_connection",
+                side_effect=ValueError("invalid port"),
+            ),
+            _patch_resolve(),
+        ):
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": config_entries.SOURCE_USER}
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_PORT: "not-a-port",
+                },
+            )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "unknown"}
+
     async def test_user_step_no_devices_found_shows_error(
         self, hass: HomeAssistant
     ) -> None:
@@ -166,6 +189,9 @@ class TestConfigFlowProfiles:
         assert len(rooms) == 1
         assert rooms[0]["profile"] == "ii_fc"
         assert rooms[0]["slave"] == 2
+        entry = result["result"]
+        assert (entry.version, entry.minor_version) == (1, 2)
+        assert entry.unique_id == "/dev/serial/by-id/test"
 
     async def test_profiles_step_multiple_units(
         self, hass: HomeAssistant

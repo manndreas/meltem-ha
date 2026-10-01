@@ -15,9 +15,13 @@ from homeassistant.components.number import (
     NumberMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
+from homeassistant.const import (
+    CONCENTRATION_PARTS_PER_MILLION,
+    PERCENTAGE,
+    EntityCategory,
+)
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import CO2_PROFILES, CONTROL_SETTING_LIMITS, HUMIDITY_PROFILES
 from .entity import MeltemEntity, room_supports_entity
@@ -38,7 +42,7 @@ CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] 
         native_min_value=CONTROL_SETTING_LIMITS["humidity_starting_point"][0],
         native_max_value=CONTROL_SETTING_LIMITS["humidity_starting_point"][1],
         native_step=CONTROL_SETTING_LIMITS["humidity_starting_point"][2],
-        native_unit_of_measurement="%",
+        native_unit_of_measurement=PERCENTAGE,
         icon="mdi:water-percent",
         supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.humidity_starting_point,
@@ -48,7 +52,7 @@ CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] 
         native_min_value=CONTROL_SETTING_LIMITS["humidity_min_level"][0],
         native_max_value=CONTROL_SETTING_LIMITS["humidity_min_level"][1],
         native_step=CONTROL_SETTING_LIMITS["humidity_min_level"][2],
-        native_unit_of_measurement="%",
+        native_unit_of_measurement=PERCENTAGE,
         icon="mdi:fan-minus",
         supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.humidity_min_level,
@@ -58,7 +62,7 @@ CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] 
         native_min_value=CONTROL_SETTING_LIMITS["humidity_max_level"][0],
         native_max_value=CONTROL_SETTING_LIMITS["humidity_max_level"][1],
         native_step=CONTROL_SETTING_LIMITS["humidity_max_level"][2],
-        native_unit_of_measurement="%",
+        native_unit_of_measurement=PERCENTAGE,
         icon="mdi:fan-plus",
         supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.humidity_max_level,
@@ -68,7 +72,7 @@ CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] 
         native_min_value=CONTROL_SETTING_LIMITS["co2_starting_point"][0],
         native_max_value=CONTROL_SETTING_LIMITS["co2_starting_point"][1],
         native_step=CONTROL_SETTING_LIMITS["co2_starting_point"][2],
-        native_unit_of_measurement="ppm",
+        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
         icon="mdi:molecule-co2",
         supported_profiles=CO2_PROFILES,
         value_fn=lambda state: state.co2_starting_point,
@@ -78,7 +82,7 @@ CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] 
         native_min_value=CONTROL_SETTING_LIMITS["co2_min_level"][0],
         native_max_value=CONTROL_SETTING_LIMITS["co2_min_level"][1],
         native_step=CONTROL_SETTING_LIMITS["co2_min_level"][2],
-        native_unit_of_measurement="%",
+        native_unit_of_measurement=PERCENTAGE,
         icon="mdi:fan-minus",
         supported_profiles=CO2_PROFILES,
         value_fn=lambda state: state.co2_min_level,
@@ -88,7 +92,7 @@ CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] 
         native_min_value=CONTROL_SETTING_LIMITS["co2_max_level"][0],
         native_max_value=CONTROL_SETTING_LIMITS["co2_max_level"][1],
         native_step=CONTROL_SETTING_LIMITS["co2_max_level"][2],
-        native_unit_of_measurement="%",
+        native_unit_of_measurement=PERCENTAGE,
         icon="mdi:fan-plus",
         supported_profiles=CO2_PROFILES,
         value_fn=lambda state: state.co2_max_level,
@@ -99,7 +103,7 @@ CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Meltem number entities."""
 

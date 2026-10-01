@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, PropertyMock, patch
 
-from homeassistant.const import EntityCategory
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import EntityCategory, UnitOfVolumeFlowRate
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import CONF_PORT, DOMAIN
@@ -115,6 +116,7 @@ class TestSensorEntityCreation:
 
     def test_device_info(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=42)})
+        coordinator.gateway_identifier = (DOMAIN, "gateway-entry")
         desc = _find_desc("exhaust_temperature")
         entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
         info = entity.device_info
@@ -123,6 +125,16 @@ class TestSensorEntityCreation:
         assert "Living Room" in info["name"]
         assert info["sw_version"] == "42"
         assert info["hw_version"] == "116852"
+        assert info["via_device"] == (DOMAIN, "gateway-entry")
+
+    def test_airflow_sensors_use_the_volume_flow_rate_device_class(self) -> None:
+        for key in ("extract_air_flow", "supply_air_flow"):
+            desc = _find_desc(key)
+            assert desc.device_class is SensorDeviceClass.VOLUME_FLOW_RATE
+            assert (
+                desc.native_unit_of_measurement
+                == UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR
+            )
 
     def test_handle_coordinator_update_pushes_versions_to_device_registry(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=42)})

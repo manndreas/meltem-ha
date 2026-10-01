@@ -49,7 +49,6 @@ REQUEST_GAP_SECONDS = 0.1
 FLOW_REFRESH_SECONDS = 10
 AIRFLOW_STALE_AFTER_SECONDS = 30
 READ_FAILURE_THRESHOLD = 3
-AIRFLOW_FAILURE_THRESHOLD = READ_FAILURE_THRESHOLD
 STATUS_REFRESH_SECONDS = 60
 TEMPERATURE_REFRESH_SECONDS = 60
 OPERATING_HOURS_REFRESH_SECONDS = 3600
@@ -240,6 +239,32 @@ SENSOR_MODE_TO_RAW_VALUE: dict[str, int] = {
 }
 RAW_VALUE_TO_SENSOR_MODE: dict[int, str] = {
     value: mode for mode, value in SENSOR_MODE_TO_RAW_VALUE.items()
+}
+
+# Entities whose values one read-health group delivers; shared by the client
+# (health bookkeeping) and the coordinator (scheduling and availability).
+READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
+    "flow": frozenset({"extract_air_flow", "supply_air_flow"}),
+    "flow_control": frozenset(
+        {"operation_mode", "preset_mode", "supply_level", "extract_level"}
+    ),
+    "intensive": frozenset({"intensive"}),
+    "status": frozenset({"error_status", "frost_protection_active", "rf_comm_status"}),
+    "temperature": frozenset(
+        {
+            "exhaust_temperature",
+            "outdoor_air_temperature",
+            "extract_air_temperature",
+            "supply_air_temperature",
+            "humidity_extract_air",
+            "humidity_supply_air",
+            "co2_extract_air",
+            "voc_supply_air",
+        }
+    ),
+    "filter": frozenset({"filter_change_due", "days_until_filter_change"}),
+    "hours": frozenset({"operating_hours"}),
+    "control_settings": frozenset(CONTROL_SETTING_REGISTERS),
 }
 
 

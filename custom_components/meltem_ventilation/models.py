@@ -96,25 +96,6 @@ class RoomState:
         group_health[group_key] = health
         return replace(self, group_read_health=tuple(sorted(group_health.items())))
 
-    @property
-    def airflow_last_successful_read(self) -> datetime | None:
-        """Compatibility view for airflow freshness consumers."""
-
-        return self.read_health_for("flow").last_successful_read
-
-    @property
-    def airflow_consecutive_failures(self) -> int | None:
-        """Compatibility view for airflow freshness consumers."""
-
-        health = self.read_health_for("flow")
-        return health.consecutive_failures if health.last_attempt is not None else None
-
-    @property
-    def airflow_last_error(self) -> str | None:
-        """Compatibility view for airflow freshness consumers."""
-
-        return self.read_health_for("flow").last_error
-
 
 EMPTY_ROOM_STATE = RoomState()
 
@@ -143,6 +124,25 @@ class RefreshPlan:
         base = dict.fromkeys(cls.__dataclass_fields__, False)
         base.update(kwargs)
         return cls(**base)
+
+    def read_groups(self) -> tuple[str, ...]:
+        """Return the read-health groups this plan refreshes."""
+
+        groups: list[str] = []
+        if self.refresh_airflow:
+            groups.extend(("flow", "flow_control", "intensive"))
+        if self.refresh_status:
+            groups.append("status")
+        if self.refresh_temperatures or self.refresh_environment:
+            groups.append("temperature")
+        if self.refresh_filter_change_due or self.refresh_filter_days:
+            groups.append("filter")
+        if self.refresh_operating_hours:
+            groups.append("hours")
+        if self.refresh_control_settings:
+            groups.append("control_settings")
+        return tuple(groups)
+
 
 @dataclass(slots=True)
 class MeltemRuntimeData:

@@ -2,12 +2,27 @@
 
 ## 3.1.0
 
+- The minimum supported Home Assistant version is now `2026.8`, the release the
+  integration is tested against. The automation triggers and conditions and
+  the `pymodbus` 3.13 requirement need a much newer release than the
+  previously declared `2025.1`.
 - Added diagnostic sensors for the gateway device path and unit Modbus slave IDs.
 - Added device automation triggers and conditions for filter changes.
 - Track read freshness by register group and expose read and write outcomes in
-  the data-health sensor and System Health.
+  the data-health sensor. System Health lists stale read groups per unit.
 - Improve fan control when airflow or operating-mode readings are incomplete,
   and reduce polling of silent units and unnecessary target-register reads.
+- Unit devices are now linked to the gateway device, and devices of units that
+  a rescan no longer finds are removed automatically.
+- Airflow sensors now use the volume flow rate device class.
+- Fixed the maximum request rate option not being honored for sub-second
+  intervals.
+- Fixed a reload failing because a late write readback reopened the serial port.
+- Fixed the quick mode showing `Individual` after a restart during intensive
+  ventilation.
+- Fixed intensive commands flagging data health on units that cannot report
+  the intensive state.
+- Setup no longer probes the gateway for entity metadata of older entries.
 - Fixed optional-read backoff growth after repeated failures.
 - Fixed the data-health sensor not reporting stale read groups unless a write
   also failed.
@@ -26,7 +41,7 @@
 
 ### Migrating your automations
 
-Every airflow control entity was replaced. Automations referencing the old
+Every airflow control entity was replaced. Automatiosns referencing the old
 entities stop working and have to be updated:
 
 | Removed | Replacement |

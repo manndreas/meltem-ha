@@ -1,8 +1,7 @@
 """Sensor entities for Meltem units.
 
-This platform exposes read-only measurements. Whether a sensor is created is
-decided from the stored room profile plus the minimal setup-time capability
-probe.
+This platform exposes read-only measurements. Which sensors a unit gets follows
+from the profile selected for it during setup.
 """
 
 from __future__ import annotations
@@ -17,10 +16,17 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime
+from homeassistant.const import (
+    CONCENTRATION_PARTS_PER_MILLION,
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfTemperature,
+    UnitOfTime,
+    UnitOfVolumeFlowRate,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import (
     ALL_PROFILES,
@@ -98,7 +104,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         key="humidity_extract_air",
         device_class=SensorDeviceClass.HUMIDITY,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement="%",
+        native_unit_of_measurement=PERCENTAGE,
         supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.humidity_extract_air,
     ),
@@ -106,7 +112,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         key="humidity_supply_air",
         device_class=SensorDeviceClass.HUMIDITY,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement="%",
+        native_unit_of_measurement=PERCENTAGE,
         supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.humidity_supply_air,
     ),
@@ -114,7 +120,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         key="co2_extract_air",
         device_class=SensorDeviceClass.CO2,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement="ppm",
+        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
         supported_profiles=CO2_PROFILES,
         value_fn=lambda state: state.co2_extract_air,
     ),
@@ -122,23 +128,25 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         key="voc_supply_air",
         device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement="ppm",
+        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
         supported_profiles=VOC_PROFILES,
         value_fn=lambda state: state.voc_supply_air,
     ),
     MeltemSensorDescription(
         key="extract_air_flow",
         icon="mdi:home-export-outline",
+        device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement="m³/h",
+        native_unit_of_measurement=UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR,
         supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.extract_air_flow,
     ),
     MeltemSensorDescription(
         key="supply_air_flow",
         icon="mdi:home-import-outline",
+        device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement="m³/h",
+        native_unit_of_measurement=UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR,
         supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.supply_air_flow,
     ),
@@ -169,7 +177,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Meltem sensor entities."""
 
