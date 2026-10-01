@@ -6,7 +6,7 @@ or the RF link behind the gateway.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from homeassistant.components.binary_sensor import (
@@ -59,6 +59,10 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
         value_fn=lambda state: state.rf_comm_status,
     ),
 )
+
+
+# The coordinator serializes all gateway access itself.
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
@@ -125,5 +129,5 @@ class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
         return self.coordinator.data_health_stale(self.room.key)
 
     @property
-    def extra_state_attributes(self) -> dict[str, object]:
+    def extra_state_attributes(self) -> Mapping[str, object]:
         return self.coordinator.data_health_attributes(self.room.key)

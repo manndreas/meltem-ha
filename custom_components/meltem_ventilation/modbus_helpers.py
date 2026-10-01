@@ -257,12 +257,11 @@ def _discovery_failed(err: ModbusError, port: str, what: str) -> list[int]:
 # ---------------------------------------------------------------------------
 
 
-async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None, list[str]]:
+async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None]:
     """Run the minimal setup-time probe on one unit.
 
-    The probe only answers two questions:
-    - which suffix capabilities does this unit expose
-    - which entities should Home Assistant create for it
+    Returns the detected sensor suffix and a short preview for the setup form.
+    The entities follow the profile the user picks, not the probe.
 
     Raises ``MeltemConnectionError`` when the serial link is down; every other
     read error just leaves that capability undetected.
@@ -283,14 +282,12 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None, list[
             continue
         values[name] = component.product_id if name == "product_id" else component.value
 
-    supported_entity_keys = set(BASE_SUPPORTED_ENTITY_KEYS) | {
-        key for key in _PLAUSIBLE_RANGES if _is_plausible(key, values.get(key))
-    }
+    detected = {key for key in _PLAUSIBLE_RANGES if _is_plausible(key, values.get(key))}
     detected_profile, capability_preview = next(
         (
             (suffix, preview)
             for suffix, preview, keys in _SUFFIXES
-            if keys & supported_entity_keys
+            if keys & detected
         ),
         ("plain", "basic"),
     )
@@ -300,7 +297,7 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None, list[
         if product_id is None
         else f"ID {product_id} | {capability_preview}"
     )
-    return detected_profile, preview, sorted(supported_entity_keys)
+    return detected_profile, preview
 
 
 # ---------------------------------------------------------------------------

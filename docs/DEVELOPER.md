@@ -154,6 +154,14 @@ diagnostics download shows `link_recycles`, `consecutive_timeouts`, and
 `seconds_since_any_answer` under `coordinator.transport`; a recycle is logged
 at info level.
 
+`ModbusUnit.disconnect()` drops the whole shared connection, not just the
+Meltem units: every other holder of the port reconnects on its next request,
+and a request that is still in flight is cut after a short grace period. This
+is accepted because the port is the gateway's own USB adapter, so any other
+holder talks to the same gateway, which is not answering either. The quiet
+window only counts answers to Meltem requests, so a recycle can still hit
+another integration that keeps the gateway busy with its own traffic.
+
 The client maps `ModbusConnectionError` to `MeltemConnectionError` and every
 other `ModbusError` to `MeltemModbusError`. When a unit times out before any
 of its blocks answered in a job, the rest of that job is skipped and all of
@@ -205,7 +213,17 @@ The values seen on the tested gateway are in
 ## Polling strategy
 
 The integration uses a serialized scheduler with an adjustable maximum
-poll-job start rate.
+poll-job start rate. The coordinator owns the gateway lock, the request-rate
+cap, the backoff, and the write sequences; the parts without Home Assistant
+state live in their own modules:
+
+| Module | Content |
+|---|---|
+| `polling.py` | job groups, their intervals, job planning and selection |
+| `read_health.py` | freshness, availability, and staleness of a read group |
+| `levels.py` | supply/extract targets of a unit and their tolerances |
+| `overlay.py` | pending values shown until a readback confirms them |
+| `write_confirmation.py` | outcome of each write against its readback |
 
 Current design:
 
@@ -216,6 +234,9 @@ Current design:
   legacy option name, this limits job starts, not individual wire requests
 - post-write readbacks count as job starts for that cap, and a job that would
   start too early is skipped and rescheduled
+- the first full read after setup reads the rooms one after another and
+  keeps the same cap between them; when it fails completely, the next attempt
+  waits `TRANSPORT_BACKOFF_START_SECONDS` instead of the request interval
 - Home Assistant's `DataUpdateCoordinator` schedules the next refresh from
   `int(loop.time())`, so sub-second intervals would fire up to a second early;
   the coordinator adds the current fractional loop second to compensate
@@ -281,6 +302,16 @@ value is reported as a mismatch, and a failed readback remains unconfirmed.
 Cached values from before the write cannot confirm it. A failed write drops any
 pending value. Failed, mismatched, or unconfirmed writes flag `data_health` for
 `WRITE_HEALTH_RETENTION_SECONDS` and then only remain visible as attributes.
+
+Pending values are dropped when a readback confirms them
+(`_confirm_pending_writes`), never as a side effect of reading an entity
+state. A pending value that is not confirmed expires through a timer, which
+also updates the entities.
+
+The minimum level of a sensor control must not exceed its maximum level;
+`async_set_control_setting` refuses such a write with `control_level_range`
+before it reaches the unit. Both values are compared after rounding to the
+register step.
 
 Units that answer the two-register mode read but reject the five-register one
 (HW-4) do not record an `intensive` read failure; the intensive state is simply
@@ -471,9 +502,11 @@ Known UX caveat:
 
 Setup never probes the gateway for entity metadata:
 
-- each room's entities are the stored keys plus everything its profile implies,
-  derived on load, so entries from older releases gain new entities without a
-  rewrite
+- each room's entities follow from its profile alone, derived on load, so
+  entries from older releases gain new entities without a rewrite; entity
+  keys that releases before `4.0.0` stored with a room are ignored, because
+  probe-detected keys beyond the profile scheduled reads the unit cannot
+  answer, and new or edited rooms no longer store them
 - one-time schema changes run in `async_migrate_entry` (config entry `1.2`
   renamed the airflow-only `airflow_data_stale` entity to `data_health`)
 - changing to a profile with fewer capabilities removes registry entities that
@@ -487,6 +520,16 @@ A fresh setup should therefore not be needed for normal profile changes or
 upgrades. Remove and re-add the config entry only when its stored data is
 actually corrupt or when debugging a setup problem that cannot be reproduced
 otherwise. Removing only the gateway device does not reset the config entry.
+
+The serial port is changed with the reconfigure flow, which checks the new
+port before saving it and reloads the entry; the options only hold the request
+rate and the unit profiles.
+
+Only one gateway can be set up (`single_config_entry`). Room keys, device
+identifiers, and entity unique IDs are derived from the Modbus address alone,
+so a second gateway with units at the same addresses would collide. The
+per-port unique ID still lets USB discovery and the manual setup recognise the
+same gateway.
 
 ## USB discovery
 
@@ -530,6 +573,10 @@ and every entity platform, including:
 - control-setting range and manufacturer-step normalization
 - config-flow helper functions for defaults and room mapping
 - entity creation per model profile across all platforms
+- the link settings in `tools/_link.py` against `const.py`
+
+CI also runs `mypy` (configured in `pyproject.toml`) against the Home
+Assistant version the test harness installs.
 
 See `CONTRIBUTING.md` for environment setup, the test commands, and the
 Windows-specific workarounds.
@@ -570,8 +617,11 @@ since `4.0.0`; any earlier commit has the pymodbus versions):
   unit, including retries
 
 The tools run without Home Assistant and keep their own copy of the link
-settings in `tools/_link.py`; keep it in line with `const.py`. Run them as
-modules from the repository root, e.g. `python -m tools.raw_requests --help`.
+settings in `tools/_link.py`; `tests/test_tools.py` keeps it in line with
+`const.py`. Run them as modules from the repository root, e.g.
+`python -m tools.raw_requests --help`. `tools/write_registers.py` stops at the
+first failed write unless `--keep-going` is given, so a trailing apply never
+activates a half-written sequence.
 
 ## Things to be careful with in future changes
 

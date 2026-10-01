@@ -28,6 +28,7 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_CO2_MAX_LEVEL,
     REGISTER_CO2_STARTING_POINT,
     REGISTER_CURRENT_LEVEL,
+    REGISTER_EXHAUST_AIR_TEMPERATURE,
     REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
@@ -40,7 +41,7 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_PRESET_VALUE,
     REGISTER_PRODUCT_ID,
 )
-from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient, _supports
+from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
@@ -182,7 +183,7 @@ class TestGatewayOperations:
     ) -> None:
         link.for_unit(4).holding[REGISTER_PRODUCT_ID] = [0xC874, 0x0001]
 
-        _profile, preview, _keys = await client.probe_slave_details(4)
+        _profile, preview = await client.probe_slave_details(4)
 
         assert preview is not None
         assert preview.startswith("ID 116852 |")
@@ -223,6 +224,19 @@ class TestReadFailures:
         assert state.operation_mode == "manual"
         for group in ("flow", "flow_control", "status", "temperature", "hours"):
             assert state.read_health_for(group).consecutive_failures == 1
+
+    async def test_a_unit_falling_silent_mid_job_skips_the_mode_reads(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        unit = link.for_unit(2)
+        unit.holding[REGISTER_EXTRACT_AIR_FLOW] = [40, 40]
+        unit.fail_read(REGISTER_EXHAUST_AIR_TEMPERATURE, ModbusTimeoutError("silent"))
+
+        state = await client.read_room_state(_ROOM, RoomState(), RefreshPlan())
+
+        assert state.supply_air_flow == 40
+        assert all(address != REGISTER_MODE for address, _count in _reads(unit))
+        assert state.read_health_for("flow_control").consecutive_failures == 1
 
     async def test_silent_units_do_not_recycle_the_link(
         self, client: MeltemModbusClient, link: MockModbusConnection
@@ -574,4 +588,4 @@ class TestSupportsHelper:
     ) -> None:
         room = replace(_ROOM, supported_entity_keys=supported)
 
-        assert _supports(room, key) is expected
+        assert room.supports(key) is expected

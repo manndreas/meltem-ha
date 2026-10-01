@@ -31,21 +31,33 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Register write in ADDRESS=VALUE form. Repeat in execution order.",
     )
+    parser.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="Continue after a failed write. By default the sequence stops, so a "
+        "trailing apply (41132) never activates a half-written mode.",
+    )
     return parser.parse_args()
 
 
 async def main() -> int:
     args = parse_args()
+    failed = False
     async with open_link(args.port) as link:
         unit = link.for_unit(args.slave)
-        for address, value in args.write:
+        for index, (address, value) in enumerate(args.write):
             try:
                 await unit.write_register(address, value)
             except ModbusError as err:
                 print(f"write {address}={value} -> {type(err).__name__}: {err}")
+                failed = True
+                if not args.keep_going:
+                    skipped = len(args.write) - index - 1
+                    print(f"stopped; {skipped} later write(s) not sent")
+                    break
                 continue
             print(f"write {address}={value} -> ok")
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

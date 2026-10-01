@@ -30,20 +30,22 @@ pip install -r requirements-test.txt
 
 Do not install `homeassistant`, `pytest` or `pytest-asyncio` separately -
 `pytest-homeassistant-custom-component` pins the matching versions.
-`requirements-test.txt` adds the `modbus-connection` and `tmodbus` versions
-that the Modbus integration of Home Assistant `2026.10` ships, because the
-integration gets its serial link from there; the test harness itself still
-ships `2026.9` (see [docs/TODO.md](./docs/TODO.md) item 3). Tests never open a
-serial port; they run against `modbus_connection.mock.MockModbusConnection`.
+The harness ships Home Assistant `2026.10` but not the requirements of its
+Modbus integration, from which the integration gets its serial link, so
+`requirements-test.txt` adds the `modbus-connection`, `tmodbus` and `pymodbus`
+versions pinned in `homeassistant/components/modbus/manifest.json` (see
+[docs/TODO.md](./docs/TODO.md) item 3). Tests never open a serial port; they
+run against `modbus_connection.mock.MockModbusConnection`.
 
-Run tests and lint with:
+Run tests, lint, and the type check with:
 
 ```bash
 pytest
 ruff check custom_components tests tools
+mypy
 ```
 
-CI runs both commands, plus hassfest and the HACS validation.
+CI runs all three commands, plus hassfest and the HACS validation.
 
 Useful focused test runs:
 
@@ -83,8 +85,8 @@ python -m tools.raw_requests --help
 - Some tools write registers. Follow the safety rules in
   [docs/LIVE_GATEWAY_TESTS.md](./docs/LIVE_GATEWAY_TESTS.md), and never write
   the baud rate or the Modbus address of a unit.
-- The tools keep their own copy of the link settings in `tools/_link.py`; keep
-  it in line with `const.py`.
+- The tools keep their own copy of the link settings in `tools/_link.py`;
+  `tests/test_tools.py` keeps it in line with `const.py`.
 
 ## Contribution guidelines
 
@@ -106,4 +108,4 @@ Please include:
 - why the change is needed
 - any hardware assumptions or test setup details
 - logs or screenshots if the change affects setup, discovery, or entities
-- confirmation that `pytest` and ruff pass
+- confirmation that `pytest`, ruff, and mypy pass

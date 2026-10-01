@@ -85,10 +85,11 @@ def _async_migrate_data_health_entities(hass: HomeAssistant, entry: ConfigEntry)
 
 
 def _room_config(room: Mapping[str, Any]) -> RoomConfig:
-    """Build one room with its stored entity keys plus everything its profile implies.
+    """Build one room whose entities follow from its profile.
 
-    Deriving the profile part on load keeps older entries complete when a
-    release adds entities, without probing the gateway or rewriting the entry.
+    Deriving them on load keeps older entries complete when a release adds
+    entities, without probing the gateway or rewriting the entry. Entity keys
+    stored by older releases are ignored.
     """
 
     return RoomConfig(
@@ -97,8 +98,7 @@ def _room_config(room: Mapping[str, Any]) -> RoomConfig:
         profile=room["profile"],
         slave=int(room["slave"]),
         preview=room.get("preview"),
-        supported_entity_keys=frozenset(room.get("supported_entity_keys", ()))
-        | frozenset(supported_entity_keys_for_profile(str(room["profile"]))),
+        supported_entity_keys=frozenset(supported_entity_keys_for_profile(str(room["profile"]))),
     )
 
 
@@ -135,8 +135,7 @@ def _async_remove_unsupported_entities(
 
     expected: dict[str, str] = {}
     for room in rooms:
-        profile_keys = set(supported_entity_keys_for_profile(room.profile))
-        supported_keys = set(room.supported_entity_keys or profile_keys) & profile_keys
+        supported_keys = set(supported_entity_keys_for_profile(room.profile))
         if room.profile not in SENSOR_CONTROL_PROFILES:
             supported_keys.discard("operation_mode")
         if {"extract_air_flow", "supply_air_flow"} & supported_keys:
@@ -218,7 +217,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:
         client.shutdown()
-        object.__delattr__(entry, "runtime_data")
+        # Home Assistant only drops runtime_data on unload, not after a failed setup.
+        del entry.runtime_data
         raise
 
     entry.async_create_background_task(

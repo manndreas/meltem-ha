@@ -79,5 +79,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-test.txt
 
+      - name: Run mypy
+        run: mypy
+
       - name: Run test suite
         run: pytest

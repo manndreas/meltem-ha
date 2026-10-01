@@ -122,13 +122,16 @@ During setup, choose the exact profile manually.
 Open the integration options via `Settings` -> `Devices & Services` -> `Meltem Modbus`
 -> `Configure`.
 
-- **Change serial connection** — update the serial port or the maximum poll-job
-  start rate used by the scheduler. One job can contain several serialized
-  Modbus requests; the option is not a wire-level request limit.
+- **Change request rate** — the maximum poll-job start rate used by the
+  scheduler. One job can contain several serialized Modbus requests; the option
+  is not a wire-level request limit.
 - **Change profiles for existing units** — reassign profiles without rescanning
   the gateway
 - **Scan for new units** — discover units that were added to the gateway after
   the initial setup
+
+To move the gateway to another serial port, choose `Reconfigure` in the menu
+of the integration entry. The new port is checked before it is saved.
 
 ## Diagnostic entities
 
