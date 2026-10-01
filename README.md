@@ -67,7 +67,7 @@ has elapsed.
 
 ### Requirements
 
-- Home Assistant `2026.8` or newer
+- Home Assistant `2026.10` or newer
 - a Meltem `M-WRG-GW` gateway
 - supported `M-WRG-S` / `M-WRG-II` units already added in the Meltem app
 - the gateway connected to the Home Assistant host via USB
@@ -155,6 +155,17 @@ With the `Terminal & SSH` add-on:
 
 ```bash
 ha core logs | grep meltem_ventilation
+```
+
+The serial link itself is handled by Home Assistant's Modbus integration. To
+see its traffic, enable debug logging in `configuration.yaml`:
+
+```yaml
+logger:
+  logs:
+    custom_components.meltem_ventilation: debug
+    modbus_connection: debug
+    tmodbus: debug
 ```
 
 ## Support

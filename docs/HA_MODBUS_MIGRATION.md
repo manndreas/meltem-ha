@@ -1,8 +1,11 @@
-# Plan: Migrating to the Modbus support of Home Assistant 2026.9
+# Plan: Migrating to the Modbus support of Home Assistant
 
 - Target version: `4.0.0`
-- Minimum Home Assistant version: `2026.9.0`
-- Status: 2026-10-01, plan (not implemented yet)
+- Minimum Home Assistant version: `2026.10.0` (the shared connection arrived
+  in `2026.9`, but that release pins a `modbus-connection` without the APIs
+  used here; see [Implementation status](#implementation-status))
+- Status: 2026-10-01, implemented on branch `feature/ha-modbus-connection`;
+  phases 0 and 8 (real gateway) are still open
 
 ## Summary
 
@@ -18,7 +21,10 @@ the same requests to the gateway as it does today. The coordinator,
 `RoomState`, and the entities stay unchanged. The layer below becomes async and
 uses the framework.
 
-## Current state
+## State before the migration
+
+Line references in this section and in the phases below point to commit
+`4009a32`, before the implementation.
 
 - Transport: synchronous `pymodbus.ModbusSerialClient` (serial RTU, 19200 8E1)
   over USB to the `M-WRG-GW`, run via `hass.async_add_executor_job`.
@@ -48,7 +54,7 @@ uses the framework.
 | Location of device logic | A `device/` subpackage inside the integration, with no Home Assistant imports. No separate PyPI library. |
 | Retry | Timeouts and protocol errors are retried once without disconnecting. `disconnect()` only after 3 consecutive timeouts with no response in between. |
 | `tools/` | All 11 scripts move to `modbus-connection` with tmodbus. |
-| Version | `4.0.0`, minimum version in `hacs.json` is `2026.9.0`. |
+| Version | `4.0.0`, minimum version in `hacs.json` is `2026.10.0`. |
 | Config entries | Data stays the same, no migration needed. |
 
 ## Verified API facts
@@ -87,8 +93,12 @@ and the `modbus-connection` documentation.
   - `read_events` for request shapes
   - `message_spacing` and `required_timeout` as attributes
 - The pins in the core manifest (dev branch) are `pymodbus==3.13.1`,
-  `modbus-connection[tmodbus]==4.12.3`, and `tmodbus==0.6.2`. Which pins
-  `2026.9.0` uses still has to be checked (phase 0).
+  `modbus-connection[tmodbus]==4.12.3`, and `tmodbus==0.6.2`.
+  - HA `2026.9.x` pins `modbus-connection[tmodbus]==4.10.0`. That version has
+    no `require_timeout`, no `Device`, a fixed 10 s timeout, and spacing per
+    unit only.
+  - HA `2026.10.0b0` pins `modbus-connection==4.12.3` and `tmodbus==0.6.2`.
+    This is why the minimum is `2026.10.0`.
 
 ## Mapping today's blocks to components
 
@@ -146,7 +156,7 @@ retried.
 | `ModbusTimeoutError` | retry once, do not disconnect; counts toward the timeout counter |
 | `ModbusProtocolError` (for example CRC) | same as timeout |
 | `ModbusDesyncError` | the library disconnects by itself; retry once |
-| `GatewayTargetError`, `GatewayPathUnavailableError` | same as timeout |
+| `GatewayTargetError`, `GatewayPathUnavailableError` | retry once; resets the timeout counter, because the gateway itself answered |
 | `ModbusConnectionError` (except `ClientClosedError`) | wait 0.5 s, retry once; the library reconnects |
 | `ClientClosedError` | immediately `MeltemConnectionError` |
 | other `ModbusExceptionError` | no retry, becomes `MeltemModbusError` |
@@ -299,7 +309,7 @@ Depends on the reference measurement from phase 0; otherwise in parallel.
 
 ### Phase 7: Documentation and release metadata
 
-1. [hacs.json](../hacs.json): `"homeassistant": "2026.9.0"`.
+1. [hacs.json](../hacs.json): `"homeassistant": "2026.10.0"`.
 2. [pyproject.toml](../pyproject.toml) and `manifest.json`: `4.0.0`.
 3. [CHANGELOG.md](../CHANGELOG.md): a `4.0.0` entry with the behavior changes below.
 4. [README.md](../README.md): requirements and logger example (`modbus_connection`, `tmodbus`).
@@ -324,12 +334,43 @@ Depends on the reference measurement from phase 0; otherwise in parallel.
 
 ## Intentional behavior changes
 
-- Exception responses from the device are no longer retried. Exception: gateway errors (code 10/11) are treated like a timeout.
+- Exception responses from the device are no longer retried. Exception: gateway errors (code 10/11) are retried once.
 - Timeouts no longer disconnect the serial link immediately, only after 3 consecutive timeouts.
 - A silent unit now costs about one timeout plus one retry per job instead of one timeout per block.
 - Setup and `edit_connection` validate the connection with a read of 43901 instead of only opening the port.
 - Setup-time detection no longer retries three times like pymodbus did by default; it follows the retry rules above.
 - The integration loads the core `modbus` integration. Its actions (`modbus.*`) therefore show up in Home Assistant.
+
+## Implementation status
+
+Phases 1 to 7 are implemented on `feature/ha-modbus-connection`. Phase 0
+(reference measurement) has to be taken from `main`, whose tools still use
+pymodbus. Phase 8 needs the real gateway. The release waits for HA `2026.10.0`.
+
+Deviations from the plan:
+
+- Minimum HA version `2026.10.0` instead of `2026.9.0`, see
+  [Verified API facts](#verified-api-facts).
+- `codec.py` was not created. The decode helpers stay in `modbus_client.py`,
+  where their tests already target them; moving them would only add churn.
+- The `device/` subpackage imports the register constants from `../const.py`.
+  It has no other Home Assistant dependency, but `const.py` imports
+  `homeassistant.const.Platform`.
+- `GatewayTargetError` and `GatewayPathUnavailableError` are retried once but
+  reset the timeout counter instead of counting toward it: the gateway
+  answered, so the serial link is alive.
+- The test harness `pytest-homeassistant-custom-component==0.13.367` ships HA
+  `2026.9.4`; [requirements-test.txt](../requirements-test.txt) installs
+  `modbus-connection` `4.12.3` on top. Move to the first harness for `2026.10`
+  once it exists.
+- HA `2026.9` deprecated `via_device`, `async_get_device`, and removing a
+  config entry from a device via `async_update_device`. The tests turn these
+  into errors, so unit devices now link to the gateway with `via_device_id`,
+  and devices of dropped units are removed with `async_remove_device`.
+- The timing tools ([benchmark_gateway.py](../tools/benchmark_gateway.py),
+  [profile_register_reads.py](../tools/profile_register_reads.py)) keep their
+  explicit gap outside the measured latency, so their numbers stay comparable
+  with the pymodbus baseline.
 
 ## Verification
 
@@ -350,8 +391,8 @@ Depends on the reference measurement from phase 0; otherwise in parallel.
 - The `homeassistant.components.modbus` API is very new; `get_hub` is already
   deprecated. Keep the lower bound in the manifest tight and check the breaking
   changes of every HA release.
-- The `modbus-connection` version in HA `2026.9.0` may be older than on the
-  dev branch and may lack some APIs (phase 0).
+- The `modbus-connection` version in HA `2026.9` turned out to be too old
+  (`4.10.0`). Resolved by requiring HA `2026.10.0`.
 - How tmodbus behaves with the gateway is untested. All hardware findings so far
   come from measurements with pymodbus.
 - The tmodbus busy retry can block the bus for up to 60 s.
