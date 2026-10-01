@@ -460,22 +460,7 @@ class MeltemModbusClient:
     ) -> RoomState:
         do_temp = refresh_plan.refresh_temperatures
         do_env = refresh_plan.refresh_environment
-
-        if room.profile in PLAIN_PROFILES:
-            # Plain units only expose the exhaust-air temperature according to
-            # the Meltem unit matrix. They do not expose the other temperature
-            # points or humidity/CO2/VOC values.
-            return RoomState(
-                exhaust_temperature=fresh(
-                    "temperatures",
-                    "exhaust_temperature",
-                    prev.exhaust_temperature,
-                    due=self._supports(room, "exhaust_temperature") and do_temp,
-                ),
-                outdoor_air_temperature=prev.outdoor_air_temperature,
-                extract_air_temperature=prev.extract_air_temperature,
-                supply_air_temperature=prev.supply_air_temperature,
-            )
+        extended = room.profile not in PLAIN_PROFILES
 
         return RoomState(
             exhaust_temperature=fresh(
@@ -488,42 +473,45 @@ class MeltemModbusClient:
                 "temperatures",
                 "outdoor_air_temperature",
                 prev.outdoor_air_temperature,
-                due=self._supports(room, "outdoor_air_temperature") and do_env,
+                due=extended and self._supports(room, "outdoor_air_temperature") and do_env,
             ),
             extract_air_temperature=fresh(
                 "temperatures",
                 "extract_air_temperature",
                 prev.extract_air_temperature,
-                due=self._supports(room, "extract_air_temperature") and do_temp,
+                due=extended and self._supports(room, "extract_air_temperature") and do_temp,
             ),
             supply_air_temperature=fresh(
                 "supply_temperature",
                 "supply_air_temperature",
                 prev.supply_air_temperature,
+                due=extended,
             ),
             humidity_extract_air=fresh(
                 "extract_air_quality",
                 "humidity_extract_air",
                 prev.humidity_extract_air,
-                due=self._environment_due(room, "humidity_extract_air", HUMIDITY_PROFILES),
+                due=extended
+                and self._environment_due(room, "humidity_extract_air", HUMIDITY_PROFILES),
             ),
             co2_extract_air=fresh(
                 "extract_air_quality",
                 "co2_extract_air",
                 prev.co2_extract_air,
-                due=self._environment_due(room, "co2_extract_air", CO2_PROFILES),
+                due=extended and self._environment_due(room, "co2_extract_air", CO2_PROFILES),
             ),
             humidity_supply_air=fresh(
                 "supply_air_quality",
                 "humidity_supply_air",
                 prev.humidity_supply_air,
-                due=self._environment_due(room, "humidity_supply_air", HUMIDITY_PROFILES),
+                due=extended
+                and self._environment_due(room, "humidity_supply_air", HUMIDITY_PROFILES),
             ),
             voc_supply_air=fresh(
                 "supply_air_quality",
                 "voc_supply_air",
                 prev.voc_supply_air,
-                due=self._environment_due(room, "voc_supply_air", VOC_PROFILES),
+                due=extended and self._environment_due(room, "voc_supply_air", VOC_PROFILES),
             ),
         )
 
@@ -874,8 +862,6 @@ class MeltemModbusClient:
             preset_mode=self._decode_preset_mode_with_fallback(
                 mode_block=mode_block,
                 full_mode_block_available=full_mode_block_available,
-                operation_mode=operation_mode,
-                raw_current_level=raw_current_level,
                 raw_extract_target=raw_extract_target,
                 previous_preset_mode=previous_state.preset_mode,
             ),
@@ -1011,8 +997,10 @@ class MeltemModbusClient:
             return None
         return RAW_VALUE_TO_SENSOR_MODE.get(current_value)
 
-    def _decode_preset_mode(self, mode_block: list[int] | None) -> str | None:
-        """Return the base quick mode from 41120..41122.
+    def _decode_preset_mode(
+        self, mode_block: list[int] | None, raw_extract_target: int | None
+    ) -> str | None:
+        """Return the base quick mode from 41120..41122, including short reads.
 
         The intensive override lives in the 41123/41124 shadow registers and
         does not replace the base quick mode, so those are ignored here.
@@ -1020,10 +1008,11 @@ class MeltemModbusClient:
 
         if mode_block is None or len(mode_block) < 2:
             return None
-        if mode_block[0] == MODE_UNBALANCED and len(mode_block) >= 3:
-            if mode_block[1] == 0 and mode_block[2] > APP_UNBALANCED_PRESET_BASE:
+        extract_target = mode_block[2] if len(mode_block) >= 3 else raw_extract_target
+        if mode_block[0] == MODE_UNBALANCED and extract_target is not None:
+            if mode_block[1] == 0 and extract_target > APP_UNBALANCED_PRESET_BASE:
                 return PRESET_MODE_EXTRACT_ONLY
-            if mode_block[2] == 0 and mode_block[1] > APP_UNBALANCED_PRESET_BASE:
+            if extract_target == 0 and mode_block[1] > APP_UNBALANCED_PRESET_BASE:
                 return PRESET_MODE_SUPPLY_ONLY
         if mode_block[0] != MODE_MANUAL:
             return None
@@ -1034,15 +1023,13 @@ class MeltemModbusClient:
         *,
         mode_block: list[int] | None,
         full_mode_block_available: bool,
-        operation_mode: str | None,
-        raw_current_level: int | None,
         raw_extract_target: int | None,
         previous_preset_mode: str | None,
     ) -> str | None:
         """Decode preset mode without keeping stale values after known non-preset states."""
 
         if full_mode_block_available:
-            decoded = self._decode_preset_mode(mode_block)
+            decoded = self._decode_preset_mode(mode_block, raw_extract_target)
             if decoded == PRESET_MODE_INTENSIVE:
                 return previous_preset_mode
             return decoded
@@ -1050,26 +1037,7 @@ class MeltemModbusClient:
         if mode_block is None:
             return previous_preset_mode
 
-        if operation_mode == OPERATION_MODE_OFF or operation_mode in SENSOR_OPERATION_MODES:
-            return None
-
-        if operation_mode == OPERATION_MODE_MANUAL:
-            return RAW_CODE_TO_PRESET_MODE.get(raw_current_level)
-
-        if operation_mode == OPERATION_MODE_UNBALANCED:
-            if (
-                raw_current_level == 0
-                and raw_extract_target is not None
-                and raw_extract_target > APP_UNBALANCED_PRESET_BASE
-            ):
-                return PRESET_MODE_EXTRACT_ONLY
-            if (
-                raw_extract_target == 0
-                and raw_current_level is not None
-                and raw_current_level > APP_UNBALANCED_PRESET_BASE
-            ):
-                return PRESET_MODE_SUPPLY_ONLY
-        return None
+        return self._decode_preset_mode(mode_block, raw_extract_target)
 
     def _decode_intensive_active(
         self,
