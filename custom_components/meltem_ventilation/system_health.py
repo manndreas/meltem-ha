@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components import system_health
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 
 from .const import DOMAIN
@@ -23,15 +22,6 @@ def async_register(
     register.async_register_info(system_health_info)
 
 
-def _loaded_entry(hass: HomeAssistant) -> ConfigEntry | None:
-    """Return the first loaded config entry, if any."""
-
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.state is ConfigEntryState.LOADED:
-            return entry
-    return None
-
-
 async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     """Return info for the system health page.
 
@@ -39,11 +29,11 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     coordinator already knows instead of putting extra load on the gateway.
     """
 
-    entry = _loaded_entry(hass)
-    if entry is None:
+    entries = hass.config_entries.async_loaded_entries(DOMAIN)
+    if not entries:
         return {"loaded_entries": 0}
 
-    runtime_data: MeltemRuntimeData = entry.runtime_data
+    runtime_data: MeltemRuntimeData = entries[0].runtime_data
     coordinator = runtime_data.coordinator
 
     return {

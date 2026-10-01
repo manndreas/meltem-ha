@@ -2,36 +2,30 @@
 """Capture and diff Meltem setting-related register families.
 
 This tool is meant for focused before/after experiments against one logical
-setting family at a time. It stores a timestamped snapshot with metadata and
-can diff against the previous capture of the same family or a specified file.
+setting family at a time, or against ad-hoc ``--range`` values. It stores a
+timestamped snapshot with metadata and can diff against the previous capture
+of the same family or a specified file.
 """
 
 from __future__ import annotations
 
 import argparse
-import asyncio
+import json
 from dataclasses import dataclass
 from datetime import datetime
-import json
 from pathlib import Path
 
-from modbus_connection import (
-    ModbusConnectionError,
-    ModbusError,
-    ModbusSerialParams,
-    ModbusUnit,
+from modbus_connection import ModbusConnectionError, ModbusError, ModbusUnit
+
+from tools._link import (
+    DEFAULT_PORT,
+    MAX_REGISTERS_PER_READ,
+    open_link,
+    parse_register_range,
+    run,
 )
-from modbus_connection.tmodbus import ModbusConnection
 
-
-FIXED_BAUDRATE = 19200
-FIXED_BYTESIZE = 8
-FIXED_PARITY = "E"
-FIXED_STOPBITS = 1
-FIXED_TIMEOUT = 0.8
-DEFAULT_PORT = "/dev/ttyACM0"
-REQUEST_GAP_SECONDS = 0.1
-MAX_REGISTERS_PER_READ = 120
+CUSTOM_FAMILY = "custom"
 
 
 @dataclass(frozen=True)
@@ -226,6 +220,13 @@ def find_latest_capture(output_dir: Path, *, family: str, slave: int, exclude: P
     return None
 
 
+def parse_custom_range(value: str) -> RegisterRange:
+    """Parse one ad-hoc ``--range`` in start:count or start-end form."""
+
+    start, end = parse_register_range(value)
+    return RegisterRange(start, end, f"range_{start}_{end}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Capture or diff focused Meltem setting register families."
@@ -236,6 +237,16 @@ def parse_args() -> argparse.Namespace:
         "--family",
         choices=sorted(FAMILY_SPECS),
         help="Named setting family to capture.",
+    )
+    parser.add_argument(
+        "--range",
+        dest="ranges",
+        action="append",
+        type=parse_custom_range,
+        help=(
+            f"Ad-hoc register range instead of --family, e.g. 41120:5 or 42000-42009. "
+            f"Repeatable; stored as family '{CUSTOM_FAMILY}'."
+        ),
     )
     parser.add_argument(
         "--label",
@@ -275,11 +286,18 @@ async def main() -> int:
                 )
         return 0
 
-    if args.slave is None or args.family is None or args.label is None:
-        print("ERROR: --slave, --family, and --label are required unless --list-families is used")
+    if args.slave is None or args.label is None or (args.family is None) == (args.ranges is None):
+        print(
+            "ERROR: --slave, --label, and either --family or --range are required "
+            "unless --list-families is used"
+        )
         return 2
 
-    family = FAMILY_SPECS[args.family]
+    family = (
+        FAMILY_SPECS[args.family]
+        if args.family is not None
+        else FamilySpec(CUSTOM_FAMILY, "Ad-hoc register ranges.", tuple(args.ranges))
+    )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = build_output_path(
@@ -289,30 +307,8 @@ async def main() -> int:
         label=args.label,
     )
 
-    connection = ModbusConnection(
-        ModbusSerialParams(
-            device=args.port,
-            baudrate=FIXED_BAUDRATE,
-            bytesize=FIXED_BYTESIZE,
-            parity=FIXED_PARITY,
-            stopbits=FIXED_STOPBITS,
-        ),
-        timeout=FIXED_TIMEOUT,
-        message_spacing=REQUEST_GAP_SECONDS,
-    )
-    try:
-        await connection.connect()
-    except ModbusConnectionError as err:
-        print(f"ERROR: could not open serial connection on {args.port}: {err}")
-        return 2
-
-    try:
-        values = await capture_snapshot(connection.for_unit(args.slave), family=family)
-    except ModbusConnectionError as err:
-        print(f"ERROR: lost the serial connection on {args.port}: {err}")
-        return 2
-    finally:
-        await connection.close()
+    async with open_link(args.port) as link:
+        values = await capture_snapshot(link.for_unit(args.slave), family=family)
 
     payload = {
         "metadata": {
@@ -360,4 +356,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    run(main)

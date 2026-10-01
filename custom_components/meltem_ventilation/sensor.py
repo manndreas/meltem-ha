@@ -6,8 +6,8 @@ from the profile selected for it during setup.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -25,7 +25,6 @@ from homeassistant.const import (
     UnitOfVolumeFlowRate,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import (
@@ -33,11 +32,10 @@ from .const import (
     CO2_PROFILES,
     CONF_PORT,
     DOMAIN,
-    GATEWAY_NAME,
     HUMIDITY_PROFILES,
     VOC_PROFILES,
 )
-from .entity import MeltemEntity, room_supports_entity
+from .entity import MeltemEntity, gateway_device_info, room_supports_entity
 from .models import MeltemRuntimeData, RoomState
 
 
@@ -45,8 +43,8 @@ from .models import MeltemRuntimeData, RoomState
 class MeltemSensorDescription(SensorEntityDescription):
     """Describe a Meltem sensor."""
 
-    supported_profiles: frozenset[str]
     value_fn: Callable[[RoomState], int | float | None]
+    supported_profiles: frozenset[str] = ALL_PROFILES
 
 
 MODBUS_SLAVE_ID_DESCRIPTION = SensorEntityDescription(
@@ -57,6 +55,7 @@ MODBUS_SLAVE_ID_DESCRIPTION = SensorEntityDescription(
 
 MODBUS_DEVICE_PATH_DESCRIPTION = SensorEntityDescription(
     key="modbus_device_path",
+    translation_key="modbus_device_path",
     entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
 )
@@ -69,7 +68,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         suggested_display_precision=1,
-        supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.exhaust_temperature,
     ),
     MeltemSensorDescription(
@@ -138,7 +136,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR,
-        supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.extract_air_flow,
     ),
     MeltemSensorDescription(
@@ -147,7 +144,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR,
-        supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.supply_air_flow,
     ),
     MeltemSensorDescription(
@@ -157,7 +153,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTime.DAYS,
         entity_category=EntityCategory.DIAGNOSTIC,
-        supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.days_until_filter_change,
     ),
     MeltemSensorDescription(
@@ -168,7 +163,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfTime.HOURS,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.operating_hours,
     ),
 )
@@ -224,11 +218,9 @@ class MeltemModbusSlaveSensor(MeltemEntity, SensorEntity):
     entity_description = MODBUS_SLAVE_ID_DESCRIPTION
 
     def __init__(self, coordinator, room) -> None:
-        super().__init__(coordinator, room, "modbus_slave_id", "modbus_slave_id")
-
-    @property
-    def native_value(self) -> int:
-        return self.room.slave
+        key = MODBUS_SLAVE_ID_DESCRIPTION.key
+        super().__init__(coordinator, room, key, key)
+        self._attr_native_value = room.slave
 
 
 class MeltemModbusDevicePathSensor(SensorEntity):
@@ -239,15 +231,5 @@ class MeltemModbusDevicePathSensor(SensorEntity):
 
     def __init__(self, entry: ConfigEntry) -> None:
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_modbus_device_path"
-        self._attr_translation_key = MODBUS_DEVICE_PATH_DESCRIPTION.key
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            manufacturer="Meltem",
-            model="M-WRG-GW",
-            name=GATEWAY_NAME,
-        )
-        self._device_path = entry.data[CONF_PORT]
-
-    @property
-    def native_value(self) -> str:
-        return self._device_path
+        self._attr_device_info = gateway_device_info(entry.entry_id)
+        self._attr_native_value = entry.data[CONF_PORT]

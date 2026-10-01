@@ -10,7 +10,8 @@
 - A serial port that another integration already uses with different settings
   is reported as a setup error instead of fighting over the port lock, and the
   setup dialog names that cause instead of a generic connection error.
-- Every request is retried at most once. The link is only reopened after
+- Every request is retried at most once, and plain Modbus exception responses
+  from a unit are not retried at all. The link is only reopened after
   three timeouts in a row while no unit answered for 10 seconds, so a silent
   unit no longer resets the connection for all others.
 - A unit that does not answer at all ends its poll job after the first
@@ -20,9 +21,17 @@
   follow the same retry rules as normal polling. The setup dialog opens the
   serial port once for reading the unit list and probing the units.
 - The diagnostics download shows how often the serial link was reopened.
+- In unbalanced mode, a failed read of the mode registers keeps the last
+  supply target instead of clearing it, as it already did for the extract
+  target.
+- The integration loads Home Assistant's `modbus` integration, so its
+  `modbus.*` actions now show up in Home Assistant.
 - Debug logging for the serial link moved from `pymodbus` to the
   `modbus_connection` and `tmodbus` loggers.
-- The developer tools in `tools/` use `modbus-connection` with tmodbus.
+- The developer tools in `tools/` use `modbus-connection` with tmodbus and
+  share their link settings. `raw_requests` and `count_requests` replace the
+  scripts in the live test plan, `capture_setting_family --range` replaces
+  `diff_register_snapshot`, and `monitor_gateway` is gone.
 
 ## 3.1.0
 
@@ -65,7 +74,7 @@
 
 ### Migrating your automations
 
-Every airflow control entity was replaced. Automatiosns referencing the old
+Every airflow control entity was replaced. Automations referencing the old
 entities stop working and have to be updated:
 
 | Removed | Replacement |

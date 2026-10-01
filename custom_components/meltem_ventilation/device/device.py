@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from modbus_connection import ModbusUnit
-from modbus_connection.model import Device, ManualComponent, raw_register
+from modbus_connection.model import Component, Device, ManualComponent, raw_register
 
 from ..const import (
     REGISTER_CO2_EXTRACT_AIR,
@@ -32,6 +32,11 @@ from .components import (
 )
 
 
+def _only[C: Component](component: C, *fields: str) -> C:
+    component.restrict_fields(fields)
+    return component
+
+
 class MeltemRoomDevice(Device):
     """One ventilation unit behind the gateway."""
 
@@ -41,7 +46,7 @@ class MeltemRoomDevice(Device):
         self.temperatures = Temperatures(unit)
         if exhaust_temperature_only:
             # Plain units only expose the exhaust temperature (unit matrix).
-            self.temperatures.restrict_fields(["exhaust_temperature"])
+            _only(self.temperatures, "exhaust_temperature")
         self.supply_temperature = SupplyTemperature(unit)
         self.extract_air_quality = ExtractAirQuality(unit)
         self.supply_air_quality = SupplyAirQuality(unit)
@@ -55,12 +60,9 @@ class MeltemRoomDevice(Device):
         self.rf_comm_status = Register(unit, base_offset=REGISTER_RF_COMM_STATUS)
         self.mode = ModeBlock(unit)
         # Many units reject the long mode read until a first write (HW-4).
-        self.mode_short = ModeBlock(unit)
-        self.mode_short.restrict_fields(["mode", "current_level"])
-        self.current_level = ModeBlock(unit)
-        self.current_level.restrict_fields(["current_level"])
-        self.extract_target_level = ModeBlock(unit)
-        self.extract_target_level.restrict_fields(["extract_target_level"])
+        self.mode_short = _only(ModeBlock(unit), "mode", "current_level")
+        self.current_level = _only(ModeBlock(unit), "current_level")
+        self.extract_target_level = _only(ModeBlock(unit), "extract_target_level")
         self.command = Command(unit)
 
 
@@ -83,12 +85,19 @@ class MeltemGateway(Device):
         super().__init__(unit)
         self.node_count = Register(unit, base_offset=REGISTER_GATEWAY_NUMBER_OF_NODES)
 
+    async def async_read_node_count(self) -> int:
+        """Read how many units the gateway is configured for."""
+
+        await self.node_count.async_update()
+        return int(self.node_count.value or 0)
+
     async def async_read_node_addresses(self, count: int) -> list[int]:
         """Read the configured unit addresses in one block."""
 
         first = REGISTER_GATEWAY_NODE_ADDRESS_1
         block = ManualComponent(self.modbus_unit, holding_ranges=((first, first + count - 1),))
-        for index in range(count):
-            block.add(str(index), raw_register(first + index))
+        keys = [str(index) for index in range(count)]
+        for index, key in enumerate(keys):
+            block.add(key, raw_register(first + index))
         values = await block.async_update()
-        return [int(values[str(index)]) for index in range(count)]
+        return [int(values[key]) for key in keys]

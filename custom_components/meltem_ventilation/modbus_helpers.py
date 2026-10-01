@@ -43,9 +43,55 @@ from .device import MeltemGateway, MeltemProbe, PolicyUnit, TransportPolicy
 
 _LOGGER = logging.getLogger(__name__)
 
+_MAX_NODE_ADDRESSES = 32
+
+# Read in this order by the setup probe; the product ID only feeds the preview.
+_PROBE_COMPONENTS = (
+    "product_id",
+    "humidity_extract_air",
+    "humidity_supply_air",
+    "co2_extract_air",
+    "voc_supply_air",
+)
+
+# Value range in which a probed register counts as a fitted sensor.
+_PLAUSIBLE_RANGES: dict[str, tuple[int, int]] = {
+    "humidity_extract_air": (0, 100),
+    "humidity_supply_air": (0, 100),
+    "co2_extract_air": (250, 10000),
+    "voc_supply_air": (0, 10000),
+}
+
+# Richest suffix first: the first one with a detected sensor wins.
+_SUFFIXES: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("fc_voc", "VOC", frozenset({"voc_supply_air"})),
+    ("fc", "CO2", frozenset({"co2_extract_air"})),
+    ("f", "humidity", frozenset({"humidity_extract_air", "humidity_supply_air"})),
+)
+
+# Units with any sensor suffix also report these temperatures.
+_SUFFIX_ENTITY_KEYS = frozenset({"outdoor_air_temperature", "extract_air_temperature"})
+
+_CAPABILITY_ENTITY_KEYS: dict[str, frozenset[str]] = {
+    "humidity": frozenset(
+        {
+            "supply_air_temperature",
+            "humidity_extract_air",
+            "humidity_supply_air",
+            "humidity_starting_point",
+            "humidity_min_level",
+            "humidity_max_level",
+        }
+    ),
+    "co2": frozenset(
+        {"co2_extract_air", "co2_starting_point", "co2_min_level", "co2_max_level"}
+    ),
+    "voc": frozenset({"voc_supply_air"}),
+}
+
 
 # ---------------------------------------------------------------------------
-#  Exception
+#  Exceptions
 # ---------------------------------------------------------------------------
 
 
@@ -139,14 +185,12 @@ async def read_gateway_node_count(unit: ModbusUnit) -> int:
     ``MeltemModbusError`` when the gateway does not answer.
     """
 
-    gateway = MeltemGateway(unit)
     try:
-        await gateway.node_count.async_update()
+        return await MeltemGateway(unit).async_read_node_count()
     except ModbusConnectionError as err:
         raise MeltemConnectionError(str(err)) from err
     except ModbusError as err:
         raise MeltemModbusError(str(err)) from err
-    return int(gateway.node_count.value or 0)
 
 
 async def discover_gateway_nodes(
@@ -160,21 +204,9 @@ async def discover_gateway_nodes(
 
     gateway = MeltemGateway(unit)
     try:
-        await gateway.node_count.async_update()
-    except ModbusConnectionError as err:
-        raise MeltemConnectionError(
-            f"Could not open serial connection on {port}: {err}"
-        ) from err
+        node_count = await gateway.async_read_node_count()
     except ModbusError as err:
-        _LOGGER.warning(
-            "Meltem gateway discovery on %s via device %s could not read the node count: %s",
-            port,
-            DEFAULT_GATEWAY_DEVICE_ID,
-            err,
-        )
-        return []
-
-    node_count = int(gateway.node_count.value or 0)
+        return _discovery_failed(err, port, "node count")
     if node_count <= 0:
         _LOGGER.warning(
             "Meltem gateway discovery on %s via device %s reported zero configured units",
@@ -184,37 +216,40 @@ async def discover_gateway_nodes(
         return []
 
     try:
-        addresses = await gateway.async_read_node_addresses(max(1, min(32, node_count)))
-    except ModbusConnectionError as err:
-        raise MeltemConnectionError(
-            f"Could not open serial connection on {port}: {err}"
-        ) from err
+        addresses = await gateway.async_read_node_addresses(min(_MAX_NODE_ADDRESSES, node_count))
     except ModbusError as err:
-        _LOGGER.warning(
-            "Meltem gateway discovery on %s via device %s could not read the node address list: %s",
-            port,
-            DEFAULT_GATEWAY_DEVICE_ID,
-            err,
-        )
-        return []
+        return _discovery_failed(err, port, "node address list")
 
     discovered: list[int] = []
     for address in addresses:
-        if address == 0:
+        if address == 0 or address in discovered:
             continue
-        if not (start <= address <= end):
-            _LOGGER.warning(
-                "Ignoring configured unit address %s from gateway on %s because it is outside %s..%s",
-                address,
-                port,
-                start,
-                end,
-            )
-            continue
-        if address not in discovered:
+        if start <= address <= end:
             discovered.append(address)
-
+            continue
+        _LOGGER.warning(
+            "Ignoring configured unit address %s from gateway on %s because it is outside %s..%s",
+            address,
+            port,
+            start,
+            end,
+        )
     return discovered
+
+
+def _discovery_failed(err: ModbusError, port: str, what: str) -> list[int]:
+    """Raise a dead link as ``MeltemConnectionError``; log any other error as no units."""
+
+    if isinstance(err, ModbusConnectionError):
+        raise MeltemConnectionError(f"Could not open serial connection on {port}: {err}") from err
+    _LOGGER.warning(
+        "Meltem gateway discovery on %s via device %s could not read the %s: %s",
+        port,
+        DEFAULT_GATEWAY_DEVICE_ID,
+        what,
+        err,
+    )
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -234,16 +269,11 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None, list[
     """
 
     probe = MeltemProbe(unit)
-    answered: set[str] = set()
-    for name in (
-        "product_id",
-        "humidity_extract_air",
-        "humidity_supply_air",
-        "co2_extract_air",
-        "voc_supply_air",
-    ):
+    values: dict[str, int] = {}
+    for name in _PROBE_COMPONENTS:
+        component = getattr(probe, name)
         try:
-            await getattr(probe, name).async_update()
+            await component.async_update()
         except ModbusConnectionError as err:
             raise MeltemConnectionError(str(err)) from err
         except ModbusTimeoutError:
@@ -251,51 +281,25 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None, list[
             break
         except ModbusError:
             continue
-        answered.add(name)
+        values[name] = component.product_id if name == "product_id" else component.value
 
-    def _probed(name: str) -> int | None:
-        if name not in answered:
-            return None
-        component = getattr(probe, name)
-        return component.product_id if name == "product_id" else component.value
-
-    supported_entity_keys = set(_base_supported_entity_keys())
-    if _is_plausible_humidity(_probed("humidity_extract_air")):
-        supported_entity_keys.add("humidity_extract_air")
-    if _is_plausible_humidity(_probed("humidity_supply_air")):
-        supported_entity_keys.add("humidity_supply_air")
-    if _is_plausible_co2(_probed("co2_extract_air")):
-        supported_entity_keys.add("co2_extract_air")
-    if _is_plausible_voc(_probed("voc_supply_air")):
-        supported_entity_keys.add("voc_supply_air")
-
-    # The suffix can be inferred from the optional sensor set alone.
-    if "voc_supply_air" in supported_entity_keys:
-        detected_profile = "fc_voc"
-    elif "co2_extract_air" in supported_entity_keys:
-        detected_profile = "fc"
-    elif (
-        "humidity_extract_air" in supported_entity_keys
-        or "humidity_supply_air" in supported_entity_keys
-    ):
-        detected_profile = "f"
-    else:
-        detected_profile = "plain"
-
-    preview_parts: list[str] = []
-    product_id = _probed("product_id")
-    if product_id is not None:
-        preview_parts.append(f"ID {product_id}")
-    capability_preview = {
-        "fc_voc": "VOC",
-        "fc": "CO2",
-        "f": "humidity",
-        "plain": "basic",
-    }[detected_profile]
-    preview_parts.append(capability_preview)
-
-    preview = " | ".join(preview_parts) if preview_parts else None
-
+    supported_entity_keys = set(BASE_SUPPORTED_ENTITY_KEYS) | {
+        key for key in _PLAUSIBLE_RANGES if _is_plausible(key, values.get(key))
+    }
+    detected_profile, capability_preview = next(
+        (
+            (suffix, preview)
+            for suffix, preview, keys in _SUFFIXES
+            if keys & supported_entity_keys
+        ),
+        ("plain", "basic"),
+    )
+    product_id = values.get("product_id")
+    preview = (
+        capability_preview
+        if product_id is None
+        else f"ID {product_id} | {capability_preview}"
+    )
     return detected_profile, preview, sorted(supported_entity_keys)
 
 
@@ -304,63 +308,24 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None, list[
 # ---------------------------------------------------------------------------
 
 
-def _base_supported_entity_keys() -> set[str]:
-    """Return entities that are generally meaningful for all units."""
-
-    return set(BASE_SUPPORTED_ENTITY_KEYS)
-
-
 def supported_entity_keys_for_profile(profile: str) -> list[str]:
     """Return the supported entity keys implied by one selected profile."""
 
-    supported_entity_keys = set(_base_supported_entity_keys())
     metadata = PROFILE_METADATA.get(profile)
     capabilities = metadata.capabilities if metadata is not None else frozenset()
 
+    supported_entity_keys = set(BASE_SUPPORTED_ENTITY_KEYS)
     if capabilities:
-        supported_entity_keys.update(
-            {
-                "outdoor_air_temperature",
-                "extract_air_temperature",
-            }
-        )
-
-    if "humidity" in capabilities:
-        supported_entity_keys.update(
-            {
-                "supply_air_temperature",
-                "humidity_extract_air",
-                "humidity_supply_air",
-                "humidity_starting_point",
-                "humidity_min_level",
-                "humidity_max_level",
-            }
-        )
-    if "co2" in capabilities:
-        supported_entity_keys.update(
-            {
-                "co2_extract_air",
-                "co2_starting_point",
-                "co2_min_level",
-                "co2_max_level",
-            }
-        )
-    if "voc" in capabilities:
-        supported_entity_keys.add("voc_supply_air")
-
+        supported_entity_keys |= _SUFFIX_ENTITY_KEYS
+    for capability, entity_keys in _CAPABILITY_ENTITY_KEYS.items():
+        if capability in capabilities:
+            supported_entity_keys |= entity_keys
     return sorted(supported_entity_keys)
 
 
-def _is_plausible_humidity(value: int | None) -> bool:
-    return value is not None and 0 <= value <= 100
-
-
-def _is_plausible_co2(value: int | None) -> bool:
-    return value is not None and 250 <= value <= 10000
-
-
-def _is_plausible_voc(value: int | None) -> bool:
-    return value is not None and 0 <= value <= 10000
+def _is_plausible(key: str, value: int | None) -> bool:
+    low, high = _PLAUSIBLE_RANGES[key]
+    return value is not None and low <= value <= high
 
 
 def derive_balanced_airflow(

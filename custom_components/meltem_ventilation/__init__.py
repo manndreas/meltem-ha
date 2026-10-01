@@ -31,18 +31,17 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
-    CO2_PROFILES,
     CONF_MAX_REQUESTS_PER_SECOND,
     CONF_PORT,
     CONF_ROOMS,
     DEFAULT_MAX_REQUESTS_PER_SECOND,
     DOMAIN,
     ENTITY_PLATFORM_BY_KEY,
-    GATEWAY_NAME,
-    HUMIDITY_PROFILES,
     PLATFORMS,
+    SENSOR_CONTROL_PROFILES,
 )
 from .coordinator import MeltemDataUpdateCoordinator
+from .entity import gateway_device_info
 from .modbus_client import MeltemModbusClient
 from .modbus_helpers import (
     MeltemModbusError,
@@ -85,16 +84,48 @@ def _async_migrate_data_health_entities(hass: HomeAssistant, entry: ConfigEntry)
         entry_entities[new_unique_id] = old_entity
 
 
-def _room_entity_keys(room: Mapping[str, Any]) -> frozenset[str]:
-    """Return the stored entity keys plus everything the room's profile implies.
+def _room_config(room: Mapping[str, Any]) -> RoomConfig:
+    """Build one room with its stored entity keys plus everything its profile implies.
 
     Deriving the profile part on load keeps older entries complete when a
     release adds entities, without probing the gateway or rewriting the entry.
     """
 
-    return frozenset(room.get("supported_entity_keys", ())) | frozenset(
-        supported_entity_keys_for_profile(str(room["profile"]))
+    return RoomConfig(
+        key=room["key"],
+        name=room["name"],
+        profile=room["profile"],
+        slave=int(room["slave"]),
+        preview=room.get("preview"),
+        supported_entity_keys=frozenset(room.get("supported_entity_keys", ()))
+        | frozenset(supported_entity_keys_for_profile(str(room["profile"]))),
     )
+
+
+def _max_requests_per_second(entry: ConfigEntry) -> float:
+    return float(
+        entry.options.get(
+            CONF_MAX_REQUESTS_PER_SECOND,
+            entry.data.get(CONF_MAX_REQUESTS_PER_SECOND, DEFAULT_MAX_REQUESTS_PER_SECOND),
+        )
+    )
+
+
+async def _async_normalize_port(hass: HomeAssistant, entry: ConfigEntry) -> str:
+    """Store and return the stable ``/dev/serial/by-id`` path of the gateway port.
+
+    A by-id link can appear after setup, so this is a runtime fix-up, not a migration.
+    """
+
+    # Resolution walks /dev/serial/by-id, so it must not run in the event loop.
+    port = await hass.async_add_executor_job(
+        resolve_preferred_port_path, entry.data[CONF_PORT]
+    )
+    if port != entry.data[CONF_PORT] or entry.unique_id != port:
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_PORT: port}, unique_id=port
+        )
+    return port
 
 
 def _async_remove_unsupported_entities(
@@ -102,32 +133,26 @@ def _async_remove_unsupported_entities(
 ) -> None:
     """Drop registry entries that no configured room/profile creates anymore."""
 
-    registry = er.async_get(hass)
     expected: dict[str, str] = {}
     for room in rooms:
         profile_keys = set(supported_entity_keys_for_profile(room.profile))
         supported_keys = set(room.supported_entity_keys or profile_keys) & profile_keys
-        if room.profile not in HUMIDITY_PROFILES | CO2_PROFILES:
+        if room.profile not in SENSOR_CONTROL_PROFILES:
             supported_keys.discard("operation_mode")
+        if {"extract_air_flow", "supply_air_flow"} & supported_keys:
+            supported_keys.add("data_health")
         for object_key in supported_keys:
             if platform := ENTITY_PLATFORM_BY_KEY.get(object_key):
                 expected[f"{DOMAIN}_{room.key}_{object_key}"] = platform.value
-        if {"extract_air_flow", "supply_air_flow"} & supported_keys:
-            expected[f"{DOMAIN}_{room.key}_data_health"] = (
-                ENTITY_PLATFORM_BY_KEY["data_health"].value
-            )
     # Gateway-level entity, not tied to any room.
     expected[f"{DOMAIN}_{entry.entry_id}_modbus_device_path"] = Platform.SENSOR.value
 
-    for existing in list(registry.entities.values()):
-        if existing.config_entry_id != entry.entry_id:
-            continue
-        unique_id = existing.unique_id
-        if not unique_id.startswith(f"{DOMAIN}_"):
-            continue
-        expected_domain = expected.get(unique_id)
-        actual_domain = existing.entity_id.partition(".")[0]
-        if expected_domain == actual_domain:
+    registry = er.async_get(hass)
+    for existing in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if (
+            not existing.unique_id.startswith(f"{DOMAIN}_")
+            or expected.get(existing.unique_id) == existing.domain
+        ):
             continue
         _LOGGER.info("Removing unsupported Meltem entity %s", existing.entity_id)
         registry.async_remove(existing.entity_id)
@@ -139,16 +164,10 @@ def _async_sync_devices(
     """Register the gateway device and drop devices of units no longer configured."""
 
     registry = dr.async_get(hass)
-    gateway_identifier = (DOMAIN, entry.entry_id)
+    gateway = gateway_device_info(entry.entry_id)
     # Unit devices reference the gateway via ``via_device_id``, so it must exist first.
-    registry.async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={gateway_identifier},
-        manufacturer="Meltem",
-        model="M-WRG-GW",
-        name=GATEWAY_NAME,
-    )
-    configured = {(DOMAIN, room.key) for room in rooms} | {gateway_identifier}
+    registry.async_get_or_create(config_entry_id=entry.entry_id, **gateway)
+    configured = {(DOMAIN, room.key) for room in rooms} | gateway["identifiers"]
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
         if device.identifiers & configured:
             continue
@@ -159,38 +178,9 @@ def _async_sync_devices(
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Meltem Modbus from a config entry."""
 
-    # Resolution walks /dev/serial/by-id, so it must not run in the event loop.
-    normalized_port = await hass.async_add_executor_job(
-        resolve_preferred_port_path, entry.data[CONF_PORT]
-    )
-    # A by-id link can appear after setup, so this is a runtime fix-up, not a migration.
-    if normalized_port != entry.data[CONF_PORT] or entry.unique_id != normalized_port:
-        hass.config_entries.async_update_entry(
-            entry,
-            data={**entry.data, CONF_PORT: normalized_port},
-            unique_id=normalized_port,
-        )
-
-    rooms = [
-        RoomConfig(
-            key=room["key"],
-            name=room["name"],
-            profile=room["profile"],
-            slave=int(room["slave"]),
-            preview=room.get("preview"),
-            supported_entity_keys=_room_entity_keys(room),
-        )
-        for room in entry.data[CONF_ROOMS]
-    ]
-    max_requests_per_second = float(
-        entry.options.get(
-            CONF_MAX_REQUESTS_PER_SECOND,
-            entry.data.get(
-                CONF_MAX_REQUESTS_PER_SECOND,
-                DEFAULT_MAX_REQUESTS_PER_SECOND,
-            ),
-        )
-    )
+    port = await _async_normalize_port(hass, entry)
+    rooms = [_room_config(room) for room in entry.data[CONF_ROOMS]]
+    max_requests_per_second = _max_requests_per_second(entry)
     _LOGGER.info(
         "Using Meltem max request rate of %.1f req/s for %s configured unit(s)",
         max_requests_per_second,
@@ -203,8 +193,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # All rooms share one client, and the client asks Home Assistant's modbus
     # integration for its units, so the gateway only ever sees one connection.
     client = MeltemModbusClient(
-        partial(async_get_unit, hass, entry, build_serial_params(normalized_port)),
-        port=normalized_port,
+        partial(async_get_unit, hass, entry, build_serial_params(port)),
+        port=port,
     )
     try:
         await client.async_validate_gateway()

@@ -8,26 +8,23 @@ import sys
 import pytest
 
 if sys.platform == "win32":
-    # The Windows proactor event loop builds an internal AF_INET socketpair when
-    # the loop is created, which pytest-homeassistant-custom-component blocks.
-    # On Linux asyncio uses a pipe there, so CI is unaffected.
-    # Only that loopback pair is let through; the socket guard itself stays
-    # active, so tests still cannot reach the network.
-    _real_socket_cls = socket.socket
+    # The proactor event loop creates an AF_INET socketpair, which the harness's
+    # socket guard blocks. Only that loopback pair is let through; Linux uses a
+    # pipe there, so CI runs with the plain guard.
+    _real_socket = socket.socket
     _real_socketpair = socket.socketpair
 
     def _loopback_socketpair(*args, **kwargs):
-        guarded_socket_cls = socket.socket
-        socket.socket = _real_socket_cls
+        guarded_socket = socket.socket
+        socket.socket = _real_socket
         try:
             return _real_socketpair(*args, **kwargs)
         finally:
-            socket.socket = guarded_socket_cls
+            socket.socket = guarded_socket
 
     socket.socketpair = _loopback_socketpair
 
 
 @pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations):
-    """Allow pytest-homeassistant-custom-component to load our integration."""
-    yield
+def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
+    """Allow pytest-homeassistant-custom-component to load the integration."""

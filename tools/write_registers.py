@@ -8,19 +8,10 @@ register writes during reverse-engineering sessions.
 from __future__ import annotations
 
 import argparse
-import asyncio
 
-from modbus_connection import ModbusConnectionError, ModbusError, ModbusSerialParams
-from modbus_connection.tmodbus import ModbusConnection
+from modbus_connection import ModbusError
 
-
-FIXED_BAUDRATE = 19200
-FIXED_BYTESIZE = 8
-FIXED_PARITY = "E"
-FIXED_STOPBITS = 1
-FIXED_TIMEOUT = 0.8
-DEFAULT_PORT = "/dev/ttyACM0"
-REQUEST_GAP_SECONDS = 0.1
+from tools._link import DEFAULT_PORT, open_link, run
 
 
 def parse_write(value: str) -> tuple[int, int]:
@@ -50,26 +41,8 @@ def parse_args() -> argparse.Namespace:
 
 async def main() -> int:
     args = parse_args()
-
-    connection = ModbusConnection(
-        ModbusSerialParams(
-            device=args.port,
-            baudrate=FIXED_BAUDRATE,
-            bytesize=FIXED_BYTESIZE,
-            parity=FIXED_PARITY,
-            stopbits=FIXED_STOPBITS,
-        ),
-        timeout=FIXED_TIMEOUT,
-        message_spacing=REQUEST_GAP_SECONDS,
-    )
-    try:
-        await connection.connect()
-    except ModbusConnectionError as err:
-        print(f"ERROR: could not open serial connection on {args.port}: {err}")
-        return 2
-
-    unit = connection.for_unit(args.slave)
-    try:
+    async with open_link(args.port) as link:
+        unit = link.for_unit(args.slave)
         for address, value in args.write:
             try:
                 await unit.write_register(address, value)
@@ -77,10 +50,8 @@ async def main() -> int:
                 print(f"write {address}={value} -> {type(err).__name__}: {err}")
                 continue
             print(f"write {address}={value} -> ok")
-        return 0
-    finally:
-        await connection.close()
+    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    run(main)

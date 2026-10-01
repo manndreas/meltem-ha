@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import types
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+from homeassistant.components.diagnostics import REDACTED
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.json import ExtendedJSONEncoder
@@ -23,9 +26,11 @@ from custom_components.meltem_ventilation.system_health import (
     system_health_info,
 )
 
-_COMPONENT_DIR = (
-    Path(__file__).parent.parent / "custom_components" / "meltem_ventilation"
+_STRINGS = (
+    Path(__file__).parent.parent / "custom_components" / "meltem_ventilation" / "strings.json"
 )
+_SECRET = "secret-device"
+_PORT = f"/dev/serial/by-id/{_SECRET}"
 
 _ROOM = RoomConfig(
     key="unit_1",
@@ -37,24 +42,6 @@ _ROOM = RoomConfig(
 )
 
 
-def _entry(hass: HomeAssistant, *, with_runtime: bool = True) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Meltem",
-        data={
-            CONF_PORT: "/dev/serial/by-id/secret-device",
-            CONF_ROOMS: [{"key": "unit_1", "slave": 2}],
-        },
-        options={CONF_PORT: "/dev/serial/by-id/secret-device"},
-        version=1,
-        source="user",
-    )
-    entry.add_to_hass(hass)
-    if with_runtime:
-        entry.runtime_data = types.SimpleNamespace(coordinator=_coordinator())
-    return entry
-
-
 def _coordinator() -> MagicMock:
     coordinator = MagicMock()
     coordinator.rooms = [_ROOM]
@@ -64,6 +51,7 @@ def _coordinator() -> MagicMock:
     coordinator.last_job_error = None
     coordinator.update_interval = None
     coordinator.room_available.return_value = True
+    coordinator.data_health_attributes.return_value = {}
     coordinator.async_discover_gateway_units = AsyncMock(return_value=[2, 3])
     coordinator.client.transport_diagnostics.return_value = {
         "consecutive_timeouts": 0,
@@ -73,50 +61,64 @@ def _coordinator() -> MagicMock:
     return coordinator
 
 
+def _entry(hass: HomeAssistant, *, with_runtime: bool = True) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Meltem",
+        data={CONF_PORT: _PORT, CONF_ROOMS: [{"key": "unit_1", "slave": 2}]},
+        options={CONF_PORT: _PORT},
+        version=1,
+        source="user",
+    )
+    entry.add_to_hass(hass)
+    if with_runtime:
+        entry.runtime_data = types.SimpleNamespace(coordinator=_coordinator())
+    return entry
+
+
+def _loaded_coordinator(hass: HomeAssistant) -> MagicMock:
+    entry = _entry(hass)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    return entry.runtime_data.coordinator
+
+
+def _dump(diagnostics: dict[str, Any]) -> str:
+    return json.dumps(diagnostics, cls=ExtendedJSONEncoder)
+
+
 class TestDiagnostics:
-    async def test_serial_port_is_redacted(self, hass: HomeAssistant) -> None:
+    async def test_serial_port_is_redacted_everywhere(self, hass: HomeAssistant) -> None:
         """The diagnostics download is attached to public issues."""
         entry = _entry(hass)
-
-        result = await async_get_config_entry_diagnostics(hass, entry)
-
-        dumped = json.dumps(result, cls=ExtendedJSONEncoder)
-        assert "secret-device" not in dumped
-        assert result["entry"]["data"][CONF_PORT] == "**REDACTED**"
-        assert result["entry"]["options"][CONF_PORT] == "**REDACTED**"
-
-    async def test_serial_port_is_redacted_from_errors(
-        self, hass: HomeAssistant,
-    ) -> None:
-        entry = _entry(hass)
-        port = entry.data[CONF_PORT]
         coordinator = entry.runtime_data.coordinator
-        coordinator.async_discover_gateway_units = AsyncMock(
-            side_effect=MeltemModbusError(f"Probe failed at {port}")
+        coordinator.async_discover_gateway_units.side_effect = MeltemModbusError(
+            f"Probe failed at {_PORT}"
         )
-        coordinator.last_job_error = MeltemModbusError(f"Job failed at {port}")
+        coordinator.last_job_error = MeltemModbusError(f"Job failed at {_PORT}")
         coordinator.safe_data = {
-            "unit_1": RoomState(
-                group_read_health=(("flow", ReadHealth(last_error=f"Read failed at {port}")),)
+            "unit_1": RoomState().with_read_health(
+                "flow", ReadHealth(last_error=f"Read failed at {_PORT}")
             )
         }
 
         result = await async_get_config_entry_diagnostics(hass, entry)
+        diagnostics = result["coordinator"]
 
-        assert "secret-device" not in json.dumps(result, cls=ExtendedJSONEncoder)
-        assert result["coordinator"]["gateway_probe_error"] == (
-            "MeltemModbusError: Probe failed at **REDACTED**"
+        assert _SECRET not in _dump(result)
+        assert result["entry"]["data"][CONF_PORT] == REDACTED
+        assert result["entry"]["options"][CONF_PORT] == REDACTED
+        assert diagnostics["gateway_probe_error"] == (
+            f"MeltemModbusError: Probe failed at {REDACTED}"
         )
-        assert result["coordinator"]["last_job_error"] == "Job failed at **REDACTED**"
-        assert result["coordinator"]["room_states"]["unit_1"]["group_read_health"][0][1][
+        assert diagnostics["last_job_error"] == f"Job failed at {REDACTED}"
+        assert diagnostics["room_states"]["unit_1"]["group_read_health"][0][1][
             "last_error"
-        ] == "Read failed at **REDACTED**"
+        ] == f"Read failed at {REDACTED}"
 
     async def test_result_is_json_serialisable(self, hass: HomeAssistant) -> None:
-        entry = _entry(hass)
+        result = await async_get_config_entry_diagnostics(hass, _entry(hass))
 
-        result = await async_get_config_entry_diagnostics(hass, entry)
-        reloaded = json.loads(json.dumps(result, cls=ExtendedJSONEncoder))
+        reloaded = json.loads(_dump(result))
 
         # frozensets would otherwise turn into an opaque type marker.
         assert reloaded["coordinator"]["rooms"][0]["supported_entity_keys"] == [
@@ -125,25 +127,25 @@ class TestDiagnostics:
         ]
 
     async def test_reports_gateway_units(self, hass: HomeAssistant) -> None:
-        entry = _entry(hass)
+        result = await async_get_config_entry_diagnostics(hass, _entry(hass))
+        diagnostics = result["coordinator"]
 
-        result = await async_get_config_entry_diagnostics(hass, entry)
-
-        assert result["coordinator"]["gateway_units"] == [2, 3]
-        assert result["coordinator"]["gateway_probe_error"] is None
-        assert result["coordinator"]["update_interval_seconds"] is None
-        assert result["coordinator"]["transport"]["link_recycles"] == 1
+        assert diagnostics["gateway_units"] == [2, 3]
+        assert diagnostics["gateway_probe_error"] is None
+        assert diagnostics["update_interval_seconds"] is None
+        assert diagnostics["transport"]["link_recycles"] == 1
 
     async def test_reports_a_failing_gateway_probe(self, hass: HomeAssistant) -> None:
         entry = _entry(hass)
-        entry.runtime_data.coordinator.async_discover_gateway_units = AsyncMock(
-            side_effect=MeltemModbusError("boom")
+        entry.runtime_data.coordinator.async_discover_gateway_units.side_effect = (
+            MeltemModbusError("boom")
         )
 
         result = await async_get_config_entry_diagnostics(hass, entry)
+        diagnostics = result["coordinator"]
 
-        assert result["coordinator"]["gateway_units"] is None
-        assert "MeltemModbusError" in result["coordinator"]["gateway_probe_error"]
+        assert diagnostics["gateway_units"] is None
+        assert diagnostics["gateway_probe_error"] == "MeltemModbusError: boom"
 
     async def test_lists_unavailable_rooms(self, hass: HomeAssistant) -> None:
         entry = _entry(hass)
@@ -161,7 +163,7 @@ class TestDiagnostics:
         result = await async_get_config_entry_diagnostics(hass, entry)
 
         assert result["coordinator"] is None
-        assert result["entry"]["data"][CONF_PORT] == "**REDACTED**"
+        assert result["entry"]["data"][CONF_PORT] == REDACTED
 
 
 class TestSystemHealth:
@@ -178,63 +180,58 @@ class TestSystemHealth:
         assert await system_health_info(hass) == {"loaded_entries": 0}
 
     async def test_reports_coordinator_state(self, hass: HomeAssistant) -> None:
-        entry = _entry(hass)
-        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _loaded_coordinator(hass)
 
-        info = await system_health_info(hass)
-
-        assert info["loaded_entries"] == 1
-        assert info["configured_units"] == 1
-        assert info["state_units"] == 1
-        assert info["last_update_success"] is True
-        assert info["last_job_error"] == "none"
-        assert info["unavailable_units"] == "none"
+        assert await system_health_info(hass) == {
+            "loaded_entries": 1,
+            "configured_units": 1,
+            "state_units": 1,
+            "last_update_success": True,
+            "last_job_error": "none",
+            "unavailable_units": "none",
+            "stale_read_groups": "none",
+        }
 
     async def test_names_unavailable_units(self, hass: HomeAssistant) -> None:
-        entry = _entry(hass)
-        entry.mock_state(hass, ConfigEntryState.LOADED)
-        entry.runtime_data.coordinator.room_available.return_value = False
+        _loaded_coordinator(hass).room_available.return_value = False
 
         info = await system_health_info(hass)
 
         assert info["unavailable_units"] == "unit_1"
 
+    @pytest.mark.parametrize(
+        ("health", "expected"),
+        [
+            (
+                {
+                    "flow": {"stale": True},
+                    "status": {"stale": None},
+                    "temperature": {"stale": True},
+                    "writes": {},
+                },
+                "unit_1: flow, temperature",
+            ),
+            ({"flow": {"stale": False}, "writes": {}}, "none"),
+        ],
+        ids=("stale", "fresh"),
+    )
     async def test_summarizes_stale_read_groups_as_plain_text(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
+        health: dict[str, dict[str, bool | None]],
+        expected: str,
     ) -> None:
         """The system information dialog renders nested dicts as empty cells."""
-        entry = _entry(hass)
-        entry.mock_state(hass, ConfigEntryState.LOADED)
-        entry.runtime_data.coordinator.data_health_attributes.return_value = {
-            "flow": {"stale": True},
-            "status": {"stale": None},
-            "temperature": {"stale": True},
-            "writes": {},
-        }
+        _loaded_coordinator(hass).data_health_attributes.return_value = health
 
         info = await system_health_info(hass)
 
-        assert info["stale_read_groups"] == "unit_1: flow, temperature"
+        assert info["stale_read_groups"] == expected
         assert all(isinstance(value, (str, int, bool)) for value in info.values())
 
-    async def test_reports_no_stale_read_groups(self, hass: HomeAssistant) -> None:
-        entry = _entry(hass)
-        entry.mock_state(hass, ConfigEntryState.LOADED)
-        entry.runtime_data.coordinator.data_health_attributes.return_value = {
-            "flow": {"stale": False},
-            "writes": {},
-        }
-
-        info = await system_health_info(hass)
-
-        assert info["stale_read_groups"] == "none"
-
     async def test_keys_match_the_translations(self, hass: HomeAssistant) -> None:
-        entry = _entry(hass)
-        entry.mock_state(hass, ConfigEntryState.LOADED)
-        strings = json.loads(
-            (_COMPONENT_DIR / "strings.json").read_text(encoding="utf-8")
-        )
+        _loaded_coordinator(hass)
+        strings = json.loads(_STRINGS.read_text(encoding="utf-8"))
 
         info = await system_health_info(hass)
 

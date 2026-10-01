@@ -210,3 +210,6 @@ __marimo__/
 # Misc.
 .DS_Store
 Thumbs.db
+
+# Raw captures and logs from live gateway tests
+tmp/

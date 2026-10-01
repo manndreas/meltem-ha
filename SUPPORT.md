@@ -6,12 +6,14 @@ If you open an issue, please include enough detail to reproduce the problem.
 
 - Home Assistant version
 - integration version
-- Meltem unit family and selected profile
-- whether you use `M-WRG-S` or `M-WRG-II`
+- unit series (`M-WRG-S` or `M-WRG-II`) and the selected profile
 - whether the issue happens during setup, discovery, reading, or writing
-- relevant Home Assistant logs
+- whether another integration, for example a Modbus hub in
+  `configuration.yaml`, uses the same serial port
+- relevant Home Assistant logs, with debug logging enabled if possible (see
+  [Logs in the README](./README.md#logs))
 - the integration diagnostics download when the entry is available; the serial
-	port is redacted automatically
+  port is redacted automatically
 
 ## Helpful logs
 
@@ -29,8 +31,9 @@ ha core logs | grep meltem_ventilation
 
 Download diagnostics from `Settings` -> `Devices & Services` ->
 `Meltem Modbus` -> the three-dot menu -> `Download diagnostics`. It includes
-configured units, current room states, availability, scheduler status and a
-best-effort gateway unit list.
+the configured units, their current states and read health, availability,
+scheduler status, counters of the serial link, and a best-effort gateway unit
+list.
 
 ## Good issue reports
 
