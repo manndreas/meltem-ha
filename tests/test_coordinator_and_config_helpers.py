@@ -916,6 +916,33 @@ class TestAirflowWriteConfirmation:
         writes = coordinator.data_health_attributes("unit_1")["writes"]
         assert writes["airflow_levels"]["status"] == "failed"
 
+    def test_stale_read_group_flags_data_health(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        now = dt_util.utcnow()
+        state = RoomState(
+            group_read_health=(
+                (
+                    "flow",
+                    ReadHealth(
+                        last_attempt=now - timedelta(seconds=31),
+                        last_successful_read=now - timedelta(seconds=31),
+                    ),
+                ),
+                ("status", ReadHealth(last_attempt=now, last_successful_read=now)),
+            ),
+        )
+        coordinator.data = {"unit_1": state}
+
+        assert coordinator.read_group_stale("unit_1", "flow") is True
+        assert coordinator.data_health_stale("unit_1") is True
+
+        coordinator.data["unit_1"] = state.with_read_health(
+            "flow", ReadHealth(last_attempt=now, last_successful_read=now)
+        )
+        assert coordinator.data_health_stale("unit_1") is False
+
 
 class TestSilentUnitScheduling:
     def test_silent_units_are_polled_less_often(self, hass: HomeAssistant) -> None:
