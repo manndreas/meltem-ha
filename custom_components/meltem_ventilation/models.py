@@ -6,9 +6,12 @@ the coordinator, entities, and Modbus client can share a stable contract.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
+
+from .const import READ_FAILURE_THRESHOLD
 
 if TYPE_CHECKING:
     from .coordinator import MeltemDataUpdateCoordinator
@@ -26,7 +29,18 @@ class RoomConfig:
     profile: str
     slave: int
     preview: str | None = None
+    # ``None`` means every entity; set ones come from the selected profile.
     supported_entity_keys: frozenset[str] | None = None
+
+    def supports(self, entity_key: str) -> bool:
+        """Return whether this unit has one entity."""
+
+        return self.supported_entity_keys is None or entity_key in self.supported_entity_keys
+
+    def supports_any(self, entity_keys: Iterable[str]) -> bool:
+        """Return whether this unit has any of these entities."""
+
+        return any(self.supports(key) for key in entity_keys)
 
 
 @dataclass(slots=True, frozen=True)
@@ -37,6 +51,16 @@ class ReadHealth:
     last_successful_read: datetime | None = None
     consecutive_failures: int = 0
     last_error: str | None = None
+
+    def failed(self, attempted_at: datetime, error: str) -> ReadHealth:
+        """Return this health after one more failed read."""
+
+        return ReadHealth(
+            last_attempt=attempted_at,
+            last_successful_read=self.last_successful_read,
+            consecutive_failures=min(self.consecutive_failures + 1, READ_FAILURE_THRESHOLD),
+            last_error=error,
+        )
 
 
 EMPTY_READ_HEALTH = ReadHealth()
@@ -91,6 +115,16 @@ class RoomState:
     co2_max_level: int | None = None
 
     group_read_health: tuple[tuple[str, ReadHealth], ...] = ()
+
+    @property
+    def has_data(self) -> bool:
+        """Return whether any value has been read yet."""
+
+        return any(
+            getattr(self, field.name) is not None
+            for field in fields(self)
+            if field.name != "group_read_health"
+        )
 
     def read_health_for(self, group_key: str) -> ReadHealth:
         """Return the last recorded health for one read group."""

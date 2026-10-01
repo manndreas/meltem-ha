@@ -36,6 +36,10 @@ _ICONS = {
 }
 
 
+# The coordinator serializes all gateway access itself.
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,

@@ -288,8 +288,8 @@ Tests: [R-9](LIVE_GATEWAY_TESTS.md#r-9--mode-block-before-any-write),
 
 - **A — no change.** Correct if the capability returns after the first write;
   the switch is only `unknown` until the user does something.
-- **B — probe once during setup.** Store the capability in
-  `supported_entity_keys` and simply do not create the intensive switch on
+- **B — probe once during setup.** Store the capability with the room and
+  simply do not create the intensive switch on
   units that never answer.
 - **C — derive intensive from `41121`.** If `41121` reads back `227` the
   override is active. Would work on units without the five-register read, but

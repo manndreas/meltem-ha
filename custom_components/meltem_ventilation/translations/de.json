@@ -9,6 +9,13 @@
           "port": "Serieller Port"
         }
       },
+      "reconfigure": {
+        "title": "Seriellen Port ändern",
+        "description": "Aktualisiere den seriellen Port des M-WRG-GW Gateways. Die Integration wird danach neu geladen.",
+        "data": {
+          "port": "Serieller Port"
+        }
+      },
       "confirm_usb": {
         "title": "Meltem Modbus Gateway erkannt",
         "description": "Home Assistant hat ein USB-Gerät an {port} gefunden ({manufacturer}, {description}). Erforderlich ist ein M-WRG-GW Gateway, das bereits mit allen unterstützten Meltem M-WRG Geräten in der Meltem App eingerichtet und per USB mit dem Home-Assistant-Rechner verbunden ist.",
@@ -52,18 +59,17 @@
     "step": {
       "init": {
         "title": "Meltem Modbus konfigurieren",
-        "description": "Wähle aus, ob du die seriellen Verbindungseinstellungen ändern, Profile bestehender Geräte ändern oder nach neuen Geräten suchen möchtest.",
+        "description": "Wähle aus, ob du die Abfragerate ändern, Profile bestehender Geräte ändern oder nach neuen Geräten suchen möchtest.",
         "menu_options": {
-          "edit_connection": "Serielle Verbindung anpassen",
+          "edit_request_rate": "Abfragerate ändern",
           "edit_profiles": "Profile bestehender Geräte ändern",
           "rescan_units": "Nach neuen Geräten suchen"
         }
       },
-      "edit_connection": {
-        "title": "Serielle Verbindung anpassen",
-        "description": "Aktualisiere den seriellen Gerätepfad und die maximale Abfragerate für das Meltem-Gateway.",
+      "edit_request_rate": {
+        "title": "Abfragerate ändern",
+        "description": "Lege fest, wie viele Abfragejobs pro Sekunde die Integration am Gateway starten darf. Ein Job kann mehrere Modbus-Anfragen enthalten. Den seriellen Port änderst du, indem du die Integration neu konfigurierst.",
         "data": {
-          "port": "Serieller Port",
           "max_requests_per_second": "Maximale Anfragen pro Sekunde"
         }
       },
@@ -116,9 +122,7 @@
     },
     "error": {
       "cannot_connect": "Verbindung zum Meltem-Gateway fehlgeschlagen.",
-      "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest.",
-      "port_in_use": "Eine andere Integration verwendet diesen seriellen Port bereits mit anderen seriellen Einstellungen.",
-      "unknown": "Unerwarteter Fehler. Details stehen im Home-Assistant-Log."
+      "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest."
     }
   },
   "triggers": {
@@ -285,6 +289,9 @@
     },
     "airflow_unknown": {
       "message": "Der aktuelle Volumenstrom von {unit} ist unbekannt, daher kann die Betriebsart nicht ohne geratene Stufe gewechselt werden. Bitte den Volumenstrom über die Lüfter-Entitäten setzen."
+    },
+    "control_level_range": {
+      "message": "Die Mindeststufe ({minimum} %) von {unit} darf nicht über der Höchststufe ({maximum} %) liegen."
     }
   }
 }

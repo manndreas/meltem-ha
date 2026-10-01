@@ -250,16 +250,10 @@ class TestDetectSlaveDetails:
             }
         )
 
-        profile, preview, keys = await detect_slave_details(unit)
+        profile, preview = await detect_slave_details(unit)
 
         assert profile == "fc_voc"
         assert preview == "ID 116852 | VOC"
-        assert {
-            "humidity_extract_air",
-            "humidity_supply_air",
-            "co2_extract_air",
-            "voc_supply_air",
-        } <= set(keys)
         assert _reads(unit) == [
             (REGISTER_PRODUCT_ID, 2),
             (REGISTER_HUMIDITY_EXTRACT_AIR, 1),
@@ -275,11 +269,10 @@ class TestDetectSlaveDetails:
         for register in _CAPABILITY_REGISTERS:
             unit.fail_read(register, IllegalDataAddressError())
 
-        profile, preview, keys = await detect_slave_details(unit)
+        profile, preview = await detect_slave_details(unit)
 
         assert profile == "plain"
         assert preview == "ID 116852 | basic"
-        assert set(keys) == BASE_SUPPORTED_ENTITY_KEYS
 
     async def test_implausible_values_do_not_count_as_capabilities(
         self, unit: MockModbusUnit
@@ -294,7 +287,7 @@ class TestDetectSlaveDetails:
         )
         unit.fail_read(REGISTER_PRODUCT_ID, IllegalDataAddressError())
 
-        profile, preview, _keys = await detect_slave_details(unit)
+        profile, preview = await detect_slave_details(unit)
 
         assert profile == "plain"
         assert preview == "basic"
@@ -302,7 +295,7 @@ class TestDetectSlaveDetails:
     async def test_a_silent_unit_is_probed_as_plain(self, unit: MockModbusUnit) -> None:
         unit.fail_requests(ModbusTimeoutError("silent"))
 
-        profile, preview, _keys = await detect_slave_details(unit)
+        profile, preview = await detect_slave_details(unit)
 
         assert profile == "plain"
         assert preview == "basic"

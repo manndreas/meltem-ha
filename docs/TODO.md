@@ -49,23 +49,24 @@ Next step:
 - The manufacturer documents contain neither `116852` nor `VMD-22RPS44`; the
   article numbers do not match, see `docs/reference/models.md`.
 
-## 3. Move the test harness to Home Assistant 2026.10
+## 3. Move the test harness to the final Home Assistant 2026.10
 
-Priority: medium
-Status: open, waiting for a release
+Priority: low
+Status: open, waiting for the stable release
 
 Finding:
-- `pytest-homeassistant-custom-component==0.13.367` ships Home Assistant
-  `2026.9.4`, but the integration requires `2026.10`.
-- `requirements-test.txt` therefore installs `modbus-connection` `4.12.3` on
-  top; the `modbus` integration from `2026.9.4` runs with it, but it is not the
-  one users run against (holding per entry and unit only from `2026.10`).
+- `pytest-homeassistant-custom-component==0.13.368` ships Home Assistant
+  `2026.10.0b0`, the first harness with the `modbus` integration users run
+  against; the whole suite, including
+  `tests/test_init.py::TestSharedModbusConnection`, passes with it.
+- The harness does not install the requirements of the `modbus` integration,
+  so `requirements-test.txt` pins them in line with its manifest.
+- `2026.10` moved Home Assistant's own flows from `voluptuous` to `probatio`;
+  the config flow follows, so mypy accepts its form schemas.
 
 Next step:
-- Once a harness version for `2026.10` exists, raise the pins in
-  `requirements-test.txt`, review the extra pins, and run the tests in
-  `tests/test_init.py::TestSharedModbusConnection` against the new `modbus`
-  integration.
+- Once a harness for the stable `2026.10.x` exists, raise the pin and compare
+  the extra pins with `homeassistant/components/modbus/manifest.json` again.
 
 ## 4. Wider block reads
 

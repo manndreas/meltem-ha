@@ -8,6 +8,7 @@ register addresses, and which entities exist on which platform.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
 
 from homeassistant.const import Platform
 
@@ -37,9 +38,9 @@ MIN_MAX_REQUESTS_PER_SECOND = 0.5
 MAX_MAX_REQUESTS_PER_SECOND = 10.0
 
 FIXED_BAUDRATE = 19200
-FIXED_BYTESIZE = 8
-FIXED_PARITY = "E"
-FIXED_STOPBITS = 1
+FIXED_BYTESIZE: Final = 8
+FIXED_PARITY: Final = "E"
+FIXED_STOPBITS: Final = 1
 FIXED_TIMEOUT = 0.8
 REQUEST_GAP_SECONDS = 0.1
 # A silent unit behind the gateway also times out, so only a run of timeouts
@@ -255,6 +256,12 @@ CONTROL_SETTING_LIMITS: dict[str, tuple[int, int, int]] = {
     "co2_min_level": (0, 100, 10),
     "co2_max_level": (10, 100, 10),
 }
+
+# Minimum and maximum airflow level of each sensor control; min must not exceed max.
+CONTROL_LEVEL_RANGES: tuple[tuple[str, str], ...] = (
+    ("humidity_min_level", "humidity_max_level"),
+    ("co2_min_level", "co2_max_level"),
+)
 
 # Entities whose values one read-health group delivers; shared by the client
 # (health bookkeeping) and the coordinator (scheduling and availability).

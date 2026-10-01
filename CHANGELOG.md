@@ -4,7 +4,10 @@
 
 - Requires Home Assistant `2026.10` or newer. The integration now uses the
   serial connection of Home Assistant's built-in Modbus integration instead of
-  its own `pymodbus` client. Entities and configuration are unchanged.
+  its own `pymodbus` client. Entities are unchanged.
+- The serial port is now changed with `Reconfigure` on the integration entry,
+  which checks the new port first. The options keep the request rate, the
+  unit profiles, and the rescan.
 - All gateway communication is asynchronous and no longer occupies Home
   Assistant's executor threads.
 - A serial port that another integration already uses with different settings
@@ -17,7 +20,23 @@
 - A unit that does not answer at all ends its poll job after the first
   unanswered block instead of timing out on every block; this also applies to
   the mode registers and to the setup probe.
-- Setup now checks the gateway by reading its unit count, and the setup probes
+- Setup now checks the gateway by reading its unit count, and the setup 
+- The system information page no longer shows the serial port path in the
+  last scheduler error.
+- A minimum level above the maximum level of the humidity or CO2 control is
+  refused before it reaches the unit.
+- Units added by a rescan no longer get the default name of a unit that is
+  kept.
+- A unit that falls silent in the middle of a poll job skips its mode
+  registers instead of timing out on them as well.
+- A gateway that does not answer at startup is retried every 5 seconds
+  instead of at the request rate, and the first full read keeps the request
+  rate between units.
+- A pending fan, quick-mode or intensive value disappears when its window
+  ends, even if no poll follows.
+- Entries from older releases no longer poll registers of  `write_registers`
+  stops at the first failed write unless `--keep-going` is given.sensors that the
+  selected profile does not have.probes
   follow the same retry rules as normal polling. The setup dialog opens the
   serial port once for reading the unit list and probing the units.
 - The diagnostics download shows how often the serial link was reopened.

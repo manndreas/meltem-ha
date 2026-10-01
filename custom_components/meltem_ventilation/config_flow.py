@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
-import voluptuous as vol
+import probatio as vol
 from homeassistant import config_entries
 from homeassistant.components.modbus import async_get_temporary_unit
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
@@ -49,7 +49,6 @@ from .modbus_helpers import (
     prepare_unit,
     read_gateway_node_count,
     resolve_preferred_port_path,
-    supported_entity_keys_for_profile,
 )
 from .models import MeltemRuntimeData
 
@@ -63,7 +62,7 @@ _SUFFIX_DEFAULT_PROFILES = {
     "fc_voc": "ii_fc_voc",
 }
 
-type _Probe = Callable[[int], Awaitable[tuple[str, str | None, list[str]]]]
+type _Probe = Callable[[int], Awaitable[tuple[str, str | None]]]
 
 
 def _build_options_result_data(
@@ -143,10 +142,13 @@ def _profile_field_key(slave: int) -> str:
     return f"slave_{slave}"
 
 
-def _default_room_name(index: int) -> str:
-    """Build a default room/device name."""
+def _default_room_name(used_names: set[str]) -> str:
+    """Return the first ``Unit N`` name that no kept unit uses yet."""
 
-    return f"Unit {index}"
+    number = 1
+    while f"Unit {number}" in used_names:
+        number += 1
+    return f"Unit {number}"
 
 
 def _unit_details(
@@ -207,14 +209,23 @@ def _build_rooms_from_profiles(
     previews_by_slave: Mapping[int, str] | None = None,
     existing_rooms_by_slave: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, object]]:
-    """Build room config entries from selected per-device profiles."""
+    """Build room config entries from selected per-device profiles.
+
+    The entities of a room follow from its profile on load, so they are not stored.
+    """
 
     rooms: list[dict[str, object]] = []
     previews_by_slave = previews_by_slave or {}
     existing_rooms_by_slave = existing_rooms_by_slave or {}
     used_room_keys: set[str] = set()
+    # Kept units keep their names, so a new unit must not reuse one.
+    used_names = {
+        str(existing_rooms_by_slave[slave]["name"])
+        for slave in slaves
+        if "name" in existing_rooms_by_slave.get(slave, {})
+    }
 
-    for index, slave in enumerate(slaves, start=1):
+    for slave in slaves:
         existing_room = existing_rooms_by_slave.get(slave, {})
         selected_profile = str(selected_profiles[_profile_field_key(slave)])
         preferred_room_key = str(existing_room.get("key") or f"slave_{slave}")
@@ -224,17 +235,16 @@ def _build_rooms_from_profiles(
             room_key = f"{preferred_room_key}_{suffix}"
             suffix += 1
         used_room_keys.add(room_key)
+        name = str(existing_room.get("name") or _default_room_name(used_names))
+        used_names.add(name)
         rooms.append(
             {
                 "key": room_key,
                 # Only the initial device name; renaming happens in the device registry.
-                "name": existing_room.get("name", _default_room_name(index)),
+                "name": name,
                 "slave": slave,
                 "profile": selected_profile,
                 "preview": previews_by_slave.get(slave) or existing_room.get("preview"),
-                "supported_entity_keys": supported_entity_keys_for_profile(
-                    selected_profile
-                ),
             }
         )
 
@@ -289,15 +299,14 @@ async def _async_probe_units(
 ) -> tuple[dict[int, str], dict[int, str]]:
     """Probe every unit and return its preview and detected profile by address.
 
-    A failed probe leaves the unit plain and without preview. The probed entity
-    keys are dropped: the stored keys always follow the profile the user picks.
+    A failed probe leaves the unit plain and without preview.
     """
 
     previews: dict[int, str] = {}
     profiles: dict[int, str] = {}
     for slave in slaves:
         try:
-            profile, preview, _keys = await probe(slave)
+            profile, preview = await probe(slave)
         except MeltemModbusError as err:
             _LOGGER.warning("Probe failed for Meltem unit at slave %s: %s", slave, err)
             profile, preview = "plain", None
@@ -324,7 +333,7 @@ async def _async_discover_units(
             end=DEFAULT_SCAN_SLAVE_END,
         )
 
-        async def probe(slave: int) -> tuple[str, str | None, list[str]]:
+        async def probe(slave: int) -> tuple[str, str | None]:
             return await detect_slave_details(await unit_for(slave))
 
         previews, profiles = await _async_probe_units(slaves, probe)
@@ -444,6 +453,9 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Scan the gateway for configured units."""
 
         self._port = await _async_resolve_port(self.hass, self._port)
+        # The port may have been edited after USB discovery set the unique ID.
+        await self.async_set_unique_id(self._port)
+        self._abort_if_unique_id_configured()
         if (error := await self._async_scan(self._port)) is not None:
             return self._show_confirm_usb_form(errors={"base": error})
         return await self.async_step_profiles()
@@ -507,6 +519,39 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders=placeholders,
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict | None = None
+    ) -> ConfigFlowResult:
+        """Change the serial port of the gateway."""
+
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        current_port = str(entry.data[CONF_PORT])
+
+        if user_input is not None:
+            port = await _async_resolve_port(self.hass, user_input[CONF_PORT])
+            # The stored path may predate a /dev/serial/by-id symlink, so it has
+            # to be normalized too before deciding that the port changed.
+            if port != await _async_resolve_port(self.hass, current_port):
+                try:
+                    await _async_validate_port(self.hass, port)
+                except Exception as err:
+                    errors["base"] = _connection_error(err, "opening", port)
+            if not errors:
+                return self.async_update_reload_and_abort(
+                    entry,
+                    unique_id=port,
+                    data_updates={CONF_PORT: port},
+                    reload_even_if_entry_is_unchanged=False,
+                )
+            current_port = str(user_input[CONF_PORT])
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=_port_schema(current_port),
+            errors=errors,
+        )
+
 
 class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
     """Handle runtime options and gateway rescans.
@@ -560,77 +605,38 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_menu(
             step_id="init",
             menu_options=[
-                "edit_connection",
+                "edit_request_rate",
                 "edit_profiles",
                 "rescan_units",
             ],
         )
 
-    async def async_step_edit_connection(
+    async def async_step_edit_request_rate(
         self, user_input: dict | None = None
     ) -> ConfigFlowResult:
-        """Change serial connection settings used by the integration."""
-
-        errors: dict[str, str] = {}
-        current_port = str(self.config_entry.data.get(CONF_PORT, DEFAULT_PORT))
-        current_request_rate = self._max_requests_per_second
+        """Change the maximum poll-job start rate."""
 
         if user_input is not None:
-            selected_port = str(user_input[CONF_PORT])
-            normalized_port = await _async_resolve_port(self.hass, selected_port)
-            selected_request_rate = float(user_input[CONF_MAX_REQUESTS_PER_SECOND])
-            # The stored path may predate a /dev/serial/by-id symlink, so it has
-            # to be normalized too before deciding that the port changed.
-            port_changed = normalized_port != await _async_resolve_port(
-                self.hass, current_port
-            )
-
-            if port_changed:
-                try:
-                    await _async_validate_port(self.hass, normalized_port)
-                except Exception as err:
-                    errors["base"] = _connection_error(err, "opening", selected_port)
-                else:
-                    self.hass.config_entries.async_update_entry(
-                        self.config_entry,
-                        data={
-                            **self.config_entry.data,
-                            CONF_PORT: normalized_port,
-                        },
-                        unique_id=normalized_port,
-                    )
-
-            if not errors:
-                options = _build_options_result_data(
-                    self.config_entry, selected_request_rate
-                )
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry, options=options
-                )
-                if not port_changed and (coordinator := self._coordinator) is not None:
-                    coordinator.update_request_rate(selected_request_rate)
-                else:
-                    # A new port needs a new link, and an entry that never
-                    # finished setup has no scheduler to retune.
-                    await self.hass.config_entries.async_reload(self.config_entry.entry_id)
-
-                return self.async_create_entry(title="", data=options)
-
-            current_port = selected_port
-            current_request_rate = selected_request_rate
+            request_rate = float(user_input[CONF_MAX_REQUESTS_PER_SECOND])
+            options = _build_options_result_data(self.config_entry, request_rate)
+            self.hass.config_entries.async_update_entry(self.config_entry, options=options)
+            if (coordinator := self._coordinator) is not None:
+                coordinator.update_request_rate(request_rate)
+            else:
+                # An entry that never finished setup has no scheduler to retune.
+                await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+            return self.async_create_entry(title="", data=options)
 
         return self.async_show_form(
-            step_id="edit_connection",
+            step_id="edit_request_rate",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_PORT, default=current_port): str,
                     vol.Required(
                         CONF_MAX_REQUESTS_PER_SECOND,
-                        default=current_request_rate,
+                        default=self._max_requests_per_second,
                     ): _build_max_request_rate_selector(),
                 }
             ),
-            errors=errors,
         )
 
     async def async_step_edit_profiles(
