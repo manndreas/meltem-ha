@@ -78,7 +78,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         suggested_display_precision=1,
-        # Only the -F and -FC variants carry this sensor, see docs/MELTEM.md.
+        # Only the -F and -FC variants carry this sensor, see docs/reference/models.md.
         supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.outdoor_air_temperature,
     ),
