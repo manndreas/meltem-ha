@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.1.0
+
+- Added diagnostic sensors for the gateway device path and unit Modbus slave IDs.
+- Added device automation triggers and conditions for filter changes.
+- Track read freshness by register group and expose read and write outcomes in
+  the data-health sensor and System Health.
+- Improve fan control when airflow or operating-mode readings are incomplete,
+  and reduce polling of silent units and unnecessary target-register reads.
+- Fixed optional-read backoff growth after repeated failures.
+- Fixed the data-health sensor not reporting stale read groups unless a write
+  also failed.
+- Redact the configured serial path from gateway, job, and read errors in
+  diagnostic downloads.
+
 ## 3.0.2
 
 - Changed some icons.
