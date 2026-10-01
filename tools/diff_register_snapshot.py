@@ -4,11 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 from pathlib import Path
-import time
 
-from pymodbus.client import ModbusSerialClient
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusError,
+    ModbusSerialParams,
+    ModbusUnit,
+)
+from modbus_connection.tmodbus import ModbusConnection
 
 
 FIXED_BAUDRATE = 19200
@@ -19,23 +25,6 @@ FIXED_TIMEOUT = 0.8
 DEFAULT_PORT = "/dev/ttyACM0"
 REQUEST_GAP_SECONDS = 0.1
 MAX_REGISTERS_PER_READ = 120
-
-
-def compat_read(client: ModbusSerialClient, *, slave: int, address: int, count: int):
-    """Read holding registers with either pymodbus keyword variant."""
-
-    try:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            device_id=slave,
-        )
-    except TypeError:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            slave=slave,
-        )
 
 
 def parse_range(value: str) -> tuple[int, int]:
@@ -51,10 +40,9 @@ def parse_range(value: str) -> tuple[int, int]:
     return start, end
 
 
-def read_range(
-    client: ModbusSerialClient,
+async def read_range(
+    unit: ModbusUnit,
     *,
-    slave: int,
     start: int,
     end: int,
 ) -> dict[int, int | None]:
@@ -66,20 +54,11 @@ def read_range(
     while chunk_start <= end:
         chunk_end = min(end, chunk_start + MAX_REGISTERS_PER_READ - 1)
         count = chunk_end - chunk_start + 1
-        response = compat_read(
-            client,
-            slave=slave,
-            address=chunk_start,
-            count=count,
-        )
-        time.sleep(REQUEST_GAP_SECONDS)
-
-        if response is None or response.isError():
-            chunk_start = chunk_end + 1
-            continue
-
-        registers = getattr(response, "registers", None)
-        if not registers:
+        try:
+            registers = await unit.read_holding_registers(chunk_start, count)
+        except ModbusConnectionError:
+            raise
+        except ModbusError:
             chunk_start = chunk_end + 1
             continue
 
@@ -89,17 +68,16 @@ def read_range(
     return values
 
 
-def read_snapshot(
-    client: ModbusSerialClient,
+async def read_snapshot(
+    unit: ModbusUnit,
     *,
-    slave: int,
     ranges: list[tuple[int, int]],
 ) -> dict[int, int | None]:
     """Read all configured ranges into one address->value map."""
 
     snapshot: dict[int, int | None] = {}
     for start, end in ranges:
-        snapshot.update(read_range(client, slave=slave, start=start, end=end))
+        snapshot.update(await read_range(unit, start=start, end=end))
     return snapshot
 
 
@@ -130,26 +108,30 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
+async def main() -> int:
     args = parse_args()
     baseline_path = Path(args.baseline)
 
-    client = ModbusSerialClient(
-        port=args.port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
+    connection = ModbusConnection(
+        ModbusSerialParams(
+            device=args.port,
+            baudrate=FIXED_BAUDRATE,
+            bytesize=FIXED_BYTESIZE,
+            parity=FIXED_PARITY,
+            stopbits=FIXED_STOPBITS,
+        ),
         timeout=FIXED_TIMEOUT,
+        message_spacing=REQUEST_GAP_SECONDS,
     )
-    if not client.connect():
-        print(f"ERROR: could not open serial connection on {args.port}")
+    try:
+        await connection.connect()
+    except ModbusConnectionError as err:
+        print(f"ERROR: could not open serial connection on {args.port}: {err}")
         return 2
 
     try:
-        snapshot = read_snapshot(
-            client,
-            slave=args.slave,
+        snapshot = await read_snapshot(
+            connection.for_unit(args.slave),
             ranges=list(args.ranges),
         )
 
@@ -176,8 +158,8 @@ def main() -> int:
             print(f"{address}: {before} -> {after}")
         return 0
     finally:
-        client.close()
+        await connection.close()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))

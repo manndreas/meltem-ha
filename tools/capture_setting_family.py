@@ -9,13 +9,19 @@ can diff against the previous capture of the same family or a specified file.
 from __future__ import annotations
 
 import argparse
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 import json
 from pathlib import Path
-import time
 
-from pymodbus.client import ModbusSerialClient
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusError,
+    ModbusSerialParams,
+    ModbusUnit,
+)
+from modbus_connection.tmodbus import ModbusConnection
 
 
 FIXED_BAUDRATE = 19200
@@ -114,27 +120,20 @@ FAMILY_SPECS: dict[str, FamilySpec] = {
 }
 
 
-def compat_read(client: ModbusSerialClient, *, slave: int, address: int, count: int):
-    """Read holding registers with either pymodbus keyword variant."""
+async def read_registers(unit: ModbusUnit, address: int, count: int) -> list[int] | None:
+    """Read holding registers, or None when the unit rejects or ignores the read."""
 
     try:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            device_id=slave,
-        )
-    except TypeError:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            slave=slave,
-        )
+        return await unit.read_holding_registers(address, count)
+    except ModbusConnectionError:
+        raise
+    except ModbusError:
+        return None
 
 
-def read_range(
-    client: ModbusSerialClient,
+async def read_range(
+    unit: ModbusUnit,
     *,
-    slave: int,
     register_range: RegisterRange,
 ) -> dict[int, int | None]:
     """Read one configured range as individual address values."""
@@ -147,35 +146,14 @@ def read_range(
     while chunk_start <= register_range.end:
         chunk_end = min(register_range.end, chunk_start + MAX_REGISTERS_PER_READ - 1)
         count = chunk_end - chunk_start + 1
-        response = compat_read(
-            client,
-            slave=slave,
-            address=chunk_start,
-            count=count,
-        )
-        time.sleep(REQUEST_GAP_SECONDS)
+        registers = await read_registers(unit, chunk_start, count)
 
-        if response is None or response.isError():
+        if registers is None:
             if count > 1:
                 for address in range(chunk_start, chunk_end + 1):
-                    single_response = compat_read(
-                        client,
-                        slave=slave,
-                        address=address,
-                        count=1,
-                    )
-                    time.sleep(REQUEST_GAP_SECONDS)
-                    if single_response is None or single_response.isError():
-                        continue
-                    single_registers = getattr(single_response, "registers", None)
-                    if not single_registers:
-                        continue
-                    values[address] = int(single_registers[0])
-            chunk_start = chunk_end + 1
-            continue
-
-        registers = getattr(response, "registers", None)
-        if not registers:
+                    single = await read_registers(unit, address, 1)
+                    if single:
+                        values[address] = int(single[0])
             chunk_start = chunk_end + 1
             continue
 
@@ -186,20 +164,17 @@ def read_range(
     return values
 
 
-def capture_snapshot(
-    client: ModbusSerialClient,
+async def capture_snapshot(
+    unit: ModbusUnit,
     *,
-    slave: int,
     family: FamilySpec,
 ) -> dict[str, int | None]:
     """Capture all ranges for one family into a string-keyed map."""
 
     values: dict[str, int | None] = {}
     for register_range in family.ranges:
-        for address, value in read_range(
-            client,
-            slave=slave,
-            register_range=register_range,
+        for address, value in (
+            await read_range(unit, register_range=register_range)
         ).items():
             values[str(address)] = value
     return values
@@ -288,7 +263,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
+async def main() -> int:
     args = parse_args()
 
     if args.list_families:
@@ -314,22 +289,27 @@ def main() -> int:
         label=args.label,
     )
 
-    client = ModbusSerialClient(
-        port=args.port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
+    connection = ModbusConnection(
+        ModbusSerialParams(
+            device=args.port,
+            baudrate=FIXED_BAUDRATE,
+            bytesize=FIXED_BYTESIZE,
+            parity=FIXED_PARITY,
+            stopbits=FIXED_STOPBITS,
+        ),
         timeout=FIXED_TIMEOUT,
+        message_spacing=REQUEST_GAP_SECONDS,
     )
-    if not client.connect():
-        print(f"ERROR: could not open serial connection on {args.port}")
+    try:
+        await connection.connect()
+    except ModbusConnectionError as err:
+        print(f"ERROR: could not open serial connection on {args.port}: {err}")
         return 2
 
     try:
-        values = capture_snapshot(client, slave=args.slave, family=family)
+        values = await capture_snapshot(connection.for_unit(args.slave), family=family)
     finally:
-        client.close()
+        await connection.close()
 
     payload = {
         "metadata": {
@@ -377,4 +357,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))

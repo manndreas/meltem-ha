@@ -9,10 +9,17 @@ function 0x03 (holding registers) and/or 0x04 (input registers).
 from __future__ import annotations
 
 import argparse
+import asyncio
 from dataclasses import dataclass
-import time
 
-from pymodbus.client import ModbusSerialClient
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusError,
+    ModbusSerialParams,
+    ModbusTimeoutError,
+    ModbusUnit,
+)
+from modbus_connection.tmodbus import ModbusConnection
 
 
 FIXED_BAUDRATE = 19200
@@ -33,48 +40,6 @@ class WindowResult:
     status: str
     values_seen: int
     sample: tuple[int, ...]
-
-
-def compat_read_holding(
-    client: ModbusSerialClient,
-    *,
-    slave: int,
-    address: int,
-    count: int,
-):
-    try:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            device_id=slave,
-        )
-    except TypeError:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            slave=slave,
-        )
-
-
-def compat_read_input(
-    client: ModbusSerialClient,
-    *,
-    slave: int,
-    address: int,
-    count: int,
-):
-    try:
-        return client.read_input_registers(
-            address=address,
-            count=count,
-            device_id=slave,
-        )
-    except TypeError:
-        return client.read_input_registers(
-            address=address,
-            count=count,
-            slave=slave,
-        )
 
 
 def parse_function_mode(value: str) -> str:
@@ -122,39 +87,39 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def read_window(
-    client: ModbusSerialClient,
+async def read_window(
+    unit: ModbusUnit,
     *,
-    slave: int,
     start: int,
     end: int,
     function_name: str,
 ) -> WindowResult:
     count = end - start + 1
-    read_fn = compat_read_holding if function_name == "holding" else compat_read_input
-    response = read_fn(client, slave=slave, address=start, count=count)
-    time.sleep(REQUEST_GAP_SECONDS)
+    read_fn = (
+        unit.read_holding_registers
+        if function_name == "holding"
+        else unit.read_input_registers
+    )
+    status: str | None = None
+    try:
+        registers = await read_fn(start, count)
+    except ModbusConnectionError:
+        raise
+    except ModbusTimeoutError:
+        status = "none"
+    except ModbusError:
+        status = "error"
 
-    if response is None:
+    if status is not None:
         return WindowResult(
             start=start,
             end=end,
             function_name=function_name,
-            status="none",
-            values_seen=0,
-            sample=(),
-        )
-    if response.isError():
-        return WindowResult(
-            start=start,
-            end=end,
-            function_name=function_name,
-            status="error",
+            status=status,
             values_seen=0,
             sample=(),
         )
 
-    registers = getattr(response, "registers", None)
     if not registers:
         return WindowResult(
             start=start,
@@ -185,7 +150,7 @@ def format_result(result: WindowResult) -> str:
     )
 
 
-def main() -> int:
+async def main() -> int:
     args = parse_args()
     if args.end < args.start:
         print("ERROR: --end must be >= --start")
@@ -203,18 +168,24 @@ def main() -> int:
         ("holding", "input") if args.function == "both" else (args.function,)
     )
 
-    client = ModbusSerialClient(
-        port=args.port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
+    connection = ModbusConnection(
+        ModbusSerialParams(
+            device=args.port,
+            baudrate=FIXED_BAUDRATE,
+            bytesize=FIXED_BYTESIZE,
+            parity=FIXED_PARITY,
+            stopbits=FIXED_STOPBITS,
+        ),
         timeout=FIXED_TIMEOUT,
+        message_spacing=REQUEST_GAP_SECONDS,
     )
-    if not client.connect():
-        print(f"ERROR: could not open serial connection on {args.port}")
+    try:
+        await connection.connect()
+    except ModbusConnectionError as err:
+        print(f"ERROR: could not open serial connection on {args.port}: {err}")
         return 2
 
+    unit = connection.for_unit(args.slave)
     totals: dict[str, dict[str, int]] = {
         name: {"ok": 0, "partial": 0, "error": 0, "none": 0, "empty": 0}
         for name in function_names
@@ -232,9 +203,8 @@ def main() -> int:
         while current <= args.end:
             window_end = min(args.end, current + args.window - 1)
             for function_name in function_names:
-                result = read_window(
-                    client,
-                    slave=args.slave,
+                result = await read_window(
+                    unit,
                     start=current,
                     end=window_end,
                     function_name=function_name,
@@ -258,8 +228,8 @@ def main() -> int:
             )
         return 0
     finally:
-        client.close()
+        await connection.close()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))

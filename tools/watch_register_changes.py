@@ -8,11 +8,17 @@ something in the Meltem app, and look for register ranges that moved.
 from __future__ import annotations
 
 import argparse
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-import time
 
-from pymodbus.client import ModbusSerialClient
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusError,
+    ModbusSerialParams,
+    ModbusUnit,
+)
+from modbus_connection.tmodbus import ModbusConnection
 
 
 FIXED_BAUDRATE = 19200
@@ -45,23 +51,6 @@ DEFAULT_RANGES: tuple[RegisterRange, ...] = (
 )
 
 
-def compat_read(client: ModbusSerialClient, *, slave: int, address: int, count: int):
-    """Read holding registers with either pymodbus keyword variant."""
-
-    try:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            device_id=slave,
-        )
-    except TypeError:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            slave=slave,
-        )
-
-
 def parse_range(value: str) -> RegisterRange:
     """Parse one CLI range in either start:count or start-end form."""
 
@@ -84,27 +73,20 @@ def parse_range(value: str) -> RegisterRange:
     raise argparse.ArgumentTypeError("range must use start:count or start-end")
 
 
-def read_range(
-    client: ModbusSerialClient,
+async def read_range(
+    unit: ModbusUnit,
     *,
-    slave: int,
     register_range: RegisterRange,
 ) -> tuple[int, ...] | None:
     """Read one register range and return a stable tuple."""
 
-    response = compat_read(
-        client,
-        slave=slave,
-        address=register_range.start,
-        count=register_range.count,
-    )
-    time.sleep(REQUEST_GAP_SECONDS)
-
-    if response is None or response.isError():
-        return None
-
-    registers = getattr(response, "registers", None)
-    if not registers or len(registers) < register_range.count:
+    try:
+        registers = await unit.read_holding_registers(
+            register_range.start, register_range.count
+        )
+    except ModbusConnectionError:
+        raise
+    except ModbusError:
         return None
 
     return tuple(int(value) for value in registers[: register_range.count])
@@ -127,22 +109,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
+async def main() -> int:
     args = parse_args()
     ranges = tuple(args.ranges) if args.ranges else DEFAULT_RANGES
 
-    client = ModbusSerialClient(
-        port=args.port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
+    connection = ModbusConnection(
+        ModbusSerialParams(
+            device=args.port,
+            baudrate=FIXED_BAUDRATE,
+            bytesize=FIXED_BYTESIZE,
+            parity=FIXED_PARITY,
+            stopbits=FIXED_STOPBITS,
+        ),
         timeout=FIXED_TIMEOUT,
+        message_spacing=REQUEST_GAP_SECONDS,
     )
-    if not client.connect():
-        print(f"ERROR: could not open serial connection on {args.port}")
+    try:
+        await connection.connect()
+    except ModbusConnectionError as err:
+        print(f"ERROR: could not open serial connection on {args.port}: {err}")
         return 2
 
+    unit = connection.for_unit(args.slave)
     previous: dict[RegisterRange, tuple[int, ...] | None] = {}
 
     try:
@@ -155,11 +143,7 @@ def main() -> int:
 
         while True:
             for register_range in ranges:
-                current = read_range(
-                    client,
-                    slave=args.slave,
-                    register_range=register_range,
-                )
+                current = await read_range(unit, register_range=register_range)
                 if previous.get(register_range) == current:
                     continue
 
@@ -173,13 +157,13 @@ def main() -> int:
                         flush=True,
                     )
 
-            time.sleep(args.interval)
-        return 0
-    except KeyboardInterrupt:
-        return 0
+            await asyncio.sleep(args.interval)
     finally:
-        client.close()
+        await connection.close()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(asyncio.run(main()))
+    except KeyboardInterrupt:
+        raise SystemExit(0) from None

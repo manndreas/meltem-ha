@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from dataclasses import dataclass
 import statistics
-import struct
 import time
 
-from pymodbus.client import ModbusSerialClient
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusError,
+    ModbusSerialParams,
+    ModbusUnit,
+)
+from modbus_connection.tmodbus import ModbusConnection
 
 
 FIXED_BAUDRATE = 19200
@@ -41,84 +47,45 @@ class Sample:
     detail: str
 
 
-def compat_read(client: ModbusSerialClient, *, slave: int, address: int, count: int):
-    """Read holding registers with either pymodbus keyword variant."""
+async def read_block(unit: ModbusUnit, *, address: int, count: int, gap: float) -> Sample:
+    """Read one register block and measure latency.
 
-    try:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            device_id=slave,
-        )
-    except TypeError:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            slave=slave,
-        )
-
-
-def read_block(
-    client: ModbusSerialClient, *, slave: int, address: int, count: int, gap: float
-) -> Sample:
-    """Read one register block and measure latency."""
+    The gap is slept after the measurement, so it never counts as latency.
+    """
 
     start = time.perf_counter()
     try:
-        response = compat_read(client, slave=slave, address=address, count=count)
-    except Exception as err:
+        registers = await unit.read_holding_registers(address, count)
+    except ModbusError as err:
         elapsed_ms = (time.perf_counter() - start) * 1000
-        time.sleep(gap)
+        await asyncio.sleep(gap)
         return Sample(False, elapsed_ms, f"{type(err).__name__}: {err}")
 
     elapsed_ms = (time.perf_counter() - start) * 1000
-    time.sleep(gap)
-
-    if response is None:
-        return Sample(False, elapsed_ms, "no response")
-    if response.isError():
-        return Sample(False, elapsed_ms, str(response))
-
-    registers = getattr(response, "registers", None)
-    if not registers or len(registers) < count:
-        return Sample(False, elapsed_ms, f"short read: {registers}")
-
+    await asyncio.sleep(gap)
     return Sample(True, elapsed_ms, str(registers))
 
 
-def discover_units(client: ModbusSerialClient, *, gateway_id: int, gap: float) -> list[int]:
+async def discover_units(gateway: ModbusUnit, *, gap: float) -> list[int]:
     """Read configured unit addresses from bridge registers."""
 
-    count_response = compat_read(
-        client,
-        slave=gateway_id,
-        address=REGISTER_GATEWAY_NUMBER_OF_NODES,
-        count=1,
-    )
-    time.sleep(gap)
-    if (
-        count_response is None
-        or count_response.isError()
-        or not getattr(count_response, "registers", None)
-    ):
-        raise RuntimeError(f"failed to read bridge node count: {count_response}")
-    node_count = int(count_response.registers[0])
+    try:
+        (node_count,) = await gateway.read_holding_registers(
+            REGISTER_GATEWAY_NUMBER_OF_NODES, 1
+        )
+    except ModbusError as err:
+        raise RuntimeError(f"failed to read bridge node count: {err}") from err
+    await asyncio.sleep(gap)
 
-    addresses_response = compat_read(
-        client,
-        slave=gateway_id,
-        address=REGISTER_GATEWAY_NODE_ADDRESS_1,
-        count=max(1, min(32, node_count)),
-    )
-    time.sleep(gap)
-    if (
-        addresses_response is None
-        or addresses_response.isError()
-        or not getattr(addresses_response, "registers", None)
-    ):
-        raise RuntimeError("failed to read bridge node addresses")
+    try:
+        addresses = await gateway.read_holding_registers(
+            REGISTER_GATEWAY_NODE_ADDRESS_1, max(1, min(32, node_count))
+        )
+    except ModbusError as err:
+        raise RuntimeError("failed to read bridge node addresses") from err
+    await asyncio.sleep(gap)
 
-    return [int(value) for value in addresses_response.registers if int(value) != 0]
+    return [int(value) for value in addresses if int(value) != 0]
 
 
 def scenario_requests(name: str) -> list[tuple[int, int, str]]:
@@ -157,8 +124,8 @@ def scenario_requests(name: str) -> list[tuple[int, int, str]]:
     raise ValueError(f"unknown scenario: {name}")
 
 
-def run_scenario(
-    client: ModbusSerialClient,
+async def run_scenario(
+    connection: ModbusConnection,
     *,
     units: list[int],
     scenario: str,
@@ -173,9 +140,8 @@ def run_scenario(
         print(f"cycle {cycle + 1}/{cycles}")
         for unit in units:
             for address, count, label in requests:
-                sample = read_block(
-                    client,
-                    slave=unit,
+                sample = await read_block(
+                    connection.for_unit(unit),
                     address=address,
                     count=count,
                     gap=gap,
@@ -217,24 +183,32 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
+async def main() -> int:
     args = parse_args()
-    client = ModbusSerialClient(
-        port=args.port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
+    # The gap is slept explicitly outside the measured latency, so the link
+    # itself adds no extra spacing.
+    connection = ModbusConnection(
+        ModbusSerialParams(
+            device=args.port,
+            baudrate=FIXED_BAUDRATE,
+            bytesize=FIXED_BYTESIZE,
+            parity=FIXED_PARITY,
+            stopbits=FIXED_STOPBITS,
+        ),
         timeout=FIXED_TIMEOUT,
     )
 
-    if not client.connect():
-        print(f"ERROR: could not open serial connection on {args.port}")
+    try:
+        await connection.connect()
+    except ModbusConnectionError as err:
+        print(f"ERROR: could not open serial connection on {args.port}: {err}")
         return 2
 
     try:
         if args.units == "auto":
-            units = discover_units(client, gateway_id=args.gateway_id, gap=args.gap)
+            units = await discover_units(
+                connection.for_unit(args.gateway_id), gap=args.gap
+            )
         else:
             units = [int(part) for part in args.units.split(",") if part.strip()]
 
@@ -244,8 +218,8 @@ def main() -> int:
         print(f"gap: {args.gap}s")
         print()
 
-        samples = run_scenario(
-            client,
+        samples = await run_scenario(
+            connection,
             units=units,
             scenario=args.scenario,
             cycles=args.cycles,
@@ -266,8 +240,8 @@ def main() -> int:
             print(f"  p95 latency:    {statistics.quantiles(latencies, n=20)[18]:.1f} ms" if len(latencies) >= 20 else f"  max latency:    {max(latencies):.1f} ms")
         return 0 if not errors else 1
     finally:
-        client.close()
+        await connection.close()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))
