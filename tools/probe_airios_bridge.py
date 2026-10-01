@@ -1,52 +1,38 @@
-#!/usr/bin/env python3
 """Probe whether the Meltem gateway exposes Airios-like bridge registers."""
 
 from __future__ import annotations
 
 import argparse
-import struct
 
-from modbus_connection import ModbusConnectionError, ModbusError, ModbusUnit
+from modbus_connection import ModbusUnit
 
-from tools._link import DEFAULT_PORT, GATEWAY_DEVICE_ID, open_link, run
-
-
-async def read_range(unit: ModbusUnit, address: int, count: int) -> list[int] | None:
-    """Read a contiguous block of uint16 registers."""
-
-    try:
-        return await unit.read_holding_registers(address, count)
-    except ModbusConnectionError:
-        raise
-    except ModbusError:
-        return None
+from tools._link import (
+    GATEWAY_DEVICE_ID,
+    REGISTER_GATEWAY_NODE_ADDRESS_1,
+    REGISTER_GATEWAY_NUMBER_OF_NODES,
+    open_link,
+    read_or_none,
+    run,
+    tool_parser,
+)
 
 
 async def read_u16(unit: ModbusUnit, address: int) -> int | None:
     """Read one uint16 register."""
 
-    registers = await read_range(unit, address, 1)
+    registers = await read_or_none(unit, address, 1)
     return None if registers is None else registers[0]
 
 
 async def read_u32_word_swap(unit: ModbusUnit, address: int) -> int | None:
-    """Read one uint32 register pair with word swap."""
+    """Read one uint32 register pair, low word first."""
 
-    registers = await read_range(unit, address, 2)
-    if registers is None:
-        return None
-    return struct.unpack(">I", struct.pack(">HH", registers[1], registers[0]))[0]
+    registers = await read_or_none(unit, address, 2)
+    return None if registers is None else registers[1] << 16 | registers[0]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Probe a Meltem gateway for Airios-style bridge registers."
-    )
-    parser.add_argument(
-        "--port",
-        default=DEFAULT_PORT,
-        help="Serial device path, for example /dev/ttyACM0 or /dev/serial/by-id/...",
-    )
+    parser = tool_parser("Probe a Meltem gateway for Airios-style bridge registers.")
     parser.add_argument(
         "--device-id",
         type=int,
@@ -66,8 +52,8 @@ async def main() -> int:
         serial_stop_bits = await read_u16(unit, 41999)
         serial_baudrate = await read_u16(unit, 42000)
         modbus_device_id = await read_u16(unit, 42001)
-        number_of_nodes = await read_u16(unit, 43901)
-        node_addresses = await read_range(unit, 43902, 16)
+        number_of_nodes = await read_u16(unit, REGISTER_GATEWAY_NUMBER_OF_NODES)
+        node_addresses = await read_or_none(unit, REGISTER_GATEWAY_NODE_ADDRESS_1, 16)
         uptime_seconds = await read_u32_word_swap(unit, 41019)
 
     print()

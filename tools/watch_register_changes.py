@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Watch Meltem register ranges and print only changes.
 
 This is intended for app-vs-Modbus comparison work: start the watcher, change
@@ -12,9 +11,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 
-from modbus_connection import ModbusConnectionError, ModbusError, ModbusUnit
-
-from tools._link import DEFAULT_PORT, open_link, parse_register_range, run
+from tools._link import open_link, parse_register_range, read_or_none, run, tool_parser
 
 DEFAULT_INTERVAL = 1.0
 
@@ -46,31 +43,8 @@ def parse_range(value: str) -> RegisterRange:
     return RegisterRange(start, end - start + 1)
 
 
-async def read_range(
-    unit: ModbusUnit,
-    *,
-    register_range: RegisterRange,
-) -> tuple[int, ...] | None:
-    """Read one register range and return a stable tuple."""
-
-    try:
-        registers = await unit.read_holding_registers(
-            register_range.start, register_range.count
-        )
-    except ModbusConnectionError:
-        raise
-    except ModbusError:
-        return None
-
-    return tuple(int(value) for value in registers[: register_range.count])
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Watch Meltem holding-register ranges and print changes only."
-    )
-    parser.add_argument("--port", default=DEFAULT_PORT)
-    parser.add_argument("--slave", type=int, required=True)
+    parser = tool_parser("Watch Meltem holding-register ranges and print changes only.", slave=True)
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
     parser.add_argument(
         "--range",
@@ -85,7 +59,7 @@ def parse_args() -> argparse.Namespace:
 async def main() -> int:
     args = parse_args()
     ranges = tuple(args.ranges) if args.ranges else DEFAULT_RANGES
-    previous: dict[RegisterRange, tuple[int, ...] | None] = {}
+    previous: dict[RegisterRange, list[int] | None] = {}
 
     async with open_link(args.port) as link:
         unit = link.for_unit(args.slave)
@@ -98,19 +72,14 @@ async def main() -> int:
 
         while True:
             for register_range in ranges:
-                current = await read_range(unit, register_range=register_range)
-                if previous.get(register_range) == current:
+                current = await read_or_none(unit, register_range.start, register_range.count)
+                if register_range in previous and previous[register_range] == current:
                     continue
 
                 previous[register_range] = current
                 stamp = datetime.now().strftime("%H:%M:%S")
-                if current is None:
-                    print(f"{stamp}  {register_range.label:<16} unavailable", flush=True)
-                else:
-                    print(
-                        f"{stamp}  {register_range.label:<16} {list(current)}",
-                        flush=True,
-                    )
+                shown = "unavailable" if current is None else current
+                print(f"{stamp}  {register_range.label:<16} {shown}", flush=True)
 
             await asyncio.sleep(args.interval)
 

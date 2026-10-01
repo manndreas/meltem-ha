@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Scan Meltem register windows and summarize which ranges are readable.
 
 This helper is intended for reverse-engineering work. It does not diff values;
@@ -9,6 +8,7 @@ function 0x03 (holding registers) and/or 0x04 (input registers).
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from dataclasses import dataclass
 
 from modbus_connection import (
@@ -18,7 +18,9 @@ from modbus_connection import (
     ModbusUnit,
 )
 
-from tools._link import DEFAULT_PORT, MAX_REGISTERS_PER_READ, open_link, run
+from tools._link import MAX_REGISTERS_PER_READ, open_link, run, tool_parser
+
+STATUSES = ("ok", "partial", "error", "none", "empty")
 
 
 @dataclass(frozen=True)
@@ -31,26 +33,15 @@ class WindowResult:
     sample: tuple[int, ...]
 
 
-def parse_function_mode(value: str) -> str:
-    normalized = value.strip().lower()
-    if normalized not in {"holding", "input", "both"}:
-        raise argparse.ArgumentTypeError("function must be holding, input, or both")
-    return normalized
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Scan readable Meltem register windows."
-    )
-    parser.add_argument("--port", default=DEFAULT_PORT)
-    parser.add_argument("--slave", type=int, required=True)
+    parser = tool_parser("Scan readable Meltem register windows.", slave=True)
     parser.add_argument("--start", type=int, required=True)
     parser.add_argument("--end", type=int, required=True)
     parser.add_argument(
         "--window",
         type=int,
-        default=120,
-        help="Registers to probe per request window. Max 120 recommended.",
+        default=MAX_REGISTERS_PER_READ,
+        help=f"Registers to probe per request window, 1 to {MAX_REGISTERS_PER_READ}.",
     )
     parser.add_argument(
         "--step",
@@ -59,9 +50,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--function",
-        type=parse_function_mode,
+        type=str.lower,
+        choices=("holding", "input", "both"),
         default="both",
-        help="holding, input, or both",
     )
     parser.add_argument(
         "--show-ok",
@@ -73,7 +64,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print only successful windows.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.end < args.start:
+        parser.error("--end must be >= --start")
+    if not 1 <= args.window <= MAX_REGISTERS_PER_READ:
+        parser.error(f"--window must be between 1 and {MAX_REGISTERS_PER_READ}")
+    if args.step is None:
+        args.step = args.window
+    if args.step <= 0:
+        parser.error("--step must be > 0")
+    return args
 
 
 async def read_window(
@@ -89,45 +89,28 @@ async def read_window(
         if function_name == "holding"
         else unit.read_input_registers
     )
-    status: str | None = None
+    values: tuple[int, ...] = ()
     try:
-        registers = await read_fn(start, count)
+        values = tuple(await read_fn(start, count))
     except ModbusConnectionError:
         raise
     except ModbusTimeoutError:
         status = "none"
     except ModbusError:
         status = "error"
+    else:
+        if not values:
+            status = "empty"
+        else:
+            status = "ok" if len(values) >= count else "partial"
 
-    if status is not None:
-        return WindowResult(
-            start=start,
-            end=end,
-            function_name=function_name,
-            status=status,
-            values_seen=0,
-            sample=(),
-        )
-
-    if not registers:
-        return WindowResult(
-            start=start,
-            end=end,
-            function_name=function_name,
-            status="empty",
-            values_seen=0,
-            sample=(),
-        )
-
-    visible_values = tuple(int(value) for value in registers)
-    status = "ok" if len(visible_values) >= count else "partial"
     return WindowResult(
         start=start,
         end=end,
         function_name=function_name,
         status=status,
-        values_seen=len(visible_values),
-        sample=visible_values[: min(6, len(visible_values))],
+        values_seen=len(values),
+        sample=values[:6],
     )
 
 
@@ -141,62 +124,39 @@ def format_result(result: WindowResult) -> str:
 
 async def main() -> int:
     args = parse_args()
-    if args.end < args.start:
-        print("ERROR: --end must be >= --start")
-        return 2
-    if args.window <= 0 or args.window > MAX_REGISTERS_PER_READ:
-        print(f"ERROR: --window must be between 1 and {MAX_REGISTERS_PER_READ}")
-        return 2
-
-    step = args.step if args.step is not None else args.window
-    if step <= 0:
-        print("ERROR: --step must be > 0")
-        return 2
-
-    function_names = (
-        ("holding", "input") if args.function == "both" else (args.function,)
-    )
-    totals: dict[str, dict[str, int]] = {
-        name: {"ok": 0, "partial": 0, "error": 0, "none": 0, "empty": 0}
-        for name in function_names
-    }
+    function_names = ("holding", "input") if args.function == "both" else (args.function,)
+    totals: dict[str, Counter[str]] = {name: Counter() for name in function_names}
 
     async with open_link(args.port) as link:
         unit = link.for_unit(args.slave)
         print(
             f"scanning slave {args.slave} on {args.port} "
             f"from {args.start} to {args.end} "
-            f"window={args.window} step={step} function={args.function}"
+            f"window={args.window} step={args.step} function={args.function}"
         )
         print()
 
-        current = args.start
-        while current <= args.end:
-            window_end = min(args.end, current + args.window - 1)
+        for window_start in range(args.start, args.end + 1, args.step):
+            window_end = min(args.end, window_start + args.window - 1)
             for function_name in function_names:
                 result = await read_window(
                     unit,
-                    start=current,
+                    start=window_start,
                     end=window_end,
                     function_name=function_name,
                 )
                 totals[function_name][result.status] += 1
-                if args.only_ok:
-                    if result.status == "ok":
-                        print(format_result(result))
-                elif args.show_ok or result.status != "ok":
+                is_ok = result.status == "ok"
+                if is_ok if args.only_ok else args.show_ok or not is_ok:
                     print(format_result(result))
-            current += step
 
     print()
     print("summary:")
     for function_name in function_names:
-        summary = totals[function_name]
-        print(
-            f"  {function_name:<7} ok={summary['ok']:<3} "
-            f"partial={summary['partial']:<3} error={summary['error']:<3} "
-            f"none={summary['none']:<3} empty={summary['empty']:<3}"
+        counts = " ".join(
+            f"{status}={totals[function_name][status]:<3}" for status in STATUSES
         )
+        print(f"  {function_name:<7} {counts}")
     return 0
 
 
