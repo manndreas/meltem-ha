@@ -45,8 +45,9 @@ FIXED_STOPBITS = 1
 FIXED_TIMEOUT = 0.8
 REQUEST_GAP_SECONDS = 0.1
 # A silent unit behind the gateway also times out, so only a run of timeouts
-# with no answer in between points at a wedged serial link.
+# while no unit answered for a while points at a wedged serial link.
 TRANSPORT_DISCONNECT_AFTER_TIMEOUTS = 3
+TRANSPORT_LINK_QUIET_SECONDS = 10.0
 TRANSPORT_RETRY_DELAY_SECONDS = 0.5
 FLOW_REFRESH_SECONDS = 10
 AIRFLOW_STALE_AFTER_SECONDS = 30

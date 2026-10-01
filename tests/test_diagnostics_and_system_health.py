@@ -65,6 +65,11 @@ def _coordinator() -> MagicMock:
     coordinator.update_interval = None
     coordinator.room_available.return_value = True
     coordinator.async_discover_gateway_units = AsyncMock(return_value=[2, 3])
+    coordinator.client.transport_diagnostics.return_value = {
+        "consecutive_timeouts": 0,
+        "link_recycles": 1,
+        "seconds_since_any_answer": 2.5,
+    }
     return coordinator
 
 
@@ -127,6 +132,7 @@ class TestDiagnostics:
         assert result["coordinator"]["gateway_units"] == [2, 3]
         assert result["coordinator"]["gateway_probe_error"] is None
         assert result["coordinator"]["update_interval_seconds"] is None
+        assert result["coordinator"]["transport"]["link_recycles"] == 1
 
     async def test_reports_a_failing_gateway_probe(self, hass: HomeAssistant) -> None:
         entry = _entry(hass)

@@ -684,6 +684,9 @@ async def main() -> int:
             )
         else:
             samples = await run_scheduler_cycles(client, rooms, args.cycles)
+    except (ModbusConnectionError, MeltemConnectionError) as err:
+        print(f"ERROR: lost the serial connection on {args.port}: {err}")
+        return 2
     finally:
         await connection.close()
 

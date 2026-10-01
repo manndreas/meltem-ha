@@ -48,3 +48,22 @@ Naechster Schritt:
 - Die Herstellerdokumente enthalten weder `116852` noch `VMD-22RPS44`; die
   Artikelnummern passen nicht, siehe `docs/reference/models.md`.
 
+## 3. Test-Harness auf Home Assistant 2026.10 anheben
+
+Prioritaet: mittel
+Status: offen, wartet auf ein Release
+
+Befund:
+- `pytest-homeassistant-custom-component==0.13.367` bringt Home Assistant
+  `2026.9.4` mit, die Integration verlangt aber `2026.10`.
+- `requirements-test.txt` installiert deshalb `modbus-connection` `4.12.3`
+  zusaetzlich; die `modbus`-Integration aus `2026.9.4` laeuft damit, ist aber
+  nicht die, gegen die Nutzer laufen (Halten pro Eintrag und Unit erst ab
+  `2026.10`).
+
+Naechster Schritt:
+- Sobald es eine Harness-Version fuer `2026.10` gibt, die Pins in
+  `requirements-test.txt` anheben, die Zusatz-Pins pruefen und die Tests in
+  `tests/test_init.py::TestSharedModbusConnection` gegen die neue
+  `modbus`-Integration laufen lassen.
+
