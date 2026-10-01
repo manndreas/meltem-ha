@@ -8,7 +8,13 @@ from datetime import datetime
 
 from homeassistant.util import dt as dt_util
 
-from .const import WRITE_CONFIRMATION_TIMEOUT_SECONDS, WRITE_HEALTH_RETENTION_SECONDS
+from .const import (
+    OPERATION_MODE_MANUAL,
+    OPERATION_MODE_OFF,
+    OPERATION_MODE_UNBALANCED,
+    WRITE_CONFIRMATION_TIMEOUT_SECONDS,
+    WRITE_HEALTH_RETENTION_SECONDS,
+)
 from .levels import levels_reached, target_levels
 from .models import RoomState, WriteConfirmation, WriteValue
 
@@ -165,7 +171,11 @@ def _read_since(state: RoomState, group_key: str, started_at: datetime) -> bool:
 
 def _readback_value(state: RoomState, write_key: str) -> WriteValue | None:
     if write_key == "airflow_levels":
-        # Only target registers confirm a write; measured airflow lags behind.
+        if state.operation_mode in (OPERATION_MODE_MANUAL, OPERATION_MODE_OFF):
+            readback = state.balanced_target_readback
+            return (readback, readback) if readback is not None else None
+        if state.operation_mode != OPERATION_MODE_UNBALANCED:
+            return None
         supply, extract = target_levels(state, airflow_is_fresh=False)
         if supply is None or extract is None:
             return None
