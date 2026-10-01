@@ -244,6 +244,24 @@ class TestMeasuredValues:
 
         assert without_previous.supply_air_temperature is None
         assert with_previous.supply_air_temperature == 19.5
+        assert with_previous.read_health_for("temperature").consecutive_failures == 1
+        assert with_previous.read_health_for("temperature").last_successful_read is None
+
+    async def test_nan_temperature_preserves_the_last_successful_read(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        plan = RefreshPlan.only(refresh_temperatures=True)
+        unit.holding[REGISTER_SUPPLY_AIR_TEMPERATURE] = _float_words(19.5)
+        initial = await client.read_room_state(_F, RoomState(), plan)
+        unit.holding[REGISTER_SUPPLY_AIR_TEMPERATURE] = [0x0000, 0x7FC0]
+
+        failed = await client.read_room_state(_F, initial, plan)
+
+        assert failed.supply_air_temperature == 19.5
+        assert failed.read_health_for("temperature").last_successful_read == (
+            initial.read_health_for("temperature").last_successful_read
+        )
+        assert failed.read_health_for("temperature").consecutive_failures == 1
 
     async def test_operating_hours_are_a_little_endian_uint32(
         self, client: MeltemModbusClient, unit: MockModbusUnit
@@ -329,6 +347,7 @@ class TestAirflowTargets:
         state = await _read_flow(client, RoomState(target_level=30))
 
         assert state.target_level == 60
+        assert state.balanced_target_readback == 60
         assert state.extract_target_level is None
 
     async def test_target_falls_back_to_balanced_airflow(
@@ -340,6 +359,7 @@ class TestAirflowTargets:
         state = await _read_flow(client, RoomState(target_level=30))
 
         assert state.target_level == 65
+        assert state.balanced_target_readback is None
         assert state.extract_target_level is None
 
     @pytest.mark.parametrize("previous_target", [None, 55])

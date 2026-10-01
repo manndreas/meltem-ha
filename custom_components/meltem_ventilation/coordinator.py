@@ -765,8 +765,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """Refresh one room's affected group after a write settles."""
 
         for attempt in range(POST_WRITE_REFRESH_RETRIES + 1):
+            await self._async_wait_for_read_slot()
             previous_state = self.safe_data.get(room.key, EMPTY_ROOM_STATE)
-            self._last_read_started = time.monotonic()
             failed = False
             try:
                 refreshed_room = await self.client.read_room_state(
@@ -813,8 +813,14 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     EMPTY_ROOM_STATE,
                     FULL_REFRESH_PLAN,
                 )
-                successful_reads += 1
-                self._room_failures.pop(room.key, None)
+                if states[room.key].has_data:
+                    successful_reads += 1
+                    self._room_failures.pop(room.key, None)
+                else:
+                    last_error = MeltemModbusError(
+                        f"No state values received from room {room.key} during startup"
+                    )
+                    self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
             except MeltemModbusError as err:
                 _LOGGER.warning("Failed to read room %s during startup: %s", room.key, err)
                 states[room.key] = read_health.record_read_failures(

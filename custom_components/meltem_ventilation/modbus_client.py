@@ -294,7 +294,7 @@ class MeltemModbusClient:
             job = _ReadJob()
             due = _due_fields(room, refresh_plan)
             updated = await self._poll(device, _due_reads(due), job)
-            state = replace(previous_state, **_fresh_values(device, due, updated))
+            state = replace(previous_state, **_fresh_values(device, due, updated, job))
             if refresh_plan.refresh_airflow:
                 state = await self._read_mode_group(room, device, job, state)
             return replace(
@@ -605,6 +605,13 @@ class MeltemModbusClient:
             state,
             operation_mode=operation_mode,
             target_level=target_level,
+            balanced_target_readback=(
+                _scale_raw_level_to_airflow(room, raw_current_level)
+                if operation_mode in (OPERATION_MODE_OFF, OPERATION_MODE_MANUAL)
+                and raw_current_level is not None
+                and 0 <= raw_current_level <= 200
+                else None
+            ),
             extract_target_level=extract_target_level,
             preset_mode=_decode_preset_mode(block, raw_extract_target, state.preset_mode),
             intensive_active=_decode_intensive_active(block, state.intensive_active),
@@ -692,7 +699,7 @@ def _due_reads(due: dict[str, _FieldRead]) -> dict[str, tuple[str, ...]]:
 
 
 def _fresh_values(
-    device: MeltemRoomDevice, due: dict[str, _FieldRead], updated: set[str]
+    device: MeltemRoomDevice, due: dict[str, _FieldRead], updated: set[str], job: _ReadJob
 ) -> dict[str, Any]:
     """Return the due fields whose component answered with a usable value."""
 
@@ -702,6 +709,7 @@ def _fresh_values(
             continue
         value = getattr(getattr(device, source.component), source.attribute)
         if value is None or (isinstance(value, float) and not math.isfinite(value)):
+            job.record_error((source.group,), f"Invalid {name} readback: {value!r}")
             continue
         values[name] = bool(value) if name in _FLAG_FIELDS else value
     return values
