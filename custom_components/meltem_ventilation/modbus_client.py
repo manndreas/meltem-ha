@@ -15,7 +15,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.util import dt as dt_util
 from modbus_connection import (
@@ -25,7 +25,6 @@ from modbus_connection import (
     ModbusTimeoutError,
     ModbusUnit,
 )
-from modbus_connection.model import Component
 
 from .const import (
     APP_UNBALANCED_PRESET_BASE,
@@ -49,7 +48,6 @@ from .const import (
     PRESET_MODE_TO_RAW_CODE,
     RAW_CODE_TO_PRESET_MODE,
     RAW_VALUE_TO_SENSOR_MODE,
-    READ_FAILURE_THRESHOLD,
     READ_GROUP_ENTITY_KEYS,
     SENSOR_MODE_TO_RAW_VALUE,
     SENSOR_OPERATION_MODES,
@@ -57,6 +55,7 @@ from .const import (
     profile_max_airflow,
 )
 from .device import MeltemRoomDevice, PolicyUnit
+from .device.components import ModeBlock
 from .modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
@@ -269,7 +268,7 @@ class MeltemModbusClient:
     async def probe_slave_details(
         self,
         slave: int,
-    ) -> tuple[str, str | None, list[str]]:
+    ) -> tuple[str, str | None]:
         """Probe one configured unit using the current gateway link."""
 
         async with self._gateway_operation(f"probing unit {slave}"):
@@ -312,8 +311,9 @@ class MeltemModbusClient:
         """Read the due components and record failures per health group.
 
         ``reads`` maps each component to the health groups its outcome counts
-        for. A timeout before anything answered means the unit is silent, so
-        the rest of the job is skipped instead of timing out once per block.
+        for. A timeout means the unit is silent, so the rest of the job is
+        skipped instead of timing out once per block; before anything answered
+        the poll itself stops, after that only the mode reads are spared.
         """
 
         if not reads:
@@ -327,8 +327,11 @@ class MeltemModbusClient:
             return set()
         for component, groups in reads.items():
             error = report.failed.get(component)
-            if error is not None:
-                job.record_error(groups, error)
+            if error is None:
+                continue
+            job.record_error(groups, error)
+            if isinstance(error, ModbusTimeoutError):
+                job.silent_error = error
         return report.updated
 
     # ------------------------------------------------------------------
@@ -401,6 +404,7 @@ class MeltemModbusClient:
                 f"Unsupported preset mode {preset_mode!r} for room {room.key}"
             )
 
+        writes: tuple[tuple[str, int], ...]
         if preset_mode == PRESET_MODE_INTENSIVE:
             writes = (("preset_mode", MODE_MANUAL), ("preset_value", raw_code))
         else:
@@ -424,16 +428,7 @@ class MeltemModbusClient:
     ) -> int:
         """Write one humidity/CO2 control setting register."""
 
-        limits = CONTROL_SETTING_LIMITS.get(setting_key)
-        if setting_key not in CONTROL_SETTING_REGISTERS or limits is None:
-            raise MeltemModbusError(
-                f"Unsupported control setting {setting_key!r} for room {room.key}"
-            )
-
-        min_val, max_val, step = limits
-        clamped = max(min_val, min(max_val, int(round(value))))
-        stepped = min_val + ((clamped - min_val + step // 2) // step) * step
-
+        stepped = normalize_control_setting(setting_key, value)
         async with self._gateway_operation(f"writing control setting for room {room.key}"):
             await self._room_device(room).control_settings.write(setting_key, stepped)
         return stepped
@@ -462,7 +457,7 @@ class MeltemModbusClient:
         job: _ReadJob,
         name: str,
         groups: tuple[str, ...],
-    ) -> Component | None:
+    ) -> ModeBlock | None:
         """Read one mode-family component.
 
         Only exception responses start the temporary backoff: they mean the
@@ -482,7 +477,7 @@ class MeltemModbusClient:
             )
             return None
 
-        component: Component = getattr(device, name)
+        component: ModeBlock = getattr(device, name)
         try:
             await component.async_update()
         except ModbusConnectionError:
@@ -518,17 +513,18 @@ class MeltemModbusClient:
         Many units reject the full 5-register read until a write has occurred.
         """
 
-        reports_mode = _supports(room, "operation_mode") or _supports(room, "preset_mode")
-        if not reports_mode and not _supports(room, "intensive"):
+        reports_mode = room.supports("operation_mode") or room.supports("preset_mode")
+        if not reports_mode and not room.supports("intensive"):
             return None
 
         full = await self._read_mode_component(
             room, device, job, "mode", ("flow_control", "intensive")
         )
+        # A component that just answered holds a value in every field it read.
         if full is not None:
             return _ModeRead(
-                mode=full.mode,
-                current_level=full.current_level,
+                mode=cast(int, full.mode),
+                current_level=cast(int, full.current_level),
                 extract_target_level=full.extract_target_level,
                 preset_mode=full.preset_mode,
                 preset_value=full.preset_value,
@@ -544,7 +540,7 @@ class MeltemModbusClient:
         # intensive state is unknown rather than a read failure.
         job.errors.pop("intensive", None)
         job.skipped.add("intensive")
-        return _ModeRead(mode=short.mode, current_level=short.current_level)
+        return _ModeRead(mode=cast(int, short.mode), current_level=cast(int, short.current_level))
 
     async def _read_mode_group(
         self,
@@ -559,6 +555,7 @@ class MeltemModbusClient:
         """
 
         block = await self._read_mode_block(room, device, job)
+        raw_current_level: int | None
         if block is not None:
             operation_mode = _decode_operation_mode(block.mode, block.current_level)
             raw_current_level = block.current_level
@@ -619,10 +616,6 @@ class MeltemModbusClient:
 # ----------------------------------------------------------------------
 
 
-def _supports(room: RoomConfig, entity_key: str) -> bool:
-    return room.supported_entity_keys is None or entity_key in room.supported_entity_keys
-
-
 def _due_fields(room: RoomConfig, plan: RefreshPlan) -> dict[str, _FieldRead]:
     """Map every ``RoomState`` field this plan reads to where it comes from.
 
@@ -641,7 +634,7 @@ def _due_fields(room: RoomConfig, plan: RefreshPlan) -> dict[str, _FieldRead]:
         attribute: str | None = None,
         gated: bool = True,
     ) -> None:
-        if when and (not gated or _supports(room, name)):
+        if when and (not gated or room.supports(name)):
             due[name] = _FieldRead(component, attribute or name, group)
 
     extended = room.profile not in PLAIN_PROFILES
@@ -727,29 +720,31 @@ def _updated_read_health(
     for group_key in refresh_plan.read_groups():
         if group_key in job.skipped:
             continue
-        if not any(_supports(room, key) for key in READ_GROUP_ENTITY_KEYS[group_key]):
+        if not room.supports_any(READ_GROUP_ENTITY_KEYS[group_key]):
             continue
 
         error = job.errors.get(group_key)
         if error is None:
             group_health[group_key] = ReadHealth(last_attempt=now, last_successful_read=now)
             continue
-        previous_health = previous_state.read_health_for(group_key)
-        group_health[group_key] = ReadHealth(
-            last_attempt=now,
-            last_successful_read=previous_health.last_successful_read,
-            consecutive_failures=min(
-                previous_health.consecutive_failures + 1,
-                READ_FAILURE_THRESHOLD,
-            ),
-            last_error=error,
-        )
+        group_health[group_key] = previous_state.read_health_for(group_key).failed(now, error)
     return tuple(sorted(group_health.items()))
 
 
 # ----------------------------------------------------------------------
 #  Scaling and decoding
 # ----------------------------------------------------------------------
+
+
+def normalize_control_setting(setting_key: str, value: int) -> int:
+    """Clamp one control setting to its limits and round it to the register step."""
+
+    limits = CONTROL_SETTING_LIMITS.get(setting_key)
+    if setting_key not in CONTROL_SETTING_REGISTERS or limits is None:
+        raise MeltemModbusError(f"Unsupported control setting {setting_key!r}")
+    min_val, max_val, step = limits
+    clamped = max(min_val, min(max_val, value))
+    return min_val + ((clamped - min_val + step // 2) // step) * step
 
 
 def _scale_airflow_to_raw(room: RoomConfig, level: int) -> int:

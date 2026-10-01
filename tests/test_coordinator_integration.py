@@ -16,12 +16,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import DOMAIN
 from custom_components.meltem_ventilation.coordinator import (
-    FULL_REFRESH_PLAN,
-    JOB_GROUPS,
     TRANSPORT_BACKOFF_MAX_SECONDS,
-    JobGroup,
+    TRANSPORT_BACKOFF_START_SECONDS,
     MeltemDataUpdateCoordinator,
-    PollJob,
 )
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
 from custom_components.meltem_ventilation.models import (
@@ -29,6 +26,13 @@ from custom_components.meltem_ventilation.models import (
     RefreshPlan,
     RoomConfig,
     RoomState,
+)
+from custom_components.meltem_ventilation.polling import (
+    FULL_REFRESH_PLAN,
+    JOB_GROUPS,
+    JobGroup,
+    PollJob,
+    room_needs_job,
 )
 
 # ---------------------------------------------------------------------------
@@ -136,7 +140,7 @@ class TestFirstRefresh:
         now = time.monotonic()
 
         failed_state = data["unit_1"]
-        assert not coordinator._room_state_has_data(failed_state)
+        assert not failed_state.has_data
         assert failed_state.read_health_for("flow").last_error == "boom: unit_1"
         assert failed_state.read_health_for("status").consecutive_failures == 1
         assert data["unit_2"] == client.next_read_state
@@ -145,6 +149,33 @@ class TestFirstRefresh:
             job.next_due > now
             for job in coordinator._jobs
             if job.room_key == "unit_2" and job.key != "flow"
+        )
+
+    async def test_first_refresh_keeps_the_request_rate_between_rooms(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build(hass, _ROOM_1, _ROOM_2, max_requests_per_second=2.0)
+
+        with patch(
+            "custom_components.meltem_ventilation.coordinator.async_sleep", new=AsyncMock()
+        ) as sleep:
+            await coordinator._read_all_rooms_full()
+
+        sleep.assert_awaited_once()
+        assert 0 < sleep.await_args.args[0] <= 0.5
+
+    async def test_a_failed_first_refresh_is_retried_after_the_backoff_start(
+        self, hass: HomeAssistant,
+    ) -> None:
+        """Retrying at the request rate would hammer a gateway that is down."""
+        coordinator, client = _build(hass)
+        client.fail_rooms = {"unit_1"}
+
+        await coordinator.async_refresh()
+
+        assert not coordinator.last_update_success
+        assert coordinator.update_interval == timedelta(
+            seconds=TRANSPORT_BACKOFF_START_SECONDS
         )
 
 
@@ -325,7 +356,7 @@ class TestJobScheduling:
         assert {
             group.key
             for group in JOB_GROUPS
-            if MeltemDataUpdateCoordinator._room_needs_job(room, group)
+            if room_needs_job(room, group)
         } == needed_jobs
 
 
@@ -518,9 +549,7 @@ class TestReadOneJob:
             last_error="read failed",
         )
 
-        assert not MeltemDataUpdateCoordinator._room_state_has_data(
-            RoomState().with_read_health("flow", failed_read)
-        )
+        assert not RoomState().with_read_health("flow", failed_read).has_data
 
 
 # ---------------------------------------------------------------------------

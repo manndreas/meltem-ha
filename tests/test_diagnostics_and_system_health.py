@@ -199,6 +199,17 @@ class TestSystemHealth:
 
         assert info["unavailable_units"] == "unit_1"
 
+    async def test_redacts_the_serial_port_in_the_last_error(
+        self, hass: HomeAssistant,
+    ) -> None:
+        """The system information is pasted into public issues as well."""
+        _loaded_coordinator(hass).last_job_error = MeltemModbusError(f"Lost {_PORT}")
+
+        info = await system_health_info(hass)
+
+        assert _SECRET not in info["last_job_error"]
+        assert info["last_job_error"] == f"Lost {REDACTED}"
+
     @pytest.mark.parametrize(
         ("health", "expected"),
         [

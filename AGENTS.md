@@ -12,8 +12,9 @@
 - `custom_components/meltem_ventilation/modbus_client.py`: async room reads, mode decoding, write sequences
 - `custom_components/meltem_ventilation/modbus_helpers.py`: link parameters, unit preparation, discovery, setup probes
 - `custom_components/meltem_ventilation/device/`: register blocks as `modbus-connection` components (`components.py`), room/probe/gateway devices (`device.py`), and the shared retry policy (`transport.py`)
-- `custom_components/meltem_ventilation/coordinator.py`: polling scheduler and write orchestration
-- `custom_components/meltem_ventilation/config_flow.py`: setup, USB discovery, gateway-backed unit discovery, profile selection
+- `custom_components/meltem_ventilation/coordinator.py`: gateway lock, request-rate cap, backoff, and write orchestration
+- `custom_components/meltem_ventilation/polling.py`, `read_health.py`, `levels.py`, `overlay.py`, `write_confirmation.py`: job planning, read freshness, airflow targets, pending values, and write outcomes used by the coordinator
+- `custom_components/meltem_ventilation/config_flow.py`: setup, USB discovery, reconfigure (serial port), gateway-backed unit discovery, profile selection
 - `custom_components/meltem_ventilation/fan.py`: the two directional airflow controls, the primary control path
 - `custom_components/meltem_ventilation/number.py`: per-series control settings such as humidity and CO2 thresholds
 - `custom_components/meltem_ventilation/strings.json`: English entity/config strings
@@ -35,13 +36,13 @@
 - Be conservative with Modbus timing and grouped reads; gateway behavior is sensitive
 - Keep the `register_ranges` of the components unchanged unless a gateway benchmark backs the change; the parity test in `tests/test_modbus_client.py` guards them
 - Do not remove or rewrite observed hardware quirks without checking `docs/MELTEM.md` and `docs/DEVELOPER.md`
-- Keep the link settings in `tools/_link.py` in line with `const.py`
+- Keep the link settings in `tools/_link.py` in line with `const.py`; `tests/test_tools.py` checks them
 - When changing versioned release metadata, update `manifest.json`, `pyproject.toml`, and `CHANGELOG.md`; the release workflow rejects a tag that differs from the first two
 
 ## Validation
 
 - Tests need Python 3.14; see `CONTRIBUTING.md` for the setup and the Windows workarounds
-- Run tests with `pytest` and lint with `ruff check custom_components tests tools`; CI runs both, plus hassfest and the HACS validation
+- Run tests with `pytest`, lint with `ruff check custom_components tests tools`, and type-check with `mypy`; CI runs all three, plus hassfest and the HACS validation
 - Focused runs are usually enough while iterating, for example:
   - `pytest tests/test_modbus_client.py`
   - `pytest tests/test_transport.py`

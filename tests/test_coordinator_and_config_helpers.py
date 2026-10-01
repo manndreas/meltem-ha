@@ -13,7 +13,10 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.meltem_ventilation.config_flow import (
     CONF_MAX_REQUESTS_PER_SECOND,
@@ -31,6 +34,7 @@ from custom_components.meltem_ventilation.const import (
     DIRECTION_EXTRACT,
     DIRECTION_SUPPLY,
     DOMAIN,
+    TARGET_OPTIMISTIC_SECONDS,
     WRITE_CONFIRMATION_TIMEOUT_SECONDS,
     WRITE_HEALTH_RETENTION_SECONDS,
 )
@@ -53,6 +57,7 @@ from custom_components.meltem_ventilation.models import (
     RoomState,
     WriteConfirmation,
 )
+from custom_components.meltem_ventilation.polling import select_due_job
 
 # ---------------------------------------------------------------------------
 #  Test doubles
@@ -81,11 +86,9 @@ class _FakeClient:
         self.discover_calls.append((start, end))
         return [2, 3, 4]
 
-    async def probe_slave_details(
-        self, slave: int
-    ) -> tuple[str, str | None, list[str]]:
+    async def probe_slave_details(self, slave: int) -> tuple[str, str | None]:
         self.probe_calls.append(slave)
-        return ("plain", f"ID {slave}", ["level"])
+        return ("plain", f"ID {slave}")
 
     async def read_room_state(
         self,
@@ -527,7 +530,9 @@ class TestEffectiveLevels:
         }
 
         assert coordinator.effective_levels("unit_1") == (80, 20)
+        coordinator._confirm_pending_writes(coordinator.data)
         assert coordinator._optimistic_levels.get("unit_1", None) is None
+        assert coordinator.level_source("unit_1") == "target"
 
     def test_overlay_tolerates_rounding_between_percent_and_raw(
         self, hass: HomeAssistant,
@@ -545,8 +550,54 @@ class TestEffectiveLevels:
             )
         }
 
-        coordinator.effective_levels("unit_1")
+        coordinator._confirm_pending_writes(coordinator.data)
         assert coordinator._optimistic_levels.get("unit_1", None) is None
+
+    def test_reading_the_levels_leaves_the_overlay_in_place(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator._optimistic_levels.set("unit_1", (80, 20))
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    operation_mode="unbalanced", target_level=80, extract_target_level=20
+                ),
+                "flow_control",
+            )
+        }
+
+        coordinator.effective_levels("unit_1")
+
+        assert "unit_1" in coordinator._optimistic_levels._pending
+
+    async def test_an_expired_overlay_updates_the_entities(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        updates: list[None] = []
+        coordinator.async_add_listener(lambda: updates.append(None))
+        coordinator._optimistic_levels.set("unit_1", (80, 20))
+        updates.clear()
+
+        async_fire_time_changed(
+            hass, dt_util.utcnow() + timedelta(seconds=TARGET_OPTIMISTIC_SECONDS + 1)
+        )
+        await hass.async_block_till_done()
+
+        assert "unit_1" not in coordinator._optimistic_levels._pending
+        assert updates
+
+    async def test_shutdown_drops_pending_values_and_their_timers(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator._optimistic_presets.set("unit_1", "high")
+
+        await coordinator.async_shutdown()
+
+        assert coordinator.optimistic_preset_mode("unit_1") is None
+        assert not coordinator._optimistic_presets._cancel_expiry
 
     def test_overlay_expires(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
@@ -573,7 +624,7 @@ class TestEffectiveLevels:
         assert coordinator.effective_levels("unit_1") == (70, 30)
         assert coordinator.level_source("unit_1") == "pending"
         assert (
-            coordinator._write_confirmations["unit_1"]["airflow_levels"].status
+            coordinator._writes.by_room["unit_1"]["airflow_levels"].status
             == "pending"
         )
 
@@ -585,7 +636,7 @@ class TestEffectiveLevels:
         assert err.value.translation_key == "write_failed"
         assert coordinator.effective_levels("unit_1") == (40, 40)
         assert client.read_calls[-1][1] == RefreshPlan.only(refresh_airflow=True)
-        assert coordinator._write_confirmations["unit_1"]["airflow_levels"].status == "failed"
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "failed"
 
     async def test_mode_change_discards_a_pending_overlay(
         self, hass: HomeAssistant,
@@ -855,7 +906,7 @@ class TestAirflowWriteConfirmation:
 
         assert coordinator.last_update_success, coordinator.last_exception
         assert (
-            coordinator._write_confirmations["unit_1"]["airflow_levels"].status
+            coordinator._writes.by_room["unit_1"]["airflow_levels"].status
             == "confirmed"
         )
         assert coordinator.level_source("unit_1") == "target"
@@ -865,7 +916,7 @@ class TestAirflowWriteConfirmation:
     ) -> None:
         """41020/41021 lag behind the target, so only target registers count."""
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
-        coordinator._write_confirmations["unit_1"] = {
+        coordinator._writes.by_room["unit_1"] = {
             "airflow_levels": WriteConfirmation(
                 expected_value=(70, 60),
                 started_at=dt_util.utcnow() - timedelta(seconds=1),
@@ -878,7 +929,7 @@ class TestAirflowWriteConfirmation:
         coordinator._confirm_pending_writes(state)
 
         assert (
-            coordinator._write_confirmations["unit_1"]["airflow_levels"].status
+            coordinator._writes.by_room["unit_1"]["airflow_levels"].status
             == "pending"
         )
 
@@ -894,10 +945,10 @@ class TestAirflowWriteConfirmation:
             started_at=dt_util.utcnow(),
             status="failed",
         )
-        coordinator._write_confirmations["unit_1"] = {"airflow_levels": failed}
+        coordinator._writes.by_room["unit_1"] = {"airflow_levels": failed}
         assert coordinator.data_health_stale("unit_1") is True
 
-        coordinator._write_confirmations["unit_1"]["airflow_levels"] = replace(
+        coordinator._writes.by_room["unit_1"]["airflow_levels"] = replace(
             failed,
             started_at=dt_util.utcnow()
             - timedelta(seconds=WRITE_HEALTH_RETENTION_SECONDS + 1),
@@ -1122,12 +1173,8 @@ class TestConfigFlowHelpers:
                 "slave": 2,
                 "profile": "ii_plain",
                 "preview": "ID 116852 | basic",
-                "supported_entity_keys": rooms[0]["supported_entity_keys"],
             }
         ]
-        assert "supply_level" in rooms[0]["supported_entity_keys"]
-        assert "extract_level" in rooms[0]["supported_entity_keys"]
-        assert "humidity_extract_air" not in rooms[0]["supported_entity_keys"]
 
     def test_build_rooms_from_profiles_uses_stable_field_keys(self) -> None:
         selected_profiles = {"slave_2": "ii_plain"}
@@ -1141,8 +1188,20 @@ class TestConfigFlowHelpers:
         assert rooms[0]["name"] == "Unit 1"
 
     def test_default_room_name(self) -> None:
-        assert _default_room_name(1) == "Unit 1"
-        assert _default_room_name(2) == "Unit 2"
+        assert _default_room_name(set()) == "Unit 1"
+        assert _default_room_name({"Unit 1", "Unit 3"}) == "Unit 2"
+
+    def test_rescan_does_not_reuse_the_name_of_a_kept_unit(self) -> None:
+        rooms = _build_rooms_from_profiles(
+            [2, 3, 4],
+            {"slave_2": "ii_plain", "slave_3": "ii_plain", "slave_4": "ii_plain"},
+            existing_rooms_by_slave={
+                3: {"key": "slave_3", "name": "Unit 1"},
+                4: {"key": "slave_4", "name": "Unit 2"},
+            },
+        )
+
+        assert [room["name"] for room in rooms] == ["Unit 3", "Unit 1", "Unit 2"]
 
     def test_build_rooms_from_profiles_generates_unique_keys_for_new_rooms(self) -> None:
         selected_profiles = {
@@ -1171,10 +1230,10 @@ class TestConfigFlowHelpers:
         assert [room["key"] for room in rooms] == ["slave_3", "slave_3_2"]
 
     async def test_failed_probe_leaves_the_unit_plain_without_preview(self) -> None:
-        async def _probe(slave: int) -> tuple[str, str | None, list[str]]:
+        async def _probe(slave: int) -> tuple[str, str | None]:
             if slave == 3:
                 raise MeltemModbusError("no answer")
-            return "f", f"ID {slave}", ["level"]
+            return "f", f"ID {slave}"
 
         previews, profiles = await _async_probe_units([2, 3], _probe)
 
@@ -1205,7 +1264,7 @@ class TestCoordinator:
 
         details = await coordinator.async_probe_slave_details(4)
 
-        assert details == ("plain", "ID 4", ["level"])
+        assert details == ("plain", "ID 4")
         assert client.probe_calls == [4]
 
     async def test_async_set_level_writes_without_forced_refresh(
@@ -1264,7 +1323,7 @@ class TestCoordinator:
 
         await coordinator.async_activate_intensive("unit_1")
 
-        confirmation = coordinator._write_confirmations["unit_1"]["intensive"]
+        confirmation = coordinator._writes.by_room["unit_1"]["intensive"]
         assert confirmation.status == "unverifiable"
         assert coordinator.data_health_stale("unit_1") is False
 
@@ -1277,7 +1336,7 @@ class TestCoordinator:
 
         await coordinator.async_activate_intensive("unit_1")
 
-        confirmation = coordinator._write_confirmations["unit_1"]["intensive"]
+        confirmation = coordinator._writes.by_room["unit_1"]["intensive"]
         assert confirmation.status == "confirmed"
 
     async def test_async_deactivate_intensive_clears_only_the_override(
@@ -1292,7 +1351,7 @@ class TestCoordinator:
         assert client.clear_intensive_calls == ["unit_1"]
         assert client.write_preset_mode_calls == []
         assert coordinator.safe_data["unit_1"].intensive_active is False
-        confirmation = coordinator._write_confirmations["unit_1"]["intensive"]
+        confirmation = coordinator._writes.by_room["unit_1"]["intensive"]
         assert confirmation.status == "confirmed"
 
     async def test_control_setting_keeps_confirmed_value_until_readback(
@@ -1316,7 +1375,7 @@ class TestCoordinator:
         assert observed_during_settle == [50]
         assert coordinator.safe_data["unit_1"].humidity_starting_point == 70
         assert (
-            coordinator._write_confirmations["unit_1"][_HUMIDITY_START_WRITE].status
+            coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE].status
             == "confirmed"
         )
         assert client.write_control_setting_calls == [
@@ -1328,7 +1387,7 @@ class TestCoordinator:
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_F])
         started_at = dt_util.utcnow()
-        coordinator._write_confirmations["unit_1"] = {
+        coordinator._writes.by_room["unit_1"] = {
             _HUMIDITY_START_WRITE: WriteConfirmation(expected_value=70, started_at=started_at)
         }
         state = RoomState(
@@ -1338,7 +1397,7 @@ class TestCoordinator:
 
         coordinator._confirm_pending_writes({"unit_1": state})
 
-        confirmation = coordinator._write_confirmations["unit_1"][_HUMIDITY_START_WRITE]
+        confirmation = coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE]
         assert confirmation.status == "pending"
         assert confirmation.actual_value is None
 
@@ -1349,7 +1408,7 @@ class TestCoordinator:
         coordinator._confirm_pending_writes({"unit_1": state})
 
         assert (
-            coordinator._write_confirmations["unit_1"][_HUMIDITY_START_WRITE].status
+            coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE].status
             == "confirmed"
         )
 
@@ -1358,7 +1417,7 @@ class TestCoordinator:
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_F])
         started_at = dt_util.utcnow()
-        coordinator._write_confirmations["unit_1"] = {
+        coordinator._writes.by_room["unit_1"] = {
             _HUMIDITY_START_WRITE: WriteConfirmation(
                 expected_value=70,
                 started_at=started_at,
@@ -1373,7 +1432,7 @@ class TestCoordinator:
 
         coordinator._confirm_pending_writes({"unit_1": state})
 
-        confirmation = coordinator._write_confirmations["unit_1"][_HUMIDITY_START_WRITE]
+        confirmation = coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE]
         assert confirmation.status == "confirmed"
         assert confirmation.actual_value == 70
 
@@ -1383,13 +1442,13 @@ class TestCoordinator:
         coordinator, _ = _build_coordinator(hass, [_UNIT_F])
         coordinator.data = {"unit_1": RoomState(humidity_starting_point=50)}
         now = dt_util.utcnow()
-        coordinator._write_confirmations["unit_1"] = {
+        coordinator._writes.by_room["unit_1"] = {
             _HUMIDITY_START_WRITE: WriteConfirmation(expected_value=70, started_at=now)
         }
 
         assert coordinator.data_health_stale("unit_1") is False
 
-        coordinator._write_confirmations["unit_1"][_HUMIDITY_START_WRITE] = WriteConfirmation(
+        coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE] = WriteConfirmation(
             expected_value=70,
             started_at=now - timedelta(seconds=WRITE_CONFIRMATION_TIMEOUT_SECONDS + 1),
         )
@@ -1409,7 +1468,7 @@ class TestCoordinator:
 
         assert coordinator.safe_data["unit_1"].humidity_starting_point == 50
         assert (
-            coordinator._write_confirmations["unit_1"][_HUMIDITY_START_WRITE].status
+            coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE].status
             == "unconfirmed"
         )
 
@@ -1433,6 +1492,36 @@ class TestCoordinator:
 
         assert observed_during_settle == [10]
         assert coordinator.safe_data["unit_1"].humidity_min_level == 20
+
+    @pytest.mark.parametrize(
+        ("state", "setting_key", "value"),
+        [
+            (RoomState(humidity_max_level=50), "humidity_min_level", 60),
+            (RoomState(humidity_min_level=50), "humidity_max_level", 40),
+        ],
+        ids=("minimum-above-maximum", "maximum-below-minimum"),
+    )
+    async def test_an_inverted_level_range_is_refused(
+        self, hass: HomeAssistant, state: RoomState, setting_key: str, value: int
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_F])
+        coordinator.data = {"unit_1": state}
+
+        with pytest.raises(HomeAssistantError) as err:
+            await coordinator.async_set_control_setting("unit_1", setting_key, value)
+
+        assert err.value.translation_key == "control_level_range"
+        assert client.write_control_setting_calls == []
+
+    async def test_levels_are_compared_after_rounding_to_the_register_step(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_F])
+        coordinator.data = {"unit_1": RoomState(humidity_max_level=50)}
+
+        await coordinator.async_set_control_setting("unit_1", "humidity_min_level", 54)
+
+        assert client.write_control_setting_calls == [("unit_1", "humidity_min_level", 54)]
 
     def test_build_jobs_only_includes_relevant_groups(
         self, hass: HomeAssistant,
@@ -1475,7 +1564,7 @@ class TestCoordinator:
             PollJob("flow", "unit_1", RefreshPlan.only(refresh_airflow=True), 10, 5.0),
         ]
 
-        selected = coordinator._select_due_job(10.0)
+        selected = select_due_job(coordinator._jobs, 10.0)
 
         assert selected is not None
         assert selected.key == "flow"
@@ -1547,7 +1636,7 @@ class TestOptionsFlow:
         assert result["type"] == "menu"
         assert result["step_id"] == "init"
         assert set(result["menu_options"]) == {
-            "edit_connection",
+            "edit_request_rate",
             "edit_profiles",
             "rescan_units",
         }
@@ -1557,7 +1646,7 @@ class TestOptionsFlow:
     ) -> None:
         flow = self._build_flow(hass)
         flow._coordinator.client.probe_slave_details = AsyncMock(  # type: ignore[union-attr]
-            side_effect=lambda slave: ("f", f"ID {slave}", ["level"])
+            side_effect=lambda slave: ("f", f"ID {slave}")
         )
 
         result = await flow.async_step_rescan_units({})
@@ -1618,7 +1707,5 @@ class TestOptionsFlow:
         assert result["type"] == "create_entry"
         room = update_entry.call_args.kwargs["data"][CONF_ROOMS][0]
         assert room["profile"] == "ii_f"
-        assert {"humidity_extract_air", "supply_level", "extract_level"} <= set(
-            room["supported_entity_keys"]
-        )
+        assert "supported_entity_keys" not in room
         reload.assert_awaited_once_with("entry-1")

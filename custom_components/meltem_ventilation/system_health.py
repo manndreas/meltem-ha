@@ -7,8 +7,9 @@ from typing import Any
 from homeassistant.components import system_health
 from homeassistant.core import HomeAssistant, callback
 
-from .const import DOMAIN
+from .const import CONF_PORT, DOMAIN
 from .coordinator import MeltemDataUpdateCoordinator
+from .diagnostics import redact_port
 from .models import MeltemRuntimeData
 
 
@@ -35,15 +36,17 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
 
     runtime_data: MeltemRuntimeData = entries[0].runtime_data
     coordinator = runtime_data.coordinator
+    last_job_error = coordinator.last_job_error
 
     return {
         "loaded_entries": 1,
         "configured_units": len(coordinator.rooms),
         "state_units": coordinator.state_room_count,
         "last_update_success": coordinator.last_update_success,
+        # The page is often pasted into issues, and by-id paths carry serial numbers.
         "last_job_error": (
-            str(coordinator.last_job_error)
-            if coordinator.last_job_error is not None
+            redact_port(str(last_job_error), str(entries[0].data[CONF_PORT]))
+            if last_job_error is not None
             else "none"
         ),
         "unavailable_units": ", ".join(

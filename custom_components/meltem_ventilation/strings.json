@@ -9,6 +9,13 @@
           "port": "Serial port"
         }
       },
+      "reconfigure": {
+        "title": "Change serial port",
+        "description": "Update the serial port of the M-WRG-GW gateway. The integration reloads afterwards.",
+        "data": {
+          "port": "Serial port"
+        }
+      },
       "confirm_usb": {
         "title": "Discovered Meltem Modbus gateway",
         "description": "Home Assistant found a USB device on {port} ({manufacturer}, {description}). An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB.",
@@ -52,18 +59,17 @@
     "step": {
       "init": {
         "title": "Configure Meltem Modbus",
-        "description": "Choose whether to change the serial connection settings, update profiles for existing units, or scan for new units.",
+        "description": "Choose whether to change the request rate, update profiles for existing units, or scan for new units.",
         "menu_options": {
-          "edit_connection": "Change serial connection",
+          "edit_request_rate": "Change request rate",
           "edit_profiles": "Change profiles for existing units",
           "rescan_units": "Scan for new units"
         }
       },
-      "edit_connection": {
-        "title": "Change serial connection",
-        "description": "Update the serial device path and the maximum request rate for the Meltem gateway.",
+      "edit_request_rate": {
+        "title": "Change request rate",
+        "description": "Set how many poll jobs per second the integration may start on the gateway. One job can contain several Modbus requests. To change the serial port, reconfigure the integration.",
         "data": {
-          "port": "Serial port",
           "max_requests_per_second": "Maximum requests per second"
         }
       },
@@ -116,9 +122,7 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to the Meltem gateway.",
-      "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant.",
-      "port_in_use": "Another integration already uses this serial port with different serial settings.",
-      "unknown": "Unexpected error. Check the Home Assistant log for details."
+      "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant."
     }
   },
   "triggers": {
@@ -285,6 +289,9 @@
     },
     "airflow_unknown": {
       "message": "The current airflow of {unit} is unknown, so the operating mode cannot be changed without guessing a level. Set the airflow with the fan entities instead."
+    },
+    "control_level_range": {
+      "message": "The minimum level ({minimum} %) of {unit} must not be above its maximum level ({maximum} %)."
     }
   }
 }

@@ -15,7 +15,9 @@ from .models import MeltemRuntimeData, RoomConfig, RoomState
 TO_REDACT: set[str] = {CONF_PORT}
 
 
-def _redact_port(message: str | None, port: str) -> str | None:
+def redact_port(message: str | None, port: str) -> str | None:
+    """Replace the serial port path in an error message."""
+
     return message.replace(port, REDACTED) if message and port else message
 
 
@@ -46,7 +48,7 @@ def _serialize_room(room: RoomConfig) -> dict[str, Any]:
 def _serialize_room_state(state: RoomState, port: str) -> dict[str, Any]:
     data = asdict(state)
     for _group_key, health in data["group_read_health"]:
-        health["last_error"] = _redact_port(health["last_error"], port)
+        health["last_error"] = redact_port(health["last_error"], port)
     return data
 
 
@@ -68,7 +70,7 @@ async def async_get_config_entry_diagnostics(
         gateway_units = await coordinator.async_discover_gateway_units()
     except Exception as err:
         # A gateway that is down must not break the diagnostics download.
-        gateway_probe_error = _redact_port(f"{type(err).__name__}: {err}", port)
+        gateway_probe_error = redact_port(f"{type(err).__name__}: {err}", port)
 
     last_job_error = coordinator.last_job_error
     return {
@@ -86,7 +88,7 @@ async def async_get_config_entry_diagnostics(
             "gateway_probe_error": gateway_probe_error,
             "transport": coordinator.client.transport_diagnostics(),
             "last_job_error": (
-                _redact_port(str(last_job_error), port)
+                redact_port(str(last_job_error), port)
                 if last_job_error is not None
                 else None
             ),
