@@ -2,45 +2,81 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.service_info.usb import UsbServiceInfo
+from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
+from modbus_connection.mock import MockModbusConnection
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import (
     CONF_MAX_REQUESTS_PER_SECOND,
     CONF_PORT,
     CONF_ROOMS,
+    DEFAULT_GATEWAY_DEVICE_ID,
     DEFAULT_MAX_REQUESTS_PER_SECOND,
     DOMAIN,
+    FIXED_TIMEOUT,
+    REQUEST_GAP_SECONDS,
 )
-from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
+from custom_components.meltem_ventilation.modbus_helpers import (
+    MeltemConnectionError,
+)
 
 # ---------------------------------------------------------------------------
 #  Helpers
 # ---------------------------------------------------------------------------
 
 _PATCHES_BASE = "custom_components.meltem_ventilation.config_flow"
-_PATCHES_HELPERS = "custom_components.meltem_ventilation.modbus_helpers"
+
+
+@pytest.fixture(autouse=True, name="gateway_link")
+def gateway_link_fixture() -> Iterator[MockModbusConnection]:
+    """Serve the flow's temporary units from memory instead of a serial port."""
+
+    connection = MockModbusConnection()
+
+    @asynccontextmanager
+    async def _temporary_unit(hass, params, unit_id):
+        yield connection.for_unit(unit_id)
+
+    with patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=_temporary_unit):
+        yield connection
 
 
 def _patch_validate_ok():
-    return patch(f"{_PATCHES_BASE}.validate_serial_connection")
+    return patch(
+        f"{_PATCHES_BASE}.read_gateway_node_count", new=AsyncMock(return_value=1)
+    )
 
 
 def _patch_scan(slaves: list[int]):
-    return patch(f"{_PATCHES_BASE}.scan_available_slaves", return_value=slaves)
+    return patch(
+        f"{_PATCHES_BASE}.discover_gateway_nodes",
+        new=AsyncMock(return_value=slaves),
+    )
+
+
+def _patch_scan_error(error: Exception):
+    return patch(
+        f"{_PATCHES_BASE}.discover_gateway_nodes",
+        new=AsyncMock(side_effect=error),
+    )
 
 
 def _patch_detect(profile="plain", preview="ID 2 | basic", keys=None):
     keys = keys or ["level", "extract_air_flow", "supply_air_flow"]
     return patch(
         f"{_PATCHES_BASE}.detect_slave_details",
-        return_value=(profile, preview, keys),
+        new=AsyncMock(return_value=(profile, preview, keys)),
     )
 
 
@@ -65,10 +101,7 @@ class TestConfigFlowUser:
         self, hass: HomeAssistant
     ) -> None:
         with (
-            patch(
-                f"{_PATCHES_BASE}.validate_serial_connection",
-                side_effect=MeltemModbusError("fail"),
-            ),
+            _patch_scan_error(MeltemConnectionError("fail")),
             _patch_resolve(),
         ):
             result = await hass.config_entries.flow.async_init(
@@ -88,10 +121,7 @@ class TestConfigFlowUser:
         self, hass: HomeAssistant
     ) -> None:
         with (
-            patch(
-                f"{_PATCHES_BASE}.validate_serial_connection",
-                side_effect=ValueError("invalid port"),
-            ),
+            _patch_scan_error(ValueError("invalid port")),
             _patch_resolve(),
         ):
             result = await hass.config_entries.flow.async_init(
@@ -149,6 +179,58 @@ class TestConfigFlowUser:
 
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "profiles"
+
+    async def test_user_step_reads_the_gateway_and_probes_each_unit(
+        self, hass: HomeAssistant, gateway_link: MockModbusConnection
+    ) -> None:
+        gateway = gateway_link.for_unit(DEFAULT_GATEWAY_DEVICE_ID)
+        gateway.holding.update({43901: 2, 43902: [2, 3]})
+        co2_unit = gateway_link.for_unit(2)
+        # Product ID 116852 as a little-endian uint32, then humidity and CO2.
+        co2_unit.holding.update(
+            {40002: [116852 & 0xFFFF, 116852 >> 16], 41006: 45, 41007: 800, 41011: 50}
+        )
+        co2_unit.fail_read(41013, IllegalDataAddressError())
+        gateway_link.for_unit(3).fail_requests(ModbusTimeoutError("silent"))
+
+        with _patch_resolve():
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": config_entries.SOURCE_USER}
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {CONF_PORT: "/dev/ttyACM0"}
+            )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "profiles"
+        assert list(result["data_schema"].schema.keys()) == ["slave_2", "slave_3"]
+        details = result["description_placeholders"]["unit_details"]
+        assert "ID 116852 | CO2" in details
+        for unit in (gateway, co2_unit):
+            assert unit.required_timeout == FIXED_TIMEOUT
+            assert unit.message_spacing == REQUEST_GAP_SECONDS
+
+    async def test_user_step_port_held_with_other_settings_shows_cannot_connect(
+        self, hass: HomeAssistant
+    ) -> None:
+        @asynccontextmanager
+        async def _conflicting_unit(hass, params, unit_id):
+            raise HomeAssistantError("already in use with different link settings")
+            yield  # pragma: no cover
+
+        with (
+            patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=_conflicting_unit),
+            _patch_resolve(),
+        ):
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": config_entries.SOURCE_USER}
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {CONF_PORT: "/dev/ttyACM0"}
+            )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "cannot_connect"}
 
 
 # ---------------------------------------------------------------------------
@@ -303,10 +385,7 @@ class TestConfigFlowProfiles:
             description="Modbus",
         )
 
-        with patch(
-            f"{_PATCHES_BASE}.validate_serial_connection",
-            side_effect=MeltemModbusError("fail"),
-        ):
+        with _patch_scan_error(MeltemConnectionError("fail")):
             result = await hass.config_entries.flow.async_init(
                 DOMAIN,
                 context={"source": config_entries.SOURCE_USB},
@@ -494,7 +573,8 @@ class TestOptionsFlow:
         )()
 
         with patch(
-            "custom_components.meltem_ventilation.config_flow.validate_serial_connection"
+            "custom_components.meltem_ventilation.config_flow.read_gateway_node_count",
+            new=AsyncMock(return_value=1),
         ) as validate_connection, patch(
             "custom_components.meltem_ventilation.config_flow.resolve_preferred_port_path",
             side_effect=lambda port: (
@@ -518,7 +598,7 @@ class TestOptionsFlow:
         assert entry.data[CONF_PORT] == "/dev/serial/by-id/new-port"
         assert entry.unique_id == "/dev/serial/by-id/new-port"
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
-        validate_connection.assert_called_once()
+        validate_connection.assert_awaited_once()
 
     async def test_options_edit_connection_ignores_an_equivalent_port_path(
         self, hass: HomeAssistant
@@ -533,7 +613,8 @@ class TestOptionsFlow:
         entry.runtime_data = type("RuntimeData", (), {"coordinator": coordinator})()
 
         with patch(
-            "custom_components.meltem_ventilation.config_flow.validate_serial_connection"
+            "custom_components.meltem_ventilation.config_flow.read_gateway_node_count",
+            new=AsyncMock(return_value=1),
         ) as validate_connection, patch(
             "custom_components.meltem_ventilation.config_flow.resolve_preferred_port_path",
             return_value="/dev/serial/by-id/test",

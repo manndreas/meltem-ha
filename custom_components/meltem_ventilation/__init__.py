@@ -5,6 +5,8 @@ This module keeps the config-entry setup path intentionally small:
 - derive each configured room's entities from its profile
 - create one shared Modbus client and one shared coordinator
 
+The serial link itself belongs to Home Assistant's ``modbus`` integration,
+which hands out units over a connection shared with any other integration.
 All actual Modbus traffic stays in ``modbus_client.py`` and all polling
 decisions stay in ``coordinator.py``.
 """
@@ -13,12 +15,18 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
+from homeassistant.components.modbus import async_get_unit
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import (
+    ConfigEntryError,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+)
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -30,11 +38,6 @@ from .const import (
     DEFAULT_MAX_REQUESTS_PER_SECOND,
     DOMAIN,
     ENTITY_PLATFORM_BY_KEY,
-    FIXED_BAUDRATE,
-    FIXED_BYTESIZE,
-    FIXED_PARITY,
-    FIXED_STOPBITS,
-    FIXED_TIMEOUT,
     GATEWAY_NAME,
     HUMIDITY_PROFILES,
     PLATFORMS,
@@ -43,7 +46,7 @@ from .coordinator import MeltemDataUpdateCoordinator
 from .modbus_client import MeltemModbusClient
 from .modbus_helpers import (
     MeltemModbusError,
-    SerialSettings,
+    build_serial_params,
     resolve_preferred_port_path,
     supported_entity_keys_for_profile,
 )
@@ -137,7 +140,7 @@ def _async_sync_devices(
 
     registry = dr.async_get(hass)
     gateway_identifier = (DOMAIN, entry.entry_id)
-    # Unit devices reference the gateway via ``via_device``, so it must exist first.
+    # Unit devices reference the gateway via ``via_device_id``, so it must exist first.
     registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={gateway_identifier},
@@ -150,7 +153,7 @@ def _async_sync_devices(
         if device.identifiers & configured:
             continue
         _LOGGER.info("Removing device of unconfigured Meltem unit %s", device.name)
-        registry.async_update_device(device.id, remove_config_entry_id=entry.entry_id)
+        registry.async_remove_device(device.id)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -168,14 +171,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             unique_id=normalized_port,
         )
 
-    settings = SerialSettings(
-        port=normalized_port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
-        timeout=float(FIXED_TIMEOUT),
-    )
     rooms = [
         RoomConfig(
             key=room["key"],
@@ -205,31 +200,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _async_remove_unsupported_entities(hass, entry, rooms)
     _async_sync_devices(hass, entry, rooms)
 
-    # All entities for one config entry share one serial client so the gateway
-    # only ever sees one active connection from Home Assistant.
-    client = MeltemModbusClient(settings)
+    # All rooms share one client, and the client asks Home Assistant's modbus
+    # integration for its units, so the gateway only ever sees one connection.
+    client = MeltemModbusClient(
+        partial(async_get_unit, hass, entry, build_serial_params(normalized_port)),
+        port=normalized_port,
+    )
     try:
-        await hass.async_add_executor_job(client.ensure_connected)
-
-        coordinator = MeltemDataUpdateCoordinator(
-            hass,
-            config_entry=entry,
-            client=client,
-            rooms=rooms,
-            max_requests_per_second=max_requests_per_second,
-        )
-        entry.runtime_data = MeltemRuntimeData(coordinator=coordinator)
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        await client.async_validate_gateway()
     except MeltemModbusError as err:
-        # The serial port stays locked otherwise and reloads would fail.
-        await hass.async_add_executor_job(client.shutdown)
-        if hasattr(entry, "runtime_data"):
-            object.__delattr__(entry, "runtime_data")
+        client.shutdown()
         raise ConfigEntryNotReady(str(err)) from err
+    except HomeAssistantError as err:
+        # Another integration already uses this port with other link settings.
+        client.shutdown()
+        raise ConfigEntryError(str(err)) from err
+
+    coordinator = MeltemDataUpdateCoordinator(
+        hass,
+        config_entry=entry,
+        client=client,
+        rooms=rooms,
+        max_requests_per_second=max_requests_per_second,
+    )
+    entry.runtime_data = MeltemRuntimeData(coordinator=coordinator)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:
-        await hass.async_add_executor_job(client.shutdown)
-        if hasattr(entry, "runtime_data"):
-            object.__delattr__(entry, "runtime_data")
+        client.shutdown()
+        object.__delattr__(entry, "runtime_data")
         raise
 
     entry.async_create_background_task(
@@ -245,7 +244,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         runtime_data: MeltemRuntimeData = entry.runtime_data
         await runtime_data.coordinator.async_shutdown()
-        # A pending write readback must not reopen the port the next entry needs.
-        await hass.async_add_executor_job(runtime_data.coordinator.client.shutdown)
+        # A pending write readback must not reach the link after unloading;
+        # the modbus integration closes the link once the entry releases it.
+        runtime_data.coordinator.client.shutdown()
 
     return unload_ok

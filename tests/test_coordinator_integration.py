@@ -48,7 +48,7 @@ class _FakeClient:
         self.next_read_state = RoomState(target_level=42)
         self._fail_rooms: set[str] = set()
 
-    def read_room_state(
+    async def read_room_state(
         self,
         room: RoomConfig,
         previous_state: RoomState,
@@ -59,28 +59,28 @@ class _FakeClient:
             raise MeltemModbusError(f"boom: {room.key}")
         return self.next_read_state
 
-    def write_level(self, room: RoomConfig, level: int) -> None:
+    async def write_level(self, room: RoomConfig, level: int) -> None:
         self.write_level_calls.append((room.key, level))
 
-    def write_unbalanced_levels(
+    async def write_unbalanced_levels(
         self, room: RoomConfig, supply_level: int, extract_level: int
     ) -> None:
         self.write_unbalanced_calls.append((room.key, supply_level, extract_level))
 
-    def write_preset_mode(
+    async def write_preset_mode(
         self,
         room: RoomConfig,
         preset_mode: str,
     ) -> None:
         self.write_preset_mode_calls.append((room.key, preset_mode))
 
-    def close(self) -> None:
+    def shutdown(self) -> None:
         self.close_calls += 1
 
-    def discover_gateway_units(self, start: int, end: int) -> list[int]:
+    async def discover_gateway_units(self, start: int, end: int) -> list[int]:
         return [2, 3]
 
-    def probe_slave_details(self, slave: int):
+    async def probe_slave_details(self, slave: int):
         return ("plain", None, ["level"])
 
     def seconds_since_successful_read(self, slave: int) -> float | None:
@@ -120,7 +120,7 @@ class TestFirstRefresh:
         coordinator, client = _build(hass, rooms=[_ROOM_1, _ROOM_2])
         client.next_read_state = RoomState(target_level=42)
 
-        data = await hass.async_add_executor_job(coordinator._read_all_rooms_full)
+        data = await coordinator._read_all_rooms_full()
 
         assert "unit_1" in data
         assert "unit_2" in data
@@ -139,10 +139,8 @@ class TestFirstRefresh:
         client._fail_rooms = {"unit_1"}
         client.next_read_state = RoomState(target_level=50)
 
-        with patch("custom_components.meltem_ventilation.coordinator.sync_sleep"):
-            data = await hass.async_add_executor_job(
-                coordinator._read_all_rooms_full
-            )
+        with patch("custom_components.meltem_ventilation.coordinator.async_sleep"):
+            data = await coordinator._read_all_rooms_full()
 
         # Failed rooms keep empty values while recording the affected groups.
         failed_state = data["unit_1"]
@@ -170,12 +168,10 @@ class TestFirstRefresh:
         client._fail_rooms = {"unit_1"}
 
         with (
-            patch("custom_components.meltem_ventilation.coordinator.sync_sleep"),
+            patch("custom_components.meltem_ventilation.coordinator.async_sleep"),
             pytest.raises(MeltemModbusError),
         ):
-            await hass.async_add_executor_job(
-                coordinator._read_all_rooms_full
-            )
+            await coordinator._read_all_rooms_full()
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +332,7 @@ class TestCoordinatorFailureHandling:
         client._fail_rooms = {"unit_1", "unit_2"}
 
         with (
-            patch("custom_components.meltem_ventilation.coordinator.sync_sleep"),
+            patch("custom_components.meltem_ventilation.coordinator.async_sleep"),
             pytest.raises(UpdateFailed),
         ):
             await coordinator._async_update_data()
@@ -485,7 +481,7 @@ class TestPostWriteRefresh:
 
 
 class TestReadOneJob:
-    def test_successful_read_merges_state(
+    async def test_successful_read_merges_state(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass, rooms=[_ROOM_1, _ROOM_2])
@@ -498,12 +494,12 @@ class TestReadOneJob:
             "flow", "unit_1", RefreshPlan.only(refresh_airflow=True), 10, 0.0
         )
 
-        result = coordinator._read_one_job(previous, job)
+        result = await coordinator._read_one_job(previous, job)
 
         assert result["unit_1"].target_level == 77
         assert result["unit_2"].target_level == 20
 
-    def test_failed_read_preserves_previous(
+    async def test_failed_read_preserves_previous(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
@@ -513,12 +509,12 @@ class TestReadOneJob:
             "flow", "unit_1", RefreshPlan.only(refresh_airflow=True), 10, 0.0
         )
 
-        result = coordinator._read_one_job(previous, job)
+        result = await coordinator._read_one_job(previous, job)
 
         assert result["unit_1"].target_level == 55
         assert result["unit_1"].read_health_for("flow").consecutive_failures == 1
 
-    def test_failed_status_job_only_increments_status_health(
+    async def test_failed_status_job_only_increments_status_health(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
@@ -535,7 +531,7 @@ class TestReadOneJob:
             "status", "unit_1", RefreshPlan.only(refresh_status=True), 60, 0.0
         )
 
-        result = coordinator._read_one_job(previous, job)
+        result = await coordinator._read_one_job(previous, job)
         state = result["unit_1"]
 
         assert state.read_health_for("flow") == flow_health
@@ -574,7 +570,7 @@ class TestReadOneJob:
         ],
         ids=("flow", "status", "temperature", "filter", "hours", "control-settings"),
     )
-    def test_each_read_group_failure_is_isolated_and_recovers(
+    async def test_each_read_group_failure_is_isolated_and_recovers(
         self,
         hass: HomeAssistant,
         job_key: str,
@@ -608,7 +604,9 @@ class TestReadOneJob:
         job = PollJob(job_key, room.key, refresh_plan, 60, 0.0)
         client._fail_rooms = {room.key}
 
-        failed_states = coordinator._read_one_job({room.key: previous_state}, job)
+        failed_states = await coordinator._read_one_job(
+            {room.key: previous_state}, job
+        )
         failed_state = failed_states[room.key]
 
         assert failed_state.target_level == 55
@@ -631,7 +629,7 @@ class TestReadOneJob:
             )
         client.next_read_state = recovered_state
 
-        recovered_states = coordinator._read_one_job(failed_states, job)
+        recovered_states = await coordinator._read_one_job(failed_states, job)
         recovered_state = recovered_states[room.key]
 
         for group_key in read_groups:
@@ -642,7 +640,7 @@ class TestReadOneJob:
         assert recovered_state.read_health_for(neighbor_group) == neighbor_health
         assert recovered_state.target_level == 55
 
-    def test_repeated_failed_flow_reads_mark_airflow_stale(
+    async def test_repeated_failed_flow_reads_mark_airflow_stale(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
@@ -653,7 +651,7 @@ class TestReadOneJob:
         )
 
         for _ in range(3):
-            state_map = coordinator._read_one_job(state_map, job)
+            state_map = await coordinator._read_one_job(state_map, job)
 
         state = state_map["unit_1"]
         coordinator.data = state_map
@@ -661,7 +659,7 @@ class TestReadOneJob:
         assert coordinator.read_group_stale("unit_1", "flow") is True
         assert coordinator.read_group_available("unit_1", "flow") is False
 
-    def test_other_job_success_does_not_clear_airflow_failures(
+    async def test_other_job_success_does_not_clear_airflow_failures(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
@@ -681,7 +679,7 @@ class TestReadOneJob:
             "status", "unit_1", RefreshPlan.only(refresh_status=True), 60, 0.0
         )
 
-        result = coordinator._read_one_job({"unit_1": previous}, job)
+        result = await coordinator._read_one_job({"unit_1": previous}, job)
 
         assert result["unit_1"].read_health_for("flow").consecutive_failures == 2
 

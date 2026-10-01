@@ -3,28 +3,34 @@
 This module contains only the long-lived :class:`MeltemModbusClient` that the
 coordinator uses for all reads and writes during normal operation.
 
-Setup-time helpers (serial-settings builders, scans, profile probes, and pure
-utility functions) live in ``modbus_helpers.py``.
+The register blocks live in ``device/``. Setup-time helpers (link parameters,
+scans, profile probes, and pure utility functions) live in ``modbus_helpers.py``.
 """
 
 from __future__ import annotations
 
 import math
-import struct
-import threading
 import time
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
+from typing import Any
 
 from homeassistant.util import dt as dt_util
-from pymodbus.client import ModbusSerialClient
-from pymodbus.exceptions import ConnectionException, ModbusIOException
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusError,
+    ModbusTimeoutError,
+    ModbusUnit,
+)
+from modbus_connection.model import Component
 
 from .const import (
     APP_UNBALANCED_PRESET_BASE,
     CO2_PROFILES,
     CONTROL_SETTING_LIMITS,
     CONTROL_SETTING_REGISTERS,
+    DEFAULT_GATEWAY_DEVICE_ID,
     HUMIDITY_PROFILES,
     MODE_MANUAL,
     MODE_OFF,
@@ -43,48 +49,23 @@ from .const import (
     RAW_VALUE_TO_SENSOR_MODE,
     READ_FAILURE_THRESHOLD,
     READ_GROUP_ENTITY_KEYS,
-    REGISTER_APPLY,
-    REGISTER_CO2_EXTRACT_AIR,
-    REGISTER_CURRENT_LEVEL,
-    REGISTER_DAYS_UNTIL_FILTER_CHANGE,
-    REGISTER_ERROR_STATUS,
-    REGISTER_EXHAUST_AIR_TEMPERATURE,
-    REGISTER_EXTRACT_AIR_FLOW,
-    REGISTER_EXTRACT_AIR_TARGET_LEVEL,
-    REGISTER_EXTRACT_AIR_TEMPERATURE,
-    REGISTER_FILTER_CHANGE_DUE,
-    REGISTER_FROST_PROTECTION_ACTIVE,
-    REGISTER_HUMIDITY_EXTRACT_AIR,
-    REGISTER_HUMIDITY_STARTING_POINT,
-    REGISTER_HUMIDITY_SUPPLY_AIR,
-    REGISTER_MODE,
-    REGISTER_OPERATING_HOURS,
-    REGISTER_OUTDOOR_AIR_TEMPERATURE,
-    REGISTER_PRESET_MODE,
-    REGISTER_PRESET_VALUE,
-    REGISTER_RF_COMM_STATUS,
-    REGISTER_SOFTWARE_VERSION,
-    REGISTER_SUPPLY_AIR_FLOW,
-    REGISTER_SUPPLY_AIR_TEMPERATURE,
-    REGISTER_VOC_SUPPLY_AIR,
-    REQUEST_GAP_SECONDS,
     SENSOR_MODE_TO_RAW_VALUE,
     SENSOR_OPERATION_MODES,
     VOC_PROFILES,
     profile_max_airflow,
 )
+from .device import MeltemRoomDevice, PolicyUnit
 from .modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
-    SerialSettings,
-    build_client,
     derive_balanced_airflow,
-    detect_slave_details_with_client,
+    detect_slave_details,
     discover_gateway_nodes,
+    new_transport_policy,
+    prepare_unit,
+    read_gateway_node_count,
 )
 from .models import ReadHealth, RefreshPlan, RoomConfig, RoomState
-
-sync_sleep = time.sleep
 
 
 def _to_optional_bool(value: int | bool | None) -> bool | None:
@@ -94,36 +75,13 @@ def _to_optional_bool(value: int | bool | None) -> bool | None:
     return bool(value) if value is not None else None
 
 
-# pyserial raises SerialException (an OSError) for port lock/IO problems.
-_RETRYABLE_EXCEPTIONS = (
-    ConnectionException,
-    ModbusIOException,
-    OSError,
-    TimeoutError,
-)
-
-# Fallback for libraries that raise plain exceptions with a descriptive message.
-_RETRYABLE_MESSAGE_MARKERS = (
-    "could not exclusively lock port",
-    "connection reset",
-    "broken pipe",
-    "resource temporarily unavailable",
-    "permission denied",
-    "device or resource busy",
-    "input/output error",
-    "i/o error",
-    "transport fail",
-    "timed out",
-    "timeout",
-    "no response received",
-)
-
 _OPTIONAL_READ_BACKOFF_START_SECONDS = 30.0
 _OPTIONAL_READ_BACKOFF_MAX_SECONDS = 300.0
 _OPTIONAL_READ_BACKOFF_MAX_FAILURES = 5
-# pymodbus resends every unanswered request 3 times by default. The client has
-# its own reconnecting retry, so a silent unit would otherwise cost ~8 timeouts.
-_PYMODBUS_RETRIES = 0
+
+# Mode-family components read on their own; they get a temporary backoff
+# because many units reject them until a first write (HW-4).
+_MODE_COMPONENTS = ("mode", "mode_short", "current_level", "extract_target_level")
 
 
 @dataclass(slots=True, frozen=True)
@@ -149,24 +107,34 @@ class _ModeGroup:
         )
 
 
-class MeltemModbusClient:
-    """Small synchronous wrapper around pymodbus.
+@dataclass(slots=True, frozen=True)
+class _DueRead:
+    """One component a job reads, and the health groups its outcome counts for."""
 
-    The client keeps one serial connection open for as long as it remains
-    usable. Reads and writes are serialized by the coordinator, and this class
-    adds one more thread-level lock so executor jobs cannot overlap either.
+    component: str
+    groups: tuple[str, ...]
+
+
+class MeltemModbusClient:
+    """Async access to every Meltem unit behind one gateway.
+
+    ``unit_factory`` hands out one ``ModbusUnit`` per Modbus address; all of
+    them share one retry policy. Reads and writes are serialized by the
+    coordinator, and the link serializes the requests themselves.
     """
 
-    def __init__(self, settings: SerialSettings) -> None:
-        self._settings = settings
-        self._client: ModbusSerialClient | None = None
-        self._lock = threading.RLock()
-        self._optional_read_backoff_until: dict[tuple[int, int, int], float] = {}
-        self._optional_read_failures: dict[tuple[int, int, int], int] = {}
-        self._optional_read_errors: dict[tuple[int, int, int], str] = {}
-        self._last_successful_read_by_slave: dict[int, float] = {}
+    def __init__(self, unit_factory: Callable[[int], ModbusUnit], *, port: str) -> None:
+        self._unit_factory = unit_factory
+        self._port = port
+        self._policy = new_transport_policy()
+        self._units: dict[int, PolicyUnit] = {}
+        self._devices: dict[int, MeltemRoomDevice] = {}
+        self._optional_read_backoff_until: dict[tuple[int, str], float] = {}
+        self._optional_read_failures: dict[tuple[int, str], int] = {}
+        self._optional_read_errors: dict[tuple[int, str], str] = {}
         self._read_group_errors: dict[str, str] = {}
         self._read_group_skipped: set[str] = set()
+        self._unit_silent_error: ModbusError | None = None
         self._shut_down = False
 
     def seconds_since_successful_read(self, slave: int) -> float | None:
@@ -176,75 +144,85 @@ class MeltemModbusClient:
         signal that a unit behind the gateway went silent.
         """
 
-        last_read = self._last_successful_read_by_slave.get(slave)
-        if last_read is None:
-            return None
-        return time.monotonic() - last_read
-
-    def close(self) -> None:
-        """Close the underlying serial client."""
-
-        with self._lock:
-            if self._client is not None:
-                self._client.close()
-                self._client = None
-
-    def ensure_connected(self) -> None:
-        """Open the serial connection, raising ``MeltemModbusError`` on failure."""
-
-        with self._lock:
-            self._ensure_client()
+        return self._policy.seconds_since_read_answer(slave)
 
     def shutdown(self) -> None:
-        """Close the connection for good, so late operations cannot reopen the port."""
+        """Reject every later operation, so a late readback cannot reach the link."""
 
-        with self._lock:
-            self._shut_down = True
-            self.close()
+        self._shut_down = True
 
-    @contextmanager
-    def _gateway_operation(self, description: str):
-        """Serialize one gateway operation and drop the connection on failure.
+    def _unit(self, slave: int) -> PolicyUnit:
+        unit = self._units.get(slave)
+        if unit is None:
+            unit = self._units[slave] = prepare_unit(
+                self._unit_factory(slave), slave, self._policy
+            )
+        return unit
 
-        Leaving a half-broken serial client behind makes every following
-        operation fail, so any error closes it.
-        """
+    def _room_device(self, room: RoomConfig) -> MeltemRoomDevice:
+        device = self._devices.get(room.slave)
+        if device is None:
+            device = self._devices[room.slave] = MeltemRoomDevice(
+                self._unit(room.slave),
+                exhaust_temperature_only=room.profile in PLAIN_PROFILES,
+            )
+        return device
 
+    @asynccontextmanager
+    async def _gateway_operation(self, description: str) -> AsyncIterator[None]:
+        """Run one gateway operation and translate its errors."""
+
+        if self._shut_down:
+            raise MeltemConnectionError(
+                f"Meltem gateway client on {self._port} was shut down"
+            )
         try:
-            with self._lock:
-                yield
+            yield
         except MeltemModbusError:
-            self.close()
             raise
+        except ModbusConnectionError as err:
+            raise MeltemConnectionError(
+                f"Lost the Meltem gateway on {self._port} while {description}: {err}"
+            ) from err
+        except ModbusError as err:
+            raise MeltemModbusError(f"Modbus error while {description}: {err}") from err
         except Exception as err:
-            self.close()
             raise MeltemModbusError(
                 f"Unexpected error while {description}: {err!r}"
             ) from err
 
-    def discover_gateway_units(self, start: int, end: int) -> list[int]:
-        """Discover configured unit addresses using the current gateway connection."""
+    async def async_validate_gateway(self) -> None:
+        """Read the gateway's node count once to prove the link works.
 
-        with self._lock:
-            client = self._ensure_client()
-            return discover_gateway_nodes(
-                client,
-                self._settings.port,
+        The gateway unit is acquired before the error translation, so a
+        conflicting link configuration surfaces unchanged.
+        """
+
+        unit = self._unit(DEFAULT_GATEWAY_DEVICE_ID)
+        async with self._gateway_operation("validating the gateway"):
+            await read_gateway_node_count(unit)
+
+    async def discover_gateway_units(self, start: int, end: int) -> list[int]:
+        """Discover configured unit addresses using the current gateway link."""
+
+        async with self._gateway_operation("discovering units"):
+            return await discover_gateway_nodes(
+                self._unit(DEFAULT_GATEWAY_DEVICE_ID),
+                self._port,
                 start=start,
                 end=end,
             )
 
-    def probe_slave_details(
+    async def probe_slave_details(
         self,
         slave: int,
     ) -> tuple[str, str | None, list[str]]:
-        """Probe one configured unit using the current gateway connection."""
+        """Probe one configured unit using the current gateway link."""
 
-        with self._lock:
-            client = self._ensure_client()
-            return detect_slave_details_with_client(client, slave)
+        async with self._gateway_operation(f"probing unit {slave}"):
+            return await detect_slave_details(self._unit(slave))
 
-    def read_room_state(
+    async def read_room_state(
         self,
         room: RoomConfig,
         previous_state: RoomState | None = None,
@@ -259,55 +237,86 @@ class MeltemModbusClient:
         previous_state = previous_state or RoomState()
         refresh_plan = refresh_plan or RefreshPlan()
 
-        with self._gateway_operation(f"reading room {room.key}"):
+        async with self._gateway_operation(f"reading room {room.key}"):
             self._read_group_errors = {}
             self._read_group_skipped = set()
-            # Fail fast on a dead transport: every read below is optional
-            # and would otherwise silently report "nothing changed".
-            self._ensure_client()
+            self._unit_silent_error = None
+            device = self._room_device(room)
+            updated = await self._poll(device, self._due_reads(room, refresh_plan))
+            prev = previous_state
 
-            if refresh_plan.refresh_airflow:
-                # Airflow drives the UI and post-write confirmation, so it
-                # gets its own fast path.
-                extract_air_flow, supply_air_flow = self._read_airflow_pair(
-                    room,
-                    previous_state,
+            def fresh(component: str, field: str, previous: Any, *, due: bool = True) -> Any:
+                if not due or component not in updated:
+                    return previous
+                value = getattr(getattr(device, component), field)
+                if isinstance(value, float) and not math.isfinite(value):
+                    value = None
+                return self._coalesce(value, previous)
+
+            extract_air_flow = fresh(
+                "airflow",
+                "extract_air_flow",
+                prev.extract_air_flow,
+                due=self._supports(room, "extract_air_flow"),
+            )
+            supply_air_flow = fresh(
+                "airflow",
+                "supply_air_flow",
+                prev.supply_air_flow,
+                due=self._supports(room, "supply_air_flow"),
+            )
+            environment = self._profile_state(room, prev, refresh_plan, fresh)
+            error = fresh(
+                "status",
+                "error_status",
+                prev.error_status,
+                due=self._supports(room, "error_status") and refresh_plan.refresh_status,
+            )
+            filter_due = fresh(
+                "status",
+                "filter_change_due",
+                prev.filter_change_due,
+                due=self._supports(room, "filter_change_due")
+                and refresh_plan.refresh_filter_change_due,
+            )
+            frost = fresh(
+                "status",
+                "frost_protection_active",
+                prev.frost_protection_active,
+                due=self._supports(room, "frost_protection_active")
+                and refresh_plan.refresh_status,
+            )
+            days = fresh(
+                "days_until_filter_change",
+                "value",
+                prev.days_until_filter_change,
+            )
+            hours = fresh("operating_hours", "operating_hours", prev.operating_hours)
+            software_version = fresh("software_version", "value", prev.software_version)
+            control_settings = {
+                key: fresh(
+                    "control_settings",
+                    key,
+                    getattr(prev, key),
+                    due=self._supports(room, key),
                 )
-            else:
-                extract_air_flow = previous_state.extract_air_flow
-                supply_air_flow = previous_state.supply_air_flow
-
-            environment = self._read_profile_state(room, previous_state, refresh_plan)
-            error, filter_due, frost = self._read_status_group(
-                room, previous_state, refresh_plan
-            )
-            days, hours, software_version = self._read_maintenance_group(
-                room, previous_state, refresh_plan
-            )
-            control_settings = self._read_control_settings_group(
-                room, previous_state, refresh_plan
-            )
-            rf_comm_status = self._read_uint16_if_due(
-                room,
-                "rf_comm_status",
-                REGISTER_RF_COMM_STATUS,
-                previous_state.rf_comm_status,
-                refresh_plan.refresh_status,
-                read_group="status",
-            )
+                for key in CONTROL_SETTING_REGISTERS
+            }
+            rf_comm_status = fresh("rf_comm_status", "value", prev.rf_comm_status)
 
             if refresh_plan.refresh_airflow:
-                mode = self._read_mode_group(
+                mode = await self._read_mode_group(
                     room,
-                    previous_state,
+                    device,
+                    prev,
                     extract_air_flow,
                     supply_air_flow,
                 )
             else:
-                mode = _ModeGroup.unchanged(previous_state)
+                mode = _ModeGroup.unchanged(prev)
             group_read_health = self._updated_read_health(
                 room,
-                previous_state,
+                prev,
                 refresh_plan,
             )
 
@@ -330,6 +339,186 @@ class MeltemModbusClient:
             extract_target_level=mode.extract_target_level,
             group_read_health=tuple(sorted(group_read_health.items())),
             **control_settings,
+        )
+
+    def _due_reads(self, room: RoomConfig, refresh_plan: RefreshPlan) -> list[_DueRead]:
+        """Return the components this plan reads, in the gateway's usual order."""
+
+        due: list[_DueRead] = []
+
+        def add(component: str, *groups: str) -> None:
+            due.append(_DueRead(component, groups))
+
+        if refresh_plan.refresh_airflow and (
+            self._supports(room, "extract_air_flow")
+            or self._supports(room, "supply_air_flow")
+        ):
+            add("airflow", "flow")
+
+        do_temp = refresh_plan.refresh_temperatures
+        do_env = refresh_plan.refresh_environment
+        if room.profile in PLAIN_PROFILES:
+            if self._supports(room, "exhaust_temperature") and do_temp:
+                add("temperatures", "temperature")
+        else:
+            if (
+                (self._supports(room, "exhaust_temperature") and do_temp)
+                or (self._supports(room, "outdoor_air_temperature") and do_env)
+                or (self._supports(room, "extract_air_temperature") and do_temp)
+            ):
+                add("temperatures", "temperature")
+            if self._supports(room, "supply_air_temperature") and do_temp:
+                add("supply_temperature", "temperature")
+            if do_env and (
+                self._environment_due(room, "humidity_extract_air", HUMIDITY_PROFILES)
+                or self._environment_due(room, "co2_extract_air", CO2_PROFILES)
+            ):
+                add("extract_air_quality", "temperature")
+            if do_env and (
+                self._environment_due(room, "humidity_supply_air", HUMIDITY_PROFILES)
+                or self._environment_due(room, "voc_supply_air", VOC_PROFILES)
+            ):
+                add("supply_air_quality", "temperature")
+
+        status_groups = tuple(
+            group_key
+            for group_key, is_due in (
+                (
+                    "status",
+                    refresh_plan.refresh_status
+                    and (
+                        self._supports(room, "error_status")
+                        or self._supports(room, "frost_protection_active")
+                    ),
+                ),
+                (
+                    "filter",
+                    refresh_plan.refresh_filter_change_due
+                    and self._supports(room, "filter_change_due"),
+                ),
+            )
+            if is_due
+        )
+        if status_groups:
+            add("status", *status_groups)
+
+        if refresh_plan.refresh_filter_days and self._supports(
+            room, "days_until_filter_change"
+        ):
+            add("days_until_filter_change", "filter")
+        if refresh_plan.refresh_operating_hours:
+            if self._supports(room, "operating_hours"):
+                add("operating_hours", "hours")
+            add("software_version", "hours")
+        if refresh_plan.refresh_control_settings and any(
+            self._supports(room, key) for key in CONTROL_SETTING_REGISTERS
+        ):
+            add("control_settings", "control_settings")
+        if refresh_plan.refresh_status and self._supports(room, "rf_comm_status"):
+            add("rf_comm_status", "status")
+        return due
+
+    def _environment_due(
+        self, room: RoomConfig, key: str, profiles: frozenset[str]
+    ) -> bool:
+        return room.profile in profiles and self._supports(room, key)
+
+    async def _poll(self, device: MeltemRoomDevice, due: list[_DueRead]) -> set[str]:
+        """Read the due components and record failures per health group.
+
+        A timeout before anything answered means the unit is silent, so the
+        rest of the job is skipped instead of timing out once per block.
+        """
+
+        if not due:
+            return set()
+        try:
+            report = await device.async_poll([read.component for read in due])
+        except ModbusTimeoutError as err:
+            self._unit_silent_error = err
+            for read in due:
+                self._record_group_read_error(read.groups, err)
+            return set()
+        for read in due:
+            error = report.failed.get(read.component)
+            if error is not None:
+                self._record_group_read_error(read.groups, error)
+        return report.updated
+
+    def _profile_state(
+        self,
+        room: RoomConfig,
+        prev: RoomState,
+        refresh_plan: RefreshPlan,
+        fresh: Callable[..., Any],
+    ) -> RoomState:
+        do_temp = refresh_plan.refresh_temperatures
+        do_env = refresh_plan.refresh_environment
+
+        if room.profile in PLAIN_PROFILES:
+            # Plain units only expose the exhaust-air temperature according to
+            # the Meltem unit matrix. They do not expose the other temperature
+            # points or humidity/CO2/VOC values.
+            return RoomState(
+                exhaust_temperature=fresh(
+                    "temperatures",
+                    "exhaust_temperature",
+                    prev.exhaust_temperature,
+                    due=self._supports(room, "exhaust_temperature") and do_temp,
+                ),
+                outdoor_air_temperature=prev.outdoor_air_temperature,
+                extract_air_temperature=prev.extract_air_temperature,
+                supply_air_temperature=prev.supply_air_temperature,
+            )
+
+        return RoomState(
+            exhaust_temperature=fresh(
+                "temperatures",
+                "exhaust_temperature",
+                prev.exhaust_temperature,
+                due=self._supports(room, "exhaust_temperature") and do_temp,
+            ),
+            outdoor_air_temperature=fresh(
+                "temperatures",
+                "outdoor_air_temperature",
+                prev.outdoor_air_temperature,
+                due=self._supports(room, "outdoor_air_temperature") and do_env,
+            ),
+            extract_air_temperature=fresh(
+                "temperatures",
+                "extract_air_temperature",
+                prev.extract_air_temperature,
+                due=self._supports(room, "extract_air_temperature") and do_temp,
+            ),
+            supply_air_temperature=fresh(
+                "supply_temperature",
+                "supply_air_temperature",
+                prev.supply_air_temperature,
+            ),
+            humidity_extract_air=fresh(
+                "extract_air_quality",
+                "humidity_extract_air",
+                prev.humidity_extract_air,
+                due=self._environment_due(room, "humidity_extract_air", HUMIDITY_PROFILES),
+            ),
+            co2_extract_air=fresh(
+                "extract_air_quality",
+                "co2_extract_air",
+                prev.co2_extract_air,
+                due=self._environment_due(room, "co2_extract_air", CO2_PROFILES),
+            ),
+            humidity_supply_air=fresh(
+                "supply_air_quality",
+                "humidity_supply_air",
+                prev.humidity_supply_air,
+                due=self._environment_due(room, "humidity_supply_air", HUMIDITY_PROFILES),
+            ),
+            voc_supply_air=fresh(
+                "supply_air_quality",
+                "voc_supply_air",
+                prev.voc_supply_air,
+                due=self._environment_due(room, "voc_supply_air", VOC_PROFILES),
+            ),
         )
 
     def _updated_read_health(
@@ -369,19 +558,24 @@ class MeltemModbusClient:
                 )
         return group_health
 
-    def write_level(self, room: RoomConfig, level: int) -> None:
+    # ------------------------------------------------------------------
+    #  Writes
+    # ------------------------------------------------------------------
+
+    async def write_level(self, room: RoomConfig, level: int) -> None:
         """Write off/manual mode and target level for one room."""
 
         mode = MODE_OFF if level == 0 else MODE_MANUAL
         raw_level = self._scale_airflow_to_raw(room, level)
 
-        with self._gateway_operation(f"writing level for room {room.key}"):
-            self._write_uint16(room.slave, REGISTER_MODE, mode)
-            self._write_uint16(room.slave, REGISTER_CURRENT_LEVEL, raw_level)
-            self._write_uint16(room.slave, REGISTER_APPLY, 0)
+        async with self._gateway_operation(f"writing level for room {room.key}"):
+            device = self._room_device(room)
+            await device.mode.write("mode", mode)
+            await device.mode.write("current_level", raw_level)
+            await device.command.write("apply", 0)
             self._clear_optional_airflow_read_backoff(room.slave)
 
-    def write_unbalanced_levels(
+    async def write_unbalanced_levels(
         self, room: RoomConfig, supply_level: int, extract_level: int
     ) -> None:
         """Write unbalanced mode with separate supply and extract levels."""
@@ -389,18 +583,17 @@ class MeltemModbusClient:
         raw_supply_level = self._scale_airflow_to_raw(room, supply_level)
         raw_extract_level = self._scale_airflow_to_raw(room, extract_level)
 
-        with self._gateway_operation(
+        async with self._gateway_operation(
             f"writing unbalanced levels for room {room.key}"
         ):
-            self._write_uint16(room.slave, REGISTER_MODE, MODE_UNBALANCED)
-            self._write_uint16(room.slave, REGISTER_CURRENT_LEVEL, raw_supply_level)
-            self._write_uint16(
-                room.slave, REGISTER_EXTRACT_AIR_TARGET_LEVEL, raw_extract_level
-            )
-            self._write_uint16(room.slave, REGISTER_APPLY, 0)
+            device = self._room_device(room)
+            await device.mode.write("mode", MODE_UNBALANCED)
+            await device.mode.write("current_level", raw_supply_level)
+            await device.mode.write("extract_target_level", raw_extract_level)
+            await device.command.write("apply", 0)
             self._clear_optional_airflow_read_backoff(room.slave)
 
-    def write_operating_mode(
+    async def write_operating_mode(
         self,
         room: RoomConfig,
         operation_mode: str,
@@ -409,27 +602,23 @@ class MeltemModbusClient:
     ) -> None:
         """Write one operating mode using the documented control registers."""
 
-        with self._gateway_operation(f"writing operating mode for room {room.key}"):
+        async with self._gateway_operation(f"writing operating mode for room {room.key}"):
+            mode_block = self._room_device(room).mode
             if operation_mode == OPERATION_MODE_OFF:
-                self._write_uint16(room.slave, REGISTER_MODE, MODE_OFF)
-                self._write_uint16(room.slave, REGISTER_CURRENT_LEVEL, 0)
+                await mode_block.write("mode", MODE_OFF)
+                await mode_block.write("current_level", 0)
             elif operation_mode == OPERATION_MODE_MANUAL:
-                self._write_uint16(room.slave, REGISTER_MODE, MODE_MANUAL)
-                self._write_uint16(
-                    room.slave,
-                    REGISTER_CURRENT_LEVEL,
-                    self._scale_airflow_to_raw(room, balanced_level),
+                await mode_block.write("mode", MODE_MANUAL)
+                await mode_block.write(
+                    "current_level", self._scale_airflow_to_raw(room, balanced_level)
                 )
             elif operation_mode == OPERATION_MODE_UNBALANCED:
-                self._write_uint16(room.slave, REGISTER_MODE, MODE_UNBALANCED)
-                self._write_uint16(
-                    room.slave,
-                    REGISTER_CURRENT_LEVEL,
-                    self._scale_airflow_to_raw(room, balanced_level),
+                await mode_block.write("mode", MODE_UNBALANCED)
+                await mode_block.write(
+                    "current_level", self._scale_airflow_to_raw(room, balanced_level)
                 )
-                self._write_uint16(
-                    room.slave,
-                    REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+                await mode_block.write(
+                    "extract_target_level",
                     self._scale_airflow_to_raw(room, extract_level),
                 )
             else:
@@ -438,14 +627,12 @@ class MeltemModbusClient:
                     raise MeltemModbusError(
                         f"Unsupported operating mode {operation_mode!r} for room {room.key}"
                     )
-                self._write_uint16(room.slave, REGISTER_MODE, MODE_SENSOR_CONTROL)
-                self._write_uint16(
-                    room.slave, REGISTER_CURRENT_LEVEL, sensor_control_value
-                )
-            self._write_uint16(room.slave, REGISTER_APPLY, 0)
+                await mode_block.write("mode", MODE_SENSOR_CONTROL)
+                await mode_block.write("current_level", sensor_control_value)
+            await self._room_device(room).command.write("apply", 0)
             self._clear_optional_airflow_read_backoff(room.slave)
 
-    def write_preset_mode(
+    async def write_preset_mode(
         self,
         room: RoomConfig,
         preset_mode: str,
@@ -458,30 +645,32 @@ class MeltemModbusClient:
                 f"Unsupported preset mode {preset_mode!r} for room {room.key}"
             )
 
-        with self._gateway_operation(f"writing preset mode for room {room.key}"):
+        async with self._gateway_operation(f"writing preset mode for room {room.key}"):
+            device = self._room_device(room)
             if preset_mode == PRESET_MODE_INTENSIVE:
-                self._write_uint16(room.slave, REGISTER_PRESET_MODE, MODE_MANUAL)
-                self._write_uint16(room.slave, REGISTER_PRESET_VALUE, raw_code)
+                await device.mode.write("preset_mode", MODE_MANUAL)
+                await device.mode.write("preset_value", raw_code)
             else:
-                self._clear_secondary_preset_registers(room.slave)
-                self._write_uint16(room.slave, REGISTER_MODE, MODE_MANUAL)
-                self._write_uint16(room.slave, REGISTER_CURRENT_LEVEL, raw_code)
-            self._write_uint16(room.slave, REGISTER_APPLY, 0)
+                await self._clear_secondary_preset_registers(device)
+                await device.mode.write("mode", MODE_MANUAL)
+                await device.mode.write("current_level", raw_code)
+            await device.command.write("apply", 0)
             self._clear_optional_airflow_read_backoff(room.slave)
 
-    def clear_intensive(self, room: RoomConfig) -> None:
+    async def clear_intensive(self, room: RoomConfig) -> None:
         """Cancel a running intensive override.
 
         Only the dedicated shadow registers are touched, so the base quick mode
         and the airflow targets stay untouched.
         """
 
-        with self._gateway_operation(f"clearing intensive mode for room {room.key}"):
-            self._clear_secondary_preset_registers(room.slave)
-            self._write_uint16(room.slave, REGISTER_APPLY, 0)
+        async with self._gateway_operation(f"clearing intensive mode for room {room.key}"):
+            device = self._room_device(room)
+            await self._clear_secondary_preset_registers(device)
+            await device.command.write("apply", 0)
             self._clear_optional_airflow_read_backoff(room.slave)
 
-    def write_control_setting(
+    async def write_control_setting(
         self,
         room: RoomConfig,
         setting_key: str,
@@ -489,9 +678,8 @@ class MeltemModbusClient:
     ) -> int:
         """Write one humidity/CO2 control setting register."""
 
-        register = CONTROL_SETTING_REGISTERS.get(setting_key)
         limits = CONTROL_SETTING_LIMITS.get(setting_key)
-        if register is None or limits is None:
+        if setting_key not in CONTROL_SETTING_REGISTERS or limits is None:
             raise MeltemModbusError(
                 f"Unsupported control setting {setting_key!r} for room {room.key}"
             )
@@ -500,242 +688,34 @@ class MeltemModbusClient:
         clamped = max(min_val, min(max_val, int(round(value))))
         stepped = min_val + ((clamped - min_val + step // 2) // step) * step
 
-        with self._gateway_operation(f"writing control setting for room {room.key}"):
-            self._write_uint16(room.slave, register, stepped)
+        async with self._gateway_operation(f"writing control setting for room {room.key}"):
+            await self._room_device(room).control_settings.write(setting_key, stepped)
         return stepped
 
-    # ------------------------------------------------------------------
-    #  Connection management
-    # ------------------------------------------------------------------
+    async def _clear_secondary_preset_registers(self, device: MeltemRoomDevice) -> None:
+        """Clear the dedicated intensive-preset shadow registers before other presets."""
 
-    def _ensure_client(self) -> ModbusSerialClient:
-        """Return a connected client, rebuilding it if needed."""
-        if self._shut_down:
-            raise MeltemConnectionError(
-                f"Meltem gateway client on {self._settings.port} was shut down"
-            )
-        last_error: Exception | None = None
-        if self._client is not None:
-            try:
-                if self._client.is_socket_open():
-                    return self._client
-            except Exception as err:
-                last_error = err
-
-            # Socket not open — try to reconnect the existing client object.
-            try:
-                if self._client.connect():
-                    return self._client
-            except Exception as err:
-                last_error = err
-
-            # Discard the stale client before building a new one.
-            try:
-                self._client.close()
-            except Exception:
-                pass
-            self._client = None
-
-        # Create a fresh client with retries so the OS has time to release the
-        # exclusive serial-port lock after a previous close().
-        for connect_attempt in range(3):
-            if connect_attempt > 0:
-                sync_sleep(0.5)
-            self._client = build_client(self._settings, retries=_PYMODBUS_RETRIES)
-            try:
-                if self._client.connect():
-                    return self._client
-            except Exception as err:
-                last_error = err
-            try:
-                self._client.close()
-            except Exception:
-                pass
-            self._client = None
-
-        if last_error is not None:
-            raise MeltemConnectionError(
-                f"Could not connect to Meltem gateway on {self._settings.port}: {last_error}"
-            ) from last_error
-        raise MeltemConnectionError(
-            f"Could not connect to Meltem gateway on {self._settings.port}"
-        )
+        await device.mode.write("preset_mode", 0)
+        await device.mode.write("preset_value", 0)
 
     # ------------------------------------------------------------------
-    #  Low-level register access (runtime, with retry)
+    #  Mode family (optional reads with backoff)
     # ------------------------------------------------------------------
 
-    def _read_holding_registers_with_retry(
+    async def _read_mode_component(
         self,
-        slave: int,
-        address: int,
-        count: int,
-        *,
-        attempts: int = 2,
-    ):
-        """Read holding registers with one retry on transient failures.
+        room: RoomConfig,
+        device: MeltemRoomDevice,
+        name: str,
+        read_group: str | tuple[str, ...],
+    ) -> Component | None:
+        """Read one mode-family component with temporary backoff."""
 
-        The connection is resolved per attempt, so a reconnect during the retry
-        is picked up by every following read instead of reusing a dead client.
-        Modbus error responses do not force a reconnect, because they still
-        prove that the gateway link itself is alive.
-        """
-
-        last_error: Exception | None = None
-
-        for attempt in range(1, attempts + 1):
-            client = self._ensure_client()
-            try:
-                response = client.read_holding_registers(
-                    address=address,
-                    count=count,
-                    device_id=slave,
-                )
-            except Exception as err:
-                # Transport-/lock-level failure — close and reconnect for next try.
-                last_error = err
-                should_retry = self._is_retryable_transport_error(err)
-                self.close()
-                if should_retry and attempt < attempts:
-                    sync_sleep(0.5)  # let OS release the serial port lock
-                    continue
-                raise MeltemModbusError(
-                    f"Read raised {type(err).__name__} for slave {slave} register {address}: {err}"
-                ) from err
-
-            sync_sleep(REQUEST_GAP_SECONDS)
-
-            if response is None:
-                # No answer at all, so treat the transport as suspect.
-                last_error = MeltemModbusError(
-                    f"Read returned no response for slave {slave} register {address}"
-                )
-                self.close()
-                if attempt < attempts:
-                    sync_sleep(0.5)
-                    continue
-                raise last_error
-
-            if response.isError():
-                last_error = MeltemModbusError(
-                    f"Read failed for slave {slave} register {address}: {response}"
-                )
-            elif not hasattr(response, "registers") or len(response.registers) < count:
-                last_error = MeltemModbusError(
-                    f"Read returned insufficient registers for slave {slave} register {address}"
-                )
-            else:
-                self._last_successful_read_by_slave[slave] = time.monotonic()
-                return response
-
-            # The gateway answered, so keep the transport open and just back off.
-            if attempt < attempts:
-                sync_sleep(REQUEST_GAP_SECONDS)
-
-        if isinstance(last_error, MeltemModbusError):
-            raise last_error
-        raise MeltemModbusError(
-            f"Read failed for slave {slave} register {address}: {last_error!r}"
-        )
-
-    def _read_uint16(self, slave: int, address: int) -> int | None:
-        response = self._read_holding_registers_with_retry(slave, address, 1)
-        return response.registers[0]
-
-    def _read_float32_word_swap(self, slave: int, address: int) -> float | None:
-        response = self._read_holding_registers_with_retry(slave, address, 2)
-        registers = response.registers
-        # The gateway exposes these temperatures as float32 with swapped words.
-        value = struct.unpack(">f", struct.pack(">HH", registers[1], registers[0]))[0]
-        return value if math.isfinite(value) else None
-
-    def _read_uint32_word_swap(self, slave: int, address: int) -> int | None:
-        response = self._read_holding_registers_with_retry(slave, address, 2)
-        registers = response.registers
-        return struct.unpack(">I", struct.pack(">HH", registers[1], registers[0]))[0]
-
-    def _read_uint16_block(self, slave: int, address: int, count: int) -> list[int]:
-        response = self._read_holding_registers_with_retry(
-            slave,
-            address,
-            count,
-        )
-        return list(response.registers[:count])
-
-    @staticmethod
-    def _decode_float32_from_block(
-        block: list[int],
-        *,
-        start_address: int,
-        address: int,
-    ) -> float | None:
-        """Decode one float32 value from a word-swapped register block."""
-
-        index = address - start_address
-        if index < 0 or index + 1 >= len(block):
-            return None
-        value = struct.unpack(">f", struct.pack(">HH", block[index + 1], block[index]))[0]
-        return value if math.isfinite(value) else None
-
-    @staticmethod
-    def _decode_uint16_from_block(
-        block: list[int],
-        *,
-        start_address: int,
-        address: int,
-    ) -> int | None:
-        """Pick one register out of a block by its documented address."""
-
-        index = address - start_address
-        if index < 0 or index >= len(block):
-            return None
-        return block[index]
-
-    # ------------------------------------------------------------------
-    #  Optional reads (swallow errors, return None)
-    # ------------------------------------------------------------------
-
-    def _read_optional_uint16(
-        self,
-        slave: int,
-        address: int,
-        *,
-        read_group: str | tuple[str, ...] | None = None,
-    ) -> int | None:
-        try:
-            return self._read_uint16(slave, address)
-        except MeltemConnectionError:
-            raise
-        except MeltemModbusError as err:
-            self._record_group_read_error(read_group, err)
+        if self._unit_silent_error is not None:
+            self._record_group_read_error(read_group, self._unit_silent_error)
             return None
 
-    def _read_optional_uint16_block(
-        self,
-        slave: int,
-        address: int,
-        count: int,
-        *,
-        read_group: str | tuple[str, ...] | None = None,
-    ) -> list[int] | None:
-        try:
-            return self._read_uint16_block(slave, address, count)
-        except MeltemConnectionError:
-            raise
-        except MeltemModbusError as err:
-            self._record_group_read_error(read_group, err)
-            return None
-
-    def _read_optional_airflow_uint16(
-        self,
-        slave: int,
-        address: int,
-        *,
-        read_group: str | tuple[str, ...] | None = None,
-    ) -> int | None:
-        """Read one optional airflow-adjacent register with temporary backoff."""
-
-        key = (slave, address, 1)
+        key = (room.slave, name)
         if self._is_optional_read_backed_off(key):
             self._record_group_read_error(
                 read_group,
@@ -743,406 +723,31 @@ class MeltemModbusClient:
             )
             return None
 
+        component: Component = getattr(device, name)
         try:
-            value = self._read_uint16(slave, address)
-        except MeltemConnectionError:
+            await component.async_update()
+        except ModbusConnectionError:
             raise
-        except MeltemModbusError as err:
+        except ModbusError as err:
             self._mark_optional_read_failure(key, err)
             self._record_group_read_error(read_group, err)
             return None
 
         self._clear_optional_read_failure(key)
-        return value
+        return component
 
-    def _read_optional_airflow_uint16_block(
-        self,
-        slave: int,
-        address: int,
-        count: int,
-        *,
-        read_group: str | tuple[str, ...] | None = None,
-    ) -> list[int] | None:
-        """Read one optional airflow-adjacent block with temporary backoff."""
-
-        key = (slave, address, count)
-        if self._is_optional_read_backed_off(key):
-            self._record_group_read_error(
-                read_group,
-                self._optional_read_errors.get(key, "Read is temporarily backed off"),
-            )
-            return None
-
-        try:
-            value = self._read_uint16_block(slave, address, count)
-        except MeltemConnectionError:
-            raise
-        except MeltemModbusError as err:
-            self._mark_optional_read_failure(key, err)
-            self._record_group_read_error(read_group, err)
-            return None
-
-        self._clear_optional_read_failure(key)
-        return value
-
-    def _is_optional_read_backed_off(self, key: tuple[int, int, int]) -> bool:
-        """Return whether one optional register read is temporarily suppressed."""
-
-        backoff_until = self._optional_read_backoff_until.get(key)
-        if backoff_until is None:
-            return False
-        if time.monotonic() >= backoff_until:
-            self._optional_read_backoff_until.pop(key, None)
-            return False
-        return True
-
-    def _mark_optional_read_failure(
-        self,
-        key: tuple[int, int, int],
-        error: MeltemModbusError,
-    ) -> None:
-        """Increase backoff after one optional register read failed."""
-
-        failures = min(
-            self._optional_read_failures.get(key, 0) + 1,
-            _OPTIONAL_READ_BACKOFF_MAX_FAILURES,
-        )
-        self._optional_read_failures[key] = failures
-        self._optional_read_errors[key] = str(error)
-        delay_seconds = min(
-            _OPTIONAL_READ_BACKOFF_MAX_SECONDS,
-            _OPTIONAL_READ_BACKOFF_START_SECONDS * (2 ** (failures - 1)),
-        )
-        self._optional_read_backoff_until[key] = time.monotonic() + delay_seconds
-
-    def _clear_optional_read_failure(self, key: tuple[int, int, int]) -> None:
-        """Clear any failure/backoff state after a successful optional read."""
-
-        self._optional_read_failures.pop(key, None)
-        self._optional_read_backoff_until.pop(key, None)
-        self._optional_read_errors.pop(key, None)
-
-    def _record_group_read_error(
-        self,
-        group_keys: str | tuple[str, ...] | None,
-        error: Exception | str,
-    ) -> None:
-        """Remember a swallowed optional-read error for each affected group."""
-
-        if group_keys is None:
-            return
-        keys = (group_keys,) if isinstance(group_keys, str) else group_keys
-        for group_key in keys:
-            self._read_group_errors.setdefault(group_key, str(error))
-
-    def _clear_optional_airflow_read_backoff(self, slave: int) -> None:
-        """Clear airflow-related optional read backoff after a successful write."""
-
-        for key in (
-            (slave, REGISTER_MODE, 2),
-            (slave, REGISTER_MODE, 5),
-            (slave, REGISTER_CURRENT_LEVEL, 1),
-            (slave, REGISTER_EXTRACT_AIR_TARGET_LEVEL, 1),
-        ):
-            self._clear_optional_read_failure(key)
-
-    def _read_optional_float32_word_swap(
-        self,
-        slave: int,
-        address: int,
-        *,
-        read_group: str | tuple[str, ...] | None = None,
-    ) -> float | None:
-        try:
-            return self._read_float32_word_swap(slave, address)
-        except MeltemConnectionError:
-            raise
-        except MeltemModbusError as err:
-            self._record_group_read_error(read_group, err)
-            return None
-
-    def _read_optional_uint32_word_swap(
-        self,
-        slave: int,
-        address: int,
-        *,
-        read_group: str | tuple[str, ...] | None = None,
+    async def _read_mode_value(
+        self, room: RoomConfig, device: MeltemRoomDevice, name: str
     ) -> int | None:
-        try:
-            return self._read_uint32_word_swap(slave, address)
-        except MeltemConnectionError:
-            raise
-        except MeltemModbusError as err:
-            self._record_group_read_error(read_group, err)
-            return None
+        """Read one register of the mode block on its own."""
 
-    # ------------------------------------------------------------------
-    #  Conditional / grouped reads
-    # ------------------------------------------------------------------
+        component = await self._read_mode_component(room, device, name, "flow_control")
+        return None if component is None else getattr(component, name)
 
-    def _read_uint16_if_due(
+    async def _read_mode_block(
         self,
         room: RoomConfig,
-        key: str,
-        register: int,
-        previous: int | None,
-        should_refresh: bool,
-        *,
-        read_group: str | None = None,
-    ) -> int | None:
-        """Read one uint16 register if supported and due."""
-        if not (self._supports(room, key) and should_refresh):
-            return previous
-        return self._coalesce(
-            self._read_optional_uint16(
-                room.slave,
-                register,
-                read_group=read_group,
-            ),
-            previous,
-        )
-
-    def _read_uint32_if_due(
-        self,
-        room: RoomConfig,
-        key: str,
-        register: int,
-        previous: int | None,
-        should_refresh: bool,
-        *,
-        read_group: str | None = None,
-    ) -> int | None:
-        """Read one uint32 register if supported and due."""
-        if not (self._supports(room, key) and should_refresh):
-            return previous
-        return self._coalesce(
-            self._read_optional_uint32_word_swap(
-                room.slave,
-                register,
-                read_group=read_group,
-            ),
-            previous,
-        )
-
-    def _read_temperature_if_due(
-        self,
-        room: RoomConfig,
-        key: str,
-        register: int,
-        previous: float | None,
-        should_refresh: bool,
-        *,
-        read_group: str | None = None,
-    ) -> float | None:
-        """Read one float32 temperature register if supported and due."""
-        if not (self._supports(room, key) and should_refresh):
-            return previous
-        return self._coalesce(
-            self._read_optional_float32_word_swap(
-                room.slave,
-                register,
-                read_group=read_group,
-            ),
-            previous,
-        )
-
-    def _read_airflow_pair(
-        self,
-        room: RoomConfig,
-        previous_state: RoomState,
-    ) -> tuple[int | None, int | None]:
-        """Read extract/supply airflow."""
-
-        supports_extract = self._supports(room, "extract_air_flow")
-        supports_supply = self._supports(room, "supply_air_flow")
-
-        extract_air_flow = previous_state.extract_air_flow
-        supply_air_flow = previous_state.supply_air_flow
-
-        block = None
-        if supports_extract or supports_supply:
-            # These registers are adjacent and benchmark well as a single read.
-            try:
-                block = self._read_uint16_block(
-                    room.slave,
-                    REGISTER_EXTRACT_AIR_FLOW,
-                    REGISTER_SUPPLY_AIR_FLOW - REGISTER_EXTRACT_AIR_FLOW + 1,
-                )
-            except MeltemConnectionError:
-                raise
-            except MeltemModbusError as err:
-                self._record_group_read_error("flow", err)
-
-        if supports_extract and block is not None:
-            extract_air_flow = self._coalesce(
-                self._decode_uint16_from_block(
-                    block,
-                    start_address=REGISTER_EXTRACT_AIR_FLOW,
-                    address=REGISTER_EXTRACT_AIR_FLOW,
-                ),
-                previous_state.extract_air_flow,
-            )
-
-        if supports_supply and block is not None:
-            supply_air_flow = self._coalesce(
-                self._decode_uint16_from_block(
-                    block,
-                    start_address=REGISTER_EXTRACT_AIR_FLOW,
-                    address=REGISTER_SUPPLY_AIR_FLOW,
-                ),
-                previous_state.supply_air_flow,
-            )
-
-        return extract_air_flow, supply_air_flow
-
-    def _read_status_group(
-        self,
-        room: RoomConfig,
-        previous_state: RoomState,
-        refresh_plan: RefreshPlan,
-    ) -> tuple[int | bool | None, int | bool | None, int | bool | None]:
-        """Read error/filter/frost as one compact status block when due."""
-
-        supports_error = self._supports(room, "error_status")
-        supports_filter = self._supports(room, "filter_change_due")
-        supports_frost = self._supports(room, "frost_protection_active")
-
-        should_refresh_error = supports_error and refresh_plan.refresh_status
-        should_refresh_filter = supports_filter and refresh_plan.refresh_filter_change_due
-        should_refresh_frost = supports_frost and refresh_plan.refresh_status
-
-        error = previous_state.error_status
-        filter_due = previous_state.filter_change_due
-        frost = previous_state.frost_protection_active
-
-        if should_refresh_error or should_refresh_filter or should_refresh_frost:
-            read_groups = tuple(
-                group_key
-                for group_key, is_due in (
-                    ("status", should_refresh_error or should_refresh_frost),
-                    ("filter", should_refresh_filter),
-                )
-                if is_due
-            )
-            block = self._read_optional_uint16_block(
-                room.slave,
-                REGISTER_ERROR_STATUS,
-                REGISTER_FROST_PROTECTION_ACTIVE - REGISTER_ERROR_STATUS + 1,
-                read_group=read_groups,
-            )
-            if block is not None:
-                if should_refresh_error:
-                    error = self._coalesce(
-                        self._decode_uint16_from_block(
-                            block,
-                            start_address=REGISTER_ERROR_STATUS,
-                            address=REGISTER_ERROR_STATUS,
-                        ),
-                        error,
-                    )
-                if should_refresh_filter:
-                    filter_due = self._coalesce(
-                        self._decode_uint16_from_block(
-                            block,
-                            start_address=REGISTER_ERROR_STATUS,
-                            address=REGISTER_FILTER_CHANGE_DUE,
-                        ),
-                        filter_due,
-                    )
-                if should_refresh_frost:
-                    frost = self._coalesce(
-                        self._decode_uint16_from_block(
-                            block,
-                            start_address=REGISTER_ERROR_STATUS,
-                            address=REGISTER_FROST_PROTECTION_ACTIVE,
-                        ),
-                        frost,
-                    )
-
-        return error, filter_due, frost
-
-    def _read_control_settings_group(
-        self,
-        room: RoomConfig,
-        previous_state: RoomState,
-        refresh_plan: RefreshPlan,
-    ) -> dict[str, int | None]:
-        """Read the contiguous humidity/CO2 control setting block when due."""
-
-        previous_values = {
-            key: getattr(previous_state, key) for key in CONTROL_SETTING_REGISTERS
-        }
-        should_refresh = refresh_plan.refresh_control_settings and any(
-            self._supports(room, key) for key in CONTROL_SETTING_REGISTERS
-        )
-        if not should_refresh:
-            return previous_values
-
-        start_address = REGISTER_HUMIDITY_STARTING_POINT
-        block = self._read_optional_uint16_block(
-            room.slave,
-            start_address,
-            len(CONTROL_SETTING_REGISTERS),
-            read_group="control_settings",
-        )
-        if block is None:
-            return previous_values
-
-        return {
-            key: (
-                self._coalesce(
-                    self._decode_uint16_from_block(
-                        block,
-                        start_address=start_address,
-                        address=register,
-                    ),
-                    previous_values[key],
-                )
-                if self._supports(room, key)
-                else previous_values[key]
-            )
-            for key, register in CONTROL_SETTING_REGISTERS.items()
-        }
-
-    def _read_maintenance_group(
-        self,
-        room: RoomConfig,
-        previous_state: RoomState,
-        refresh_plan: RefreshPlan,
-    ) -> tuple[int | None, int | None, int | None]:
-        """Read the slow-moving filter, runtime, and firmware values when due."""
-
-        days = self._read_uint16_if_due(
-            room, "days_until_filter_change",
-            REGISTER_DAYS_UNTIL_FILTER_CHANGE,
-            previous_state.days_until_filter_change,
-            refresh_plan.refresh_filter_days,
-            read_group="filter",
-        )
-        hours = self._read_uint32_if_due(
-            room, "operating_hours",
-            REGISTER_OPERATING_HOURS,
-            previous_state.operating_hours,
-            refresh_plan.refresh_operating_hours,
-            read_group="hours",
-        )
-        software_version = (
-            self._coalesce(
-                self._read_optional_uint16(
-                    room.slave,
-                    REGISTER_SOFTWARE_VERSION,
-                    read_group="hours",
-                ),
-                previous_state.software_version,
-            )
-            if refresh_plan.refresh_operating_hours
-            else previous_state.software_version
-        )
-        return days, hours, software_version
-
-    def _read_mode_block(
-        self,
-        room: RoomConfig,
+        device: MeltemRoomDevice,
     ) -> tuple[list[int] | None, bool]:
         """Read the mode register block, falling back to a shorter read.
 
@@ -1158,40 +763,42 @@ class MeltemModbusClient:
         if not needs_full_mode_block:
             return None, False
 
-        mode_block = self._read_optional_airflow_uint16_block(
-            room.slave,
-            REGISTER_MODE,
-            5,
-            read_group=("flow_control", "intensive"),
+        full = await self._read_mode_component(
+            room, device, "mode", ("flow_control", "intensive")
         )
-        if mode_block is not None and len(mode_block) >= 5:
-            return mode_block, True
+        if full is not None:
+            return [
+                full.mode,
+                full.current_level,
+                full.extract_target_level,
+                full.preset_mode,
+                full.preset_value,
+            ], True
 
         if self._supports(room, "operation_mode") or self._supports(room, "preset_mode"):
-            mode_block = self._read_optional_airflow_uint16_block(
-                room.slave,
-                REGISTER_MODE,
-                2,
-                read_group="flow_control",
+            short = await self._read_mode_component(
+                room, device, "mode_short", "flow_control"
             )
-            if mode_block is not None:
+            if short is not None:
                 self._read_group_errors.pop("flow_control", None)
                 # The unit answers, it just lacks the long read (HW-4), so the
                 # intensive state is unknown rather than a read failure.
                 self._read_group_errors.pop("intensive", None)
                 self._read_group_skipped.add("intensive")
-        return mode_block, False
+                return [short.mode, short.current_level], False
+        return None, False
 
-    def _read_mode_group(
+    async def _read_mode_group(
         self,
         room: RoomConfig,
+        device: MeltemRoomDevice,
         previous_state: RoomState,
         extract_air_flow: int | None,
         supply_air_flow: int | None,
     ) -> _ModeGroup:
         """Read and decode operating mode, airflow targets, and preset state."""
 
-        mode_block, full_mode_block_available = self._read_mode_block(room)
+        mode_block, full_mode_block_available = await self._read_mode_block(room, device)
 
         operation_mode = (
             self._decode_operation_mode(mode_block[0], mode_block[1])
@@ -1203,11 +810,7 @@ class MeltemModbusClient:
         raw_current_level = (
             mode_block[1]
             if mode_block is not None and len(mode_block) >= 2
-            else self._read_optional_airflow_uint16(
-                room.slave,
-                REGISTER_CURRENT_LEVEL,
-                read_group="flow_control",
-            )
+            else await self._read_mode_value(room, device, "current_level")
         )
 
         raw_extract_target: int | None = None
@@ -1219,11 +822,7 @@ class MeltemModbusClient:
             raw_extract_target = (
                 mode_block[2]
                 if full_mode_block_available and mode_block is not None
-                else self._read_optional_airflow_uint16(
-                    room.slave,
-                    REGISTER_EXTRACT_AIR_TARGET_LEVEL,
-                    read_group="flow_control",
-                )
+                else await self._read_mode_value(room, device, "extract_target_level")
             )
             extract_target_level = (
                 self._decode_unbalanced_target_readback(room, raw_extract_target)
@@ -1269,231 +868,61 @@ class MeltemModbusClient:
             ),
         )
 
-    def _read_profile_state(
+    def _is_optional_read_backed_off(self, key: tuple[int, str]) -> bool:
+        """Return whether one optional register read is temporarily suppressed."""
+
+        backoff_until = self._optional_read_backoff_until.get(key)
+        if backoff_until is None:
+            return False
+        if time.monotonic() >= backoff_until:
+            self._optional_read_backoff_until.pop(key, None)
+            return False
+        return True
+
+    def _mark_optional_read_failure(
         self,
-        room: RoomConfig,
-        previous_state: RoomState,
-        refresh_plan: RefreshPlan,
-    ) -> RoomState:
-        prev = previous_state
-        do_temp = refresh_plan.refresh_temperatures
-        do_env = refresh_plan.refresh_environment
-
-        if room.profile in PLAIN_PROFILES:
-            # Plain units only expose the exhaust-air temperature according to
-            # the Meltem unit matrix. They do not expose the other temperature
-            # points or humidity/CO2/VOC values.
-            exhaust = self._read_temperature_if_due(
-                room,
-                "exhaust_temperature",
-                REGISTER_EXHAUST_AIR_TEMPERATURE,
-                prev.exhaust_temperature,
-                do_temp,
-                read_group="temperature",
-            )
-            return RoomState(
-                exhaust_temperature=exhaust,
-                outdoor_air_temperature=prev.outdoor_air_temperature,
-                extract_air_temperature=prev.extract_air_temperature,
-                supply_air_temperature=prev.supply_air_temperature,
-            )
-
-        exhaust = prev.exhaust_temperature
-        outdoor = prev.outdoor_air_temperature
-        extract = prev.extract_air_temperature
-        supply = prev.supply_air_temperature
-
-        need_main_temp_block = any(
-            (
-                self._supports(room, "exhaust_temperature") and do_temp,
-                self._supports(room, "outdoor_air_temperature") and do_env,
-                self._supports(room, "extract_air_temperature") and do_temp,
-            )
-        )
-        if need_main_temp_block:
-            main_temp_block = self._read_optional_uint16_block(
-                room.slave,
-                REGISTER_EXTRACT_AIR_TEMPERATURE,
-                6,
-                read_group="temperature",
-            )
-            if main_temp_block is not None:
-                if self._supports(room, "exhaust_temperature") and do_temp:
-                    exhaust = self._coalesce(
-                        self._decode_float32_from_block(
-                            main_temp_block,
-                            start_address=REGISTER_EXTRACT_AIR_TEMPERATURE,
-                            address=REGISTER_EXHAUST_AIR_TEMPERATURE,
-                        ),
-                        prev.exhaust_temperature,
-                    )
-                if self._supports(room, "outdoor_air_temperature") and do_env:
-                    outdoor = self._coalesce(
-                        self._decode_float32_from_block(
-                            main_temp_block,
-                            start_address=REGISTER_EXTRACT_AIR_TEMPERATURE,
-                            address=REGISTER_OUTDOOR_AIR_TEMPERATURE,
-                        ),
-                        prev.outdoor_air_temperature,
-                    )
-                if self._supports(room, "extract_air_temperature") and do_temp:
-                    extract = self._coalesce(
-                        self._decode_float32_from_block(
-                            main_temp_block,
-                            start_address=REGISTER_EXTRACT_AIR_TEMPERATURE,
-                            address=REGISTER_EXTRACT_AIR_TEMPERATURE,
-                        ),
-                        prev.extract_air_temperature,
-                    )
-
-        if self._supports(room, "supply_air_temperature") and do_temp:
-            supply = self._coalesce(
-                self._read_optional_float32_word_swap(
-                    room.slave,
-                    REGISTER_SUPPLY_AIR_TEMPERATURE,
-                    read_group="temperature",
-                ),
-                prev.supply_air_temperature,
-            )
-
-        humidity_extract = prev.humidity_extract_air
-        humidity_supply = prev.humidity_supply_air
-        co2 = prev.co2_extract_air
-        voc = prev.voc_supply_air
-
-        need_extract_env_block = any(
-            (
-                room.profile in HUMIDITY_PROFILES and self._supports(room, "humidity_extract_air") and do_env,
-                room.profile in CO2_PROFILES and self._supports(room, "co2_extract_air") and do_env,
-            )
-        )
-        if need_extract_env_block:
-            extract_env_block = self._read_optional_uint16_block(
-                room.slave,
-                REGISTER_HUMIDITY_EXTRACT_AIR,
-                REGISTER_CO2_EXTRACT_AIR - REGISTER_HUMIDITY_EXTRACT_AIR + 1,
-                read_group="temperature",
-            )
-            if extract_env_block is not None:
-                if room.profile in HUMIDITY_PROFILES and self._supports(room, "humidity_extract_air") and do_env:
-                    humidity_extract = self._coalesce(
-                        self._decode_uint16_from_block(
-                            extract_env_block,
-                            start_address=REGISTER_HUMIDITY_EXTRACT_AIR,
-                            address=REGISTER_HUMIDITY_EXTRACT_AIR,
-                        ),
-                        prev.humidity_extract_air,
-                    )
-                if room.profile in CO2_PROFILES and self._supports(room, "co2_extract_air") and do_env:
-                    co2 = self._coalesce(
-                        self._decode_uint16_from_block(
-                            extract_env_block,
-                            start_address=REGISTER_HUMIDITY_EXTRACT_AIR,
-                            address=REGISTER_CO2_EXTRACT_AIR,
-                        ),
-                        prev.co2_extract_air,
-                    )
-
-        need_supply_env_block = any(
-            (
-                room.profile in HUMIDITY_PROFILES and self._supports(room, "humidity_supply_air") and do_env,
-                room.profile in VOC_PROFILES and self._supports(room, "voc_supply_air") and do_env,
-            )
-        )
-        if need_supply_env_block:
-            supply_env_block = self._read_optional_uint16_block(
-                room.slave,
-                REGISTER_HUMIDITY_SUPPLY_AIR,
-                REGISTER_VOC_SUPPLY_AIR - REGISTER_HUMIDITY_SUPPLY_AIR + 1,
-                read_group="temperature",
-            )
-            if supply_env_block is not None:
-                if room.profile in HUMIDITY_PROFILES and self._supports(room, "humidity_supply_air") and do_env:
-                    humidity_supply = self._coalesce(
-                        self._decode_uint16_from_block(
-                            supply_env_block,
-                            start_address=REGISTER_HUMIDITY_SUPPLY_AIR,
-                            address=REGISTER_HUMIDITY_SUPPLY_AIR,
-                        ),
-                        prev.humidity_supply_air,
-                    )
-                if room.profile in VOC_PROFILES and self._supports(room, "voc_supply_air") and do_env:
-                    voc = self._coalesce(
-                        self._decode_uint16_from_block(
-                            supply_env_block,
-                            start_address=REGISTER_HUMIDITY_SUPPLY_AIR,
-                            address=REGISTER_VOC_SUPPLY_AIR,
-                        ),
-                        prev.voc_supply_air,
-                    )
-
-        return RoomState(
-            exhaust_temperature=exhaust,
-            outdoor_air_temperature=outdoor,
-            extract_air_temperature=extract,
-            supply_air_temperature=supply,
-            humidity_extract_air=humidity_extract,
-            humidity_supply_air=humidity_supply,
-            co2_extract_air=co2,
-            voc_supply_air=voc,
-        )
-
-    # ------------------------------------------------------------------
-    #  Write helpers
-    # ------------------------------------------------------------------
-
-    def _write_uint16(
-        self,
-        slave: int,
-        address: int,
-        value: int,
-        *,
-        attempts: int = 2,
+        key: tuple[int, str],
+        error: Exception | str,
     ) -> None:
-        """Write one register, retrying once after a transient transport failure."""
+        """Increase backoff after one optional register read failed."""
 
-        last_error: Exception | None = None
+        failures = min(
+            self._optional_read_failures.get(key, 0) + 1,
+            _OPTIONAL_READ_BACKOFF_MAX_FAILURES,
+        )
+        self._optional_read_failures[key] = failures
+        self._optional_read_errors[key] = str(error)
+        delay_seconds = min(
+            _OPTIONAL_READ_BACKOFF_MAX_SECONDS,
+            _OPTIONAL_READ_BACKOFF_START_SECONDS * (2 ** (failures - 1)),
+        )
+        self._optional_read_backoff_until[key] = time.monotonic() + delay_seconds
 
-        for attempt in range(1, attempts + 1):
-            client = self._ensure_client()
-            try:
-                response = client.write_register(
-                    address=address, value=value, device_id=slave
-                )
-            except Exception as err:
-                last_error = err
-                should_retry = self._is_retryable_transport_error(err)
-                self.close()
-                if should_retry and attempt < attempts:
-                    sync_sleep(0.5)
-                    continue
-                raise MeltemModbusError(
-                    f"Write raised {type(err).__name__} for slave {slave} register {address}: {err}"
-                ) from err
+    def _clear_optional_read_failure(self, key: tuple[int, str]) -> None:
+        """Clear any failure/backoff state after a successful optional read."""
 
-            sync_sleep(REQUEST_GAP_SECONDS)
-            if response is None:
-                last_error = MeltemModbusError(
-                    f"Write returned no response for slave {slave} register {address}"
-                )
-                self.close()
-                if attempt < attempts:
-                    sync_sleep(0.5)
-                    continue
-                raise last_error
+        self._optional_read_failures.pop(key, None)
+        self._optional_read_backoff_until.pop(key, None)
+        self._optional_read_errors.pop(key, None)
 
-            if response.isError():
-                raise MeltemModbusError(
-                    f"Write failed for slave {slave} register {address}: {response}"
-                )
+    def _record_group_read_error(
+        self,
+        group_keys: str | tuple[str, ...] | None,
+        error: Exception | str,
+    ) -> None:
+        """Remember a swallowed optional-read error for each affected group."""
 
+        if group_keys is None:
             return
+        keys = (group_keys,) if isinstance(group_keys, str) else group_keys
+        for group_key in keys:
+            self._read_group_errors.setdefault(group_key, str(error))
 
-    def _clear_secondary_preset_registers(self, slave: int) -> None:
-        """Clear the dedicated intensive-preset shadow registers before other presets."""
+    def _clear_optional_airflow_read_backoff(self, slave: int) -> None:
+        """Clear airflow-related optional read backoff after a successful write."""
 
-        self._write_uint16(slave, REGISTER_PRESET_MODE, 0)
-        self._write_uint16(slave, REGISTER_PRESET_VALUE, 0)
+        for name in _MODE_COMPONENTS:
+            self._clear_optional_read_failure((slave, name))
 
     # ------------------------------------------------------------------
     #  Tiny helpers
@@ -1501,14 +930,6 @@ class MeltemModbusClient:
 
     def _coalesce(self, value, previous_value):
         return previous_value if value is None else value
-
-    def _is_retryable_transport_error(self, err: Exception) -> bool:
-        """Return whether an exception looks like a transient lock/transport issue."""
-
-        if isinstance(err, _RETRYABLE_EXCEPTIONS):
-            return True
-        message = str(err).lower()
-        return any(marker in message for marker in _RETRYABLE_MESSAGE_MARKERS)
 
     def _scale_airflow_to_raw(self, room: RoomConfig, level: int) -> int:
         max_airflow = profile_max_airflow(room.profile)

@@ -8,32 +8,31 @@ The heavier runtime reads happen only after the config entry is created.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
-from functools import partial
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.components.modbus import async_get_temporary_unit
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.usb import UsbServiceInfo
+from modbus_connection import ModbusUnit
 
 from .const import (
     CONF_MAX_REQUESTS_PER_SECOND,
     CONF_PORT,
     CONF_ROOMS,
+    DEFAULT_GATEWAY_DEVICE_ID,
     DEFAULT_MAX_REQUESTS_PER_SECOND,
     DEFAULT_PORT,
     DEFAULT_SCAN_SLAVE_END,
     DEFAULT_SCAN_SLAVE_START,
     DOMAIN,
-    FIXED_BAUDRATE,
-    FIXED_BYTESIZE,
-    FIXED_PARITY,
-    FIXED_STOPBITS,
-    FIXED_TIMEOUT,
     GATEWAY_NAME,
     MAX_MAX_REQUESTS_PER_SECOND,
     MIN_MAX_REQUESTS_PER_SECOND,
@@ -41,15 +40,16 @@ from .const import (
 )
 from .coordinator import MeltemDataUpdateCoordinator
 from .modbus_helpers import (
+    MeltemConnectionError,
     MeltemModbusError,
-    SerialSettings,
-    build_scan_settings,
-    build_setup_probe_settings,
+    build_serial_params,
     detect_slave_details,
+    discover_gateway_nodes,
+    new_transport_policy,
+    prepare_unit,
+    read_gateway_node_count,
     resolve_preferred_port_path,
-    scan_available_slaves,
     supported_entity_keys_for_profile,
-    validate_serial_connection,
 )
 from .models import MeltemRuntimeData
 
@@ -238,31 +238,52 @@ def _build_rooms_from_profiles(
     return rooms
 
 
-async def _async_scan_slaves(hass, settings: SerialSettings) -> list[int]:
-    """Validate the serial connection and discover configured units via the gateway."""
+@asynccontextmanager
+async def _temporary_units(
+    hass, port: str
+) -> AsyncIterator[Callable[[int], Awaitable[ModbusUnit]]]:
+    """Hold units on the gateway link for one flow step.
 
-    await hass.async_add_executor_job(validate_serial_connection, settings)
-    return await hass.async_add_executor_job(
-        partial(
-            scan_available_slaves,
-            build_scan_settings(settings),
+    The link closes again on exit unless a loaded entry also holds it.
+    """
+
+    params = build_serial_params(port)
+    policy = new_transport_policy()
+    async with AsyncExitStack() as stack:
+        units: dict[int, ModbusUnit] = {}
+
+        async def unit_for(slave: int) -> ModbusUnit:
+            if slave not in units:
+                try:
+                    unit = await stack.enter_async_context(
+                        async_get_temporary_unit(hass, params, slave)
+                    )
+                except HomeAssistantError as err:
+                    raise MeltemConnectionError(str(err)) from err
+                units[slave] = prepare_unit(unit, slave, policy)
+            return units[slave]
+
+        yield unit_for
+
+
+async def _async_scan_slaves(hass, port: str) -> list[int]:
+    """Discover configured units via the gateway bridge registers."""
+
+    async with _temporary_units(hass, port) as unit_for:
+        _LOGGER.info("Starting Meltem gateway-backed unit discovery on %s", port)
+        return await discover_gateway_nodes(
+            await unit_for(DEFAULT_GATEWAY_DEVICE_ID),
+            port,
             start=DEFAULT_SCAN_SLAVE_START,
             end=DEFAULT_SCAN_SLAVE_END,
         )
-    )
 
 
-def _build_serial_settings(port: str) -> SerialSettings:
-    """Build the fixed serial settings for the given port."""
+async def _async_validate_port(hass, port: str) -> None:
+    """Check that a gateway answers on the given serial port."""
 
-    return SerialSettings(
-        port=port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
-        timeout=float(FIXED_TIMEOUT),
-    )
+    async with _temporary_units(hass, port) as unit_for:
+        await read_gateway_node_count(await unit_for(DEFAULT_GATEWAY_DEVICE_ID))
 
 
 async def _async_resolve_port(hass, port: str) -> str:
@@ -276,7 +297,7 @@ async def _async_resolve_port(hass, port: str) -> str:
 
 async def _async_probe_discovered_slaves(
     hass,
-    settings: SerialSettings,
+    port: str,
     discovered_slaves: list[int],
 ) -> tuple[dict[int, str], dict[int, str]]:
     """Probe discovered units for previews and detected profiles.
@@ -285,32 +306,28 @@ async def _async_probe_discovered_slaves(
     always derived from the profile the user picks afterwards.
     """
 
-    probe_settings = build_setup_probe_settings(settings)
     preview_by_slave: dict[int, str] = {}
     detected_profile_by_slave: dict[int, str] = {}
 
-    for slave in discovered_slaves:
-        try:
-            (
-                detected_profile,
-                preview,
-                _supported_entity_keys,
-            ) = await hass.async_add_executor_job(
-                detect_slave_details,
-                probe_settings,
-                slave,
-            )
-        except MeltemModbusError as err:
-            _LOGGER.warning(
-                "Setup probe failed for Meltem unit at slave %s: %s",
-                slave,
-                err,
-            )
-            detected_profile = "plain"
-            preview = None
-        detected_profile_by_slave[slave] = detected_profile
-        if preview:
-            preview_by_slave[slave] = preview
+    async with _temporary_units(hass, port) as unit_for:
+        for slave in discovered_slaves:
+            try:
+                (
+                    detected_profile,
+                    preview,
+                    _supported_entity_keys,
+                ) = await detect_slave_details(await unit_for(slave))
+            except MeltemModbusError as err:
+                _LOGGER.warning(
+                    "Setup probe failed for Meltem unit at slave %s: %s",
+                    slave,
+                    err,
+                )
+                detected_profile = "plain"
+                preview = None
+            detected_profile_by_slave[slave] = detected_profile
+            if preview:
+                preview_by_slave[slave] = preview
 
     return preview_by_slave, detected_profile_by_slave
 
@@ -351,10 +368,9 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Abort before the slow scan when this gateway is already set up.
             await self.async_set_unique_id(normalized_port)
             self._abort_if_unique_id_configured()
-            settings = _build_serial_settings(selected_port)
 
             try:
-                discovered_slaves = await _async_scan_slaves(self.hass, settings)
+                discovered_slaves = await _async_scan_slaves(self.hass, normalized_port)
             except MeltemModbusError:
                 errors["base"] = "cannot_connect"
             except Exception:
@@ -378,7 +394,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         self._detected_profile_by_slave,
                     ) = await _async_probe_discovered_slaves(
                         self.hass,
-                        settings,
+                        normalized_port,
                         discovered_slaves,
                     )
                     self._port = normalized_port
@@ -456,10 +472,10 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_scan(self) -> ConfigFlowResult:
         """Scan the gateway for configured units."""
 
-        settings = _build_serial_settings(self._port)
+        self._port = await _async_resolve_port(self.hass, self._port)
 
         try:
-            discovered_slaves = await _async_scan_slaves(self.hass, settings)
+            discovered_slaves = await _async_scan_slaves(self.hass, self._port)
         except MeltemModbusError:
             return self._show_confirm_usb_form(
                 errors={"base": "cannot_connect"},
@@ -473,7 +489,6 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "Read configured Meltem units from gateway on %s and found no configured addresses",
                 self._port,
             )
-            self._port = await _async_resolve_port(self.hass, self._port)
             return self._show_confirm_usb_form(
                 errors={"base": "no_devices_found"},
             )
@@ -483,11 +498,10 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._detected_profile_by_slave,
         ) = await _async_probe_discovered_slaves(
             self.hass,
-            settings,
+            self._port,
             discovered_slaves,
         )
         self._discovered_slaves = discovered_slaves
-        self._port = await _async_resolve_port(self.hass, self._port)
         return await self.async_step_profiles()
 
     async def async_step_profiles(
@@ -605,13 +619,8 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             )
 
             if normalized_port != current_normalized_port:
-                settings = _build_serial_settings(selected_port)
-
                 try:
-                    await self.hass.async_add_executor_job(
-                        validate_serial_connection,
-                        settings,
-                    )
+                    await _async_validate_port(self.hass, normalized_port)
                 except MeltemModbusError:
                     errors["base"] = "cannot_connect"
                 except Exception:
