@@ -933,6 +933,47 @@ class TestAirflowWriteConfirmation:
             == "pending"
         )
 
+    def test_derived_target_does_not_confirm_a_level_write(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator._writes.by_room["unit_1"] = {
+            "airflow_levels": WriteConfirmation(
+                expected_value=(30, 30),
+                started_at=dt_util.utcnow() - timedelta(seconds=1),
+            )
+        }
+        state = _fresh(
+            RoomState(
+                operation_mode="manual",
+                target_level=30,
+                supply_air_flow=30,
+                extract_air_flow=30,
+            )
+        )
+
+        coordinator._confirm_pending_writes(state)
+
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "pending"
+
+    def test_balanced_target_readback_confirms_a_level_write(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator._writes.by_room["unit_1"] = {
+            "airflow_levels": WriteConfirmation(
+                expected_value=(30, 30),
+                started_at=dt_util.utcnow() - timedelta(seconds=1),
+            )
+        }
+        state = _fresh(
+            RoomState(operation_mode="manual", target_level=30, balanced_target_readback=30)
+        )
+
+        coordinator._confirm_pending_writes(state)
+
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
+
     def test_old_write_failures_stop_flagging_data_health(
         self, hass: HomeAssistant,
     ) -> None:

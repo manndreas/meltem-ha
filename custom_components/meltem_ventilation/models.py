@@ -101,6 +101,7 @@ class RoomState:
     preset_mode: str | None = None
     intensive_active: bool | None = None
     target_level: int | None = None
+    balanced_target_readback: int | None = None
     extract_target_level: int | None = None
 
     days_until_filter_change: int | None = None

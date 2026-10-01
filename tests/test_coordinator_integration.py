@@ -178,6 +178,36 @@ class TestFirstRefresh:
             seconds=TRANSPORT_BACKOFF_START_SECONDS
         )
 
+    async def test_a_first_refresh_without_any_room_values_backs_off(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build(hass)
+        client.next_read_state = RoomState().with_read_health(
+            "flow",
+            ReadHealth(last_attempt=dt_util.utcnow(), consecutive_failures=1, last_error="timeout"),
+        )
+
+        await coordinator.async_refresh()
+
+        assert not coordinator.last_update_success
+        assert coordinator.update_interval == timedelta(seconds=TRANSPORT_BACKOFF_START_SECONDS)
+
+    async def test_first_refresh_keeps_working_room_when_another_has_no_values(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
+        unanswered = RoomState().with_read_health(
+            "flow",
+            ReadHealth(last_attempt=dt_util.utcnow(), consecutive_failures=1, last_error="timeout"),
+        )
+        working = RoomState(target_level=42)
+        with patch.object(client, "read_room_state", side_effect=[unanswered, working]):
+            states = await coordinator._read_all_rooms_full()
+
+        assert states == {"unit_1": unanswered, "unit_2": working}
+        assert coordinator._room_failures["unit_1"] == 1
+        assert all(job.next_due < time.monotonic() for job in coordinator._jobs if job.room_key == "unit_1")
+
 
 # ---------------------------------------------------------------------------
 #  _async_update_data — first vs incremental
@@ -378,6 +408,22 @@ class TestPostWriteRefresh:
         await coordinator._async_refresh_room_after_write(_ROOM_1)
 
         assert coordinator.data["unit_1"].target_level == 50
+
+    async def test_refresh_after_write_waits_for_the_request_rate_slot(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build(hass, max_requests_per_second=0.5)
+        coordinator.data = {"unit_1": RoomState(target_level=10)}
+        coordinator._last_read_started = time.monotonic()
+
+        with patch(
+            "custom_components.meltem_ventilation.coordinator.async_sleep", new=AsyncMock()
+        ) as sleep:
+            await coordinator._async_refresh_room_after_write(_ROOM_1)
+
+        sleep.assert_awaited_once()
+        assert 0 < sleep.await_args.args[0] <= 2.0
+        assert len(client.read_calls) == 1
 
     async def test_refresh_after_write_honors_minimum_attempt_count(
         self, hass: HomeAssistant,
