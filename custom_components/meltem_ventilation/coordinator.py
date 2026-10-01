@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import operator
 import time
 from collections.abc import Callable
@@ -23,7 +24,6 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     AIRFLOW_STALE_AFTER_SECONDS,
-    CONTROL_SETTING_REGISTERS,
     CONTROL_SETTINGS_REFRESH_SECONDS,
     DEFAULT_SCAN_SLAVE_END,
     DEFAULT_SCAN_SLAVE_START,
@@ -47,6 +47,7 @@ from .const import (
     PRESET_MODE_INTENSIVE,
     PRESET_MODE_SUPPLY_ONLY,
     READ_FAILURE_THRESHOLD,
+    READ_GROUP_ENTITY_KEYS,
     SENSOR_OPERATION_MODES,
     STATUS_REFRESH_SECONDS,
     TARGET_OPTIMISTIC_SECONDS,
@@ -71,6 +72,8 @@ async_sleep = asyncio.sleep
 sync_sleep = time.sleep
 
 FULL_REFRESH_PLAN = RefreshPlan()
+AIRFLOW_REFRESH_PLAN = RefreshPlan.only(refresh_airflow=True)
+CONTROL_SETTINGS_REFRESH_PLAN = RefreshPlan.only(refresh_control_settings=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,116 +83,46 @@ class JobGroup:
     key: str
     interval_seconds: int
     refresh_plan: RefreshPlan
-    entity_keys: frozenset[str]
+
+    @property
+    def entity_keys(self) -> frozenset[str]:
+        """Return the entities whose values this job refreshes."""
+
+        return frozenset().union(
+            *(READ_GROUP_ENTITY_KEYS[group] for group in self.refresh_plan.read_groups())
+        )
 
 
 JOB_GROUPS: tuple[JobGroup, ...] = (
+    JobGroup("flow", FLOW_REFRESH_SECONDS, AIRFLOW_REFRESH_PLAN),
+    JobGroup("status", STATUS_REFRESH_SECONDS, RefreshPlan.only(refresh_status=True)),
     JobGroup(
-        key="flow",
-        interval_seconds=FLOW_REFRESH_SECONDS,
-        refresh_plan=RefreshPlan.only(refresh_airflow=True),
-        entity_keys=frozenset(
-            {
-                "extract_air_flow",
-                "supply_air_flow",
-                "supply_level",
-                "extract_level",
-                "operation_mode",
-                "preset_mode",
-                "intensive",
-            }
-        ),
+        "temperature",
+        TEMPERATURE_REFRESH_SECONDS,
+        RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),
     ),
     JobGroup(
-        key="status",
-        interval_seconds=STATUS_REFRESH_SECONDS,
-        refresh_plan=RefreshPlan.only(refresh_status=True),
-        entity_keys=frozenset(
-            {"error_status", "frost_protection_active", "rf_comm_status"}
-        ),
+        "filter",
+        FILTER_REFRESH_SECONDS,
+        RefreshPlan.only(refresh_filter_change_due=True, refresh_filter_days=True),
     ),
     JobGroup(
-        key="temperature",
-        interval_seconds=TEMPERATURE_REFRESH_SECONDS,
-        refresh_plan=RefreshPlan.only(
-            refresh_temperatures=True,
-            refresh_environment=True,
-        ),
-        entity_keys=frozenset(
-            {
-                "exhaust_temperature",
-                "outdoor_air_temperature",
-                "extract_air_temperature",
-                "supply_air_temperature",
-                "humidity_extract_air",
-                "humidity_supply_air",
-                "co2_extract_air",
-                "voc_supply_air",
-            }
-        ),
+        "hours",
+        OPERATING_HOURS_REFRESH_SECONDS,
+        RefreshPlan.only(refresh_operating_hours=True),
     ),
     JobGroup(
-        key="filter",
-        interval_seconds=FILTER_REFRESH_SECONDS,
-        refresh_plan=RefreshPlan.only(
-            refresh_filter_change_due=True,
-            refresh_filter_days=True,
-        ),
-        entity_keys=frozenset({"filter_change_due", "days_until_filter_change"}),
-    ),
-    JobGroup(
-        key="hours",
-        interval_seconds=OPERATING_HOURS_REFRESH_SECONDS,
-        refresh_plan=RefreshPlan.only(refresh_operating_hours=True),
-        entity_keys=frozenset({"operating_hours"}),
-    ),
-    JobGroup(
-        key="control_settings",
-        interval_seconds=CONTROL_SETTINGS_REFRESH_SECONDS,
-        refresh_plan=RefreshPlan.only(refresh_control_settings=True),
-        entity_keys=frozenset(CONTROL_SETTING_REGISTERS),
+        "control_settings",
+        CONTROL_SETTINGS_REFRESH_SECONDS,
+        CONTROL_SETTINGS_REFRESH_PLAN,
     ),
 )
 
-AIRFLOW_REFRESH_PLAN = JOB_GROUPS[0].refresh_plan
-CONTROL_SETTINGS_REFRESH_PLAN = JOB_GROUPS[-1].refresh_plan
-
-READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
-    "flow": frozenset({"extract_air_flow", "supply_air_flow"}),
-    "flow_control": frozenset(
-        {"operation_mode", "preset_mode", "supply_level", "extract_level"}
-    ),
-    "intensive": frozenset({"intensive"}),
-    "status": frozenset({"error_status", "frost_protection_active", "rf_comm_status"}),
-    "temperature": JOB_GROUPS[2].entity_keys,
-    "filter": JOB_GROUPS[3].entity_keys,
-    "hours": JOB_GROUPS[4].entity_keys,
-    "control_settings": JOB_GROUPS[5].entity_keys,
+READ_GROUP_INTERVAL_SECONDS: dict[str, int] = {
+    group_key: job_group.interval_seconds
+    for job_group in JOB_GROUPS
+    for group_key in job_group.refresh_plan.read_groups()
 }
-READ_GROUP_INTERVAL_SECONDS = {
-    **{group.key: group.interval_seconds for group in JOB_GROUPS},
-    "flow_control": FLOW_REFRESH_SECONDS,
-    "intensive": FLOW_REFRESH_SECONDS,
-}
-
-
-def _read_groups_for_plan(refresh_plan: RefreshPlan) -> tuple[str, ...]:
-    """Return the health groups touched by one refresh plan."""
-
-    groups: list[str] = []
-    if refresh_plan.refresh_airflow:
-        groups.extend(("flow", "flow_control", "intensive"))
-    if refresh_plan.refresh_status:
-        groups.append("status")
-    if refresh_plan.refresh_temperatures or refresh_plan.refresh_environment:
-        groups.append("temperature")
-    if refresh_plan.refresh_filter_change_due or refresh_plan.refresh_filter_days:
-        groups.append("filter")
-    if refresh_plan.refresh_operating_hours:
-        groups.append("hours")
-    if refresh_plan.refresh_control_settings:
-        groups.append("control_settings")
-    return tuple(groups)
 
 
 def _room_supports_read_group(room: RoomConfig, group_key: str) -> bool:
@@ -197,6 +130,7 @@ def _room_supports_read_group(room: RoomConfig, group_key: str) -> bool:
 
     supported = room.supported_entity_keys
     return not supported or bool(READ_GROUP_ENTITY_KEYS[group_key] & supported)
+
 
 TRANSPORT_BACKOFF_AFTER_FAILURES = 3
 TRANSPORT_BACKOFF_START_SECONDS = 5.0
@@ -324,6 +258,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._level_locks = {room.key: asyncio.Lock() for room in rooms}
         self._level_fallbacks: dict[str, tuple[str, datetime]] = {}
         self._started_at = time.monotonic()
+        self._last_read_started: float | None = None
         # Jobs are precomputed once and then executed in a due-time round robin.
         self._jobs = self._build_jobs()
 
@@ -355,6 +290,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     def last_job_error(self) -> MeltemModbusError | None:
         """Return the last scheduler job error, if any."""
         return self._last_job_error
+
+    @property
+    def gateway_identifier(self) -> tuple[str, str]:
+        """Return the device identifier of the gateway the units hang off."""
+
+        return (DOMAIN, self.config_entry.entry_id)
 
     def room_available(self, room_key: str) -> bool:
         """Return whether one room still delivers usable data.
@@ -552,13 +493,18 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         try:
             async with self._gateway_lock:
                 if not self._safe_data:
+                    self._last_read_started = time.monotonic()
                     states = await self.hass.async_add_executor_job(self._read_all_rooms_full)
                     self._on_transport_success()
                     self._schedule_next_tick()
                     return states
 
                 now = time.monotonic()
-                job = self._select_due_job(now)
+                job = (
+                    None
+                    if self._read_spacing_remaining(now) > 0
+                    else self._select_due_job(now)
+                )
                 if job is None:
                     self._schedule_next_tick()
                     return self.data
@@ -566,6 +512,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 # Move the job forward before running it so a failing read
                 # cannot get stuck at the front of the queue forever.
                 job.next_due = now + self._job_interval(job)
+                self._last_read_started = now
                 self._last_job_error = None
                 updated_data = await self.hass.async_add_executor_job(
                     self._read_one_job,
@@ -583,19 +530,17 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 self._schedule_next_tick()
                 return updated_data
         except MeltemModbusError as err:
+            # Only the initial full read gets here; jobs record errors per room.
             self._consecutive_transport_failures += 1
             self._apply_transport_backoff()
-            if self._safe_data and self._consecutive_transport_failures <= 3:
-                self._last_job_error = err
-                self.client.reset_connection()
-                _LOGGER.warning(
-                    "Keeping cached Meltem state after transient transport error (%s/%s): %s",
-                    self._consecutive_transport_failures,
-                    3,
-                    err,
-                )
-                return self.data
             raise UpdateFailed(str(err)) from err
+
+    def _read_spacing_remaining(self, now: float) -> float:
+        """Return how long the request-rate cap still blocks the next read."""
+
+        if self._last_read_started is None:
+            return 0.0
+        return self._last_read_started + self._tick_seconds - now
 
     def _job_interval(self, job: PollJob) -> float:
         """Return the job interval, stretched while its unit stays silent."""
@@ -630,7 +575,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         earliest_due = min(job.next_due for job in self._jobs)
         seconds = max(self._tick_seconds, earliest_due - time.monotonic())
-        self.update_interval = timedelta(seconds=seconds)
+        # HA schedules from int(loop.time()), which would fire up to a second early.
+        loop_time = self.hass.loop.time()
+        self.update_interval = timedelta(
+            seconds=seconds + loop_time - math.floor(loop_time)
+        )
 
     def _on_transport_success(self) -> None:
         """Reset failure tracking and any active polling backoff."""
@@ -1035,6 +984,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         for attempt in range(POST_WRITE_REFRESH_RETRIES + 1):
             previous_state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
+            self._last_read_started = time.monotonic()
             try:
                 refreshed_room = await self.hass.async_add_executor_job(
                     self.client.read_room_state,
@@ -1043,7 +993,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     refresh_plan,
                 )
             except MeltemModbusError as err:
-                self.client.reset_connection()
                 _LOGGER.warning(
                     "Failed to refresh room %s immediately after write: %s",
                     room.key,
@@ -1099,8 +1048,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 )
                 last_error = err
                 self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
-                # Reset after a failure so the next room starts with a clean connection.
-                self.client.reset_connection()
+                # Give the serial port time to settle before the next room.
                 sync_sleep(0.5)
 
         if successful_reads == 0 and last_error is not None:
@@ -1126,13 +1074,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         return any(
             getattr(state, field_name) is not None
             for field_name in RoomState.__dataclass_fields__
-            if field_name
-            not in {
-                "airflow_last_successful_read",
-                "airflow_consecutive_failures",
-                "airflow_last_error",
-                "group_read_health",
-            }
+            if field_name != "group_read_health"
         )
 
     @staticmethod
@@ -1146,7 +1088,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         failed_state = state
         attempted_at = dt_util.utcnow()
-        for group_key in _read_groups_for_plan(refresh_plan):
+        for group_key in refresh_plan.read_groups():
             if not _room_supports_read_group(room, group_key):
                 continue
             previous_health = failed_state.read_health_for(group_key)
@@ -1163,11 +1105,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 ),
             )
         return failed_state
-
-    def airflow_data_available(self, room_key: str) -> bool:
-        """Return whether measured airflow was refreshed recently enough."""
-
-        return self.read_group_available(room_key, "flow")
 
     @staticmethod
     def read_group_for_entity(entity_key: str) -> str | None:
@@ -1222,11 +1159,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         )
         age = (dt_util.utcnow() - health.last_successful_read).total_seconds()
         return age > stale_after
-
-    def airflow_data_stale(self, room_key: str) -> bool | None:
-        """Return whether airflow readings are known to be stale."""
-
-        return self.read_group_stale(room_key, "flow")
 
     def data_health_stale(self, room_key: str) -> bool | None:
         """Return whether any read group or write confirmation is unhealthy."""
@@ -1413,7 +1345,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             if state is None:
                 continue
             for write_key, confirmation in tuple(confirmations.items()):
-                if confirmation.status in {"failed", "confirmed"}:
+                if confirmation.status in {"failed", "confirmed", "unverifiable"}:
                     continue
                 group_key = self._write_group(write_key)
                 read_health = state.read_health_for(group_key)
@@ -1432,6 +1364,16 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                             last_error=read_health.last_error,
                         )
                         changed = True
+                    continue
+
+                if write_key == "intensive" and not self._read_since(
+                    state, "intensive", confirmation.started_at
+                ):
+                    # The unit answered the mode read but cannot report intensive (HW-4).
+                    confirmations[write_key] = replace(
+                        confirmation, status="unverifiable", last_error=None
+                    )
+                    changed = True
                     continue
 
                 actual = self._write_readback_value(state, write_key)
@@ -1457,20 +1399,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         if changed:
             self.async_update_listeners()
 
-    def airflow_health_attributes(self, room_key: str) -> dict[str, str | int | None]:
-        """Return the legacy airflow health attributes."""
+    @staticmethod
+    def _read_since(state: RoomState, group_key: str, started_at: datetime) -> bool:
+        """Return whether a group was read at or after one point in time."""
 
-        state = self._safe_data.get(room_key, EMPTY_ROOM_STATE)
-        health = state.read_health_for("flow")
-        return {
-            "last_successful_read": health.last_successful_read.isoformat()
-            if health.last_successful_read
-            else None,
-            "consecutive_failures": (
-                health.consecutive_failures if health.last_attempt is not None else None
-            ),
-            "last_error": health.last_error,
-        }
+        last_attempt = state.read_health_for(group_key).last_attempt
+        return last_attempt is not None and last_attempt >= started_at
 
     def _read_one_job(
         self,
@@ -1490,7 +1424,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             )
         except MeltemModbusError as err:
             _LOGGER.warning("Failed to read room %s for job %s: %s", room.key, job.key, err)
-            self.client.reset_connection()
             self._last_job_error = err
             self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
             failed_state = self._with_read_group_failures(

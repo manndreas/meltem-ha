@@ -14,9 +14,8 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.usb import UsbServiceInfo
@@ -320,6 +319,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Meltem Modbus."""
 
     VERSION = 1
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         self._port = DEFAULT_PORT
@@ -338,7 +338,9 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return MeltemVentilationOptionsFlow()
 
-    async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_user(
+        self, user_input: dict | None = None
+    ) -> ConfigFlowResult:
         """Collect the serial port and scan for connected units."""
 
         errors: dict[str, str] = {}
@@ -346,12 +348,18 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             selected_port = user_input[CONF_PORT]
             normalized_port = await _async_resolve_port(self.hass, selected_port)
+            # Abort before the slow scan when this gateway is already set up.
+            await self.async_set_unique_id(normalized_port)
+            self._abort_if_unique_id_configured()
             settings = _build_serial_settings(selected_port)
 
             try:
                 discovered_slaves = await _async_scan_slaves(self.hass, settings)
             except MeltemModbusError:
                 errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected error while scanning %s", selected_port)
+                errors["base"] = "unknown"
             else:
                 _LOGGER.info(
                     "Read configured Meltem units from gateway on %s and found addresses: %s",
@@ -376,9 +384,6 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._port = normalized_port
                     self._discovered_slaves = discovered_slaves
 
-                    await self.async_set_unique_id(normalized_port)
-                    self._abort_if_unique_id_configured()
-
                     return await self.async_step_profiles()
 
         data_schema = vol.Schema(
@@ -393,7 +398,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_usb(self, discovery_info: UsbServiceInfo) -> FlowResult:
+    async def async_step_usb(self, discovery_info: UsbServiceInfo) -> ConfigFlowResult:
         """Handle USB discovery for a Meltem gateway."""
 
         port = discovery_info.device
@@ -414,7 +419,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_confirm_usb(
         self, user_input: dict | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Confirm a discovered USB device before scanning units."""
 
         if user_input is not None:
@@ -427,7 +432,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self,
         *,
         errors: dict[str, str] | None = None,
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Render the USB confirmation step."""
 
         data_schema = vol.Schema(
@@ -448,7 +453,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def async_step_scan(self) -> FlowResult:
+    async def async_step_scan(self) -> ConfigFlowResult:
         """Scan the gateway for configured units."""
 
         settings = _build_serial_settings(self._port)
@@ -459,6 +464,9 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self._show_confirm_usb_form(
                 errors={"base": "cannot_connect"},
             )
+        except Exception:
+            _LOGGER.exception("Unexpected error while scanning %s", self._port)
+            return self._show_confirm_usb_form(errors={"base": "unknown"})
 
         if not discovered_slaves:
             _LOGGER.info(
@@ -484,7 +492,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_profiles(
         self, user_input: dict | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Collect the profile for each detected unit."""
 
         if not self._discovered_slaves:
@@ -563,7 +571,9 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         )
         return runtime_data.coordinator if runtime_data is not None else None
 
-    async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+    async def async_step_init(
+        self, user_input: dict | None = None
+    ) -> ConfigFlowResult:
         """Choose which configuration action to perform."""
 
         return self.async_show_menu(
@@ -577,7 +587,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_edit_connection(
         self, user_input: dict | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Change serial connection settings used by the integration."""
 
         errors: dict[str, str] = {}
@@ -604,6 +614,9 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                     )
                 except MeltemModbusError:
                     errors["base"] = "cannot_connect"
+                except Exception:
+                    _LOGGER.exception("Unexpected error while opening %s", selected_port)
+                    errors["base"] = "unknown"
                 else:
                     self.hass.config_entries.async_update_entry(
                         self.config_entry,
@@ -658,7 +671,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_edit_profiles(
         self, user_input: dict | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Edit the profiles for already known units without rescanning."""
 
         coordinator = self._coordinator
@@ -713,7 +726,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             description_placeholders=placeholders,
         )
 
-    async def _async_apply_profiles(self, updated_data: dict) -> FlowResult:
+    async def _async_apply_profiles(self, updated_data: dict) -> ConfigFlowResult:
         """Persist changed room profiles and reload the entry."""
 
         self.hass.config_entries.async_update_entry(
@@ -733,7 +746,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_rescan_units(
         self, user_input: dict | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Rescan the gateway for configured units and update the integration."""
 
         errors: dict[str, str] = {}
@@ -795,7 +808,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_profiles(
         self, user_input: dict | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Update profiles after a rescan."""
 
         if not self._discovered_slaves:

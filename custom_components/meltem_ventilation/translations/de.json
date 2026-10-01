@@ -40,7 +40,11 @@
     },
     "error": {
       "cannot_connect": "Verbindung zum Meltem-Gateway fehlgeschlagen.",
-      "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest."
+      "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest.",
+      "unknown": "Unerwarteter Fehler. Details stehen im Home-Assistant-Log."
+    },
+    "abort": {
+      "already_configured": "Dieses Meltem-Gateway ist bereits eingerichtet."
     }
   },
   "options": {
@@ -111,7 +115,8 @@
     },
     "error": {
       "cannot_connect": "Verbindung zum Meltem-Gateway fehlgeschlagen.",
-      "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest."
+      "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest.",
+      "unknown": "Unerwarteter Fehler. Details stehen im Home-Assistant-Log."
     }
   },
   "triggers": {
@@ -266,7 +271,7 @@
       "last_update_success": "Letzte Aktualisierung erfolgreich",
       "last_job_error": "Letzter Scheduler-Fehler",
       "unavailable_units": "Aktuell nicht verfügbare Geräte",
-      "read_health": "Lesestatus je Datengruppe"
+      "stale_read_groups": "Veraltete Datengruppen"
     }
   },
   "exceptions": {

@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 
 from .const import DOMAIN
+from .coordinator import MeltemDataUpdateCoordinator
 from .models import MeltemRuntimeData
 
 
@@ -61,8 +62,23 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
             if not coordinator.room_available(room.key)
         )
         or "none",
-        "read_health": {
-            room.key: coordinator.data_health_attributes(room.key)
-            for room in coordinator.rooms
-        },
+        "stale_read_groups": _stale_read_groups(coordinator),
     }
+
+
+def _stale_read_groups(coordinator: MeltemDataUpdateCoordinator) -> str:
+    """Summarize stale read groups per unit.
+
+    The system information dialog only renders plain values, not nested dicts.
+    """
+
+    units = []
+    for room in coordinator.rooms:
+        stale = [
+            group_key
+            for group_key, health in coordinator.data_health_attributes(room.key).items()
+            if group_key != "writes" and health.get("stale") is True
+        ]
+        if stale:
+            units.append(f"{room.key}: {', '.join(stale)}")
+    return "; ".join(units) or "none"

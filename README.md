@@ -67,7 +67,7 @@ has elapsed.
 
 ### Requirements
 
-- Home Assistant `2025.1` or newer
+- Home Assistant `2026.8` or newer
 - a Meltem `M-WRG-GW` gateway
 - supported `M-WRG-S` / `M-WRG-II` units already added in the Meltem app
 - the gateway connected to the Home Assistant host via USB

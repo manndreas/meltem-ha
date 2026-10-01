@@ -454,9 +454,10 @@ class TestReadRoomState:
         )
 
         assert first.supply_air_flow == 30
-        assert first.airflow_last_successful_read is not None
-        assert first.airflow_consecutive_failures == 0
-        assert first.airflow_last_error is None
+        first_health = first.read_health_for("flow")
+        assert first_health.last_successful_read is not None
+        assert first_health.consecutive_failures == 0
+        assert first_health.last_error is None
 
         airflow_fails = True
         failed = client.read_room_state(
@@ -466,9 +467,10 @@ class TestReadRoomState:
         )
 
         assert failed.supply_air_flow == 30
-        assert failed.airflow_last_successful_read == first.airflow_last_successful_read
-        assert failed.airflow_consecutive_failures == 1
-        assert failed.airflow_last_error == "airflow block read failed"
+        failed_health = failed.read_health_for("flow")
+        assert failed_health.last_successful_read == first_health.last_successful_read
+        assert failed_health.consecutive_failures == 1
+        assert failed_health.last_error == "airflow block read failed"
 
         airflow_fails = False
         recovered = client.read_room_state(
@@ -477,9 +479,10 @@ class TestReadRoomState:
             RefreshPlan.only(refresh_airflow=True),
         )
 
-        assert recovered.airflow_last_successful_read is not None
-        assert recovered.airflow_consecutive_failures == 0
-        assert recovered.airflow_last_error is None
+        recovered_health = recovered.read_health_for("flow")
+        assert recovered_health.last_successful_read is not None
+        assert recovered_health.consecutive_failures == 0
+        assert recovered_health.last_error is None
 
     def test_control_setting_read_health_tracks_failure_and_recovery(self) -> None:
         client = self._build_client()
@@ -893,6 +896,43 @@ class TestReadRoomState:
 
         assert state.preset_mode == "medium"
         assert state.intensive_active is True
+
+    def test_active_intensive_reports_the_base_quick_mode_after_a_restart(self) -> None:
+        client = self._build_client()
+        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
+        client._supports = lambda _room, _key: True
+        client._read_uint16 = lambda *_a, **_kw: 228
+        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
+            registers=[MODE_MANUAL, 228, 0, MODE_MANUAL, 227]
+        )
+        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+
+        state = client.read_room_state(
+            room,
+            RoomState(),
+            RefreshPlan.only(refresh_airflow=True),
+        )
+
+        assert state.preset_mode == "low"
+        assert state.intensive_active is True
+
+    def test_base_quick_mode_changes_are_seen_during_intensive(self) -> None:
+        client = self._build_client()
+        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
+        client._supports = lambda _room, _key: True
+        client._read_uint16 = lambda *_a, **_kw: 230
+        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
+            registers=[MODE_MANUAL, 230, 0, MODE_MANUAL, 227]
+        )
+        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+
+        state = client.read_room_state(
+            room,
+            RoomState(preset_mode="medium"),
+            RefreshPlan.only(refresh_airflow=True),
+        )
+
+        assert state.preset_mode == "high"
 
     def test_inactive_intensive_override_is_reported_as_false(self) -> None:
         client = self._build_client()

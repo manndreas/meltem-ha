@@ -227,6 +227,8 @@ forever on some units or only until the first write.
 
 The `intensive` read group is no longer marked failed when the two-register
 fallback succeeds, so these units do not keep `data_health` permanently on.
+Intensive writes on these units are recorded as `unverifiable` rather than
+`unconfirmed` for the same reason.
 
 ### What to measure
 

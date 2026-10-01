@@ -20,8 +20,8 @@ from custom_components.meltem_ventilation.const import (
     CONF_ROOMS,
     DOMAIN,
     MODEL_PROFILES,
+    READ_GROUP_ENTITY_KEYS,
 )
-from custom_components.meltem_ventilation.coordinator import READ_GROUP_ENTITY_KEYS
 from custom_components.meltem_ventilation.modbus_helpers import (
     supported_entity_keys_for_profile,
 )
@@ -239,6 +239,38 @@ async def test_diagnostic_connection_entities_are_created_once_and_disabled(
 
 async def _noop_refresh(self) -> None:
     return None
+
+
+async def test_unit_devices_hang_off_the_gateway_device(
+    hass: HomeAssistant, setup_profile
+) -> None:
+    with_serial_stubs = pytest.MonkeyPatch()
+    with_serial_stubs.setattr(
+        "custom_components.meltem_ventilation.MeltemModbusClient.ensure_connected",
+        lambda self: None,
+    )
+    with_serial_stubs.setattr(
+        "custom_components.meltem_ventilation.coordinator."
+        "MeltemDataUpdateCoordinator.async_refresh",
+        _noop_refresh,
+    )
+    try:
+        _, entry_id = await setup_profile("ii_plain", room_count=2)
+    finally:
+        with_serial_stubs.undo()
+
+    registry = dr.async_get(hass)
+    gateway = registry.async_get_device(identifiers={(DOMAIN, entry_id)})
+    assert gateway is not None
+    units = [
+        device
+        for device in dr.async_entries_for_config_entry(registry, entry_id)
+        if device.id != gateway.id
+    ]
+    assert len(units) == 2
+    assert all(device.via_device_id == gateway.id for device in units)
+    # The entry was created as 1.1 and migrated on setup.
+    assert hass.config_entries.async_get_entry(entry_id).minor_version == 2
 
 
 async def test_device_path_sensor_keeps_its_registry_entry_across_reloads(
