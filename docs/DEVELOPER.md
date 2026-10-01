@@ -3,8 +3,9 @@
 This document captures the main implementation details, caveats, and lessons
 learned while developing the `Meltem M-WRG` Home Assistant integration.
 
-For the consolidated manufacturer reference we transcribed into Markdown, see
-`docs/MELTEM.md`.
+For the manufacturer reference extracted from the original Meltem documents,
+see `docs/reference/`. Observed register behaviour and traced app writes are
+in `docs/MELTEM.md`.
 
 For the local Modbus-side settings reverse-engineering backlog, see
 `docs/SETTING_RE_BACKLOG.md`.

@@ -5,7 +5,7 @@ Stand: 3.0.0
 Diese Liste enthaelt nur noch offene Punkte. Alles, was frueher hier als
 "erledigt" gefuehrt wurde, ist inzwischen in `CHANGELOG.md` beschrieben.
 Hardware-Befunde und Reverse-Engineering-Notizen stehen in `docs/MELTEM.md`
-und `docs/DEVELOPER.md`.
+und `docs/DEVELOPER.md`, Herstellerangaben in `docs/reference/`.
 
 Offene Punkte, die vor einer Entscheidung eine Messung an echter Hardware
 brauchen, stehen in `docs/HARDWARE_BACKLOG.md`.
@@ -29,6 +29,9 @@ Einordnung:
 
 Naechster Schritt:
 - Nur bei Gelegenheit weiter untersuchen, siehe `docs/SETTING_RE_BACKLOG.md`.
+- Herstellerseitig sind die Zu-/Abluft-Volumenstroeme als Geraeteparameter
+  (Kennzahlen 42-47) dokumentiert, ohne Modbus-Zuordnung, siehe
+  `docs/reference/device-parameters.md`.
 
 ## 2. `PRODUCT_ID` sprechend decodieren
 
@@ -42,4 +45,6 @@ Befund:
 
 Naechster Schritt:
 - Werte weiterer Geraete sammeln, bevor eine Decodierung geraten wird.
+- Die Herstellerdokumente enthalten weder `116852` noch `VMD-22RPS44`; die
+  Artikelnummern passen nicht, siehe `docs/reference/models.md`.
 

@@ -14,7 +14,8 @@
 - `custom_components/meltem_ventilation/coordinator.py`: polling scheduler and write orchestration
 - `custom_components/meltem_ventilation/strings.json`: English entity/config strings
 - `custom_components/meltem_ventilation/translations/de.json`: German translations
-- `docs/MELTEM.md`: handwritten manufacturer reference extracted into Markdown
+- `docs/reference/`: manufacturer reference extracted from the original Meltem documents (originals in gitignored `docs/meltem/`)
+- `docs/MELTEM.md`: observed register behavior, gateway quirks, and traced app writes
 - `docs/DEVELOPER.md`: implementation notes, caveats, and hardware findings
 - `docs/HARDWARE_BACKLOG.md`: open findings that require live-gateway testing
 - `CHANGELOG.md`: release history
@@ -22,7 +23,8 @@
 ## Working rules
 
 - Keep user-visible terminology aligned with the Meltem manuals where practical
-- Prefer updating `docs/MELTEM.md` when new manufacturer facts are discovered
+- Put new manufacturer facts into the matching file under `docs/reference/` with a source ID; put hardware observations into `docs/MELTEM.md`
+- Never commit the original Meltem PDFs; summarize facts in own words instead of copying text or figures
 - Be conservative with Modbus timing and grouped reads; gateway behavior is sensitive
 - Do not remove or rewrite observed hardware quirks without checking `docs/DEVELOPER.md`
 - When changing versioned release metadata, update both `manifest.json` and `pyproject.toml`
