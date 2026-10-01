@@ -73,15 +73,17 @@ class _FakeClient:
         # HW-4 units answer the mode read but not the intensive registers.
         self.skipped_groups: set[str] = set()
 
-    def discover_gateway_units(self, start: int, end: int) -> list[int]:
+    async def discover_gateway_units(self, start: int, end: int) -> list[int]:
         self.discover_calls.append((start, end))
         return [2, 3, 4]
 
-    def probe_slave_details(self, slave: int) -> tuple[str, str | None, list[str]]:
+    async def probe_slave_details(
+        self, slave: int
+    ) -> tuple[str, str | None, list[str]]:
         self.probe_calls.append(slave)
         return ("plain", f"ID {slave}", ["level"])
 
-    def read_room_state(
+    async def read_room_state(
         self,
         room: RoomConfig,
         previous_state: RoomState,
@@ -104,15 +106,15 @@ class _FakeClient:
             )
         return state
 
-    def write_level(self, room: RoomConfig, level: int) -> None:
+    async def write_level(self, room: RoomConfig, level: int) -> None:
         self.write_level_calls.append((room.key, level))
 
-    def write_unbalanced_levels(
+    async def write_unbalanced_levels(
         self, room: RoomConfig, supply_level: int, extract_level: int
     ) -> None:
         self.write_unbalanced_calls.append((room.key, supply_level, extract_level))
 
-    def write_operating_mode(
+    async def write_operating_mode(
         self,
         room: RoomConfig,
         operation_mode: str,
@@ -121,14 +123,14 @@ class _FakeClient:
     ) -> None:
         self.write_operating_mode_calls.append((room.key, operation_mode))
 
-    def write_preset_mode(
+    async def write_preset_mode(
         self,
         room: RoomConfig,
         preset_mode: str,
     ) -> None:
         self.write_preset_mode_calls.append((room.key, preset_mode))
 
-    def write_control_setting(
+    async def write_control_setting(
         self,
         room: RoomConfig,
         setting_key: str,
@@ -273,7 +275,9 @@ class TestCoordinatorResilience:
         client.silent_seconds_by_slave[2] = ROOM_SILENT_AFTER_SECONDS + 1
         assert not coordinator.room_available("unit_1")
 
-    def test_failed_job_marks_only_the_affected_room(self, hass: HomeAssistant) -> None:
+    async def test_failed_job_marks_only_the_affected_room(
+        self, hass: HomeAssistant
+    ) -> None:
         rooms = [
             RoomConfig(key="broken", name="Broken", profile="ii_plain", slave=2),
             RoomConfig(key="unit_2", name="Unit 2", profile="ii_plain", slave=3),
@@ -282,7 +286,7 @@ class TestCoordinatorResilience:
         previous = {"broken": RoomState(target_level=10), "unit_2": RoomState(target_level=20)}
 
         for _ in range(ROOM_UNAVAILABLE_AFTER_FAILURES):
-            coordinator._read_one_job(
+            await coordinator._read_one_job(
                 previous,
                 PollJob(
                     key="flow_broken",
@@ -1320,7 +1324,7 @@ class TestCoordinator:
 
         recorded: list[tuple[str, str]] = []
 
-        def _write_preset_mode(room: RoomConfig, preset_mode: str) -> None:
+        async def _write_preset_mode(room: RoomConfig, preset_mode: str) -> None:
             recorded.append((room.key, preset_mode))
 
         client.write_preset_mode = _write_preset_mode  # type: ignore[method-assign]
@@ -1558,7 +1562,7 @@ class TestCoordinator:
         coordinator.data = {"unit_1": RoomState(humidity_min_level=10)}
         observed_during_settle: list[int | None] = []
 
-        def _write(room: RoomConfig, setting_key: str, value: int) -> int:
+        async def _write(room: RoomConfig, setting_key: str, value: int) -> int:
             client.write_control_setting_calls.append((room.key, setting_key, value))
             return 20
 
@@ -1641,7 +1645,7 @@ class TestCoordinator:
         assert selected is not None
         assert selected.key == "flow"
 
-    def test_read_one_job_keeps_previous_state_on_failure(
+    async def test_read_one_job_keeps_previous_state_on_failure(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(
@@ -1653,7 +1657,7 @@ class TestCoordinator:
             "flow", "broken", RefreshPlan.only(refresh_airflow=True), 10, 0.0
         )
 
-        state_map = coordinator._read_one_job(previous, job)
+        state_map = await coordinator._read_one_job(previous, job)
 
         assert state_map["broken"].target_level == 30
 

@@ -12,13 +12,14 @@ import logging
 import math
 import operator
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -69,7 +70,6 @@ from .models import (
 
 _LOGGER = logging.getLogger(__name__)
 async_sleep = asyncio.sleep
-sync_sleep = time.sleep
 
 FULL_REFRESH_PLAN = RefreshPlan()
 AIRFLOW_REFRESH_PLAN = RefreshPlan.only(refresh_airflow=True)
@@ -292,10 +292,14 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         return self._last_job_error
 
     @property
-    def gateway_identifier(self) -> tuple[str, str]:
-        """Return the device identifier of the gateway the units hang off."""
+    def gateway_device_id(self) -> str | None:
+        """Return the registry id of the gateway device the units hang off."""
 
-        return (DOMAIN, self.config_entry.entry_id)
+        entry_id = self.config_entry.entry_id
+        device = dr.async_get(self.hass).async_get_device_by_identifier(
+            (DOMAIN, entry_id), entry_id
+        )
+        return device.id if device is not None else None
 
     def room_available(self, room_key: str) -> bool:
         """Return whether one room still delivers usable data.
@@ -494,7 +498,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             async with self._gateway_lock:
                 if not self._safe_data:
                     self._last_read_started = time.monotonic()
-                    states = await self.hass.async_add_executor_job(self._read_all_rooms_full)
+                    states = await self._read_all_rooms_full()
                     self._on_transport_success()
                     self._schedule_next_tick()
                     return states
@@ -514,11 +518,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 job.next_due = now + self._job_interval(job)
                 self._last_read_started = now
                 self._last_job_error = None
-                updated_data = await self.hass.async_add_executor_job(
-                    self._read_one_job,
-                    self.data,
-                    job,
-                )
+                updated_data = await self._read_one_job(self.data, job)
                 # _read_one_job swallows transport errors to keep cached state,
                 # so success has to be derived from the recorded job error.
                 if self._last_job_error is None:
@@ -873,7 +873,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         room: RoomConfig,
         write_key: str,
         expected_value: str | int | bool | tuple[int, int],
-        write_method: Callable[..., object],
+        write_method: Callable[..., Awaitable[object]],
         *write_args: object,
         refresh_plan: RefreshPlan | None = None,
         min_refresh_attempts: int = 1,
@@ -889,10 +889,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         )
         async with self._gateway_lock:
             try:
-                write_result = await self.hass.async_add_executor_job(
-                    write_method,
-                    *write_args,
-                )
+                write_result = await write_method(*write_args)
             except Exception as err:
                 # A failed write makes any earlier pending value doubtful.
                 clear_overlay = {
@@ -955,8 +952,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """Discover configured units using the active gateway client."""
 
         async with self._gateway_lock:
-            return await self.hass.async_add_executor_job(
-                self.client.discover_gateway_units,
+            return await self.client.discover_gateway_units(
                 DEFAULT_SCAN_SLAVE_START,
                 DEFAULT_SCAN_SLAVE_END,
             )
@@ -968,10 +964,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """Probe one unit using the active gateway client."""
 
         async with self._gateway_lock:
-            return await self.hass.async_add_executor_job(
-                self.client.probe_slave_details,
-                slave,
-            )
+            return await self.client.probe_slave_details(slave)
 
     async def _async_refresh_room_after_write(
         self,
@@ -986,8 +979,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             previous_state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
             self._last_read_started = time.monotonic()
             try:
-                refreshed_room = await self.hass.async_add_executor_job(
-                    self.client.read_room_state,
+                refreshed_room = await self.client.read_room_state(
                     room,
                     previous_state,
                     refresh_plan,
@@ -1023,7 +1015,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             if attempt < POST_WRITE_REFRESH_RETRIES:
                 await async_sleep(POST_WRITE_REFRESH_INTERVAL_SECONDS)
 
-    def _read_all_rooms_full(self) -> dict[str, RoomState]:
+    async def _read_all_rooms_full(self) -> dict[str, RoomState]:
         """Read a full initial state for all configured rooms."""
 
         states: dict[str, RoomState] = {}
@@ -1031,7 +1023,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         last_error: MeltemModbusError | None = None
         for room in self.rooms:
             try:
-                states[room.key] = self.client.read_room_state(
+                states[room.key] = await self.client.read_room_state(
                     room,
                     EMPTY_ROOM_STATE,
                     FULL_REFRESH_PLAN,
@@ -1049,7 +1041,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 last_error = err
                 self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
                 # Give the serial port time to settle before the next room.
-                sync_sleep(0.5)
+                await async_sleep(0.5)
 
         if successful_reads == 0 and last_error is not None:
             raise last_error
@@ -1406,7 +1398,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         last_attempt = state.read_health_for(group_key).last_attempt
         return last_attempt is not None and last_attempt >= started_at
 
-    def _read_one_job(
+    async def _read_one_job(
         self,
         previous_states: dict[str, RoomState],
         job: PollJob,
@@ -1417,7 +1409,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         previous_state = previous_states.get(room.key, EMPTY_ROOM_STATE)
 
         try:
-            refreshed_state = self.client.read_room_state(
+            refreshed_state = await self.client.read_room_state(
                 room,
                 previous_state,
                 job.refresh_plan,

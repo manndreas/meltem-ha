@@ -1,9 +1,9 @@
 """Setup-time helpers and shared utilities for Meltem Modbus access.
 
-This module contains all functions that do **not** require the long-lived
+This module contains everything that does **not** need the long-lived
 :class:`MeltemModbusClient` runtime object:
 
-* serial-settings helpers (build / validate / resolve)
+* serial link parameters and unit preparation
 * gateway node discovery
 * setup-time profile probes
 * plausibility checks and pure helper functions
@@ -15,31 +15,31 @@ The config flow imports exclusively from here. The runtime client in
 from __future__ import annotations
 
 import logging
-import struct
-import time
-from dataclasses import dataclass
 from pathlib import Path
 
-from pymodbus.client import ModbusSerialClient
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusError,
+    ModbusSerialParams,
+    ModbusUnit,
+)
 
 from .const import (
     BASE_SUPPORTED_ENTITY_KEYS,
     DEFAULT_GATEWAY_DEVICE_ID,
+    FIXED_BAUDRATE,
+    FIXED_BYTESIZE,
+    FIXED_PARITY,
+    FIXED_STOPBITS,
+    FIXED_TIMEOUT,
     PROFILE_METADATA,
-    REGISTER_CO2_EXTRACT_AIR,
-    REGISTER_GATEWAY_NODE_ADDRESS_1,
-    REGISTER_GATEWAY_NUMBER_OF_NODES,
-    REGISTER_HUMIDITY_EXTRACT_AIR,
-    REGISTER_HUMIDITY_SUPPLY_AIR,
-    REGISTER_PRODUCT_ID,
-    REGISTER_VOC_SUPPLY_AIR,
     REQUEST_GAP_SECONDS,
-    SCAN_TIMEOUT,
-    SETUP_PROBE_TIMEOUT,
+    TRANSPORT_DISCONNECT_AFTER_TIMEOUTS,
+    TRANSPORT_RETRY_DELAY_SECONDS,
 )
+from .device import MeltemGateway, MeltemProbe, PolicyUnit, TransportPolicy
 
 _LOGGER = logging.getLogger(__name__)
-sync_sleep = time.sleep
 
 
 # ---------------------------------------------------------------------------
@@ -60,20 +60,8 @@ class MeltemConnectionError(MeltemModbusError):
 
 
 # ---------------------------------------------------------------------------
-#  Serial settings
+#  Serial link
 # ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True, frozen=True)
-class SerialSettings:
-    """Serial settings for the Meltem gateway."""
-
-    port: str
-    baudrate: int
-    bytesize: int
-    parity: str
-    stopbits: int
-    timeout: float
 
 
 def resolve_preferred_port_path(port: str) -> str:
@@ -103,152 +91,37 @@ def resolve_preferred_port_path(port: str) -> str:
     return port
 
 
-def validate_serial_connection(settings: SerialSettings) -> None:
-    """Check whether the configured serial connection can be opened."""
+def build_serial_params(port: str) -> ModbusSerialParams:
+    """Return the fixed serial link parameters of the Meltem gateway."""
 
-    client = build_client(settings)
-    try:
-        if not client.connect():
-            raise MeltemModbusError(
-                f"Could not open serial connection on {settings.port}"
-            )
-    finally:
-        client.close()
-
-
-def build_scan_settings(settings: SerialSettings) -> SerialSettings:
-    """Use a shorter timeout for device discovery scans."""
-
-    return SerialSettings(
-        port=settings.port,
-        baudrate=settings.baudrate,
-        bytesize=settings.bytesize,
-        parity=settings.parity,
-        stopbits=settings.stopbits,
-        timeout=min(settings.timeout, SCAN_TIMEOUT),
+    return ModbusSerialParams(
+        device=port,
+        baudrate=FIXED_BAUDRATE,
+        bytesize=FIXED_BYTESIZE,
+        parity=FIXED_PARITY,
+        stopbits=FIXED_STOPBITS,
     )
 
 
-def build_setup_probe_settings(settings: SerialSettings) -> SerialSettings:
-    """Use a moderate timeout for setup-time previews and profile detection."""
+def new_transport_policy() -> TransportPolicy:
+    """Return the retry policy shared by all units on one gateway link."""
 
-    return SerialSettings(
-        port=settings.port,
-        baudrate=settings.baudrate,
-        bytesize=settings.bytesize,
-        parity=settings.parity,
-        stopbits=settings.stopbits,
-        timeout=min(settings.timeout, SETUP_PROBE_TIMEOUT),
+    return TransportPolicy(
+        disconnect_after_timeouts=TRANSPORT_DISCONNECT_AFTER_TIMEOUTS,
+        connection_retry_delay=TRANSPORT_RETRY_DELAY_SECONDS,
     )
 
 
-# ---------------------------------------------------------------------------
-#  Client builder
-# ---------------------------------------------------------------------------
+def prepare_unit(unit: ModbusUnit, unit_id: int, policy: TransportPolicy) -> PolicyUnit:
+    """Ask the link for the gateway's timing and wrap the unit in the retry policy.
 
-
-def build_client(
-    settings: SerialSettings, *, retries: int | None = None
-) -> ModbusSerialClient:
-    """Create a new pymodbus serial client from the given settings."""
-
-    extra = {} if retries is None else {"retries": retries}
-    return ModbusSerialClient(
-        port=settings.port,
-        baudrate=settings.baudrate,
-        bytesize=settings.bytesize,
-        parity=settings.parity,
-        stopbits=settings.stopbits,
-        timeout=settings.timeout,
-        **extra,
-    )
-
-
-# ---------------------------------------------------------------------------
-#  Setup-time profile detection
-# ---------------------------------------------------------------------------
-
-
-def detect_slave_details(
-    settings: SerialSettings, slave: int
-) -> tuple[str, str | None, list[str]]:
-    """Best-effort setup-time profile detection with a minimal register probe."""
-
-    client = build_client(settings)
-
-    try:
-        if not client.connect():
-            return "plain", None, _base_supported_entity_keys()
-        return detect_slave_details_with_client(client, slave)
-    finally:
-        client.close()
-
-
-def detect_slave_details_with_client(
-    client: ModbusSerialClient,
-    slave: int,
-) -> tuple[str, str | None, list[str]]:
-    """Run the minimal setup-time probe on an already open client.
-
-    The probe only answers two questions:
-    - which suffix capabilities does this unit expose
-    - which entities should Home Assistant create for it
+    The timeout must be asked for before the first request, since a lower
+    timeout only takes effect on the next connect.
     """
 
-    supported_entity_keys = set(_base_supported_entity_keys())
-    product_id = _safe_read_uint32_word_swap(
-        client,
-        slave,
-        REGISTER_PRODUCT_ID,
-    )
-
-    humidity_extract_air = _safe_read_uint16(
-        client, slave, REGISTER_HUMIDITY_EXTRACT_AIR
-    )
-    if _is_plausible_humidity(humidity_extract_air):
-        supported_entity_keys.add("humidity_extract_air")
-
-    humidity_supply_air = _safe_read_uint16(
-        client, slave, REGISTER_HUMIDITY_SUPPLY_AIR
-    )
-    if _is_plausible_humidity(humidity_supply_air):
-        supported_entity_keys.add("humidity_supply_air")
-
-    co2_extract_air = _safe_read_uint16(client, slave, REGISTER_CO2_EXTRACT_AIR)
-    if _is_plausible_co2(co2_extract_air):
-        supported_entity_keys.add("co2_extract_air")
-
-    voc_supply_air = _safe_read_uint16(client, slave, REGISTER_VOC_SUPPLY_AIR)
-    if _is_plausible_voc(voc_supply_air):
-        supported_entity_keys.add("voc_supply_air")
-
-    # The suffix can be inferred from the optional sensor set alone.
-    if "voc_supply_air" in supported_entity_keys:
-        detected_profile = "fc_voc"
-    elif "co2_extract_air" in supported_entity_keys:
-        detected_profile = "fc"
-    elif (
-        "humidity_extract_air" in supported_entity_keys
-        or "humidity_supply_air" in supported_entity_keys
-    ):
-        detected_profile = "f"
-    else:
-        detected_profile = "plain"
-
-    preview_parts: list[str] = []
-    if product_id is not None:
-        preview_parts.append(f"ID {product_id}")
-    capability_preview = {
-        "fc_voc": "VOC",
-        "fc": "CO2",
-        "f": "humidity",
-        "plain": "basic",
-    }[detected_profile]
-    preview_parts.append(capability_preview)
-
-    preview = " | ".join(preview_parts) if preview_parts else None
-
-    return detected_profile, preview, sorted(supported_entity_keys)
+    unit.set_message_spacing(REQUEST_GAP_SECONDS)
+    unit.require_timeout(FIXED_TIMEOUT)
+    return PolicyUnit(unit, unit_id, policy)
 
 
 # ---------------------------------------------------------------------------
@@ -256,99 +129,49 @@ def detect_slave_details_with_client(
 # ---------------------------------------------------------------------------
 
 
-def scan_available_slaves(
-    settings: SerialSettings, *, start: int, end: int
+async def read_gateway_node_count(unit: ModbusUnit) -> int:
+    """Read how many units the gateway is configured for.
+
+    Raises ``MeltemConnectionError`` when the serial link cannot be opened and
+    ``MeltemModbusError`` when the gateway does not answer.
+    """
+
+    gateway = MeltemGateway(unit)
+    try:
+        await gateway.node_count.async_update()
+    except ModbusConnectionError as err:
+        raise MeltemConnectionError(str(err)) from err
+    except ModbusError as err:
+        raise MeltemModbusError(str(err)) from err
+    return int(gateway.node_count.value or 0)
+
+
+async def discover_gateway_nodes(
+    unit: ModbusUnit, port: str, *, start: int, end: int
 ) -> list[int]:
-    """Discover configured unit addresses via the gateway bridge registers."""
+    """Discover configured unit addresses via the Airios-style bridge registers.
 
-    client = build_client(settings)
+    Raises ``MeltemConnectionError`` when the serial link cannot be opened; a
+    gateway that does not answer just yields no units.
+    """
 
+    gateway = MeltemGateway(unit)
     try:
-        if not client.connect():
-            raise MeltemModbusError(
-                f"Could not open serial connection on {settings.port}"
-            )
-
-        _LOGGER.info(
-            "Starting Meltem gateway-backed unit discovery on %s",
-            settings.port,
-        )
-
-        discovered = discover_gateway_nodes(client, settings.port, start=start, end=end)
-        if not discovered:
-            _LOGGER.info(
-                "Meltem gateway-backed unit discovery on %s found no configured units",
-                settings.port,
-            )
-            return []
-
-        _LOGGER.info(
-            "Meltem gateway-backed unit discovery on %s found configured unit addresses: %s",
-            settings.port,
-            discovered,
-        )
-        return discovered
-    finally:
-        client.close()
-
-
-def _read_gateway_registers(
-    client: ModbusSerialClient,
-    port: str,
-    address: int,
-    count: int,
-    what: str,
-) -> list[int] | None:
-    """Read one gateway bridge register block, logging why it failed."""
-
-    try:
-        response = client.read_holding_registers(
-            address=address,
-            count=count,
-            device_id=DEFAULT_GATEWAY_DEVICE_ID,
-        )
-    except Exception as err:
+        await gateway.node_count.async_update()
+    except ModbusConnectionError as err:
+        raise MeltemConnectionError(
+            f"Could not open serial connection on {port}: {err}"
+        ) from err
+    except ModbusError as err:
         _LOGGER.warning(
-            "Meltem gateway discovery on %s via device %s raised %r while reading %s",
+            "Meltem gateway discovery on %s via device %s could not read the node count: %s",
             port,
             DEFAULT_GATEWAY_DEVICE_ID,
             err,
-            what,
         )
-        sync_sleep(REQUEST_GAP_SECONDS)
-        return None
-
-    sync_sleep(REQUEST_GAP_SECONDS)
-
-    registers = getattr(response, "registers", None) if response is not None else None
-    if response is None or response.isError() or not registers:
-        _LOGGER.warning(
-            "Meltem gateway discovery on %s via device %s returned no readable %s",
-            port,
-            DEFAULT_GATEWAY_DEVICE_ID,
-            what,
-        )
-        return None
-
-    return [int(value) for value in registers]
-
-
-def discover_gateway_nodes(
-    client: ModbusSerialClient, port: str, *, start: int, end: int
-) -> list[int]:
-    """Try to discover configured units via Airios-style bridge registers."""
-
-    node_counts = _read_gateway_registers(
-        client,
-        port,
-        REGISTER_GATEWAY_NUMBER_OF_NODES,
-        1,
-        "node count",
-    )
-    if node_counts is None:
         return []
 
-    node_count = node_counts[0]
+    node_count = int(gateway.node_count.value or 0)
     if node_count <= 0:
         _LOGGER.warning(
             "Meltem gateway discovery on %s via device %s reported zero configured units",
@@ -357,14 +180,19 @@ def discover_gateway_nodes(
         )
         return []
 
-    addresses = _read_gateway_registers(
-        client,
-        port,
-        REGISTER_GATEWAY_NODE_ADDRESS_1,
-        max(1, min(32, node_count)),
-        "node address list",
-    )
-    if addresses is None:
+    try:
+        addresses = await gateway.async_read_node_addresses(max(1, min(32, node_count)))
+    except ModbusConnectionError as err:
+        raise MeltemConnectionError(
+            f"Could not open serial connection on {port}: {err}"
+        ) from err
+    except ModbusError as err:
+        _LOGGER.warning(
+            "Meltem gateway discovery on %s via device %s could not read the node address list: %s",
+            port,
+            DEFAULT_GATEWAY_DEVICE_ID,
+            err,
+        )
         return []
 
     discovered: list[int] = []
@@ -387,51 +215,82 @@ def discover_gateway_nodes(
 
 
 # ---------------------------------------------------------------------------
-#  Best-effort read helpers (setup-time only)
+#  Setup-time profile detection
 # ---------------------------------------------------------------------------
 
 
-def _safe_read_registers(
-    client: ModbusSerialClient, slave: int, address: int, count: int
-) -> list[int] | None:
-    """Best-effort register read for setup previews."""
+async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None, list[str]]:
+    """Run the minimal setup-time probe on one unit.
 
-    try:
-        response = client.read_holding_registers(
-            address=address, count=count, device_id=slave
-        )
-        sync_sleep(REQUEST_GAP_SECONDS)
-    except Exception:
-        return None
+    The probe only answers two questions:
+    - which suffix capabilities does this unit expose
+    - which entities should Home Assistant create for it
 
-    if response is None or response.isError():
-        return None
+    Raises ``MeltemConnectionError`` when the serial link is down; every other
+    read error just leaves that capability undetected.
+    """
 
-    registers = getattr(response, "registers", None)
-    if not registers or len(registers) < count:
-        return None
+    probe = MeltemProbe(unit)
+    answered: set[str] = set()
+    for name in (
+        "product_id",
+        "humidity_extract_air",
+        "humidity_supply_air",
+        "co2_extract_air",
+        "voc_supply_air",
+    ):
+        try:
+            await getattr(probe, name).async_update()
+        except ModbusConnectionError as err:
+            raise MeltemConnectionError(str(err)) from err
+        except ModbusError:
+            continue
+        answered.add(name)
 
-    return list(registers[:count])
+    def _probed(name: str) -> int | None:
+        if name not in answered:
+            return None
+        component = getattr(probe, name)
+        return component.product_id if name == "product_id" else component.value
 
+    supported_entity_keys = set(_base_supported_entity_keys())
+    if _is_plausible_humidity(_probed("humidity_extract_air")):
+        supported_entity_keys.add("humidity_extract_air")
+    if _is_plausible_humidity(_probed("humidity_supply_air")):
+        supported_entity_keys.add("humidity_supply_air")
+    if _is_plausible_co2(_probed("co2_extract_air")):
+        supported_entity_keys.add("co2_extract_air")
+    if _is_plausible_voc(_probed("voc_supply_air")):
+        supported_entity_keys.add("voc_supply_air")
 
-def _safe_read_uint16(
-    client: ModbusSerialClient, slave: int, address: int
-) -> int | None:
-    """Best-effort uint16 read for setup previews."""
+    # The suffix can be inferred from the optional sensor set alone.
+    if "voc_supply_air" in supported_entity_keys:
+        detected_profile = "fc_voc"
+    elif "co2_extract_air" in supported_entity_keys:
+        detected_profile = "fc"
+    elif (
+        "humidity_extract_air" in supported_entity_keys
+        or "humidity_supply_air" in supported_entity_keys
+    ):
+        detected_profile = "f"
+    else:
+        detected_profile = "plain"
 
-    registers = _safe_read_registers(client, slave, address, 1)
-    return registers[0] if registers else None
+    preview_parts: list[str] = []
+    product_id = _probed("product_id")
+    if product_id is not None:
+        preview_parts.append(f"ID {product_id}")
+    capability_preview = {
+        "fc_voc": "VOC",
+        "fc": "CO2",
+        "f": "humidity",
+        "plain": "basic",
+    }[detected_profile]
+    preview_parts.append(capability_preview)
 
+    preview = " | ".join(preview_parts) if preview_parts else None
 
-def _safe_read_uint32_word_swap(
-    client: ModbusSerialClient, slave: int, address: int
-) -> int | None:
-    """Best-effort uint32 read for setup previews."""
-
-    registers = _safe_read_registers(client, slave, address, 2)
-    if registers is None:
-        return None
-    return struct.unpack(">I", struct.pack(">HH", registers[1], registers[0]))[0]
+    return detected_profile, preview, sorted(supported_entity_keys)
 
 
 # ---------------------------------------------------------------------------

@@ -116,7 +116,7 @@ class TestSensorEntityCreation:
 
     def test_device_info(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=42)})
-        coordinator.gateway_identifier = (DOMAIN, "gateway-entry")
+        coordinator.gateway_device_id = "gateway-device"
         desc = _find_desc("exhaust_temperature")
         entity = MeltemSensorEntity(coordinator, _ROOM_FC_VOC, desc)
         info = entity.device_info
@@ -125,7 +125,7 @@ class TestSensorEntityCreation:
         assert "Living Room" in info["name"]
         assert info["sw_version"] == "42"
         assert info["hw_version"] == "116852"
-        assert info["via_device"] == (DOMAIN, "gateway-entry")
+        assert info["via_device_id"] == "gateway-device"
 
     def test_airflow_sensors_use_the_volume_flow_rate_device_class(self) -> None:
         for key in ("extract_air_flow", "supply_air_flow"):
