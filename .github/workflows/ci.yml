@@ -17,7 +17,7 @@ env:
 jobs:
   hassfest:
     name: Hassfest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -28,7 +28,7 @@ jobs:
 
   hacs:
     name: HACS Validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -42,7 +42,7 @@ jobs:
 
   ruff:
     name: Ruff
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -61,7 +61,7 @@ jobs:
 
   pytest:
     name: Pytest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
