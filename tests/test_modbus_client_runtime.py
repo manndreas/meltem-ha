@@ -105,6 +105,20 @@ class TestEnsureClient:
         assert result is mock_pymodbus
         mock_pymodbus.connect.assert_called_once()
 
+    def test_runtime_client_disables_pymodbus_retries(self) -> None:
+        """The own reconnecting retry already covers lost frames."""
+        client = MeltemModbusClient(_SETTINGS)
+        fresh = MagicMock()
+        fresh.connect.return_value = True
+
+        with patch(
+            "custom_components.meltem_ventilation.modbus_client.build_client",
+            return_value=fresh,
+        ) as mock_build:
+            client._ensure_client()
+
+        mock_build.assert_called_once_with(_SETTINGS, retries=0)
+
     def test_builds_new_client_after_stale_one_fails(self) -> None:
         client = MeltemModbusClient(_SETTINGS)
         stale = MagicMock()
@@ -874,7 +888,7 @@ class TestReadRoomStateEndToEnd:
             patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
             patch(
                 "custom_components.meltem_ventilation.modbus_client.build_client",
-                side_effect=lambda s: _failing_client(),
+                side_effect=lambda *_a, **_kw: _failing_client(),
             ),
             pytest.raises(MeltemModbusError, match="Could not connect"),
         ):
@@ -892,7 +906,7 @@ class TestReadRoomStateEndToEnd:
             patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
             patch(
                 "custom_components.meltem_ventilation.modbus_client.build_client",
-                side_effect=lambda s: _failing_client(),
+                side_effect=lambda *_a, **_kw: _failing_client(),
             ),
             pytest.raises(MeltemConnectionError),
         ):

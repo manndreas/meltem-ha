@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import types
+from dataclasses import replace
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -22,16 +25,23 @@ from custom_components.meltem_ventilation.config_flow import (
     _profile_field_key,
     _unit_details,
 )
-from custom_components.meltem_ventilation.const import DOMAIN
+from custom_components.meltem_ventilation.const import (
+    DIRECTION_EXTRACT,
+    DIRECTION_SUPPLY,
+    DOMAIN,
+    WRITE_HEALTH_RETENTION_SECONDS,
+)
 from custom_components.meltem_ventilation.coordinator import (
     ROOM_SILENT_AFTER_SECONDS,
     ROOM_UNAVAILABLE_AFTER_FAILURES,
+    SILENT_ROOM_POLL_SECONDS,
     TRANSPORT_BACKOFF_AFTER_FAILURES,
     TRANSPORT_BACKOFF_MAX_SECONDS,
     TRANSPORT_BACKOFF_START_SECONDS,
     MeltemDataUpdateCoordinator,
     PollJob,
 )
+from custom_components.meltem_ventilation.fan import MeltemDirectionalFanEntity
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
 from custom_components.meltem_ventilation.models import (
     ReadHealth,
@@ -547,7 +557,7 @@ class TestEffectiveLevels:
 
         assert coordinator.effective_levels("unit_1") == (40, 40)
 
-    async def test_writes_keep_confirmed_state_and_reconcile_write_failures(
+    async def test_writes_show_pending_levels_and_reconcile_write_failures(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
@@ -558,7 +568,8 @@ class TestEffectiveLevels:
         }
 
         await coordinator.async_set_unbalanced_levels("unit_1", 70, 30)
-        assert coordinator.effective_levels("unit_1") == (40, 40)
+        assert coordinator.effective_levels("unit_1") == (70, 30)
+        assert coordinator.level_source("unit_1") == "pending"
         assert (
             coordinator._write_confirmations["unit_1"]["airflow_levels"].status
             == "pending"
@@ -569,9 +580,10 @@ class TestEffectiveLevels:
 
         client.write_unbalanced_levels = _raise
         client.next_read_state = RoomState(operation_mode="manual", target_level=40)
-        with pytest.raises(MeltemModbusError):
+        with pytest.raises(HomeAssistantError) as err:
             await coordinator.async_set_unbalanced_levels("unit_1", 10, 90)
 
+        assert err.value.translation_key == "write_failed"
         assert coordinator.effective_levels("unit_1") == (40, 40)
         assert client.read_calls[-1][1] == RefreshPlan.only(refresh_airflow=True)
         assert coordinator._write_confirmations["unit_1"]["airflow_levels"].status == "failed"
@@ -592,6 +604,340 @@ class TestEffectiveLevels:
             await coordinator.async_set_operation_mode("unit_1", "co2_control")
 
         assert coordinator._optimistic_levels.get("unit_1", None) is None
+
+    async def test_manual_mode_without_any_known_airflow_is_refused(
+        self, hass: HomeAssistant,
+    ) -> None:
+        """Guessing 0 m3/h would stop the unit instead of changing its mode."""
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {"unit_1": RoomState(operation_mode="co2_control")}
+
+        with pytest.raises(HomeAssistantError) as err:
+            await coordinator.async_set_operation_mode("unit_1", "manual")
+
+        assert err.value.translation_key == "airflow_unknown"
+        assert client.write_operating_mode_calls == []
+
+
+def _fresh(state: RoomState) -> dict[str, RoomState]:
+    return {"unit_1": _with_fresh_read_groups(state, "flow", "flow_control")}
+
+
+class TestDirectionalWrites:
+    """One fan direction changes without disturbing the other one."""
+
+    async def test_supply_write_keeps_the_extract_target(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(
+            RoomState(
+                operation_mode="unbalanced", target_level=40, extract_target_level=30
+            )
+        )
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
+
+        assert client.write_unbalanced_calls == [("unit_1", 60, 30)]
+
+    async def test_extract_write_keeps_the_supply_target(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(
+            RoomState(
+                operation_mode="unbalanced", target_level=40, extract_target_level=30
+            )
+        )
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_EXTRACT, 60)
+
+        assert client.write_unbalanced_calls == [("unit_1", 40, 60)]
+
+    async def test_turning_off_one_direction_keeps_the_unit_running(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=40))
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 0)
+
+        assert client.write_unbalanced_calls == [("unit_1", 0, 40)]
+        assert client.write_level_calls == []
+
+    async def test_turning_off_the_last_direction_switches_the_unit_off(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(
+            RoomState(
+                operation_mode="unbalanced", target_level=40, extract_target_level=0
+            )
+        )
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 0)
+
+        assert client.write_level_calls == [("unit_1", 0)]
+        assert client.write_unbalanced_calls == []
+
+    @pytest.mark.parametrize("extract_level", [40, 41])
+    async def test_matching_levels_are_written_as_balanced(
+        self, hass: HomeAssistant, extract_level: int,
+    ) -> None:
+        """One m3/h apart is a rounding artifact, not an intended imbalance."""
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(
+            RoomState(
+                operation_mode="unbalanced", target_level=40, extract_target_level=60
+            )
+        )
+
+        await coordinator.async_set_direction_level(
+            "unit_1", DIRECTION_EXTRACT, extract_level
+        )
+
+        assert client.write_level_calls == [("unit_1", extract_level)]
+        assert client.write_unbalanced_calls == []
+
+    async def test_starting_from_off_runs_both_directions(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="off"))
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 50)
+
+        assert client.write_level_calls == [("unit_1", 50)]
+
+    async def test_leaving_sensor_control_writes_a_balanced_level(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(
+            RoomState(
+                operation_mode="co2_control", supply_air_flow=48, extract_air_flow=51
+            )
+        )
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
+
+        assert client.write_level_calls == [("unit_1", 60)]
+
+    async def test_turning_one_direction_off_under_sensor_control_keeps_the_unit_running(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(
+            RoomState(
+                operation_mode="co2_control", supply_air_flow=48, extract_air_flow=51
+            )
+        )
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 0)
+
+        assert client.write_unbalanced_calls == [("unit_1", 0, 51)]
+
+    async def test_close_measured_airflows_count_as_balanced(
+        self, hass: HomeAssistant,
+    ) -> None:
+        """Without a target readback, measurement jitter must not force unbalanced."""
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    operation_mode="manual", supply_air_flow=60, extract_air_flow=58
+                ),
+                "flow",
+            )
+        }
+        assert coordinator.level_source("unit_1") == "measured"
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
+
+        assert client.write_level_calls == [("unit_1", 60)]
+        assert client.write_unbalanced_calls == []
+
+    async def test_unknown_opposite_uses_a_balanced_fallback(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {"unit_1": RoomState(operation_mode="manual")}
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
+
+        assert client.write_level_calls == [("unit_1", 60)]
+        assert (
+            coordinator.level_write_fallback("unit_1")
+            == "both_directions_balanced_manual"
+        )
+
+    async def test_unknown_opposite_refuses_to_switch_off_one_direction(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {"unit_1": RoomState(operation_mode="manual")}
+
+        with pytest.raises(HomeAssistantError) as err:
+            await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 0)
+
+        assert err.value.translation_key == "opposite_airflow_unknown"
+        assert client.write_level_calls == []
+        assert client.write_unbalanced_calls == []
+
+    async def test_unknown_mode_is_reported_after_an_explicit_write(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(supply_air_flow=40, extract_air_flow=30))
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
+
+        assert client.write_unbalanced_calls == [("unit_1", 60, 30)]
+        assert coordinator.level_write_fallback("unit_1") == "unknown_mode_overridden"
+
+    async def test_fallback_is_cleared_by_the_next_successful_readback(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {"unit_1": RoomState(operation_mode="manual")}
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
+        assert coordinator.level_write_fallback("unit_1") is not None
+
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
+
+        assert coordinator.level_write_fallback("unit_1") is None
+
+    async def test_fan_shows_the_pending_level_right_after_a_write(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
+        supply = MeltemDirectionalFanEntity(coordinator, _UNIT_1, DIRECTION_SUPPLY)
+
+        await supply.async_set_percentage(80)
+
+        assert supply.percentage == 80
+        assert supply.extra_state_attributes["level_source"] == "pending"
+
+    async def test_successive_fan_commands_build_on_each_other(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
+        supply = MeltemDirectionalFanEntity(coordinator, _UNIT_1, DIRECTION_SUPPLY)
+        extract = MeltemDirectionalFanEntity(coordinator, _UNIT_1, DIRECTION_EXTRACT)
+
+        await supply.async_set_percentage(40)
+        await extract.async_set_percentage(40)
+
+        assert client.write_unbalanced_calls == [("unit_1", 40, 60)]
+        assert client.write_level_calls == [("unit_1", 40)]
+
+    async def test_concurrent_fan_commands_from_a_scene_end_balanced(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
+        supply = MeltemDirectionalFanEntity(coordinator, _UNIT_1, DIRECTION_SUPPLY)
+        extract = MeltemDirectionalFanEntity(coordinator, _UNIT_1, DIRECTION_EXTRACT)
+
+        await asyncio.gather(
+            supply.async_set_percentage(40), extract.async_set_percentage(40)
+        )
+
+        assert client.write_level_calls[-1] == ("unit_1", 40)
+        assert coordinator.effective_levels("unit_1") == (40, 40)
+
+
+class TestAirflowWriteConfirmation:
+    async def test_poll_after_a_fan_write_confirms_it_without_failing_the_update(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 70)
+        client.next_read_state = RoomState(
+            operation_mode="unbalanced", target_level=70, extract_target_level=60
+        )
+
+        await coordinator.async_refresh()
+
+        assert coordinator.last_update_success, coordinator.last_exception
+        assert (
+            coordinator._write_confirmations["unit_1"]["airflow_levels"].status
+            == "confirmed"
+        )
+        assert coordinator.level_source("unit_1") == "target"
+
+    def test_measured_airflow_does_not_confirm_a_level_write(
+        self, hass: HomeAssistant,
+    ) -> None:
+        """41020/41021 lag behind the target, so only target registers count."""
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator._write_confirmations["unit_1"] = {
+            "airflow_levels": WriteConfirmation(
+                expected_value=(70, 60),
+                started_at=dt_util.utcnow() - timedelta(seconds=1),
+            )
+        }
+        state = _fresh(
+            RoomState(operation_mode="manual", supply_air_flow=70, extract_air_flow=60)
+        )
+
+        coordinator._confirm_pending_writes(state)
+
+        assert (
+            coordinator._write_confirmations["unit_1"]["airflow_levels"].status
+            == "pending"
+        )
+
+    def test_old_write_failures_stop_flagging_data_health(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(RoomState(target_level=40), "flow")
+        }
+        failed = WriteConfirmation(
+            expected_value=(40, 40),
+            started_at=dt_util.utcnow(),
+            status="failed",
+        )
+        coordinator._write_confirmations["unit_1"] = {"airflow_levels": failed}
+        assert coordinator.data_health_stale("unit_1") is True
+
+        coordinator._write_confirmations["unit_1"]["airflow_levels"] = replace(
+            failed,
+            started_at=dt_util.utcnow()
+            - timedelta(seconds=WRITE_HEALTH_RETENTION_SECONDS + 1),
+        )
+
+        assert coordinator.data_health_stale("unit_1") is False
+        writes = coordinator.data_health_attributes("unit_1")["writes"]
+        assert writes["airflow_levels"]["status"] == "failed"
+
+
+class TestSilentUnitScheduling:
+    def test_silent_units_are_polled_less_often(self, hass: HomeAssistant) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        flow_job = next(job for job in coordinator._jobs if job.key == "flow")
+        hours_job = next(job for job in coordinator._jobs if job.key == "hours")
+        assert coordinator._job_interval(flow_job) == flow_job.interval_seconds
+
+        client.silent_seconds_by_slave[_UNIT_1.slave] = ROOM_SILENT_AFTER_SECONDS + 1
+
+        assert coordinator._job_interval(flow_job) == SILENT_ROOM_POLL_SECONDS
+        assert coordinator._job_interval(hours_job) == hours_job.interval_seconds
+
+    def test_units_that_never_answered_count_as_silent(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        assert not coordinator._room_silent("unit_1")
+
+        coordinator._started_at -= ROOM_SILENT_AFTER_SECONDS + 1
+
+        assert coordinator._room_silent("unit_1")
 
 
 # ---------------------------------------------------------------------------
@@ -649,10 +995,28 @@ class TestOptimisticPresetOverlay:
 
         client.write_preset_mode = _raise
 
-        with pytest.raises(MeltemModbusError):
+        with pytest.raises(HomeAssistantError):
             await coordinator.async_set_preset_mode("unit_1", "high")
 
         assert coordinator.optimistic_preset_mode("unit_1") is None
+
+    async def test_successful_preset_write_shows_the_selection_until_confirmed(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
+        )
+        coordinator.data = {"unit_1": RoomState(preset_mode="low")}
+        client.next_read_state = RoomState(preset_mode="low")
+
+        with patch(
+            "custom_components.meltem_ventilation.coordinator.async_sleep",
+            new=AsyncMock(),
+        ):
+            await coordinator.async_set_preset_mode("unit_1", "high")
+
+        assert coordinator.optimistic_preset_mode("unit_1") == "high"
 
     async def test_clear_pending_preset_still_writes_manual_mode(
         self, hass: HomeAssistant,
@@ -719,10 +1083,28 @@ class TestOptimisticIntensiveOverlay:
 
         client.write_preset_mode = _raise
 
-        with pytest.raises(MeltemModbusError):
+        with pytest.raises(HomeAssistantError):
             await coordinator.async_activate_intensive("unit_1")
 
         assert coordinator.optimistic_intensive("unit_1") is None
+
+    async def test_successful_write_shows_the_switch_state_until_confirmed(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
+        )
+        coordinator.data = {"unit_1": RoomState(intensive_active=False)}
+        client.next_read_state = RoomState(intensive_active=False)
+
+        with patch(
+            "custom_components.meltem_ventilation.coordinator.async_sleep",
+            new=AsyncMock(),
+        ):
+            await coordinator.async_activate_intensive("unit_1")
+
+        assert coordinator.optimistic_intensive("unit_1") is True
 
 
 # ---------------------------------------------------------------------------

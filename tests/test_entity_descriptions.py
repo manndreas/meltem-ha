@@ -306,7 +306,13 @@ class TestSensorDescriptionMetadata:
     def test_operating_hours_has_duration_device_class(self) -> None:
         desc = _sensor_desc("operating_hours")
         assert desc.device_class == "duration"
+        assert desc.state_class == "total_increasing"
         assert desc.entity_category == "diagnostic"
+
+    def test_days_until_filter_change_is_a_duration(self) -> None:
+        desc = _sensor_desc("days_until_filter_change")
+        assert desc.device_class == "duration"
+        assert desc.native_unit_of_measurement == "d"
 
     @pytest.mark.parametrize("key", ["extract_air_flow", "supply_air_flow"])
     def test_airflow_sensors_have_state_class(self, key: str) -> None:

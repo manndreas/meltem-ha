@@ -148,8 +148,21 @@ SENSOR_OPERATION_MODES: tuple[str, ...] = (
     "automatic",
 )
 
+DIRECTION_SUPPLY = "supply"
+DIRECTION_EXTRACT = "extract"
+
+# Where the airflow shown by a fan entity comes from.
+LEVEL_SOURCE_PENDING = "pending"
+LEVEL_SOURCE_TARGET = "target"
+LEVEL_SOURCE_MEASURED = "measured"
+
+LEVEL_WRITE_FALLBACK_BALANCED = "both_directions_balanced_manual"
+LEVEL_WRITE_FALLBACK_UNKNOWN_MODE = "unknown_mode_overridden"
+
 WRITE_SETTLE_SECONDS = 1.5
 WRITE_CONFIRMATION_TIMEOUT_SECONDS = 30.0
+# Older write outcomes stay visible as attributes but no longer flag data health.
+WRITE_HEALTH_RETENTION_SECONDS = 600.0
 TARGET_OPTIMISTIC_SECONDS = 15.0
 POST_WRITE_REFRESH_RETRIES = 2
 POST_WRITE_REFRESH_INTERVAL_SECONDS = 2.5

@@ -268,5 +268,16 @@
       "unavailable_units": "Currently unavailable units",
       "read_health": "Per-group read health"
     }
+  },
+  "exceptions": {
+    "write_failed": {
+      "message": "Could not send the command to {unit}: {error}"
+    },
+    "opposite_airflow_unknown": {
+      "message": "The opposite airflow of {unit} is currently unknown, so a single direction cannot be switched off. Try again once the unit reports its airflow."
+    },
+    "airflow_unknown": {
+      "message": "The current airflow of {unit} is unknown, so the operating mode cannot be changed without guessing a level. Set the airflow with the fan entities instead."
+    }
   }
 }

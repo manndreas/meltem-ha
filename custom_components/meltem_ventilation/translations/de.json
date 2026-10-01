@@ -268,5 +268,16 @@
       "unavailable_units": "Aktuell nicht verfügbare Geräte",
       "read_health": "Lesestatus je Datengruppe"
     }
+  },
+  "exceptions": {
+    "write_failed": {
+      "message": "Der Befehl konnte nicht an {unit} gesendet werden: {error}"
+    },
+    "opposite_airflow_unknown": {
+      "message": "Der Volumenstrom der Gegenrichtung von {unit} ist aktuell unbekannt, daher kann keine einzelne Richtung ausgeschaltet werden. Bitte erneut versuchen, sobald das Gerät seinen Volumenstrom meldet."
+    },
+    "airflow_unknown": {
+      "message": "Der aktuelle Volumenstrom von {unit} ist unbekannt, daher kann die Betriebsart nicht ohne geratene Stufe gewechselt werden. Bitte den Volumenstrom über die Lüfter-Entitäten setzen."
+    }
   }
 }

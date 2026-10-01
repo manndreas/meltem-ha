@@ -147,9 +147,12 @@ def build_setup_probe_settings(settings: SerialSettings) -> SerialSettings:
 # ---------------------------------------------------------------------------
 
 
-def build_client(settings: SerialSettings) -> ModbusSerialClient:
+def build_client(
+    settings: SerialSettings, *, retries: int | None = None
+) -> ModbusSerialClient:
     """Create a new pymodbus serial client from the given settings."""
 
+    extra = {} if retries is None else {"retries": retries}
     return ModbusSerialClient(
         port=settings.port,
         baudrate=settings.baudrate,
@@ -157,6 +160,7 @@ def build_client(settings: SerialSettings) -> ModbusSerialClient:
         parity=settings.parity,
         stopbits=settings.stopbits,
         timeout=settings.timeout,
+        **extra,
     )
 
 
