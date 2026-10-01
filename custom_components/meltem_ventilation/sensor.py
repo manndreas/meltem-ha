@@ -17,8 +17,9 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, UnitOfTemperature
+from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -26,6 +27,7 @@ from .const import (
     CO2_PROFILES,
     CONF_PORT,
     DOMAIN,
+    GATEWAY_NAME,
     HUMIDITY_PROFILES,
     VOC_PROFILES,
 )
@@ -143,8 +145,9 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     MeltemSensorDescription(
         key="days_until_filter_change",
         icon="mdi:calendar-clock",
+        device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement="d",
+        native_unit_of_measurement=UnitOfTime.DAYS,
         entity_category=EntityCategory.DIAGNOSTIC,
         supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.days_until_filter_change,
@@ -153,7 +156,8 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         key="operating_hours",
         icon="mdi:fan-clock",
         device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement="h",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfTime.HOURS,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
         supported_profiles=ALL_PROFILES,
@@ -228,6 +232,12 @@ class MeltemModbusDevicePathSensor(SensorEntity):
     def __init__(self, entry: ConfigEntry) -> None:
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_modbus_device_path"
         self._attr_translation_key = MODBUS_DEVICE_PATH_DESCRIPTION.key
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            manufacturer="Meltem",
+            model="M-WRG-GW",
+            name=GATEWAY_NAME,
+        )
         self._device_path = entry.data[CONF_PORT]
 
     @property

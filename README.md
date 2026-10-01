@@ -35,6 +35,15 @@ reproduces the extract-only or supply-only shortcuts of the Meltem app. When
 both are zero, the unit is switched off; turning it back on starts both
 directions again.
 
+A new fan value is shown immediately and confirmed by the next airflow poll a
+few seconds later; the `level_source` attribute tells whether a fan currently
+shows a `pending` write, a confirmed `target`, or `measured` airflow. Turning on
+a fan that is already running changes nothing, so it does not end a running
+sensor mode; turning on a stopped direction restores its last speed. If the
+opposite direction cannot be read at the moment, a non-zero value is applied to
+both directions, and switching off a single direction is refused instead of
+stopping the whole unit.
+
 Two further controls complement the fans:
 
 - **Quick mode** — the app shortcuts `Low`, `Medium` and `High`. The airflow

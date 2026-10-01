@@ -1,8 +1,7 @@
 """Writable number entities for Meltem units.
 
-These entities are optimistic on purpose: Home Assistant updates the slider
-immediately, then waits for the coordinator to confirm the new value from the
-gateway. This keeps the UI responsive even though writes settle slowly.
+Each write is read back from the gateway before the call returns, so the
+entity shows the value the unit actually stored after step normalization.
 """
 
 from __future__ import annotations

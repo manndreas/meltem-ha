@@ -107,7 +107,10 @@ class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
             return optimistic
         preset_mode = self.room_state.preset_mode
         if preset_mode is None:
-            return None
+            # The decoder reports "no quick mode" as None once the mode is known.
+            if self.room_state.operation_mode is None:
+                return None
+            return PRESET_MODE_INACTIVE
         if preset_mode in self._attr_options:
             return preset_mode
         # extract_only/supply_only are still decoded but are expressed by the

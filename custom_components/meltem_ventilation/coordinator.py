@@ -13,10 +13,11 @@ import operator
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -26,8 +27,15 @@ from .const import (
     CONTROL_SETTINGS_REFRESH_SECONDS,
     DEFAULT_SCAN_SLAVE_END,
     DEFAULT_SCAN_SLAVE_START,
+    DIRECTION_SUPPLY,
+    DOMAIN,
     FILTER_REFRESH_SECONDS,
     FLOW_REFRESH_SECONDS,
+    LEVEL_SOURCE_MEASURED,
+    LEVEL_SOURCE_PENDING,
+    LEVEL_SOURCE_TARGET,
+    LEVEL_WRITE_FALLBACK_BALANCED,
+    LEVEL_WRITE_FALLBACK_UNKNOWN_MODE,
     OPERATING_HOURS_REFRESH_SECONDS,
     OPERATION_MODE_MANUAL,
     OPERATION_MODE_OFF,
@@ -44,6 +52,7 @@ from .const import (
     TARGET_OPTIMISTIC_SECONDS,
     TEMPERATURE_REFRESH_SECONDS,
     WRITE_CONFIRMATION_TIMEOUT_SECONDS,
+    WRITE_HEALTH_RETENTION_SECONDS,
     WRITE_SETTLE_SECONDS,
 )
 from .modbus_client import MeltemModbusClient
@@ -196,9 +205,14 @@ ROOM_UNAVAILABLE_AFTER_FAILURES = 3
 # The slowest job runs hourly, but the airflow job polls every 10 s, so a unit
 # that answers nothing for this long is genuinely silent.
 ROOM_SILENT_AFTER_SECONDS = 120.0
+# Every unanswered read costs several timeouts, so silent units are polled
+# rarely to keep the shared bus free for the units that still respond.
+SILENT_ROOM_POLL_SECONDS = 60
 PRESET_OPTIMISTIC_SECONDS = 15.0
 # Rounding between m3/h and the raw 0..200 register costs at most 1 m3/h.
 LEVEL_CONFIRM_TOLERANCE = 2
+# Percent-to-m3/h rounding can leave two meant-to-be-equal directions one step apart.
+BALANCED_LEVEL_TOLERANCE = 1
 # Fallback wake-up for the degenerate case of a gateway without any poll job.
 IDLE_TICK_SECONDS = 60.0
 
@@ -265,6 +279,18 @@ def _levels_reached(
     )
 
 
+def _levels_balanced(level: int, other: int) -> bool:
+    """Return whether two direction levels should run as one balanced level."""
+
+    if level == other:
+        return True
+    return level > 0 and other > 0 and abs(level - other) <= BALANCED_LEVEL_TOLERANCE
+
+
+def _first_known(*values: int | None) -> int | None:
+    return next((value for value in values if value is not None), None)
+
+
 class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     """Coordinate polling and writes for all configured rooms."""
 
@@ -295,6 +321,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._optimistic_levels = _OptimisticOverlay[tuple[int, int]](
             TARGET_OPTIMISTIC_SECONDS, matches=_levels_reached
         )
+        self._level_locks = {room.key: asyncio.Lock() for room in rooms}
+        self._level_fallbacks: dict[str, tuple[str, datetime]] = {}
+        self._started_at = time.monotonic()
         # Jobs are precomputed once and then executed in a due-time round robin.
         self._jobs = self._build_jobs()
 
@@ -388,28 +417,69 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         two directional fans never rebuild each other from a stale cache.
         """
 
+        return self._resolve_levels(room_key)[0]
+
+    def level_source(self, room_key: str) -> str | None:
+        """Return whether the effective levels are pending, targets, or measurements."""
+
+        return self._resolve_levels(room_key)[1]
+
+    def _resolve_levels(
+        self, room_key: str
+    ) -> tuple[tuple[int | None, int | None], str | None]:
+        """Return the effective supply/extract pair and where it comes from."""
+
         state = self._safe_data.get(room_key)
-        if state is None:
-            confirmed = None
-        else:
+        confirmed: tuple[int | None, int | None] | None = None
+        source: str | None = None
+        if state is not None:
             airflow_is_fresh = self.read_group_fresh(room_key, "flow")
             mode_is_fresh = self.read_group_fresh(room_key, "flow_control")
             if not mode_is_fresh or state.operation_mode is None:
-                confirmed = (
-                    (state.supply_air_flow, state.extract_air_flow)
-                    if airflow_is_fresh
-                    else None
-                )
+                if airflow_is_fresh:
+                    confirmed = (state.supply_air_flow, state.extract_air_flow)
+                    source = LEVEL_SOURCE_MEASURED
             else:
                 confirmed = self._confirmed_levels(
                     state,
                     airflow_is_fresh=airflow_is_fresh,
                 )
+                targets = self._confirmed_levels(state, airflow_is_fresh=False)
+                source = (
+                    LEVEL_SOURCE_TARGET
+                    if confirmed == targets
+                    else LEVEL_SOURCE_MEASURED
+                )
+            if confirmed == (None, None):
+                confirmed, source = None, None
 
         pending = self._optimistic_levels.get(room_key, confirmed)
         if pending is not None:
-            return pending
-        return confirmed if confirmed is not None else (None, None)
+            return pending, LEVEL_SOURCE_PENDING
+        return (confirmed if confirmed is not None else (None, None)), source
+
+    def level_write_fallback(self, room_key: str) -> str | None:
+        """Return the fallback used by the last fan write until a readback follows."""
+
+        fallback = self._level_fallbacks.get(room_key)
+        if fallback is None:
+            return None
+        marker, written_at = fallback
+        state = self._safe_data.get(room_key)
+        if state is not None:
+            health = state.read_health_for("flow_control")
+            if (
+                health.last_error is None
+                and health.last_successful_read is not None
+                and health.last_successful_read >= written_at
+            ):
+                del self._level_fallbacks[room_key]
+                return None
+        return marker
+
+    def _record_level_fallback(self, room_key: str, marker: str) -> None:
+        self._level_fallbacks[room_key] = (marker, dt_util.utcnow())
+        self.async_update_listeners()
 
     @staticmethod
     def _confirmed_levels(
@@ -495,7 +565,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
                 # Move the job forward before running it so a failing read
                 # cannot get stuck at the front of the queue forever.
-                job.next_due = now + job.interval_seconds
+                job.next_due = now + self._job_interval(job)
                 self._last_job_error = None
                 updated_data = await self.hass.async_add_executor_job(
                     self._read_one_job,
@@ -526,6 +596,23 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 )
                 return self.data
             raise UpdateFailed(str(err)) from err
+
+    def _job_interval(self, job: PollJob) -> float:
+        """Return the job interval, stretched while its unit stays silent."""
+
+        if self._room_silent(job.room_key):
+            return max(job.interval_seconds, SILENT_ROOM_POLL_SECONDS)
+        return job.interval_seconds
+
+    def _room_silent(self, room_key: str) -> bool:
+        """Return whether a unit has not answered any read for a long time."""
+
+        room = self._rooms_by_key[room_key]
+        silent_for = self.client.seconds_since_successful_read(room.slave)
+        if silent_for is None:
+            # Never answered since startup.
+            silent_for = time.monotonic() - self._started_at
+        return silent_for > ROOM_SILENT_AFTER_SECONDS
 
     def _schedule_next_tick(self) -> None:
         """Sleep until the next job is due instead of waking up on every tick.
@@ -597,6 +684,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self.client.write_level,
             room,
             level,
+            on_written=lambda: self._set_optimistic_levels(room_key, level, level),
         )
 
     async def async_set_unbalanced_levels(
@@ -618,29 +706,118 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             room,
             supply_level,
             extract_level,
+            on_written=lambda: self._set_optimistic_levels(
+                room_key, supply_level, extract_level
+            ),
         )
+
+    async def async_set_direction_level(
+        self, room_key: str, direction: str, level: int
+    ) -> None:
+        """Set one airflow direction and keep the other one where it is.
+
+        Resolving the opposite direction and writing share one per-unit lock,
+        so quick successive or concurrent fan commands build on each other.
+        """
+
+        room = self._rooms_by_key[room_key]
+        async with self._level_locks[room_key]:
+            (supply, extract), source = self._resolve_levels(room_key)
+            other = extract if direction == DIRECTION_SUPPLY else supply
+            if other is None:
+                if level == 0:
+                    # Stopping both directions instead would be a silent surprise.
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="opposite_airflow_unknown",
+                        translation_placeholders={"unit": room.name},
+                    )
+                _LOGGER.warning(
+                    "Room %s (slave %s): opposite airflow is unknown; setting both "
+                    "directions to %s m3/h in balanced manual mode",
+                    room.name,
+                    room.slave,
+                    level,
+                )
+                await self.async_set_level(room_key, level)
+                self._record_level_fallback(room_key, LEVEL_WRITE_FALLBACK_BALANCED)
+                return
+
+            operation_mode = self._safe_data.get(
+                room_key, EMPTY_ROOM_STATE
+            ).operation_mode
+            if (
+                source == LEVEL_SOURCE_MEASURED
+                and supply is not None
+                and extract is not None
+                and abs(supply - extract) <= LEVEL_CONFIRM_TOLERANCE
+            ):
+                # Measured airflow jitters around one balanced target.
+                other = round((supply + extract) / 2)
+
+            # A stopped unit restarts both directions, never single-sided (HW-5).
+            starting_from_off = operation_mode == OPERATION_MODE_OFF
+            # Under sensor control both fans only report fluctuating
+            # measurements, so writing one direction would pin the other to a
+            # sampled value. Turning a direction off still stays unbalanced.
+            leaving_sensor_control = (
+                level > 0 and operation_mode in SENSOR_OPERATION_MODES
+            )
+            # Equal levels written as unbalanced would leave the unit in a mode
+            # it cannot return from on its own.
+            if (
+                _levels_balanced(level, other)
+                or starting_from_off
+                or leaving_sensor_control
+            ):
+                await self.async_set_level(room_key, level)
+            else:
+                supply_level, extract_level = (
+                    (level, other) if direction == DIRECTION_SUPPLY else (other, level)
+                )
+                await self.async_set_unbalanced_levels(
+                    room_key, supply_level, extract_level
+                )
+
+            if operation_mode is None:
+                _LOGGER.warning(
+                    "Room %s (slave %s): operating mode was unknown; the fan "
+                    "command may have overridden it",
+                    room.name,
+                    room.slave,
+                )
+                self._record_level_fallback(
+                    room_key, LEVEL_WRITE_FALLBACK_UNKNOWN_MODE
+                )
 
     async def async_set_operation_mode(self, room_key: str, operation_mode: str) -> None:
         """Write a new operating mode for one room and refresh afterwards."""
 
         room = self._rooms_by_key[room_key]
         state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
-        balanced_level = (
-            state.target_level
-            if state.target_level is not None
-            else state.supply_air_flow
-            if state.supply_air_flow is not None
-            else state.extract_air_flow
-            if state.extract_air_flow is not None
-            else 0
+        supply, extract = self.effective_levels(room_key)
+        balanced_level = _first_known(
+            supply,
+            state.target_level,
+            state.supply_air_flow,
+            state.extract_air_flow,
         )
-        extract_level = (
-            state.extract_target_level
-            if state.extract_target_level is not None
-            else state.extract_air_flow
-            if state.extract_air_flow is not None
-            else balanced_level
+        extract_level = _first_known(
+            extract,
+            state.extract_target_level,
+            state.extract_air_flow,
+            balanced_level,
         )
+        if balanced_level is None and operation_mode in (
+            OPERATION_MODE_MANUAL,
+            OPERATION_MODE_UNBALANCED,
+        ):
+            # Guessing 0 here would stop the unit instead of changing its mode.
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="airflow_unknown",
+                translation_placeholders={"unit": room.name},
+            )
 
         self._clear_optimistic_levels(room_key)
         await self._async_write_with_confirmation(
@@ -650,8 +827,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self.client.write_operating_mode,
             room,
             operation_mode,
-            int(balanced_level),
-            int(extract_level),
+            int(balanced_level or 0),
+            int(extract_level or 0),
             refresh_plan=AIRFLOW_REFRESH_PLAN,
         )
 
@@ -669,6 +846,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             preset_mode,
             refresh_plan=AIRFLOW_REFRESH_PLAN,
             min_refresh_attempts=2,
+            on_written=lambda: self._set_optimistic_preset_mode(room_key, preset_mode),
         )
 
     async def async_clear_preset_mode(self, room_key: str) -> None:
@@ -687,6 +865,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             else OPERATION_MODE_MANUAL
         )
         await self.async_set_operation_mode(room_key, operation_mode)
+        self._clear_optimistic_preset_mode(room_key)
 
     async def async_activate_intensive(self, room_key: str) -> None:
         """Start temporary intensive ventilation without changing the base preset."""
@@ -701,6 +880,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             PRESET_MODE_INTENSIVE,
             refresh_plan=AIRFLOW_REFRESH_PLAN,
             min_refresh_attempts=2,
+            on_written=lambda: self._set_optimistic_intensive(room_key, True),
         )
 
     async def async_deactivate_intensive(self, room_key: str) -> None:
@@ -715,6 +895,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             room,
             refresh_plan=AIRFLOW_REFRESH_PLAN,
             min_refresh_attempts=2,
+            on_written=lambda: self._set_optimistic_intensive(room_key, False),
         )
 
     async def async_set_control_setting(
@@ -748,6 +929,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         refresh_plan: RefreshPlan | None = None,
         min_refresh_attempts: int = 1,
         use_write_result: bool = False,
+        on_written: Callable[[], None] | None = None,
     ) -> None:
         """Write one setting, preserve confirmed state, and verify by readback."""
 
@@ -763,6 +945,14 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     *write_args,
                 )
             except Exception as err:
+                # A failed write makes any earlier pending value doubtful.
+                clear_overlay = {
+                    "airflow_levels": self._clear_optimistic_levels,
+                    "preset_mode": self._clear_optimistic_preset_mode,
+                    "intensive": self._clear_optimistic_intensive,
+                }.get(write_key)
+                if clear_overlay is not None:
+                    clear_overlay(room.key)
                 self._record_write_pending(room.key, write_key, expected_value)
                 self._set_write_confirmation(
                     room.key,
@@ -774,7 +964,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     room,
                     refresh_plan=readback_plan,
                 )
-                raise
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="write_failed",
+                    translation_placeholders={"unit": room.name, "error": str(err)},
+                ) from err
 
             confirmed_expected = (
                 write_result
@@ -782,6 +976,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 else expected_value
             )
             self._record_write_pending(room.key, write_key, confirmed_expected)
+            if on_written is not None:
+                on_written()
 
             if refresh_plan is None:
                 return
@@ -1043,12 +1239,15 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             for group_key in state.group_read_health
         ):
             return True
+        now = dt_util.utcnow()
         if any(
             self._write_confirmation_status(confirmation) in {
                 "unconfirmed",
                 "mismatch",
                 "failed",
             }
+            and (now - confirmation.started_at).total_seconds()
+            <= WRITE_HEALTH_RETENTION_SECONDS
             for confirmation in self._write_confirmations.get(room_key, {}).values()
         ):
             return True
@@ -1178,7 +1377,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         write_key: str,
     ) -> str | int | bool | tuple[int, int] | None:
         if write_key == "airflow_levels":
-            supply, extract = MeltemDataUpdateCoordinator._confirmed_levels(state)
+            # Only target registers confirm a write; measured airflow lags behind.
+            supply, extract = MeltemDataUpdateCoordinator._confirmed_levels(
+                state, airflow_is_fresh=False
+            )
             if supply is None or extract is None:
                 return None
             return supply, extract

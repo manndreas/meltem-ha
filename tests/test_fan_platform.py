@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from custom_components.meltem_ventilation.fan import (
     DIRECTION_EXTRACT,
     DIRECTION_SUPPLY,
@@ -29,8 +27,9 @@ def _make_coordinator(levels: tuple[int | None, int | None] = (40, 40)) -> Magic
     )
     coordinator.read_group_available.return_value = True
     coordinator.effective_levels.return_value = levels
-    coordinator.async_set_level = AsyncMock()
-    coordinator.async_set_unbalanced_levels = AsyncMock()
+    coordinator.level_source.return_value = None
+    coordinator.level_write_fallback.return_value = None
+    coordinator.async_set_direction_level = AsyncMock()
     coordinator.safe_data = {"unit_1": RoomState(target_level=40, operation_mode="manual")}
     return coordinator
 
@@ -84,156 +83,106 @@ class TestReadState:
 
 
 class TestWrites:
-    def test_supply_write_keeps_extract_from_effective_levels(self) -> None:
-        coordinator = _make_coordinator(levels=(40, 30))
+    """The fan converts percent to m3/h; the coordinator decides how to write."""
 
-        asyncio.run(_supply(coordinator).async_set_percentage(60))
-
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 60, 30)
-
-    def test_extract_write_keeps_supply_from_effective_levels(self) -> None:
+    def test_set_percentage_delegates_one_direction(self) -> None:
         coordinator = _make_coordinator(levels=(40, 30))
 
         asyncio.run(_extract(coordinator).async_set_percentage(60))
 
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 40, 60)
+        coordinator.async_set_direction_level.assert_awaited_once_with(
+            "unit_1", DIRECTION_EXTRACT, 60
+        )
 
-    def test_turning_off_one_direction_keeps_the_unit_running(self) -> None:
+    def test_turn_off_writes_zero_for_the_own_direction(self) -> None:
         coordinator = _make_coordinator(levels=(40, 30))
 
         asyncio.run(_supply(coordinator).async_turn_off())
 
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 0, 30)
-        coordinator.async_set_level.assert_not_awaited()
-
-    def test_turning_off_the_last_direction_switches_the_unit_off(self) -> None:
-        coordinator = _make_coordinator(levels=(40, 0))
-
-        asyncio.run(_supply(coordinator).async_turn_off())
-
-        coordinator.async_set_level.assert_awaited_once_with("unit_1", 0)
-        coordinator.async_set_unbalanced_levels.assert_not_awaited()
-
-    def test_turn_on_from_zero_uses_a_default_speed(self) -> None:
-        coordinator = _make_coordinator(levels=(0, 30))
-
-        asyncio.run(_supply(coordinator).async_turn_on())
-
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 50, 30)
-
-    def test_turn_on_restores_the_current_speed(self) -> None:
-        coordinator = _make_coordinator(levels=(70, 30))
-
-        asyncio.run(_supply(coordinator).async_turn_on())
-
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 70, 30)
+        coordinator.async_set_direction_level.assert_awaited_once_with(
+            "unit_1", DIRECTION_SUPPLY, 0
+        )
 
     def test_percentage_is_clamped(self) -> None:
         coordinator = _make_coordinator(levels=(40, 30))
 
         asyncio.run(_supply(coordinator).async_set_percentage(150))
 
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 100, 30)
-
-    @pytest.mark.parametrize("levels", [(40, None), (None, None)])
-    def test_unknown_opposite_uses_balanced_write_fallback(
-        self,
-        levels: tuple[int | None, int | None],
-    ) -> None:
-        coordinator = _make_coordinator(levels=levels)
-        entity = _supply(coordinator)
-
-        asyncio.run(entity.async_set_percentage(60))
-
-        coordinator.async_set_level.assert_awaited_once_with("unit_1", 60)
-        coordinator.async_set_unbalanced_levels.assert_not_awaited()
-        assert (
-            entity.extra_state_attributes["last_write_fallback"]
-            == "both_directions_balanced_manual"
-        )
-
-    def test_turning_off_with_unknown_opposite_stops_both_directions(self) -> None:
-        coordinator = _make_coordinator(levels=(40, None))
-
-        asyncio.run(_supply(coordinator).async_turn_off())
-
-        coordinator.async_set_level.assert_awaited_once_with("unit_1", 0)
-        coordinator.async_set_unbalanced_levels.assert_not_awaited()
-
-    def test_unknown_mode_is_reported_before_an_explicit_write(self) -> None:
-        coordinator = _make_coordinator(levels=(40, 30))
-        coordinator.safe_data = {"unit_1": RoomState(target_level=40)}
-        entity = _supply(coordinator)
-
-        assert entity.extra_state_attributes["operating_mode_known"] is False
-        assert entity.extra_state_attributes["fan_write_may_override_mode"] is True
-
-        asyncio.run(entity.async_set_percentage(60))
-
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with(
-            "unit_1", 60, 30
-        )
-        assert entity.extra_state_attributes["last_write_fallback"] == (
-            "unknown_mode_overridden"
+        coordinator.async_set_direction_level.assert_awaited_once_with(
+            "unit_1", DIRECTION_SUPPLY, 100
         )
 
 
-class TestBalancedOperation:
-    """Equal levels must not leave the unit stuck in unbalanced mode."""
-
-    def test_matching_levels_are_written_as_balanced(self) -> None:
-        coordinator = _make_coordinator(levels=(40, 60))
-
-        asyncio.run(_extract(coordinator).async_set_percentage(40))
-
-        coordinator.async_set_level.assert_awaited_once_with("unit_1", 40)
-        coordinator.async_set_unbalanced_levels.assert_not_awaited()
-
-    def test_differing_levels_still_use_unbalanced(self) -> None:
-        coordinator = _make_coordinator(levels=(40, 60))
-
-        asyncio.run(_extract(coordinator).async_set_percentage(70))
-
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 40, 70)
-        coordinator.async_set_level.assert_not_awaited()
-
-    def test_starting_from_off_runs_both_directions(self) -> None:
-        coordinator = _make_coordinator(levels=(0, 0))
-        coordinator.safe_data = {"unit_1": RoomState(operation_mode="off")}
+class TestTurnOn:
+    def test_turn_on_from_zero_uses_a_default_speed(self) -> None:
+        coordinator = _make_coordinator(levels=(0, 30))
 
         asyncio.run(_supply(coordinator).async_turn_on())
 
-        coordinator.async_set_level.assert_awaited_once_with("unit_1", 50)
-        coordinator.async_set_unbalanced_levels.assert_not_awaited()
+        coordinator.async_set_direction_level.assert_awaited_once_with(
+            "unit_1", DIRECTION_SUPPLY, 50
+        )
 
-    def test_single_direction_is_still_reachable_while_running(self) -> None:
-        coordinator = _make_coordinator(levels=(50, 50))
+    def test_turn_on_restores_the_last_running_speed(self) -> None:
+        coordinator = _make_coordinator(levels=(70, 30))
+        entity = _supply(coordinator)
+        entity.async_write_ha_state = MagicMock()
+        entity._handle_coordinator_update()
+        coordinator.effective_levels.return_value = (0, 30)
 
-        asyncio.run(_extract(coordinator).async_set_percentage(0))
+        asyncio.run(entity.async_turn_on())
 
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 50, 0)
+        coordinator.async_set_direction_level.assert_awaited_once_with(
+            "unit_1", DIRECTION_SUPPLY, 70
+        )
 
-    def test_leaving_sensor_control_writes_a_balanced_level(self) -> None:
-        """Under sensor control both fans only report fluctuating measurements."""
+    def test_turn_on_while_running_keeps_the_unit_untouched(self) -> None:
+        """Re-sending the measured level would end a running sensor mode."""
         coordinator = _make_coordinator(levels=(48, 51))
         coordinator.safe_data = {"unit_1": RoomState(operation_mode="co2_control")}
 
-        asyncio.run(_supply(coordinator).async_set_percentage(60))
+        asyncio.run(_supply(coordinator).async_turn_on())
 
-        coordinator.async_set_level.assert_awaited_once_with("unit_1", 60)
-        coordinator.async_set_unbalanced_levels.assert_not_awaited()
+        coordinator.async_set_direction_level.assert_not_awaited()
 
-    def test_turning_one_direction_off_under_sensor_control_keeps_the_unit_running(
-        self,
-    ) -> None:
-        """Switching a single fan off must not stop the whole unit."""
+    def test_turn_on_with_an_explicit_percentage_still_writes(self) -> None:
         coordinator = _make_coordinator(levels=(48, 51))
-        coordinator.safe_data = {"unit_1": RoomState(operation_mode="co2_control")}
 
-        asyncio.run(_supply(coordinator).async_turn_off())
+        asyncio.run(_supply(coordinator).async_turn_on(percentage=80))
 
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 0, 51)
-        coordinator.async_set_level.assert_not_awaited()
+        coordinator.async_set_direction_level.assert_awaited_once_with(
+            "unit_1", DIRECTION_SUPPLY, 80
+        )
+
+
+class TestAttributes:
+    def test_level_source_and_opposite_airflow_are_exposed(self) -> None:
+        coordinator = _make_coordinator(levels=(40, 30))
+        coordinator.level_source.return_value = "target"
+
+        attributes = _supply(coordinator).extra_state_attributes
+
+        assert attributes["level_source"] == "target"
+        assert attributes["opposite_airflow"] == 30
+        assert attributes["opposite_airflow_known"] is True
+        assert "last_write_fallback" not in attributes
+
+    def test_unknown_opposite_announces_the_balanced_fallback(self) -> None:
+        coordinator = _make_coordinator(levels=(40, None))
+
+        attributes = _supply(coordinator).extra_state_attributes
+
+        assert attributes["next_write_fallback"] == "both_directions_balanced_manual"
+
+    def test_last_write_fallback_comes_from_the_coordinator(self) -> None:
+        coordinator = _make_coordinator(levels=(60, 60))
+        coordinator.level_write_fallback.return_value = "unknown_mode_overridden"
+        coordinator.safe_data = {"unit_1": RoomState(target_level=60)}
+
+        attributes = _supply(coordinator).extra_state_attributes
+
+        assert attributes["last_write_fallback"] == "unknown_mode_overridden"
+        assert attributes["operating_mode_known"] is False
 
 
 class TestProfileScaling:
@@ -243,7 +192,9 @@ class TestProfileScaling:
         asyncio.run(_supply(coordinator, _ROOM_S).async_set_percentage(50))
 
         # s-series units top out at 97 m3/h, so 50 % must not be written as 50.
-        coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 49, 0)
+        coordinator.async_set_direction_level.assert_awaited_once_with(
+            "unit_1", DIRECTION_SUPPLY, 49
+        )
 
     def test_full_airflow_reads_back_as_full_percentage(self) -> None:
         coordinator = _make_coordinator(levels=(97, 97))
@@ -258,18 +209,3 @@ class TestProfileScaling:
         assert _supply(coordinator).percentage == 100
 
 
-class TestOptimisticOverlay:
-    def test_second_direction_uses_the_pending_value_of_the_first(self) -> None:
-        """The two fans must not rebuild each other from a stale cache."""
-        coordinator = _make_coordinator(levels=(40, 30))
-
-        asyncio.run(_supply(coordinator).async_set_percentage(80))
-        # The coordinator overlay now reports the pending supply level.
-        coordinator.effective_levels.return_value = (80, 30)
-        asyncio.run(_extract(coordinator).async_set_percentage(20))
-
-        assert coordinator.async_set_unbalanced_levels.await_args_list[1].args == (
-            "unit_1",
-            80,
-            20,
-        )
