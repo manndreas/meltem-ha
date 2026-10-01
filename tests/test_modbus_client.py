@@ -147,6 +147,34 @@ class TestRequestShapes:
         assert state.extract_air_temperature is None
         assert state.supply_air_temperature is None
 
+    async def test_plain_profile_keeps_previous_extended_measurements(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        previous = RoomState(
+            outdoor_air_temperature=5.5,
+            extract_air_temperature=22.0,
+            supply_air_temperature=18.5,
+            humidity_extract_air=44,
+            co2_extract_air=780,
+            humidity_supply_air=46,
+            voc_supply_air=120,
+        )
+
+        state = await client.read_room_state(
+            _PLAIN,
+            previous,
+            RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),
+        )
+
+        assert _reads(unit) == [(REGISTER_EXHAUST_AIR_TEMPERATURE, 2)]
+        assert state.outdoor_air_temperature == previous.outdoor_air_temperature
+        assert state.extract_air_temperature == previous.extract_air_temperature
+        assert state.supply_air_temperature == previous.supply_air_temperature
+        assert state.humidity_extract_air == previous.humidity_extract_air
+        assert state.co2_extract_air == previous.co2_extract_air
+        assert state.humidity_supply_air == previous.humidity_supply_air
+        assert state.voc_supply_air == previous.voc_supply_air
+
     async def test_unsupported_control_settings_are_not_read(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
