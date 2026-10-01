@@ -42,6 +42,7 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
     """
 
     _attr_has_entity_name = True
+    _requires_fresh_read_group = True
 
     def __init__(
         self,
@@ -83,9 +84,10 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
         if not is_available:
             return False
         read_group = self.coordinator.read_group_for_entity(self._entity_key)
-        return read_group is None or self.coordinator.read_group_available(
-            self.room.key,
-            read_group,
+        return (
+            read_group is None
+            or not self._requires_fresh_read_group
+            or self.coordinator.read_group_available(self.room.key, read_group)
         )
 
     def _handle_coordinator_update(self) -> None:

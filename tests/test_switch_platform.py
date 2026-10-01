@@ -39,11 +39,12 @@ def test_reports_the_running_override() -> None:
     assert _build_switch(RoomState(intensive_active=False)).is_on is False
 
 
-def test_unavailable_when_intensive_status_is_stale() -> None:
+def test_available_when_intensive_status_is_stale() -> None:
     entity = _build_switch(RoomState(intensive_active=True))
     entity.coordinator.read_group_available.return_value = False
 
-    assert entity.available is False
+    assert entity.available is True
+    entity.coordinator.read_group_available.assert_not_called()
 
 
 def test_intensive_status_has_its_own_read_health_group() -> None:
