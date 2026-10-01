@@ -353,7 +353,8 @@ Three changes reduce bus time but were made without a live gateway:
 Priority: high (blocks the `4.0.0` release)
 Status: open
 Affected code: `device/transport.py`, `device/components.py`,
-`modbus_helpers.prepare_unit`, `modbus_client._poll`
+`modbus_helpers.prepare_unit`, `modbus_client._poll`,
+`modbus_client._read_mode_component`
 
 ### Observation
 
@@ -362,14 +363,31 @@ connection (tmodbus via `modbus-connection`). The request shapes and their
 order are unchanged and covered by tests against an in-memory gateway, but
 every timing and error finding in this backlog was measured with pymodbus.
 
+Two behaviors found in review depend on how the gateway answers and are left
+as they are until measured:
+
+- **Code 10/11 for a powered-off unit.** A silent unit ends its job after the
+  first timeout. If the gateway answers code 10/11 instead, the job goes on:
+  in the in-memory gateway a full read costs 28 requests and a flow job 8,
+  each retried once, and the mode reads go into backoff.
+- **Busy (code 6).** tmodbus retries it internally for up to 60 s with
+  growing waits, while the link and `_gateway_lock` stay held, so UI writes
+  wait as well. `modbus-connection` does not make this configurable.
+
 ### Why this cannot be decided blind
 
 1. tmodbus frames, waits, and times out differently from pymodbus; the gateway
    is known to be sensitive to pacing.
 2. Whether a powered-off unit shows up as a timeout or as a gateway exception
-   (code 10/11) decides how the timeout counter behaves.
-3. tmodbus retries `SERVER_DEVICE_BUSY` (code 6) internally for up to 60 s
-   while the gateway lock is held.
+   (code 10/11) decides whether the per-job skip applies. Skipping on code
+   10/11 blind would also end jobs on a single RF hiccup the gateway reports
+   that way.
+3. Capping a job with a timeout cancels a busy request in the middle of
+   tmodbus' retry; whether that leaves the gateway in a clean state is
+   unknown.
+4. `TRANSPORT_LINK_QUIET_SECONDS` (10 s) is a guess: long enough that a
+   working link always gets an answer from some unit in that time, short
+   enough that a wedged link is recycled quickly.
 
 ### What to measure
 
@@ -379,19 +397,24 @@ before `4.0.0`: `tools/benchmark_gateway.py`,
 then repeat with the `4.0.0` tools:
 
 1. Latency and timeout rate per scenario, compared with the baseline.
-2. Power off one unit: timeout or code 10/11, timeouts per job, and whether
-   the link is recycled although other units still answer.
+2. Power off one unit: timeout or code 10/11, requests per job, and whether
+   `link_recycles` in the diagnostics stays at 0 while other units answer.
 3. A freshly powered unit: the fallback from five to two mode registers (HW-4).
 4. Write confirmation via `41121` and the settle time after writes (HW-2).
-5. Whether the gateway ever answers with code 6.
+5. Whether the gateway ever answers with code 6, and for how long.
 6. Unplug and replug the USB cable; reload and unload the entry: the port is
    released and the link comes back.
-7. 24 hours of continuous operation with all units.
+7. 24 hours of continuous operation with all units; note `link_recycles` and
+   the info-level "Recycling the Meltem gateway link" log lines.
 
 ### Candidate solutions
 
 - **A — release** if all measurements match the baseline.
-- **B — tune** `REQUEST_GAP_SECONDS`, `FIXED_TIMEOUT`, or
-  `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS` from the measurements.
-- **C — count gateway exceptions as timeouts** if a powered-off unit answers
-  with code 11 and the link still needs recycling.
+- **B — tune** `REQUEST_GAP_SECONDS`, `FIXED_TIMEOUT`,
+  `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS`, or `TRANSPORT_LINK_QUIET_SECONDS`
+  from the measurements.
+- **C — skip the rest of a job on code 10/11** like on a timeout, in
+  `MeltemModbusClient._poll` and `_read_mode_component`, and keep code 10/11
+  out of the mode backoff, if a powered-off unit answers that way.
+- **D — cap jobs and writes** with `asyncio.timeout` in the coordinator if the
+  gateway sends code 6 and the 60 s retry blocks the UI.

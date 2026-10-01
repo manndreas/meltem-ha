@@ -160,7 +160,7 @@ retried.
 | `ModbusConnectionError` (except `ClientClosedError`) | wait 0.5 s, retry once; the library reconnects |
 | `ClientClosedError` | immediately `MeltemConnectionError` |
 | other `ModbusExceptionError` | no retry, becomes `MeltemModbusError` |
-| 3 consecutive timeouts with no response in between (across all units) | `disconnect()` and reset the counter |
+| 3 consecutive timeouts (across all units) while no unit answered for `TRANSPORT_LINK_QUIET_SECONDS` | `disconnect()`, reset the counter, start a new quiet window |
 | `ServerDeviceBusyError` | tmodbus retries internally for up to 60 s; check on the gateway |
 
 Further points:
@@ -371,6 +371,22 @@ Deviations from the plan:
   [profile_register_reads.py](../tools/profile_register_reads.py)) keep their
   explicit gap outside the measured latency, so their numbers stay comparable
   with the pymodbus baseline.
+
+Changes from the review after the implementation:
+
+- The link is only recycled when, in addition to 3 timeouts in a row, no unit
+  answered for `TRANSPORT_LINK_QUIET_SECONDS` (10 s). Counting timeouts alone
+  recycled the link when two silent units, or two jobs of one silent unit,
+  followed each other.
+- A timeout during the mode reads ends the job like a timeout in `_poll`.
+  Only exception responses start the mode backoff; before, a unit falling
+  silent there cost up to 7 requests and two link recycles per flow job.
+- The setup probe stops at the first timeout of a unit.
+- The config flow reads the unit list and probes the units on one temporary
+  link, and reports a port held with other settings as `port_in_use`.
+- The diagnostics show the link counters; a recycle is logged at info level.
+- Gateway answers code 10/11 and busy (code 6) stay as they are until
+  measured, see HW-7 in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md).
 
 ## Verification
 

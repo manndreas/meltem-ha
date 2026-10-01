@@ -143,6 +143,15 @@ Check that:
 - the units were already added in the Meltem app
 - the units are fully configured in the `M-WRG-GW` gateway
 
+### Serial port shared with another integration
+
+The serial link is handled by Home Assistant's Modbus integration, so other
+integrations can use the same port. They must use the same serial settings
+(19200 baud, 8E1); otherwise setup reports that the port is already in use.
+The longest timeout any of them asks for applies to all requests on that
+port, so a long timeout elsewhere slows down this integration when a unit
+does not answer.
+
 ### Logs
 
 In Home Assistant:

@@ -31,20 +31,27 @@ _NO_ANSWER_ERRORS = (ModbusTimeoutError, ModbusProtocolError)
 class TransportPolicy:
     """Retry once, and recycle the link only when nothing answers at all.
 
-    One policy is shared by all units on a gateway link, so a single silent
-    unit does not count as a dead link while its neighbours keep answering.
+    One policy is shared by all units on a gateway link. The link is recycled
+    after a run of timeouts only if no request got any answer for a while, so
+    silent units do not count as a dead link while their neighbours answer.
     """
 
     def __init__(
         self,
         *,
         disconnect_after_timeouts: int,
+        link_quiet_seconds: float,
         connection_retry_delay: float,
     ) -> None:
         self._disconnect_after_timeouts = disconnect_after_timeouts
+        self._link_quiet_seconds = link_quiet_seconds
         self._connection_retry_delay = connection_retry_delay
         self._consecutive_timeouts = 0
+        # Creating the policy and recycling the link both start a quiet window.
+        self._quiet_since = time.monotonic()
+        self._last_answer_at: float | None = None
         self._last_read_answer: dict[int, float] = {}
+        self._link_recycles = 0
 
     def seconds_since_read_answer(self, unit_id: int) -> float | None:
         """Return the age of the last successful register read for one unit."""
@@ -53,6 +60,19 @@ class TransportPolicy:
         if answered_at is None:
             return None
         return time.monotonic() - answered_at
+
+    def diagnostics(self) -> dict[str, float | int | None]:
+        """Return the link health counters."""
+
+        return {
+            "consecutive_timeouts": self._consecutive_timeouts,
+            "link_recycles": self._link_recycles,
+            "seconds_since_any_answer": (
+                None
+                if self._last_answer_at is None
+                else round(time.monotonic() - self._last_answer_at, 1)
+            ),
+        }
 
     async def run[T](
         self,
@@ -75,7 +95,7 @@ class TransportPolicy:
                     raise
                 await async_sleep(self._connection_retry_delay)
             except _GATEWAY_TARGET_ERRORS:
-                self._consecutive_timeouts = 0
+                self._link_answered()
                 if last_attempt:
                     raise
             except _NO_ANSWER_ERRORS:
@@ -83,24 +103,34 @@ class TransportPolicy:
                 if last_attempt:
                     raise
             except ModbusExceptionError:
-                self._consecutive_timeouts = 0
+                self._link_answered()
                 raise
             else:
-                self._consecutive_timeouts = 0
+                self._link_answered()
                 if is_read:
                     self._last_read_answer[unit_id] = time.monotonic()
                 return result
         raise AssertionError("unreachable")
 
+    def _link_answered(self) -> None:
+        self._consecutive_timeouts = 0
+        self._quiet_since = self._last_answer_at = time.monotonic()
+
     async def _count_timeout(self, unit: ModbusUnit) -> None:
         self._consecutive_timeouts += 1
         if self._consecutive_timeouts < self._disconnect_after_timeouts:
             return
-        self._consecutive_timeouts = 0
-        _LOGGER.debug(
-            "Recycling the Meltem gateway link after %s timeouts without any answer",
-            self._disconnect_after_timeouts,
+        quiet_for = time.monotonic() - self._quiet_since
+        if quiet_for < self._link_quiet_seconds:
+            return
+        _LOGGER.info(
+            "Recycling the Meltem gateway link after %s timeouts and %.0f s without any answer",
+            self._consecutive_timeouts,
+            quiet_for,
         )
+        self._consecutive_timeouts = 0
+        self._quiet_since = time.monotonic()
+        self._link_recycles += 1
         try:
             await unit.disconnect()
         except ModbusConnectionError as err:

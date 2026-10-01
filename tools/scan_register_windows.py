@@ -227,6 +227,9 @@ async def main() -> int:
                 f"none={summary['none']:<3} empty={summary['empty']:<3}"
             )
         return 0
+    except ModbusConnectionError as err:
+        print(f"ERROR: lost the serial connection on {args.port}: {err}")
+        return 2
     finally:
         await connection.close()
 

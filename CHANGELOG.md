@@ -8,14 +8,18 @@
 - All gateway communication is asynchronous and no longer occupies Home
   Assistant's executor threads.
 - A serial port that another integration already uses with different settings
-  is reported as a setup error instead of fighting over the port lock.
+  is reported as a setup error instead of fighting over the port lock, and the
+  setup dialog names that cause instead of a generic connection error.
 - Every request is retried at most once. The link is only reopened after
-  three timeouts in a row without any answer, so one silent unit no longer
-  resets the connection for all others.
-- A unit that does not answer at all ends its poll job after the first block
-  instead of timing out on every block.
+  three timeouts in a row while no unit answered for 10 seconds, so a silent
+  unit no longer resets the connection for all others.
+- A unit that does not answer at all ends its poll job after the first
+  unanswered block instead of timing out on every block; this also applies to
+  the mode registers and to the setup probe.
 - Setup now checks the gateway by reading its unit count, and the setup probes
-  follow the same retry rules as normal polling.
+  follow the same retry rules as normal polling. The setup dialog opens the
+  serial port once for reading the unit list and probing the units.
+- The diagnostics download shows how often the serial link was reopened.
 - Debug logging for the serial link moved from `pymodbus` to the
   `modbus_connection` and `tmodbus` loggers.
 - The developer tools in `tools/` use `modbus-connection` with tmodbus.

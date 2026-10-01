@@ -6,6 +6,7 @@ from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
     ConfigEntryError,
@@ -14,6 +15,8 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from modbus_connection import ClientClosedError, ModbusTimeoutError
+from modbus_connection.mock import MockModbusConnection
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation import (
@@ -27,6 +30,7 @@ from custom_components.meltem_ventilation.const import (
     CONF_PORT,
     CONF_ROOMS,
     DOMAIN,
+    FIXED_TIMEOUT,
     PLATFORMS,
 )
 from custom_components.meltem_ventilation.modbus_helpers import (
@@ -728,3 +732,61 @@ class TestDeviceRegistrySync:
 
         assert registry.async_get(configured.id) is not None
         assert registry.async_get(dropped.id) is None
+
+
+# ---------------------------------------------------------------------------
+#  Home Assistant's shared Modbus connection
+# ---------------------------------------------------------------------------
+
+
+class TestSharedModbusConnection:
+    """Set up through the real modbus integration, on an in-memory link."""
+
+    @staticmethod
+    def _patch_link(links: list[MockModbusConnection], *, gateway_silent: bool = False):
+        def _connection(params, **kwargs) -> MockModbusConnection:
+            link = MockModbusConnection()
+            gateway = link.for_unit(1)
+            gateway.holding.update({43901: 1, 43902: [2]})
+            if gateway_silent:
+                gateway.fail_requests(ModbusTimeoutError("silent"))
+            link.for_unit(2).holding.update({41020: [30, 30], 41120: [3, 60, 0, 0, 0]})
+            links.append(link)
+            return link
+
+        return patch(
+            "homeassistant.components.modbus.connection.ModbusConnection", _connection
+        )
+
+    async def test_unload_releases_the_link(self, hass: HomeAssistant) -> None:
+        links: list[MockModbusConnection] = []
+        entry = _mock_config_entry()
+        entry.add_to_hass(hass)
+
+        with self._patch_link(links):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+            (link,) = links
+            assert link.for_unit(2).read_events
+            assert link.for_unit(2).required_timeout == FIXED_TIMEOUT
+
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            await hass.async_block_till_done()
+
+        with pytest.raises(ClientClosedError):
+            await link.for_unit(1).read_holding_registers(43901, 1)
+
+    async def test_a_silent_gateway_retries_setup_and_releases_the_link(
+        self, hass: HomeAssistant
+    ) -> None:
+        links: list[MockModbusConnection] = []
+        entry = _mock_config_entry()
+        entry.add_to_hass(hass)
+
+        with self._patch_link(links, gateway_silent=True):
+            await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+
+        assert entry.state is ConfigEntryState.SETUP_RETRY
+        with pytest.raises(ClientClosedError):
+            await links[0].for_unit(1).read_holding_registers(43901, 1)

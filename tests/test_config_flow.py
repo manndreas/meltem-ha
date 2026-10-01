@@ -52,6 +52,12 @@ def gateway_link_fixture() -> Iterator[MockModbusConnection]:
         yield connection
 
 
+@asynccontextmanager
+async def _conflicting_unit(hass, params, unit_id):
+    raise HomeAssistantError("already in use with different link settings")
+    yield  # pragma: no cover
+
+
 def _patch_validate_ok():
     return patch(
         f"{_PATCHES_BASE}.read_gateway_node_count", new=AsyncMock(return_value=1)
@@ -209,15 +215,43 @@ class TestConfigFlowUser:
         for unit in (gateway, co2_unit):
             assert unit.required_timeout == FIXED_TIMEOUT
             assert unit.message_spacing == REQUEST_GAP_SECONDS
+        # The silent unit is given up after its first probe and one retry.
+        assert len(gateway_link.for_unit(3).read_events) == 2
 
-    async def test_user_step_port_held_with_other_settings_shows_cannot_connect(
+    async def test_user_step_scans_and_probes_on_one_link(
+        self, hass: HomeAssistant, gateway_link: MockModbusConnection
+    ) -> None:
+        gateway_link.for_unit(DEFAULT_GATEWAY_DEVICE_ID).holding.update(
+            {43901: 2, 43902: [2, 3]}
+        )
+        holds: list[str] = []
+
+        @asynccontextmanager
+        async def _recording_unit(hass, params, unit_id):
+            holds.append(f"take {unit_id}")
+            try:
+                yield gateway_link.for_unit(unit_id)
+            finally:
+                holds.append(f"release {unit_id}")
+
+        with (
+            patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=_recording_unit),
+            _patch_resolve(),
+        ):
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": config_entries.SOURCE_USER}
+            )
+            await hass.config_entries.flow.async_configure(
+                result["flow_id"], {CONF_PORT: "/dev/ttyACM0"}
+            )
+
+        # Releasing the last hold would close the port in between.
+        assert holds[:3] == ["take 1", "take 2", "take 3"]
+        assert sorted(holds[3:]) == ["release 1", "release 2", "release 3"]
+
+    async def test_user_step_port_held_with_other_settings_shows_port_in_use(
         self, hass: HomeAssistant
     ) -> None:
-        @asynccontextmanager
-        async def _conflicting_unit(hass, params, unit_id):
-            raise HomeAssistantError("already in use with different link settings")
-            yield  # pragma: no cover
-
         with (
             patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=_conflicting_unit),
             _patch_resolve(),
@@ -230,7 +264,7 @@ class TestConfigFlowUser:
             )
 
         assert result["type"] == FlowResultType.FORM
-        assert result["errors"] == {"base": "cannot_connect"}
+        assert result["errors"] == {"base": "port_in_use"}
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +633,33 @@ class TestOptionsFlow:
         assert entry.unique_id == "/dev/serial/by-id/new-port"
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
         validate_connection.assert_awaited_once()
+
+    async def test_options_edit_connection_reports_a_port_held_with_other_settings(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = self._setup_entry(hass)
+
+        with patch(
+            f"{_PATCHES_BASE}.async_get_temporary_unit", new=_conflicting_unit
+        ), patch(
+            f"{_PATCHES_BASE}.resolve_preferred_port_path", side_effect=lambda port: port
+        ):
+            result = await hass.config_entries.options.async_init(entry.entry_id)
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"],
+                {"next_step_id": "edit_connection"},
+            )
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"],
+                {
+                    CONF_PORT: "/dev/ttyACM1",
+                    CONF_MAX_REQUESTS_PER_SECOND: 5.0,
+                },
+            )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "port_in_use"}
+        assert entry.data[CONF_PORT] == "/dev/serial/by-id/test"
 
     async def test_options_edit_connection_ignores_an_equivalent_port_path(
         self, hass: HomeAssistant

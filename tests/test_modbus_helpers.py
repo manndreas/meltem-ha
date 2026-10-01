@@ -312,6 +312,8 @@ class TestDetectSlaveDetails:
 
         assert profile == "plain"
         assert preview == "basic"
+        # The remaining probes would only time out as well.
+        assert _reads(unit) == [(REGISTER_PRODUCT_ID, 2)]
 
     async def test_a_dead_link_is_raised(self, unit: MockModbusUnit) -> None:
         unit.fail_requests(ModbusConnectionError("no port"))

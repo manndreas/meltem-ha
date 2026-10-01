@@ -222,6 +222,17 @@ class TestReadFailures:
         for group in ("flow", "flow_control", "status", "temperature", "hours"):
             assert state.read_health_for(group).consecutive_failures == 1
 
+    async def test_silent_units_do_not_recycle_the_link(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        for slave in (2, 3):
+            link.for_unit(slave).fail_requests(ModbusTimeoutError("silent"))
+
+        for room in (_ROOM, _ROOM_S):
+            await client.read_room_state(room, RoomState(), RefreshPlan())
+
+        assert client.transport_diagnostics()["link_recycles"] == 0
+
     async def test_a_silent_unit_does_not_affect_its_neighbours(
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
@@ -307,14 +318,34 @@ class TestWriteLevel:
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
         unit = link.for_unit(2)
+        attempts: list[int] = []
+        write_register = unit.write_register
+
+        async def _lose_the_first_apply(address: int, value: int) -> None:
+            attempts.append(address)
+            if address == REGISTER_APPLY and attempts.count(REGISTER_APPLY) == 1:
+                raise ModbusTimeoutError("lost")
+            await write_register(address, value)
+
+        unit.write_register = _lose_the_first_apply
+
+        await client.write_level(_ROOM, 50)
+
+        assert attempts == [
+            REGISTER_MODE,
+            REGISTER_CURRENT_LEVEL,
+            REGISTER_APPLY,
+            REGISTER_APPLY,
+        ]
+
+    async def test_a_write_unanswered_twice_is_raised(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        unit = link.for_unit(2)
         unit.fail_write(REGISTER_APPLY, ModbusTimeoutError("silent"))
 
         with pytest.raises(MeltemModbusError):
             await client.write_level(_ROOM, 50)
-
-        unit.fail_write(REGISTER_APPLY, None)
-        await client.write_level(_ROOM, 50)
-        assert unit.holding[REGISTER_APPLY] == 0
 
 
 class TestWriteUnbalancedLevels:
