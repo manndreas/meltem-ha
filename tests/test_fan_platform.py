@@ -6,7 +6,6 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.meltem_ventilation.fan import (
     DIRECTION_EXTRACT,
@@ -75,15 +74,13 @@ class TestReadState:
         coordinator.room_available.return_value = False
         assert entity.available is False
 
-    def test_unavailable_when_flow_control_is_stale(self) -> None:
+    def test_available_when_flow_control_is_stale(self) -> None:
         coordinator = _make_coordinator()
         coordinator.read_group_for_entity.return_value = "flow_control"
         coordinator.read_group_available.return_value = False
 
-        assert _supply(coordinator).available is False
-        coordinator.read_group_available.assert_called_once_with(
-            "unit_1", "flow_control"
-        )
+        assert _supply(coordinator).available is True
+        coordinator.read_group_available.assert_not_called()
 
 
 class TestWrites:
@@ -138,23 +135,47 @@ class TestWrites:
 
         coordinator.async_set_unbalanced_levels.assert_awaited_once_with("unit_1", 100, 30)
 
-    def test_write_is_refused_while_the_other_direction_is_unknown(self) -> None:
-        """Writing always sends both directions, so a guess would stop the other fan."""
-        coordinator = _make_coordinator(levels=(40, None))
+    @pytest.mark.parametrize("levels", [(40, None), (None, None)])
+    def test_unknown_opposite_uses_balanced_write_fallback(
+        self,
+        levels: tuple[int | None, int | None],
+    ) -> None:
+        coordinator = _make_coordinator(levels=levels)
+        entity = _supply(coordinator)
 
-        with pytest.raises(HomeAssistantError):
-            asyncio.run(_supply(coordinator).async_set_percentage(60))
+        asyncio.run(entity.async_set_percentage(60))
 
+        coordinator.async_set_level.assert_awaited_once_with("unit_1", 60)
         coordinator.async_set_unbalanced_levels.assert_not_awaited()
-        coordinator.async_set_level.assert_not_awaited()
+        assert (
+            entity.extra_state_attributes["last_write_fallback"]
+            == "both_directions_balanced_manual"
+        )
 
-    def test_turn_off_is_refused_while_the_other_direction_is_unknown(self) -> None:
+    def test_turning_off_with_unknown_opposite_stops_both_directions(self) -> None:
         coordinator = _make_coordinator(levels=(40, None))
 
-        with pytest.raises(HomeAssistantError):
-            asyncio.run(_supply(coordinator).async_turn_off())
+        asyncio.run(_supply(coordinator).async_turn_off())
 
-        coordinator.async_set_level.assert_not_awaited()
+        coordinator.async_set_level.assert_awaited_once_with("unit_1", 0)
+        coordinator.async_set_unbalanced_levels.assert_not_awaited()
+
+    def test_unknown_mode_is_reported_before_an_explicit_write(self) -> None:
+        coordinator = _make_coordinator(levels=(40, 30))
+        coordinator.safe_data = {"unit_1": RoomState(target_level=40)}
+        entity = _supply(coordinator)
+
+        assert entity.extra_state_attributes["operating_mode_known"] is False
+        assert entity.extra_state_attributes["fan_write_may_override_mode"] is True
+
+        asyncio.run(entity.async_set_percentage(60))
+
+        coordinator.async_set_unbalanced_levels.assert_awaited_once_with(
+            "unit_1", 60, 30
+        )
+        assert entity.extra_state_attributes["last_write_fallback"] == (
+            "unknown_mode_overridden"
+        )
 
 
 class TestBalancedOperation:

@@ -35,6 +35,8 @@ class MeltemIntensiveSwitch(MeltemEntity, SwitchEntity):
     Meltem app, so the switch can also flip back without user interaction.
     """
 
+    _requires_fresh_read_group = False
+
     def __init__(self, coordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "intensive", "intensive")
         self._attr_icon = "mdi:fan-plus"

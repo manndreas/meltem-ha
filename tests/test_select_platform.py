@@ -61,12 +61,19 @@ def _build_preset_entity(
     return MeltemPresetModeSelect(coordinator, room)
 
 
+def test_preset_mode_is_unknown_without_readback() -> None:
+    entity = _build_preset_entity("ii_plain", state=RoomState())
+
+    assert entity.current_option is None
+
+
 class TestMeltemOperationModeSelect:
-    def test_unavailable_when_flow_control_is_stale(self) -> None:
+    def test_available_when_flow_control_is_stale(self) -> None:
         entity = _build_entity("ii_fc")
         entity.coordinator.read_group_available.return_value = False
 
-        assert entity.available is False
+        assert entity.available is True
+        entity.coordinator.read_group_available.assert_not_called()
 
     def test_f_profile_offers_humidity_control_only(self) -> None:
         entity = _build_entity("ii_f")
@@ -146,14 +153,14 @@ class TestOperationModeSelectCreation:
 
 
 class TestMeltemPresetModeSelect:
-    def test_unavailable_when_flow_control_is_stale(self) -> None:
+    def test_available_when_flow_control_is_stale(self) -> None:
         entity = _build_preset_entity("ii_plain")
         entity.coordinator.read_group_for_entity.side_effect = lambda key: (
             "flow_control" if key == "preset_mode" else None
         )
         entity.coordinator.read_group_available.return_value = False
 
-        assert entity.available is False
+        assert entity.available is True
 
     def test_only_app_quick_modes_are_selectable(self) -> None:
         entity = _build_preset_entity("ii_plain")
@@ -166,12 +173,12 @@ class TestMeltemPresetModeSelect:
         )
         assert entity.current_option == "medium"
 
-    def test_missing_preset_mode_has_no_matching_option(self) -> None:
+    def test_missing_preset_mode_is_unknown(self) -> None:
         entity = _build_preset_entity(
             "ii_plain",
             state=RoomState(operation_mode="unbalanced"),
         )
-        assert entity.current_option == PRESET_MODE_INACTIVE
+        assert entity.current_option is None
 
     def test_single_direction_states_are_reported_as_individual(self) -> None:
         """extract_only/supply_only are expressed by the two fan entities."""

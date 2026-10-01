@@ -348,13 +348,26 @@ class TestCoordinatorResilience:
 _UNIT_1 = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 
 
+def _with_fresh_read_groups(state: RoomState, *group_keys: str) -> RoomState:
+    read_at = dt_util.utcnow()
+    for group_key in group_keys:
+        state = state.with_read_health(
+            group_key,
+            ReadHealth(last_attempt=read_at, last_successful_read=read_at),
+        )
+    return state
+
+
 class TestEffectiveLevels:
     def test_balanced_mode_reports_one_value_for_both_directions(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
-            "unit_1": RoomState(operation_mode="manual", target_level=45)
+            "unit_1": _with_fresh_read_groups(
+                RoomState(operation_mode="manual", target_level=45),
+                "flow_control",
+            )
         }
 
         assert coordinator.effective_levels("unit_1") == (45, 45)
@@ -362,10 +375,13 @@ class TestEffectiveLevels:
     def test_unbalanced_mode_reports_both_targets(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
-            "unit_1": RoomState(
-                operation_mode="unbalanced",
-                target_level=60,
-                extract_target_level=20,
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    operation_mode="unbalanced",
+                    target_level=60,
+                    extract_target_level=20,
+                ),
+                "flow_control",
             )
         }
 
@@ -373,17 +389,25 @@ class TestEffectiveLevels:
 
     def test_off_reports_zero(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
-        coordinator.data = {"unit_1": RoomState(operation_mode="off", target_level=40)}
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(
+                RoomState(operation_mode="off", target_level=40), "flow_control"
+            )
+        }
 
         assert coordinator.effective_levels("unit_1") == (0, 0)
 
     def test_falls_back_to_measured_airflow(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
-            "unit_1": RoomState(
-                operation_mode="unbalanced",
-                supply_air_flow=55,
-                extract_air_flow=25,
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    operation_mode="unbalanced",
+                    supply_air_flow=55,
+                    extract_air_flow=25,
+                ),
+                "flow_control",
+                "flow",
             )
         }
 
@@ -398,15 +422,71 @@ class TestEffectiveLevels:
         """41121 holds the mode selector there, so it must not become a level."""
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
-            "unit_1": RoomState(
-                operation_mode=sensor_mode,
-                target_level=56,
-                supply_air_flow=22,
-                extract_air_flow=21,
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    operation_mode=sensor_mode,
+                    target_level=56,
+                    supply_air_flow=22,
+                    extract_air_flow=21,
+                ),
+                "flow_control",
+                "flow",
             )
         }
 
         assert coordinator.effective_levels("unit_1") == (22, 21)
+
+    def test_unknown_mode_uses_independent_fresh_airflow_values(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    target_level=56,
+                    supply_air_flow=22,
+                    extract_air_flow=21,
+                ),
+                "flow_control",
+                "flow",
+            )
+        }
+
+        assert coordinator.effective_levels("unit_1") == (22, 21)
+
+    def test_unknown_mode_does_not_duplicate_one_fresh_airflow_value(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(
+                RoomState(target_level=56, supply_air_flow=22), "flow"
+            )
+        }
+
+        assert coordinator.effective_levels("unit_1") == (22, None)
+
+    def test_unknown_mode_does_not_use_stale_airflow_values(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        failed_at = dt_util.utcnow()
+        stale_at = failed_at - timedelta(seconds=40)
+        state = RoomState(
+            supply_air_flow=22,
+            extract_air_flow=21,
+        ).with_read_health(
+            "flow",
+            ReadHealth(
+                last_attempt=failed_at,
+                last_successful_read=stale_at,
+                consecutive_failures=1,
+                last_error="flow read failed",
+            ),
+        )
+        coordinator.data = {"unit_1": state}
+
+        assert coordinator.effective_levels("unit_1") == (None, None)
 
     def test_pending_write_wins_over_stale_state(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
@@ -424,10 +504,13 @@ class TestEffectiveLevels:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator._set_optimistic_levels("unit_1", 80, 20)
         coordinator.data = {
-            "unit_1": RoomState(
-                operation_mode="unbalanced",
-                target_level=80,
-                extract_target_level=20,
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    operation_mode="unbalanced",
+                    target_level=80,
+                    extract_target_level=20,
+                ),
+                "flow_control",
             )
         }
 
@@ -440,10 +523,13 @@ class TestEffectiveLevels:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator._set_optimistic_levels("unit_1", 80, 20)
         coordinator.data = {
-            "unit_1": RoomState(
-                operation_mode="unbalanced",
-                target_level=79,
-                extract_target_level=21,
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    operation_mode="unbalanced",
+                    target_level=79,
+                    extract_target_level=21,
+                ),
+                "flow_control",
             )
         }
 
@@ -453,7 +539,9 @@ class TestEffectiveLevels:
     def test_overlay_expires(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
-            "unit_1": RoomState(operation_mode="manual", target_level=40)
+            "unit_1": _with_fresh_read_groups(
+                RoomState(operation_mode="manual", target_level=40), "flow_control"
+            )
         }
         coordinator._optimistic_levels._pending["unit_1"] = ((80, 20), 0.0)
 
@@ -464,7 +552,9 @@ class TestEffectiveLevels:
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
-            "unit_1": RoomState(operation_mode="manual", target_level=40)
+            "unit_1": _with_fresh_read_groups(
+                RoomState(operation_mode="manual", target_level=40), "flow_control"
+            )
         }
 
         await coordinator.async_set_unbalanced_levels("unit_1", 70, 30)
@@ -509,6 +599,17 @@ class TestEffectiveLevels:
 # ---------------------------------------------------------------------------
 
 class TestOptimisticPresetOverlay:
+    def test_missing_readback_is_not_reported_as_inactive(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
+        )
+        coordinator.data = {"unit_1": RoomState(error_status=False)}
+
+        assert coordinator.optimistic_preset_mode("unit_1") is None
+
     def test_overlay_is_returned_until_the_gateway_confirms(
         self, hass: HomeAssistant,
     ) -> None:

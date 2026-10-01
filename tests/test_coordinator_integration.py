@@ -128,6 +128,9 @@ class TestFirstRefresh:
         assert data["unit_1"].target_level == 42
         # Two rooms read with full RefreshPlan.
         assert len(client.read_calls) == 2
+        assert client.write_level_calls == []
+        assert client.write_unbalanced_calls == []
+        assert client.write_preset_mode_calls == []
 
     async def test_first_refresh_partial_failure_still_returns_states(
         self, hass: HomeAssistant,
