@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Write one or more Meltem holding registers to a unit.
 
 This helper is intentionally small and explicit so we can reproduce app-origin
@@ -11,24 +10,20 @@ import argparse
 
 from modbus_connection import ModbusError
 
-from tools._link import DEFAULT_PORT, open_link, run
+from tools._link import open_link, run, tool_parser
 
 
 def parse_write(value: str) -> tuple[int, int]:
     """Parse one write pair in ADDRESS=VALUE form."""
 
-    if "=" not in value:
+    address, separator, register_value = value.partition("=")
+    if not separator:
         raise argparse.ArgumentTypeError("write must look like ADDRESS=VALUE")
-    address_s, register_value_s = value.split("=", 1)
-    return int(address_s), int(register_value_s)
+    return int(address), int(register_value)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Write one or more Meltem holding registers."
-    )
-    parser.add_argument("--port", default=DEFAULT_PORT)
-    parser.add_argument("--slave", type=int, required=True)
+    parser = tool_parser("Write one or more Meltem holding registers.", slave=True)
     parser.add_argument(
         "--write",
         action="append",
