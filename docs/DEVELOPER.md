@@ -41,8 +41,8 @@ These are the most important practical findings from the latest hardware tests:
   values
 - room entities stay unavailable until the first poll returns at least one
   state value
-- unloading waits for an active serial operation before closing the shared
-  client, so a background read cannot reopen the port after shutdown
+- unloading waits for an active serial operation and then shuts the shared
+  client down for good, so a late post-write readback cannot reopen the port
 
 ## Scope
 
@@ -237,6 +237,11 @@ Current design:
 - only one job runs at a time
 - scheduler cadence is derived from `max_requests_per_second`; despite the
   legacy option name, this limits job starts, not individual wire requests
+- post-write readbacks count as job starts for that cap, and a job that would
+  start too early is skipped and rescheduled
+- Home Assistant's `DataUpdateCoordinator` schedules the next refresh from
+  `int(loop.time())`, so sub-second intervals would fire up to a second early;
+  the coordinator adds the current fractional loop second to compensate
 - one job can perform several grouped or optional Modbus reads, each still
   separated by `REQUEST_GAP_SECONDS`
 - airflow-level writes rely on the normal scheduler for later readback instead
@@ -273,16 +278,20 @@ consecutive failures, and most recent error. Optional Modbus failures preserve
 the last cached value, but only affect the health of the group that performed
 the read. A successful read in another group does not clear that failure.
 Expected groups are derived from each room's supported entities, so a register
-that a device profile does not expose is not reported as a failed read.
+that a device profile does not expose is not reported as a failed read. The
+group-to-entity mapping lives in `const.READ_GROUP_ENTITY_KEYS` and
+`RefreshPlan.read_groups()`; the client and the coordinator both use it.
 
 Read-only entities are available only while their own group's last successful
 read is fresh. Airflow uses a 30-second freshness limit; other groups use three
 times their polling interval. Control entities (fans, selects, the intensive
 switch) stay available while the unit answers and report `unknown` values
 instead, so a command can still be sent. The `data_health` diagnostic binary
-sensor and the Home Assistant system-health page expose per-group read status
-and write confirmation details without issuing extra gateway requests. Its
-attributes are excluded from the recorder because they change on every poll.
+sensor exposes per-group read status and write confirmation details without
+issuing extra gateway requests; its attributes are excluded from the recorder
+because they change on every poll. The Home Assistant system-health page lists
+stale groups per unit as plain text, because its dialog does not render nested
+values.
 
 A successful Modbus write call confirms only that the write operation was
 accepted at the transport/protocol layer. Control entities show the written
@@ -297,7 +306,12 @@ pending value. Failed, mismatched, or unconfirmed writes flag `data_health` for
 
 Units that answer the two-register mode read but reject the five-register one
 (HW-4) do not record an `intensive` read failure; the intensive state is simply
-unknown there.
+unknown there. An intensive write on such a unit is recorded as `unverifiable`
+instead of `unconfirmed`, so it does not flag `data_health`.
+
+The base quick mode is decoded from `41120..41122` only. The intensive override
+in `41123`/`41124` no longer masks it, so the quick mode stays correct after a
+restart during intensive ventilation.
 
 Write errors reach the UI as translated `HomeAssistantError`s (`exceptions` in
 `strings.json`) instead of an "Unknown error".
@@ -837,15 +851,19 @@ Known UX caveat:
 
 ## Existing config entries and profile changes
 
-Setup repairs stored room metadata before creating entities:
+Setup never probes the gateway for entity metadata:
 
-- missing setup metadata is re-probed, with profile-derived temperature and
-  control-setting keys merged into the best-effort sensor probe result
-- older probe-only metadata is augmented from the selected profile on startup
+- each room's entities are the stored keys plus everything its profile implies,
+  derived on load, so entries from older releases gain new entities without a
+  rewrite
+- one-time schema changes run in `async_migrate_entry` (config entry `1.2`
+  renamed the airflow-only `airflow_data_stale` entity to `data_health`)
 - changing to a profile with fewer capabilities removes registry entities that
   the new profile no longer creates
 - globally removed entities from older releases are handled by the same
   platform-aware registry cleanup
+- devices of units that a rescan no longer reports are removed on setup; unit
+  devices are linked to the gateway device via `via_device`
 
 A fresh setup should therefore not be needed for normal profile changes or
 upgrades. Remove and re-add the config entry only when its stored data is

@@ -15,7 +15,11 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  # pytest-homeassistant-custom-component dictates the minimum Python version.
+  PYTHON_VERSION: "3.14"
 
 jobs:
   hassfest:
@@ -24,10 +28,29 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Run hassfest
-        uses: home-assistant/actions/hassfest@master
+        uses: home-assistant/actions/hassfest@06749dd8c0b54f350bc69c8752456cee498808a3 # master
+
+  ruff:
+    name: Ruff
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff
+        run: python -m pip install --upgrade pip ruff==0.15.20
+
+      - name: Run ruff
+        run: ruff check custom_components tests
 
   pytest:
     name: Pytest
@@ -35,13 +58,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          # pytest-homeassistant-custom-component dictates the minimum version.
-          python-version: "3.14"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install test dependencies
         run: |
@@ -57,10 +79,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Run HACS validation
-        uses: hacs/action@main
+        uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main
         with:
           category: integration
           ignore: topics
@@ -70,19 +92,22 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - hassfest
+      - ruff
       - pytest
       - hacs
+    permissions:
+      contents: write
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.13"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Validate Python sources
         run: python -m py_compile custom_components/meltem_ventilation/*.py
@@ -90,19 +115,36 @@ jobs:
       - name: Determine release tag
         id: release_meta
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME="${{ github.event.inputs.tag_name }}"
-          elif [ "${{ github.event_name }}" = "release" ]; then
-            TAG_NAME="${{ github.event.release.tag_name }}"
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG_NAME="${INPUT_TAG}"
+          elif [ "${EVENT_NAME}" = "release" ]; then
+            TAG_NAME="${RELEASE_TAG}"
           else
-            TAG_NAME="${GITHUB_REF_NAME}"
+            TAG_NAME="${REF_NAME}"
           fi
 
           ZIP_NAME="meltem-ha-${TAG_NAME}.zip"
 
           echo "tag_name=${TAG_NAME}" >> "${GITHUB_OUTPUT}"
           echo "zip_name=${ZIP_NAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check release version
+        shell: bash
+        env:
+          TAG_NAME: ${{ steps.release_meta.outputs.tag_name }}
+        run: |
+          MANIFEST_VERSION=$(python -c "import json; print(json.load(open('custom_components/meltem_ventilation/manifest.json'))['version'])")
+          PYPROJECT_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "${TAG_NAME#v}" != "${MANIFEST_VERSION}" ] || [ "${MANIFEST_VERSION}" != "${PYPROJECT_VERSION}" ]; then
+            echo "::error::Tag ${TAG_NAME}, manifest.json ${MANIFEST_VERSION} and pyproject.toml ${PYPROJECT_VERSION} disagree"
+            exit 1
+          fi
 
       - name: Build release archive
         shell: bash
