@@ -6,8 +6,8 @@ or the RF link behind the gateway.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -28,8 +28,8 @@ from .models import MeltemRuntimeData, RoomState
 class MeltemBinarySensorDescription(BinarySensorEntityDescription):
     """Describe a Meltem binary sensor."""
 
-    supported_profiles: frozenset[str]
     value_fn: Callable[[RoomState], bool | None]
+    supported_profiles: frozenset[str] = ALL_PROFILES
 
 
 BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
@@ -37,20 +37,17 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
         key="error_status",
         icon="mdi:alert-circle-outline",
         device_class=BinarySensorDeviceClass.PROBLEM,
-        supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.error_status,
     ),
     MeltemBinarySensorDescription(
         key="frost_protection_active",
         icon="mdi:snowflake-thermometer",
-        supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.frost_protection_active,
     ),
     MeltemBinarySensorDescription(
         key="filter_change_due",
         icon="mdi:air-filter",
         device_class=BinarySensorDeviceClass.PROBLEM,
-        supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.filter_change_due,
     ),
     MeltemBinarySensorDescription(
@@ -59,7 +56,6 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        supported_profiles=ALL_PROFILES,
         value_fn=lambda state: state.rf_comm_status,
     ),
 )
@@ -84,8 +80,9 @@ async def async_setup_entry(
     entities.extend(
         MeltemDataHealthBinarySensor(coordinator, room)
         for room in coordinator.rooms
-        if room_supports_entity(room, "supply_air_flow")
-        or room_supports_entity(room, "extract_air_flow")
+        if any(
+            room_supports_entity(room, key) for key in ("supply_air_flow", "extract_air_flow")
+        )
     )
     async_add_entities(entities)
 
@@ -128,5 +125,5 @@ class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
         return self.coordinator.data_health_stale(self.room.key)
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, object]:
         return self.coordinator.data_health_attributes(self.room.key)

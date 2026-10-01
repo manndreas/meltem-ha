@@ -5,30 +5,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import dataclass
 import statistics
 import time
+from dataclasses import dataclass
 
-from modbus_connection import (
-    ModbusConnectionError,
-    ModbusError,
-    ModbusExceptionError,
-    ModbusSerialParams,
-    ModbusUnit,
-)
-from modbus_connection.tmodbus import ModbusConnection
+from modbus_connection import ModbusError, ModbusExceptionError
 
-
-FIXED_BAUDRATE = 19200
-FIXED_BYTESIZE = 8
-FIXED_PARITY = "E"
-FIXED_STOPBITS = 1
-FIXED_TIMEOUT = 0.8
-DEFAULT_PORT = "/dev/ttyACM0"
-DEFAULT_GATEWAY_DEVICE_ID = 1
-
-REGISTER_GATEWAY_NUMBER_OF_NODES = 43901
-REGISTER_GATEWAY_NODE_ADDRESS_1 = 43902
+from tools._link import DEFAULT_PORT, GATEWAY_DEVICE_ID, discover_units, open_link, run
 
 
 @dataclass(frozen=True)
@@ -52,30 +35,6 @@ SPECS: tuple[ReadSpec, ...] = (
 )
 
 
-async def discover_units(gateway: ModbusUnit, *, gap: float) -> list[int]:
-    try:
-        (node_count,) = await gateway.read_holding_registers(
-            REGISTER_GATEWAY_NUMBER_OF_NODES, 1
-        )
-    except ModbusConnectionError:
-        raise
-    except ModbusError as err:
-        raise RuntimeError(f"failed to read bridge node count: {err}") from err
-    await asyncio.sleep(gap)
-
-    try:
-        addresses = await gateway.read_holding_registers(
-            REGISTER_GATEWAY_NODE_ADDRESS_1, max(1, min(32, node_count))
-        )
-    except ModbusConnectionError:
-        raise
-    except ModbusError as err:
-        raise RuntimeError(f"failed to read bridge node addresses: {err}") from err
-    await asyncio.sleep(gap)
-
-    return [int(value) for value in addresses if int(value) != 0]
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Profile register reads across all Meltem units."
@@ -90,26 +49,8 @@ async def main() -> int:
     args = parse_args()
     # The gap is slept explicitly outside the measured latency, so the link
     # itself adds no extra spacing.
-    connection = ModbusConnection(
-        ModbusSerialParams(
-            device=args.port,
-            baudrate=FIXED_BAUDRATE,
-            bytesize=FIXED_BYTESIZE,
-            parity=FIXED_PARITY,
-            stopbits=FIXED_STOPBITS,
-        ),
-        timeout=FIXED_TIMEOUT,
-    )
-    try:
-        await connection.connect()
-    except ModbusConnectionError as err:
-        print(f"ERROR: could not open serial connection on {args.port}: {err}")
-        return 2
-
-    try:
-        units = await discover_units(
-            connection.for_unit(DEFAULT_GATEWAY_DEVICE_ID), gap=args.gap
-        )
+    async with open_link(args.port, message_spacing=None) as link:
+        units = await discover_units(link.for_unit(GATEWAY_DEVICE_ID), gap=args.gap)
         print(f"units: {units}")
         print(f"gap: {args.gap}s")
         print(f"cycles: {args.cycles}")
@@ -121,7 +62,7 @@ async def main() -> int:
         for cycle in range(1, args.cycles + 1):
             print(f"cycle {cycle}/{args.cycles}")
             for unit in units:
-                modbus_unit = connection.for_unit(unit)
+                modbus_unit = link.for_unit(unit)
                 for spec in SPECS:
                     start = time.perf_counter()
                     try:
@@ -151,23 +92,17 @@ async def main() -> int:
                     await asyncio.sleep(args.gap)
             print()
 
-        print("summary:")
-        for spec in SPECS:
-            latencies = latencies_by_label[spec.label]
-            failures = failures_by_label[spec.label]
-            total = len(latencies) + failures
-            avg = statistics.mean(latencies) if latencies else 0.0
-            print(
-                f"  {spec.label:<24} total={total:<3} failures={failures:<3} avg_ms={avg:>6.1f}"
-            )
-
-        return 0
-    except ModbusConnectionError as err:
-        print(f"ERROR: lost the serial connection on {args.port}: {err}")
-        return 2
-    finally:
-        await connection.close()
+    print("summary:")
+    for spec in SPECS:
+        latencies = latencies_by_label[spec.label]
+        failures = failures_by_label[spec.label]
+        total = len(latencies) + failures
+        avg = statistics.mean(latencies) if latencies else 0.0
+        print(
+            f"  {spec.label:<24} total={total:<3} failures={failures:<3} avg_ms={avg:>6.1f}"
+        )
+    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    run(main)

@@ -61,14 +61,14 @@
       },
       "edit_connection": {
         "title": "Change serial connection",
-        "description": "Update the serial device path and scheduler request rate used for the Meltem gateway.",
+        "description": "Update the serial device path and the maximum request rate for the Meltem gateway.",
         "data": {
           "port": "Serial port",
           "max_requests_per_second": "Maximum requests per second"
         }
       },
       "edit_profiles": {
-        "title": "Change Meltem device profiles",
+        "title": "Change profiles for existing units",
         "description": "Update the selected profile for each configured Meltem M-WRG unit.\n\n{unit_details}",
         "data": {
           "slave_2": "Unit at Modbus address 2",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from homeassistant.exceptions import HomeAssistantError
 from modbus_connection import (
@@ -38,7 +40,7 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_PRESET_VALUE,
     REGISTER_PRODUCT_ID,
 )
-from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
+from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient, _supports
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
@@ -49,6 +51,7 @@ _PORT = "/dev/ttyACM0"
 _ROOM = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 _ROOM_S = RoomConfig(key="unit_s", name="Unit S", profile="s_plain", slave=3)
 _ROOM_FC_VOC = RoomConfig(key="unit_v", name="Unit V", profile="ii_fc_voc", slave=4)
+_AIRFLOW = RefreshPlan.only(refresh_airflow=True)
 
 
 @pytest.fixture(name="sleeps")
@@ -74,14 +77,18 @@ def client_fixture(link: MockModbusConnection) -> MeltemModbusClient:
     return MeltemModbusClient(link.for_unit, port=_PORT)
 
 
-def _writes(unit: MockModbusUnit) -> list[WriteEvent]:
+def _writes(link: MockModbusConnection, room: RoomConfig) -> list[WriteEvent]:
     events: list[WriteEvent] = []
-    unit.on_write(events.append)
+    link.for_unit(room.slave).on_write(events.append)
     return events
 
 
 def _written(events: list[WriteEvent]) -> list[tuple[int, int]]:
     return [(event.address, event.values[0]) for event in events]
+
+
+def _reads(unit: MockModbusUnit) -> list[tuple[int, int]]:
+    return [(event.address, event.count) for event in unit.read_events]
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +100,7 @@ class TestUnits:
     async def test_every_unit_asks_for_the_gateway_timing(
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
-        await client.read_room_state(_ROOM, RoomState(), RefreshPlan.only(refresh_airflow=True))
+        await client.read_room_state(_ROOM, RoomState(), _AIRFLOW)
 
         unit = link.for_unit(2)
         assert unit.message_spacing == 0.1
@@ -109,10 +116,9 @@ class TestUnits:
             return link.for_unit(unit_id)
 
         client = MeltemModbusClient(_factory, port=_PORT)
-        plan = RefreshPlan.only(refresh_airflow=True)
         for _ in range(2):
-            await client.read_room_state(_ROOM, RoomState(), plan)
-            await client.read_room_state(_ROOM_S, RoomState(), plan)
+            await client.read_room_state(_ROOM, RoomState(), _AIRFLOW)
+            await client.read_room_state(_ROOM_S, RoomState(), _AIRFLOW)
 
         assert requested == [2, 3]
 
@@ -121,7 +127,7 @@ class TestUnits:
     ) -> None:
         assert client.seconds_since_successful_read(2) is None
 
-        await client.read_room_state(_ROOM, RoomState(), RefreshPlan.only(refresh_airflow=True))
+        await client.read_room_state(_ROOM, RoomState(), _AIRFLOW)
 
         assert client.seconds_since_successful_read(2) is not None
         assert client.seconds_since_successful_read(3) is None
@@ -141,9 +147,7 @@ class TestGatewayOperations:
 
         await client.async_validate_gateway()
 
-        assert [(e.address, e.count) for e in gateway.read_events] == [
-            (REGISTER_GATEWAY_NUMBER_OF_NODES, 1)
-        ]
+        assert _reads(gateway) == [(REGISTER_GATEWAY_NUMBER_OF_NODES, 1)]
 
     async def test_validate_reports_a_silent_gateway(
         self, client: MeltemModbusClient, link: MockModbusConnection
@@ -214,9 +218,7 @@ class TestReadFailures:
 
         state = await client.read_room_state(_ROOM, previous, RefreshPlan())
 
-        assert [(e.address, e.count) for e in unit.read_events] == [
-            (REGISTER_EXTRACT_AIR_FLOW, 2)
-        ] * 2
+        assert _reads(unit) == [(REGISTER_EXTRACT_AIR_FLOW, 2)] * 2
         assert state.supply_air_flow == 30
         assert state.operation_mode == "manual"
         for group in ("flow", "flow_control", "status", "temperature", "hours"):
@@ -238,10 +240,9 @@ class TestReadFailures:
     ) -> None:
         link.for_unit(2).fail_requests(ModbusTimeoutError("silent"))
         link.for_unit(3).holding[REGISTER_EXTRACT_AIR_FLOW] = [40, 40]
-        plan = RefreshPlan.only(refresh_airflow=True)
 
-        await client.read_room_state(_ROOM, RoomState(), plan)
-        state = await client.read_room_state(_ROOM_S, RoomState(), plan)
+        await client.read_room_state(_ROOM, RoomState(), _AIRFLOW)
+        state = await client.read_room_state(_ROOM_S, RoomState(), _AIRFLOW)
 
         assert state.supply_air_flow == 40
         assert state.read_health_for("flow").consecutive_failures == 0
@@ -265,48 +266,50 @@ class TestReadFailures:
 
 
 class TestWriteLevel:
-    async def test_zero_level_switches_the_unit_off(
-        self, client: MeltemModbusClient, link: MockModbusConnection
+    @pytest.mark.parametrize(
+        ("room", "level", "expected"),
+        [
+            pytest.param(
+                _ROOM,
+                0,
+                [(REGISTER_MODE, MODE_OFF), (REGISTER_CURRENT_LEVEL, 0), (REGISTER_APPLY, 0)],
+                id="zero-switches-the-unit-off",
+            ),
+            pytest.param(
+                _ROOM,
+                50,
+                [(REGISTER_MODE, MODE_MANUAL), (REGISTER_CURRENT_LEVEL, 100), (REGISTER_APPLY, 0)],
+                id="scaled-to-the-raw-range",
+            ),
+            pytest.param(
+                _ROOM_S,
+                97,
+                [(REGISTER_MODE, MODE_MANUAL), (REGISTER_CURRENT_LEVEL, 200), (REGISTER_APPLY, 0)],
+                id="s-profile-scales-to-its-own-maximum",
+            ),
+        ],
+    )
+    async def test_writes_mode_level_and_apply(
+        self,
+        client: MeltemModbusClient,
+        link: MockModbusConnection,
+        room: RoomConfig,
+        level: int,
+        expected: list[tuple[int, int]],
     ) -> None:
-        events = _writes(link.for_unit(2))
+        events = _writes(link, room)
 
-        await client.write_level(_ROOM, 0)
+        await client.write_level(room, level)
 
-        assert _written(events) == [
-            (REGISTER_MODE, MODE_OFF),
-            (REGISTER_CURRENT_LEVEL, 0),
-            (REGISTER_APPLY, 0),
-        ]
+        assert _written(events) == expected
+        # The manuals only list single-register writes (0x06).
         assert {event.function_code for event in events} == {0x06}
-
-    async def test_level_is_scaled_to_the_raw_range(
-        self, client: MeltemModbusClient, link: MockModbusConnection
-    ) -> None:
-        events = _writes(link.for_unit(2))
-
-        await client.write_level(_ROOM, 50)
-
-        assert _written(events) == [
-            (REGISTER_MODE, MODE_MANUAL),
-            (REGISTER_CURRENT_LEVEL, 100),
-            (REGISTER_APPLY, 0),
-        ]
-
-    async def test_s_profile_scales_to_its_own_maximum(
-        self, client: MeltemModbusClient, link: MockModbusConnection
-    ) -> None:
-        events = _writes(link.for_unit(3))
-
-        await client.write_level(_ROOM_S, 97)
-
-        assert _written(events)[1] == (REGISTER_CURRENT_LEVEL, 200)
 
     async def test_a_rejected_write_is_raised(
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
-        unit = link.for_unit(2)
-        events = _writes(unit)
-        unit.fail_write(REGISTER_CURRENT_LEVEL, IllegalDataValueError())
+        events = _writes(link, _ROOM)
+        link.for_unit(2).fail_write(REGISTER_CURRENT_LEVEL, IllegalDataValueError())
 
         with pytest.raises(MeltemModbusError):
             await client.write_level(_ROOM, 50)
@@ -341,38 +344,36 @@ class TestWriteLevel:
     async def test_a_write_unanswered_twice_is_raised(
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
-        unit = link.for_unit(2)
-        unit.fail_write(REGISTER_APPLY, ModbusTimeoutError("silent"))
+        link.for_unit(2).fail_write(REGISTER_APPLY, ModbusTimeoutError("silent"))
 
         with pytest.raises(MeltemModbusError):
             await client.write_level(_ROOM, 50)
 
 
 class TestWriteUnbalancedLevels:
+    @pytest.mark.parametrize(
+        ("supply", "extract", "raw_supply", "raw_extract"),
+        [(60, 40, 120, 80), (999, -10, 200, 0)],
+        ids=("scaled", "clamped"),
+    )
     async def test_writes_mode_and_both_levels(
-        self, client: MeltemModbusClient, link: MockModbusConnection
+        self,
+        client: MeltemModbusClient,
+        link: MockModbusConnection,
+        supply: int,
+        extract: int,
+        raw_supply: int,
+        raw_extract: int,
     ) -> None:
-        events = _writes(link.for_unit(2))
+        events = _writes(link, _ROOM)
 
-        await client.write_unbalanced_levels(_ROOM, 60, 40)
+        await client.write_unbalanced_levels(_ROOM, supply, extract)
 
         assert _written(events) == [
             (REGISTER_MODE, MODE_UNBALANCED),
-            (REGISTER_CURRENT_LEVEL, 120),
-            (REGISTER_EXTRACT_AIR_TARGET_LEVEL, 80),
+            (REGISTER_CURRENT_LEVEL, raw_supply),
+            (REGISTER_EXTRACT_AIR_TARGET_LEVEL, raw_extract),
             (REGISTER_APPLY, 0),
-        ]
-
-    async def test_raw_levels_are_clamped(
-        self, client: MeltemModbusClient, link: MockModbusConnection
-    ) -> None:
-        events = _writes(link.for_unit(2))
-
-        await client.write_unbalanced_levels(_ROOM, 999, -10)
-
-        assert _written(events)[1:3] == [
-            (REGISTER_CURRENT_LEVEL, 200),
-            (REGISTER_EXTRACT_AIR_TARGET_LEVEL, 0),
         ]
 
 
@@ -392,7 +393,7 @@ class TestWriteOperatingMode:
         operation_mode: str,
         selector: int,
     ) -> None:
-        events = _writes(link.for_unit(4))
+        events = _writes(link, _ROOM_FC_VOC)
 
         await client.write_operating_mode(_ROOM_FC_VOC, operation_mode, 45, 45)
 
@@ -405,7 +406,7 @@ class TestWriteOperatingMode:
     async def test_unbalanced_mode_keeps_both_levels(
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
-        events = _writes(link.for_unit(2))
+        events = _writes(link, _ROOM)
 
         await client.write_operating_mode(_ROOM, "unbalanced", 60, 40)
 
@@ -419,7 +420,7 @@ class TestWriteOperatingMode:
     async def test_off_mode_clears_the_level(
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
-        events = _writes(link.for_unit(2))
+        events = _writes(link, _ROOM)
 
         await client.write_operating_mode(_ROOM, "off", 60, 40)
 
@@ -429,10 +430,23 @@ class TestWriteOperatingMode:
             (REGISTER_APPLY, 0),
         ]
 
+    async def test_manual_mode_writes_the_balanced_level(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link, _ROOM)
+
+        await client.write_operating_mode(_ROOM, "manual", 60, 40)
+
+        assert _written(events) == [
+            (REGISTER_MODE, MODE_MANUAL),
+            (REGISTER_CURRENT_LEVEL, 120),
+            (REGISTER_APPLY, 0),
+        ]
+
     async def test_unknown_mode_is_rejected_before_writing(
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
-        events = _writes(link.for_unit(2))
+        events = _writes(link, _ROOM)
 
         with pytest.raises(MeltemModbusError, match="Unsupported operating mode"):
             await client.write_operating_mode(_ROOM, "turbo", 60, 40)
@@ -441,38 +455,48 @@ class TestWriteOperatingMode:
 
 
 class TestWritePresetMode:
-    async def test_quick_mode_clears_the_shadow_registers_first(
-        self, client: MeltemModbusClient, link: MockModbusConnection
+    @pytest.mark.parametrize(
+        ("preset_mode", "expected"),
+        [
+            pytest.param(
+                "medium",
+                [
+                    (REGISTER_PRESET_MODE, 0),
+                    (REGISTER_PRESET_VALUE, 0),
+                    (REGISTER_MODE, MODE_MANUAL),
+                    (REGISTER_CURRENT_LEVEL, PRESET_MODE_CODE_MEDIUM),
+                    (REGISTER_APPLY, 0),
+                ],
+                id="quick-mode-clears-the-shadow-registers-first",
+            ),
+            pytest.param(
+                "intensive",
+                [
+                    (REGISTER_PRESET_MODE, MODE_MANUAL),
+                    (REGISTER_PRESET_VALUE, PRESET_MODE_CODE_INTENSIVE),
+                    (REGISTER_APPLY, 0),
+                ],
+                id="intensive-writes-only-the-shadow-registers",
+            ),
+        ],
+    )
+    async def test_writes_the_preset_sequence(
+        self,
+        client: MeltemModbusClient,
+        link: MockModbusConnection,
+        preset_mode: str,
+        expected: list[tuple[int, int]],
     ) -> None:
-        events = _writes(link.for_unit(2))
+        events = _writes(link, _ROOM)
 
-        await client.write_preset_mode(_ROOM, "medium")
+        await client.write_preset_mode(_ROOM, preset_mode)
 
-        assert _written(events) == [
-            (REGISTER_PRESET_MODE, 0),
-            (REGISTER_PRESET_VALUE, 0),
-            (REGISTER_MODE, MODE_MANUAL),
-            (REGISTER_CURRENT_LEVEL, PRESET_MODE_CODE_MEDIUM),
-            (REGISTER_APPLY, 0),
-        ]
-
-    async def test_intensive_writes_only_the_shadow_registers(
-        self, client: MeltemModbusClient, link: MockModbusConnection
-    ) -> None:
-        events = _writes(link.for_unit(2))
-
-        await client.write_preset_mode(_ROOM, "intensive")
-
-        assert _written(events) == [
-            (REGISTER_PRESET_MODE, MODE_MANUAL),
-            (REGISTER_PRESET_VALUE, PRESET_MODE_CODE_INTENSIVE),
-            (REGISTER_APPLY, 0),
-        ]
+        assert _written(events) == expected
 
     async def test_clearing_intensive_leaves_the_base_mode_alone(
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
-        events = _writes(link.for_unit(2))
+        events = _writes(link, _ROOM)
 
         await client.clear_intensive(_ROOM)
 
@@ -518,7 +542,7 @@ class TestWriteControlSetting:
         register: int,
         expected: int,
     ) -> None:
-        events = _writes(link.for_unit(4))
+        events = _writes(link, _ROOM_FC_VOC)
 
         written = await client.write_control_setting(_ROOM_FC_VOC, setting_key, value)
 
@@ -536,16 +560,18 @@ class TestWriteControlSetting:
 
 
 class TestSupportsHelper:
-    def test_returns_true_when_no_constraints(self, client: MeltemModbusClient) -> None:
-        assert client._supports(_ROOM, "anything")
+    @pytest.mark.parametrize(
+        ("supported", "key", "expected"),
+        [
+            (None, "anything", True),
+            (frozenset({"exhaust_temperature"}), "exhaust_temperature", True),
+            (frozenset({"exhaust_temperature"}), "humidity_extract_air", False),
+        ],
+        ids=("unconstrained", "listed", "not-listed"),
+    )
+    def test_only_listed_keys_are_supported(
+        self, supported: frozenset[str] | None, key: str, expected: bool
+    ) -> None:
+        room = replace(_ROOM, supported_entity_keys=supported)
 
-    def test_returns_true_only_for_listed_keys(self, client: MeltemModbusClient) -> None:
-        room = RoomConfig(
-            key="r",
-            name="R",
-            profile="ii_plain",
-            slave=2,
-            supported_entity_keys=frozenset({"exhaust_temperature"}),
-        )
-        assert client._supports(room, "exhaust_temperature")
-        assert not client._supports(room, "humidity_extract_air")
+        assert _supports(room, key) is expected

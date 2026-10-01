@@ -84,8 +84,7 @@ class TransportPolicy:
     ) -> T:
         """Run one request with the gateway's retry policy."""
 
-        for attempt in (1, 2):
-            last_attempt = attempt == 2
+        for last_attempt in (False, True):
             try:
                 result = await operation(*args)
             except ClientClosedError:
@@ -159,31 +158,17 @@ class PolicyUnit:
         return self._unit.connected
 
     async def read_holding_registers(self, address: int, count: int) -> list[int]:
-        return await self._policy.run(
-            self._unit,
-            self._unit_id,
-            self._unit.read_holding_registers,
-            address,
-            count,
-            is_read=True,
-        )
+        return await self._run(self._unit.read_holding_registers, address, count, is_read=True)
 
     async def write_register(self, address: int, value: int) -> None:
-        await self._policy.run(
-            self._unit,
-            self._unit_id,
-            self._unit.write_register,
-            address,
-            value,
-            is_read=False,
-        )
+        await self._run(self._unit.write_register, address, value, is_read=False)
 
     async def write_registers(self, address: int, values: list[int]) -> None:
-        await self._policy.run(
-            self._unit,
-            self._unit_id,
-            self._unit.write_registers,
-            address,
-            values,
-            is_read=False,
+        await self._run(self._unit.write_registers, address, values, is_read=False)
+
+    async def _run[T](
+        self, operation: Callable[..., Awaitable[T]], *args: Any, is_read: bool
+    ) -> T:
+        return await self._policy.run(
+            self._unit, self._unit_id, operation, *args, is_read=is_read
         )

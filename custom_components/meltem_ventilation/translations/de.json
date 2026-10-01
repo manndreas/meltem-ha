@@ -61,14 +61,14 @@
       },
       "edit_connection": {
         "title": "Serielle Verbindung anpassen",
-        "description": "Aktualisiere den seriellen Gerätepfad und die Request-Rate des Schedulers für das Meltem-Gateway.",
+        "description": "Aktualisiere den seriellen Gerätepfad und die maximale Abfragerate für das Meltem-Gateway.",
         "data": {
           "port": "Serieller Port",
-          "max_requests_per_second": "Maximale Requests pro Sekunde"
+          "max_requests_per_second": "Maximale Anfragen pro Sekunde"
         }
       },
       "edit_profiles": {
-        "title": "Meltem Geräteprofile ändern",
+        "title": "Profile bestehender Geräte ändern",
         "description": "Aktualisiere das ausgewählte Profil für jedes eingerichtete Meltem M-WRG Gerät.\n\n{unit_details}",
         "data": {
           "slave_2": "Gerät an Modbus-Adresse 2",
@@ -271,7 +271,7 @@
       "configured_units": "Eingerichtete Geräte",
       "state_units": "Geräte mit Live-Status",
       "last_update_success": "Letzte Aktualisierung erfolgreich",
-      "last_job_error": "Letzter Scheduler-Fehler",
+      "last_job_error": "Letzter Abfragefehler",
       "unavailable_units": "Aktuell nicht verfügbare Geräte",
       "stale_read_groups": "Veraltete Datengruppen"
     }

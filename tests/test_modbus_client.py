@@ -7,6 +7,10 @@ real request shapes, the retry policy, and the decode logic together.
 from __future__ import annotations
 
 import struct
+import time
+from collections.abc import Mapping
+from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import pytest
 from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
@@ -17,6 +21,7 @@ from custom_components.meltem_ventilation.const import (
     MODE_CO2_CONTROL_VALUE,
     MODE_HUMIDITY_CONTROL_VALUE,
     MODE_MANUAL,
+    MODE_OFF,
     MODE_SENSOR_CONTROL,
     MODE_UNBALANCED,
     REGISTER_CURRENT_LEVEL,
@@ -28,27 +33,33 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_HUMIDITY_STARTING_POINT,
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_MODE,
+    REGISTER_OPERATING_HOURS,
     REGISTER_PRESET_MODE,
     REGISTER_SUPPLY_AIR_TEMPERATURE,
 )
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
-from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
+from custom_components.meltem_ventilation.models import (
+    EMPTY_ROOM_STATE,
+    RefreshPlan,
+    RoomConfig,
+    RoomState,
+)
 
 _PLAIN = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-_FC = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc", slave=2)
+_F = replace(_PLAIN, profile="ii_f")
+_FC = replace(_PLAIN, profile="ii_fc")
+_FC_VOC = replace(_PLAIN, profile="ii_fc_voc")
 _FLOW = RefreshPlan.only(refresh_airflow=True)
+_TEMPERATURES = RefreshPlan.only(refresh_temperatures=True, refresh_environment=True)
 _CONTROL_SETTINGS = RefreshPlan.only(refresh_control_settings=True)
 _REJECTED = IllegalDataAddressError()
 
 
 @pytest.fixture(autouse=True)
 def _no_transport_pause(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _sleep(_seconds: float) -> None:
-        return None
-
     monkeypatch.setattr(
-        "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
+        "custom_components.meltem_ventilation.device.transport.async_sleep", AsyncMock()
     )
 
 
@@ -100,6 +111,19 @@ def _reads(unit: MockModbusUnit) -> list[tuple[int, int]]:
     return [(event.address, event.count) for event in unit.read_events]
 
 
+async def _read_flow(
+    client: MeltemModbusClient,
+    previous: RoomState = EMPTY_ROOM_STATE,
+    room: RoomConfig = _PLAIN,
+) -> RoomState:
+    return await client.read_room_state(room, previous, _FLOW)
+
+
+def _values(state: RoomState, expected: Mapping[str, object]) -> dict[str, object]:
+    """Return the state's values for the fields named in ``expected``."""
+    return {name: getattr(state, name) for name in expected}
+
+
 # ---------------------------------------------------------------------------
 #  Request shapes
 # ---------------------------------------------------------------------------
@@ -109,9 +133,7 @@ class TestRequestShapes:
     async def test_full_read_keeps_the_established_block_order(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc_voc", slave=2)
-
-        await client.read_room_state(room, RoomState(), RefreshPlan())
+        await client.read_room_state(_FC_VOC, RoomState(), RefreshPlan())
 
         assert _reads(unit) == [
             (41020, 2),
@@ -135,56 +157,39 @@ class TestRequestShapes:
             _float_words(20.0) + _float_words(5.0) + _float_words(21.0)
         )
 
-        state = await client.read_room_state(
-            _PLAIN,
-            RoomState(),
-            RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),
-        )
+        state = await client.read_room_state(_PLAIN, RoomState(), _TEMPERATURES)
 
+        expected = {
+            "exhaust_temperature": 21.0,
+            "outdoor_air_temperature": None,
+            "extract_air_temperature": None,
+            "supply_air_temperature": None,
+        }
         assert _reads(unit) == [(REGISTER_EXHAUST_AIR_TEMPERATURE, 2)]
-        assert state.exhaust_temperature == 21.0
-        assert state.outdoor_air_temperature is None
-        assert state.extract_air_temperature is None
-        assert state.supply_air_temperature is None
+        assert _values(state, expected) == expected
 
     async def test_plain_profile_keeps_previous_extended_measurements(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
-        previous = RoomState(
-            outdoor_air_temperature=5.5,
-            extract_air_temperature=22.0,
-            supply_air_temperature=18.5,
-            humidity_extract_air=44,
-            co2_extract_air=780,
-            humidity_supply_air=46,
-            voc_supply_air=120,
-        )
+        extended = {
+            "outdoor_air_temperature": 5.5,
+            "extract_air_temperature": 22.0,
+            "supply_air_temperature": 18.5,
+            "humidity_extract_air": 44,
+            "co2_extract_air": 780,
+            "humidity_supply_air": 46,
+            "voc_supply_air": 120,
+        }
 
-        state = await client.read_room_state(
-            _PLAIN,
-            previous,
-            RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),
-        )
+        state = await client.read_room_state(_PLAIN, RoomState(**extended), _TEMPERATURES)
 
         assert _reads(unit) == [(REGISTER_EXHAUST_AIR_TEMPERATURE, 2)]
-        assert state.outdoor_air_temperature == previous.outdoor_air_temperature
-        assert state.extract_air_temperature == previous.extract_air_temperature
-        assert state.supply_air_temperature == previous.supply_air_temperature
-        assert state.humidity_extract_air == previous.humidity_extract_air
-        assert state.co2_extract_air == previous.co2_extract_air
-        assert state.humidity_supply_air == previous.humidity_supply_air
-        assert state.voc_supply_air == previous.voc_supply_air
+        assert _values(state, extended) == extended
 
     async def test_unsupported_control_settings_are_not_read(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
-        room = RoomConfig(
-            key="unit_1",
-            name="Unit 1",
-            profile="ii_plain",
-            slave=2,
-            supported_entity_keys=frozenset({"extract_air_flow"}),
-        )
+        room = replace(_PLAIN, supported_entity_keys=frozenset({"extract_air_flow"}))
 
         state = await client.read_room_state(room, RoomState(), _CONTROL_SETTINGS)
 
@@ -211,39 +216,39 @@ class TestMeasuredValues:
                 REGISTER_HUMIDITY_SUPPLY_AIR: [46, 0, 120],
             }
         )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc_voc", slave=2)
 
-        state = await client.read_room_state(
-            room,
-            RoomState(),
-            RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),
-        )
+        state = await client.read_room_state(_FC_VOC, RoomState(), _TEMPERATURES)
 
-        assert state.extract_air_temperature == 22.0
-        assert state.outdoor_air_temperature == 5.5
-        assert state.exhaust_temperature == 19.0
-        assert state.supply_air_temperature == 18.5
-        assert state.humidity_extract_air == 44
-        assert state.humidity_supply_air == 46
-        assert state.co2_extract_air == 780
-        assert state.voc_supply_air == 120
+        expected = {
+            "extract_air_temperature": 22.0,
+            "outdoor_air_temperature": 5.5,
+            "exhaust_temperature": 19.0,
+            "supply_air_temperature": 18.5,
+            "humidity_extract_air": 44,
+            "humidity_supply_air": 46,
+            "co2_extract_air": 780,
+            "voc_supply_air": 120,
+        }
+        assert _values(state, expected) == expected
 
     async def test_nan_temperature_keeps_the_previous_value(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
         unit.holding[REGISTER_SUPPLY_AIR_TEMPERATURE] = [0x0000, 0x7FC0]
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_f", slave=2)
         plan = RefreshPlan.only(refresh_temperatures=True)
 
-        assert (await client.read_room_state(room, RoomState(), plan)).supply_air_temperature is None
-        previous = RoomState(supply_air_temperature=19.5)
-        state = await client.read_room_state(room, previous, plan)
-        assert state.supply_air_temperature == 19.5
+        without_previous = await client.read_room_state(_F, RoomState(), plan)
+        with_previous = await client.read_room_state(
+            _F, RoomState(supply_air_temperature=19.5), plan
+        )
+
+        assert without_previous.supply_air_temperature is None
+        assert with_previous.supply_air_temperature == 19.5
 
     async def test_operating_hours_are_a_little_endian_uint32(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
-        unit.holding[41030] = [5, 1]
+        unit.holding[REGISTER_OPERATING_HOURS] = [5, 1]
 
         state = await client.read_room_state(
             _PLAIN, RoomState(), RefreshPlan.only(refresh_operating_hours=True)
@@ -263,7 +268,7 @@ class TestReadHealth:
     ) -> None:
         _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
 
-        first = await client.read_room_state(_PLAIN, RoomState(), _FLOW)
+        first = await _read_flow(client)
         assert first.supply_air_flow == 30
         first_health = first.read_health_for("flow")
         assert first_health.last_successful_read is not None
@@ -271,7 +276,7 @@ class TestReadHealth:
         assert first_health.last_error is None
 
         unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, _REJECTED)
-        failed = await client.read_room_state(_PLAIN, first, _FLOW)
+        failed = await _read_flow(client, first)
         assert failed.supply_air_flow == 30
         failed_health = failed.read_health_for("flow")
         assert failed_health.last_successful_read == first_health.last_successful_read
@@ -279,8 +284,7 @@ class TestReadHealth:
         assert failed_health.last_error is not None
 
         unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, None)
-        recovered = await client.read_room_state(_PLAIN, failed, _FLOW)
-        recovered_health = recovered.read_health_for("flow")
+        recovered_health = (await _read_flow(client, failed)).read_health_for("flow")
         assert recovered_health.consecutive_failures == 0
         assert recovered_health.last_error is None
 
@@ -289,10 +293,9 @@ class TestReadHealth:
     ) -> None:
         unit.holding[REGISTER_HUMIDITY_STARTING_POINT] = [55, 10, 90, 800, 10, 90]
         unit.fail_read(REGISTER_HUMIDITY_STARTING_POINT, _REJECTED)
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_f", slave=2)
 
         failed = await client.read_room_state(
-            room, RoomState(humidity_starting_point=50), _CONTROL_SETTINGS
+            _F, RoomState(humidity_starting_point=50), _CONTROL_SETTINGS
         )
         health = failed.read_health_for("control_settings")
         assert failed.humidity_starting_point == 50
@@ -301,14 +304,14 @@ class TestReadHealth:
         assert health.last_error is not None
 
         unit.fail_read(REGISTER_HUMIDITY_STARTING_POINT, None)
-        recovered = await client.read_room_state(room, failed, _CONTROL_SETTINGS)
+        recovered = await client.read_room_state(_F, failed, _CONTROL_SETTINGS)
         health = recovered.read_health_for("control_settings")
         assert recovered.humidity_starting_point == 55
         assert health.consecutive_failures == 0
         assert health.last_error is None
 
-        assert await client.write_control_setting(room, "humidity_starting_point", 70) == 70
-        confirmed = await client.read_room_state(room, recovered, _CONTROL_SETTINGS)
+        assert await client.write_control_setting(_F, "humidity_starting_point", 70) == 70
+        confirmed = await client.read_room_state(_F, recovered, _CONTROL_SETTINGS)
         assert confirmed.humidity_starting_point == 70
 
 
@@ -323,7 +326,7 @@ class TestAirflowTargets:
     ) -> None:
         _seed(unit, flow=(65, 65), mode=[MODE_MANUAL, 120, 0, 0, 0])
 
-        state = await client.read_room_state(_PLAIN, RoomState(target_level=30), _FLOW)
+        state = await _read_flow(client, RoomState(target_level=30))
 
         assert state.target_level == 60
         assert state.extract_target_level is None
@@ -334,7 +337,7 @@ class TestAirflowTargets:
         _seed(unit, flow=(65, 65))
         _reject_all_mode_reads(unit)
 
-        state = await client.read_room_state(_PLAIN, RoomState(target_level=30), _FLOW)
+        state = await _read_flow(client, RoomState(target_level=30))
 
         assert state.target_level == 65
         assert state.extract_target_level is None
@@ -349,9 +352,7 @@ class TestAirflowTargets:
         _seed(unit, flow=(30, 40))
         _reject_all_mode_reads(unit)
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(target_level=previous_target), _FLOW
-        )
+        state = await _read_flow(client, RoomState(target_level=previous_target))
 
         assert state.target_level is None
 
@@ -359,19 +360,17 @@ class TestAirflowTargets:
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
         _seed(unit, mode=[MODE_MANUAL, 120, 0, 0, 0])
-        manual = await client.read_room_state(
-            _PLAIN, RoomState(operation_mode="manual", extract_target_level=60), _FLOW
+        manual = await _read_flow(
+            client, RoomState(operation_mode="manual", extract_target_level=60)
         )
 
         _seed(unit, mode=[MODE_UNBALANCED, 120, 120, 0, 0])
-        unbalanced = await client.read_room_state(
-            _PLAIN, RoomState(operation_mode="unbalanced"), _FLOW
-        )
+        unbalanced = await _read_flow(client, RoomState(operation_mode="unbalanced"))
 
         assert manual.target_level == 60
         assert manual.extract_target_level is None
         assert unbalanced.extract_target_level == 60
-        assert _reads(unit) == [(41020, 2), (41120, 5)] * 2
+        assert _reads(unit) == [(REGISTER_EXTRACT_AIR_FLOW, 2), (REGISTER_MODE, 5)] * 2
 
     async def test_extract_target_is_read_on_its_own_after_the_short_block(
         self, client: MeltemModbusClient, unit: MockModbusUnit
@@ -379,14 +378,14 @@ class TestAirflowTargets:
         _seed(unit, flow=(60, 40), mode=[MODE_UNBALANCED, 120, 80, 0, 0])
         _reject_long_mode_read(unit)
 
-        state = await client.read_room_state(_PLAIN, RoomState(), _FLOW)
+        state = await _read_flow(client)
 
         assert state.target_level == 60
         assert state.extract_target_level == 40
         assert _reads(unit) == [
-            (41020, 2),
-            (41120, 5),
-            (41120, 2),
+            (REGISTER_EXTRACT_AIR_FLOW, 2),
+            (REGISTER_MODE, 5),
+            (REGISTER_MODE, 2),
             (REGISTER_EXTRACT_AIR_TARGET_LEVEL, 1),
         ]
 
@@ -395,9 +394,7 @@ class TestAirflowTargets:
     ) -> None:
         _seed(unit, flow=(30, 0), mode=[MODE_UNBALANCED, 0, 203, 0, 0])
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(operation_mode="unbalanced"), _FLOW
-        )
+        state = await _read_flow(client, RoomState(operation_mode="unbalanced"))
 
         assert state.target_level == 0
         assert state.extract_target_level == 30
@@ -408,9 +405,7 @@ class TestAirflowTargets:
         """227..230 share the >200 range but decode far above the rated airflow."""
         _seed(unit, flow=(30, 0), mode=[MODE_UNBALANCED, 229, 229, 0, 0])
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(operation_mode="unbalanced"), _FLOW
-        )
+        state = await _read_flow(client, RoomState(operation_mode="unbalanced"))
 
         assert state.target_level is None
         assert state.extract_target_level is None
@@ -433,11 +428,28 @@ class TestAirflowTargets:
         """41121 carries 112/144/16 there, which would scale to 56/72/8 m3/h."""
         _seed(unit, flow=(24, 24), mode=[MODE_SENSOR_CONTROL, mode_value, 0, 0, 0])
 
-        state = await client.read_room_state(_FC, RoomState(), _FLOW)
+        state = await _read_flow(client, room=_FC)
 
         assert state.operation_mode == expected_mode
         # Derived from the measured airflow, not from the mode selector.
         assert state.target_level == 24
+
+    async def test_unbalanced_unit_without_mode_reads_keeps_both_targets(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, flow=(40, 60))
+        _reject_all_mode_reads(unit)
+        unit.fail_read(REGISTER_EXTRACT_AIR_TARGET_LEVEL, _REJECTED)
+
+        state = await _read_flow(
+            client,
+            RoomState(operation_mode="unbalanced", target_level=60, extract_target_level=40),
+        )
+
+        assert state.operation_mode == "unbalanced"
+        assert state.target_level == 60
+        assert state.extract_target_level == 40
+        assert state.read_health_for("flow_control").last_error is not None
 
 
 # ---------------------------------------------------------------------------
@@ -452,12 +464,25 @@ class TestModeReadBackoff:
         _seed(unit)
         _reject_all_mode_reads(unit)
 
-        first = await client.read_room_state(_PLAIN, RoomState(), _FLOW)
-        second = await client.read_room_state(_PLAIN, first, _FLOW)
+        first = await _read_flow(client)
+        second = await _read_flow(client, first)
 
         assert first.target_level == 30
         assert second.target_level == 30
         assert _reads(unit).count((REGISTER_CURRENT_LEVEL, 1)) == 1
+
+    async def test_backed_off_read_is_retried_once_the_pause_ran_out(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit)
+        _reject_all_mode_reads(unit)
+        first = await _read_flow(client)
+        backoff = client._mode_backoff
+        backoff.until = dict.fromkeys(backoff.until, time.monotonic() - 1)
+
+        await _read_flow(client, first)
+
+        assert _reads(unit).count((REGISTER_CURRENT_LEVEL, 1)) == 2
 
     async def test_a_unit_falling_silent_ends_the_mode_reads(
         self, client: MeltemModbusClient, unit: MockModbusUnit
@@ -466,36 +491,38 @@ class TestModeReadBackoff:
         _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
         unit.fail_read(REGISTER_MODE, ModbusTimeoutError("silent"))
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(operation_mode="manual"), _FLOW
-        )
+        state = await _read_flow(client, RoomState(operation_mode="manual"))
 
-        assert _reads(unit) == [(41020, 2), (41120, 5), (41120, 5)]
+        assert _reads(unit) == [
+            (REGISTER_EXTRACT_AIR_FLOW, 2),
+            (REGISTER_MODE, 5),
+            (REGISTER_MODE, 5),
+        ]
         assert state.operation_mode == "manual"
         assert state.read_health_for("flow").consecutive_failures == 0
         assert state.read_health_for("flow_control").consecutive_failures == 1
-        assert not client._is_optional_read_backed_off((2, "mode"))
+        assert not client._mode_backoff.is_active((2, "mode"))
 
     def test_backoff_caps_the_failure_counter(self, client: MeltemModbusClient) -> None:
         key = (2, "current_level")
-        client._optional_read_failures[key] = 1024
+        client._mode_backoff.failures[key] = 1024
 
-        client._mark_optional_read_failure(key, MeltemModbusError("read failed"))
+        client._mode_backoff.mark_failure(key, MeltemModbusError("read failed"))
 
-        assert client._optional_read_failures[key] == 5
-        assert client._is_optional_read_backed_off(key)
+        assert client._mode_backoff.failures[key] == 5
+        assert client._mode_backoff.is_active(key)
 
     async def test_successful_write_clears_the_backoff(
         self, client: MeltemModbusClient
     ) -> None:
         names = ("mode", "mode_short", "current_level", "extract_target_level")
-        for name in names:
-            client._mark_optional_read_failure((2, name), MeltemModbusError("no"))
+        keys = [(2, name) for name in names]
+        for key in keys:
+            client._mode_backoff.mark_failure(key, MeltemModbusError("no"))
 
         await client.write_level(_PLAIN, 40)
 
-        for name in names:
-            assert not client._is_optional_read_backed_off((2, name))
+        assert not any(client._mode_backoff.is_active(key) for key in keys)
 
 
 # ---------------------------------------------------------------------------
@@ -504,37 +531,68 @@ class TestModeReadBackoff:
 
 
 class TestModeDecoding:
-    async def test_preset_is_decoded_from_the_app_code(
-        self, client: MeltemModbusClient, unit: MockModbusUnit
+    @pytest.mark.parametrize(
+        ("flow", "block", "previous", "expected_preset"),
+        [
+            pytest.param(
+                (30, 30),
+                [MODE_MANUAL, 229, 0, 0, 0],
+                RoomState(operation_mode="manual"),
+                "medium",
+                id="app-code",
+            ),
+            pytest.param(
+                (50, 0),
+                [MODE_UNBALANCED, 0, 205, 0, 0],
+                RoomState(operation_mode="unbalanced"),
+                "extract_only",
+                id="extract-only-from-the-unbalanced-code",
+            ),
+            pytest.param(
+                (0, 50),
+                [MODE_UNBALANCED, 205, 0, 0, 0],
+                RoomState(operation_mode="unbalanced"),
+                "supply_only",
+                id="supply-only-from-the-unbalanced-code",
+            ),
+            pytest.param(
+                (30, 30),
+                [MODE_MANUAL, 227, 0, 0, 0],
+                RoomState(preset_mode="medium"),
+                "medium",
+                id="intensive-code-in-a-full-read-keeps-the-base-preset",
+            ),
+            pytest.param(
+                (30, 30),
+                [MODE_MANUAL, 228, 0, 0, 0],
+                RoomState(preset_mode="intensive"),
+                "low",
+                id="cleared-shadow-registers-give-the-base-preset",
+            ),
+        ],
+    )
+    async def test_preset_is_decoded_from_the_mode_block(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        flow: tuple[int, int],
+        block: list[int],
+        previous: RoomState,
+        expected_preset: str,
     ) -> None:
-        _seed(unit, mode=[MODE_MANUAL, 229, 0, 0, 0])
+        _seed(unit, flow=flow, mode=block)
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(operation_mode="manual"), _FLOW
-        )
+        state = await _read_flow(client, previous)
 
-        assert state.preset_mode == "medium"
-
-    async def test_extract_only_preset_is_decoded_from_the_unbalanced_code(
-        self, client: MeltemModbusClient, unit: MockModbusUnit
-    ) -> None:
-        _seed(unit, flow=(50, 0), mode=[MODE_UNBALANCED, 0, 205, 0, 0])
-
-        state = await client.read_room_state(
-            _PLAIN, RoomState(operation_mode="unbalanced"), _FLOW
-        )
-
-        assert state.preset_mode == "extract_only"
+        assert state.preset_mode == expected_preset
 
     async def test_raw_200_is_not_misdecoded_as_extract_only(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
         _seed(unit, flow=(100, 0), mode=[MODE_UNBALANCED, 0, 200, 0, 0])
 
-        state = await client.read_room_state(
-            _PLAIN,
-            RoomState(operation_mode="unbalanced", preset_mode="extract_only"),
-            _FLOW,
+        state = await _read_flow(
+            client, RoomState(operation_mode="unbalanced", preset_mode="extract_only")
         )
 
         assert state.extract_target_level == 100
@@ -545,23 +603,22 @@ class TestModeDecoding:
     ) -> None:
         _seed(unit, mode=[MODE_SENSOR_CONTROL, MODE_AUTOMATIC_VALUE, 0, 0, 0])
 
-        state = await client.read_room_state(
-            _FC, RoomState(operation_mode="manual", preset_mode="low"), _FLOW
+        state = await _read_flow(
+            client, RoomState(operation_mode="manual", preset_mode="low"), _FC
         )
 
         assert state.operation_mode == "automatic"
         assert state.preset_mode is None
 
-    async def test_cleared_shadow_registers_decode_the_base_preset(
+    async def test_off_mode_is_decoded(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
-        _seed(unit, mode=[MODE_MANUAL, 228, 0, 0, 0])
+        _seed(unit, flow=(0, 0), mode=[MODE_OFF, 0, 0, 0, 0])
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(preset_mode="intensive"), _FLOW
-        )
+        state = await _read_flow(client, RoomState(operation_mode="manual"))
 
-        assert state.preset_mode == "low"
+        assert state.operation_mode == "off"
+        assert state.preset_mode is None
 
     @pytest.mark.parametrize(
         ("current_level", "previous_preset", "expected_preset"),
@@ -582,9 +639,7 @@ class TestModeDecoding:
     ) -> None:
         _seed(unit, mode=[MODE_MANUAL, current_level, 0, MODE_MANUAL, 227])
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(preset_mode=previous_preset), _FLOW
-        )
+        state = await _read_flow(client, RoomState(preset_mode=previous_preset))
 
         assert state.preset_mode == expected_preset
         assert state.intensive_active is True
@@ -594,9 +649,7 @@ class TestModeDecoding:
     ) -> None:
         _seed(unit, mode=[MODE_MANUAL, 229, 0, 0, 0])
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(intensive_active=True), _FLOW
-        )
+        state = await _read_flow(client, RoomState(intensive_active=True))
 
         assert state.intensive_active is False
 
@@ -610,7 +663,7 @@ class TestModeDecoding:
             [MODE_MANUAL, 229, 0, 0, 0],
         ):
             _seed(unit, mode=block)
-            state = await client.read_room_state(_PLAIN, state, _FLOW)
+            state = await _read_flow(client, state)
 
         assert state.preset_mode == "medium"
 
@@ -622,7 +675,7 @@ class TestShortModeFallback:
         _seed(unit, mode=[MODE_MANUAL, 229, 0, 0, 0])
         _reject_long_mode_read(unit)
 
-        state = await client.read_room_state(_PLAIN, RoomState(), _FLOW)
+        state = await _read_flow(client)
 
         assert state.operation_mode == "manual"
         assert state.preset_mode == "medium"
@@ -635,38 +688,40 @@ class TestShortModeFallback:
         _seed(unit, mode=[MODE_MANUAL, 229, 0, 0, 0])
         _reject_long_mode_read(unit)
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(intensive_active=True), _FLOW
-        )
+        state = await _read_flow(client, RoomState(intensive_active=True))
 
         assert state.intensive_active is True
         assert state.read_health_for("flow_control").last_error is None
         assert state.read_health_for("intensive").last_attempt is None
 
-    async def test_short_read_clears_the_preset_in_plain_manual_mode(
-        self, client: MeltemModbusClient, unit: MockModbusUnit
+    @pytest.mark.parametrize(
+        ("room", "block", "operation_mode"),
+        [
+            pytest.param(_PLAIN, [MODE_MANUAL, 120, 0, 0, 0], "manual", id="plain-manual"),
+            pytest.param(
+                _FC,
+                [MODE_SENSOR_CONTROL, MODE_AUTOMATIC_VALUE, 0, 0, 0],
+                "automatic",
+                id="sensor-mode",
+            ),
+        ],
+    )
+    async def test_short_read_clears_the_preset_without_a_quick_mode(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        room: RoomConfig,
+        block: list[int],
+        operation_mode: str,
     ) -> None:
-        _seed(unit, mode=[MODE_MANUAL, 120, 0, 0, 0])
+        _seed(unit, mode=block)
         _reject_long_mode_read(unit)
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(operation_mode="manual", preset_mode="medium"), _FLOW
+        state = await _read_flow(
+            client, RoomState(operation_mode="manual", preset_mode="medium"), room
         )
 
-        assert state.operation_mode == "manual"
-        assert state.preset_mode is None
-
-    async def test_short_read_clears_the_preset_in_a_sensor_mode(
-        self, client: MeltemModbusClient, unit: MockModbusUnit
-    ) -> None:
-        _seed(unit, mode=[MODE_SENSOR_CONTROL, MODE_AUTOMATIC_VALUE, 0, 0, 0])
-        _reject_long_mode_read(unit)
-
-        state = await client.read_room_state(
-            _FC, RoomState(operation_mode="manual", preset_mode="low"), _FLOW
-        )
-
-        assert state.operation_mode == "automatic"
+        assert state.operation_mode == operation_mode
         assert state.preset_mode is None
 
     async def test_preset_is_kept_when_no_mode_read_answers(
@@ -675,8 +730,8 @@ class TestShortModeFallback:
         _seed(unit, mode=[MODE_MANUAL, 120, 0, 0, 0])
         unit.fail_read(REGISTER_MODE, _REJECTED)
 
-        state = await client.read_room_state(
-            _PLAIN, RoomState(operation_mode="manual", preset_mode="medium"), _FLOW
+        state = await _read_flow(
+            client, RoomState(operation_mode="manual", preset_mode="medium")
         )
 
         assert state.operation_mode == "manual"

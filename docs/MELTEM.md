@@ -24,6 +24,98 @@ an `O/VOC-AUL` column (all temperatures, both humidities, CO2 and VOC) in the
 sensor matrix. None of the documents collected in `docs/meltem/` contains the
 register or the option. Their origin is unknown; treat both as unverified.
 
+## Discovery and unit list
+
+The gateway answers on its own Modbus address `1` and lists the units it
+knows there. On the tested gateway:
+
+- `43901 -> 6` (number of configured units)
+- `43902..43917 -> [3, 2, 4, 5, 7, 6, 0, ...]` (their addresses)
+- `43900..43905` are unreadable on the units themselves
+
+## Product registers and readable islands
+
+All six tested `M-WRG-II` units returned the same product registers:
+
+- `40002 PRODUCT_ID -> 116852 (0x0001C874)`
+- `40011 PRODUCT_NAME -> VMD-22RPS44`
+- `40021 RECEIVED_PRODUCT_ID -> 116852 (0x0001C874)`
+
+These registers are the most promising basis for telling the series apart.
+
+Other diagnostic registers that returned stable values:
+
+- `40004 SOFTWARE_VERSION`
+- `40101 RF_COMM_STATUS`
+- `40103 FAULT_STATUS`
+- `40104 VALUE_ERROR_STATUS`
+
+Observed software versions:
+
+- units `1, 2, 3, 4, 6`: `2326`
+- unit `5`: `2584`, probably a replacement board
+
+The original note does not say how the units were numbered. Address `1` is
+the gateway and the units answer on `2..7`, so these are probably positions
+in the setup, not Modbus addresses.
+
+Holding-register sweep on `2026-03-31` on unit `slave 2`:
+
+- a coarse scan over `40000..49999` with windows of 10 registers found
+  readable windows only in `40000..40019`, `40200..40209`, `41000..41029`, and
+  `41100..41109`
+- single-register reads refined this to the islands `40000..40022`,
+  `40024..40025`, `40200..40209`, `41000..41029`, `41100..41113`, and
+  `42000..42009`
+- a block read fails as a whole as soon as one register in it is unreadable,
+  which is why coarse windows hide islands
+
+Registers that did not answer on the tested setup:
+
+- `41041 FILTER_DURATION`
+- `41042 FILTER_REMAINING_PERCENT`
+- `41043 FAN_RPM_EXHAUST`
+- `41044 FAN_RPM_SUPPLY`
+- `41050 BYPASS_MODE`
+- `41051 BYPASS_STATUS`
+
+## Request pacing and block reads
+
+- requests sent too quickly cause partial reads, stale data, or a temporary
+  loss of all values; the gateway answers one request after the other
+- a request gap of `0.1 s` was stable; no gap at all inflated latency heavily
+  without improving reliability
+- setup scans are sensitive to short timeouts
+- stable block reads: airflow `41020..41021`, status `41016..41018`, and
+  temperatures `41002..41005` plus a separate `41009`
+
+These results were measured with pymodbus. HW-7 in
+[HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) repeats them with the shared
+Modbus connection.
+
+## Target readback and measured airflow
+
+The manuals describe `41121` only as part of the write sequence. On the tested
+gateway it reads back the last written raw balanced target:
+
+- a baseline of `60 m3/h` corresponded to `41121 = 120`
+- writing `64 m3/h` changed `41121` to `128` at once; `10 m3/h` and the
+  restore were reflected at once as well
+- on several units `41121` returned a Modbus exception until the first write
+  to that unit; afterwards it was readable and followed every write
+- older readings such as `230` lie outside the raw range `0..200`; they match
+  the HIGH quick mode code from the
+  [traced app writes](#reverse-engineered-app-preset-behavior)
+
+`41020` (extract) and `41021` (supply) show the effective airflow and lag
+behind the target:
+
+- small balanced writes did not always show up at once; a large change such
+  as `60 -> 10 m3/h` did
+- a write on unit `4` from `60` to `65 m3/h` showed up in `41020..41021` after
+  about 4 s, and the restore to `60 m3/h` after a few seconds; the same held
+  while all six units were polled in one loop
+
 ## Temperature register quirk
 
 Observed on tested `M-WRG-GW` gateways:
@@ -31,6 +123,7 @@ Observed on tested `M-WRG-GW` gateways:
 - documented exhaust air temperature `41000/41001` behaved like extract air temperature
 - documented extract air temperature `41004/41005` behaved like exhaust air temperature
 - in other words: `41000` and `41004` appear effectively swapped on some setups
+- treat this as a quirk of the gateway, not as a correction of the unit manual
 
 ## Reverse-engineered app preset behavior
 
@@ -123,10 +216,10 @@ Current interpretation:
   `200 + airflow_in_m3h / 10` on the active side
 - plain airflow writes such as `30/30` through the documented `0..200`
   scaling path do not necessarily update the same keypad LED state as the app
-- the Home Assistant integration currently exposes `Abluft` / `Zuluft` as
-  app-like preset modes as well, but when those are triggered from HA it uses
-  the room's current known airflow as the active-side target because the app's
-  separately stored shortcut values are not yet readable
+- the Home Assistant integration decodes these shortcuts on read but does not
+  write them; since 3.0.0 it expresses supply-only and extract-only operation
+  by setting one fan to zero, because the airflow stored for the shortcut is
+  not readable
 
 Important limitation:
 
@@ -147,7 +240,7 @@ Important limitation:
   registers
 - confirmed local examples on the tested setup:
   - `Bedienfolie LOW = 60 m3/h` remained effective offline and still drove
-    `60/60 m3/h`
+    `60/60 m3/h`, with `41120..41122 = [3, 228, 0]`
   - temporary intensive airflow `= 90 m3/h` remained effective offline and
     still drove `90/90 m3/h`
 - later single-register scans also found additional readable local shadow
@@ -162,19 +255,25 @@ Important limitation:
 - an additional panel-side hardware check on `2026-03-31` showed that local
   `Abluft` / `Zuluft` button presses on another tested unit (`slave 2`) did
   not change `41120..41124` at all
-- instead the panel-side changes appeared in shadow/meta ranges:
+- instead the panel-side changes appeared in the airflow and in shadow/meta
+  ranges:
   - `neutral -> Abluft`
+    - `41020: 20 -> 40`, `41021: 20 -> 28`
     - `51120..51133`: broad `+1` increment pattern
     - `51150..51151`: `27 -> 28`
     - `52007: 27 -> 4352`
     - `52008..52010`: `27 -> 28`
   - `neutral -> Zuluft`
+    - `41020: 10 -> 0`
     - `51113: 4353 -> 4352`
     - `52008: 4352 -> 5376`
     - `52009: 31 -> 1055`
 - direct raw Modbus runtime writes such as `41120 = 4`, `41121 = 0`,
   `41122 = 201` or `205`, then `41132 = 0`, still changed airflow on that
   unit but did not light the physical keypad LEDs
+  - `41120..41124` read back as written: `[4, 0, 201, 0, 0]` for `Abluft 10`,
+    `[4, 201, 0, 0, 0]` for `Zuluft 10`, `[4, 0, 205, 0, 0]` for `Abluft 50`
+  - `Abluft 50` converged to `50/0 m3/h`
 - this means the reverse-engineered `200 + airflow / 10` encoding is a valid
   runtime shortcut path, but not yet a complete model of the local panel LED
   semantics on all observed hardware

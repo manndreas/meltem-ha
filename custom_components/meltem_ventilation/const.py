@@ -1,10 +1,8 @@
 """Constants for the Meltem integration.
 
-This file keeps protocol details in one place:
-- config-entry keys
-- scheduler defaults
-- supported profile metadata
-- Modbus register addresses
+This file keeps the fixed facts in one place: config-entry keys, link and
+scheduler timing, unit profiles, operating modes with their raw codes, Modbus
+register addresses, and which entities exist on which platform.
 """
 
 from __future__ import annotations
@@ -50,35 +48,41 @@ TRANSPORT_DISCONNECT_AFTER_TIMEOUTS = 3
 TRANSPORT_LINK_QUIET_SECONDS = 10.0
 TRANSPORT_RETRY_DELAY_SECONDS = 0.5
 FLOW_REFRESH_SECONDS = 10
-AIRFLOW_STALE_AFTER_SECONDS = 30
-READ_FAILURE_THRESHOLD = 3
 STATUS_REFRESH_SECONDS = 60
 TEMPERATURE_REFRESH_SECONDS = 60
 OPERATING_HOURS_REFRESH_SECONDS = 3600
 CONTROL_SETTINGS_REFRESH_SECONDS = 3600
 FILTER_REFRESH_SECONDS = 3600
+AIRFLOW_STALE_AFTER_SECONDS = 30
+READ_FAILURE_THRESHOLD = 3
+
+WRITE_SETTLE_SECONDS = 1.5
+WRITE_CONFIRMATION_TIMEOUT_SECONDS = 30.0
+# Older write outcomes stay visible as attributes but no longer flag data health.
+WRITE_HEALTH_RETENTION_SECONDS = 600.0
+TARGET_OPTIMISTIC_SECONDS = 15.0
+POST_WRITE_REFRESH_RETRIES = 2
+POST_WRITE_REFRESH_INTERVAL_SECONDS = 2.5
+
 
 @dataclass(frozen=True, slots=True)
 class ProfileMetadata:
     """User-facing and protocol-relevant facts about one supported unit family."""
 
     label: str
-    series: str
     max_airflow: int
     capabilities: frozenset[str]
 
 
 PROFILE_METADATA: dict[str, ProfileMetadata] = {
-    "s_plain": ProfileMetadata("M-WRG-S", "s", 97, frozenset()),
-    "s_f": ProfileMetadata("M-WRG-S (-F)", "s", 97, frozenset({"humidity"})),
-    "s_fc": ProfileMetadata("M-WRG-S (-FC)", "s", 97, frozenset({"humidity", "co2"})),
-    "ii_plain": ProfileMetadata("M-WRG-II", "ii", 100, frozenset()),
-    "ii_f": ProfileMetadata("M-WRG-II (-F)", "ii", 100, frozenset({"humidity"})),
-    "ii_fc": ProfileMetadata(
-        "M-WRG-II (-FC)", "ii", 100, frozenset({"humidity", "co2"})
-    ),
+    "s_plain": ProfileMetadata("M-WRG-S", 97, frozenset()),
+    "s_f": ProfileMetadata("M-WRG-S (-F)", 97, frozenset({"humidity"})),
+    "s_fc": ProfileMetadata("M-WRG-S (-FC)", 97, frozenset({"humidity", "co2"})),
+    "ii_plain": ProfileMetadata("M-WRG-II", 100, frozenset()),
+    "ii_f": ProfileMetadata("M-WRG-II (-F)", 100, frozenset({"humidity"})),
+    "ii_fc": ProfileMetadata("M-WRG-II (-FC)", 100, frozenset({"humidity", "co2"})),
     "ii_fc_voc": ProfileMetadata(
-        "M-WRG-II (O/VOC-AUL)", "ii", 100, frozenset({"humidity", "co2", "voc"})
+        "M-WRG-II (O/VOC-AUL)", 100, frozenset({"humidity", "co2", "voc"})
     ),
 }
 
@@ -99,9 +103,25 @@ ALL_PROFILES: frozenset[str] = frozenset(MODEL_PROFILES)
 HUMIDITY_PROFILES: frozenset[str] = _profiles_with("humidity")
 CO2_PROFILES: frozenset[str] = _profiles_with("co2")
 VOC_PROFILES: frozenset[str] = _profiles_with("voc")
+# Units that can run a sensor-driven control mode at all.
+SENSOR_CONTROL_PROFILES: frozenset[str] = HUMIDITY_PROFILES | CO2_PROFILES
 PLAIN_PROFILES: frozenset[str] = frozenset(
     key for key, metadata in PROFILE_METADATA.items() if not metadata.capabilities
 )
+
+
+def profile_label(profile: str) -> str:
+    """Return the user-facing label for one supported profile."""
+
+    return MODEL_PROFILE_LABELS.get(profile, "M-WRG")
+
+
+def profile_max_airflow(profile: str) -> int:
+    """Return the max airflow in m³/h for one supported profile."""
+
+    metadata = PROFILE_METADATA.get(profile)
+    return metadata.max_airflow if metadata is not None else 100
+
 
 PRESET_MODE_LOW = "low"
 PRESET_MODE_MEDIUM = "medium"
@@ -144,11 +164,26 @@ DIRECT_OPERATION_MODES: tuple[str, ...] = (
     OPERATION_MODE_MANUAL,
     OPERATION_MODE_UNBALANCED,
 )
-SENSOR_OPERATION_MODES: tuple[str, ...] = (
-    "humidity_control",
-    "co2_control",
-    "automatic",
-)
+
+MODE_OFF = 1
+MODE_SENSOR_CONTROL = 2
+MODE_MANUAL = 3
+MODE_UNBALANCED = 4
+MODE_HUMIDITY_CONTROL_VALUE = 112
+MODE_CO2_CONTROL_VALUE = 144
+MODE_AUTOMATIC_VALUE = 16
+
+# In sensor control the selector lives in REGISTER_CURRENT_LEVEL, not the mode
+# register, so read and write share this mapping.
+SENSOR_MODE_TO_RAW_VALUE: dict[str, int] = {
+    "humidity_control": MODE_HUMIDITY_CONTROL_VALUE,
+    "co2_control": MODE_CO2_CONTROL_VALUE,
+    "automatic": MODE_AUTOMATIC_VALUE,
+}
+RAW_VALUE_TO_SENSOR_MODE: dict[int, str] = {
+    value: mode for mode, value in SENSOR_MODE_TO_RAW_VALUE.items()
+}
+SENSOR_OPERATION_MODES: tuple[str, ...] = tuple(SENSOR_MODE_TO_RAW_VALUE)
 
 DIRECTION_SUPPLY = "supply"
 DIRECTION_EXTRACT = "extract"
@@ -161,49 +196,45 @@ LEVEL_SOURCE_MEASURED = "measured"
 LEVEL_WRITE_FALLBACK_BALANCED = "both_directions_balanced_manual"
 LEVEL_WRITE_FALLBACK_UNKNOWN_MODE = "unknown_mode_overridden"
 
-WRITE_SETTLE_SECONDS = 1.5
-WRITE_CONFIRMATION_TIMEOUT_SECONDS = 30.0
-# Older write outcomes stay visible as attributes but no longer flag data health.
-WRITE_HEALTH_RETENTION_SECONDS = 600.0
-TARGET_OPTIMISTIC_SECONDS = 15.0
-POST_WRITE_REFRESH_RETRIES = 2
-POST_WRITE_REFRESH_INTERVAL_SECONDS = 2.5
+REGISTER_PRODUCT_ID = 40002
+REGISTER_SOFTWARE_VERSION = 40004
+REGISTER_RF_COMM_STATUS = 40101
 
 # On the tested M-WRG-GW gateway, 41000 and 41004 are effectively swapped
 # compared to the unit manual. We map the logical sensor names to the values
 # actually observed on the gateway.
-REGISTER_EXHAUST_AIR_TEMPERATURE = 41004
-REGISTER_OUTDOOR_AIR_TEMPERATURE = 41002
 REGISTER_EXTRACT_AIR_TEMPERATURE = 41000
+REGISTER_OUTDOOR_AIR_TEMPERATURE = 41002
+REGISTER_EXHAUST_AIR_TEMPERATURE = 41004
+REGISTER_HUMIDITY_EXTRACT_AIR = 41006
+REGISTER_CO2_EXTRACT_AIR = 41007
 REGISTER_SUPPLY_AIR_TEMPERATURE = 41009
+REGISTER_HUMIDITY_SUPPLY_AIR = 41011
+REGISTER_VOC_SUPPLY_AIR = 41013
 REGISTER_ERROR_STATUS = 41016
 REGISTER_FILTER_CHANGE_DUE = 41017
 REGISTER_FROST_PROTECTION_ACTIVE = 41018
-REGISTER_HUMIDITY_EXTRACT_AIR = 41006
-REGISTER_CO2_EXTRACT_AIR = 41007
-REGISTER_HUMIDITY_SUPPLY_AIR = 41011
-REGISTER_VOC_SUPPLY_AIR = 41013
 REGISTER_EXTRACT_AIR_FLOW = 41020
 REGISTER_SUPPLY_AIR_FLOW = 41021
 REGISTER_DAYS_UNTIL_FILTER_CHANGE = 41027
 REGISTER_OPERATING_HOURS = 41030
-REGISTER_GATEWAY_NUMBER_OF_NODES = 43901
-REGISTER_GATEWAY_NODE_ADDRESS_1 = 43902
-REGISTER_CURRENT_LEVEL = 41121
+
 REGISTER_MODE = 41120
+REGISTER_CURRENT_LEVEL = 41121
 REGISTER_EXTRACT_AIR_TARGET_LEVEL = 41122
 REGISTER_PRESET_MODE = 41123
 REGISTER_PRESET_VALUE = 41124
 REGISTER_APPLY = 41132
-REGISTER_SOFTWARE_VERSION = 40004
-REGISTER_PRODUCT_ID = 40002
-REGISTER_RF_COMM_STATUS = 40101
+
 REGISTER_HUMIDITY_STARTING_POINT = 42000
 REGISTER_HUMIDITY_MIN_LEVEL = 42001
 REGISTER_HUMIDITY_MAX_LEVEL = 42002
 REGISTER_CO2_STARTING_POINT = 42003
 REGISTER_CO2_MIN_LEVEL = 42004
 REGISTER_CO2_MAX_LEVEL = 42005
+
+REGISTER_GATEWAY_NUMBER_OF_NODES = 43901
+REGISTER_GATEWAY_NODE_ADDRESS_1 = 43902
 
 # Contiguous 42000..42005 block, so the order also defines the block layout.
 CONTROL_SETTING_REGISTERS: dict[str, int] = {
@@ -223,25 +254,6 @@ CONTROL_SETTING_LIMITS: dict[str, tuple[int, int, int]] = {
     "co2_starting_point": (500, 1200, 1),
     "co2_min_level": (0, 100, 10),
     "co2_max_level": (10, 100, 10),
-}
-
-MODE_OFF = 1
-MODE_SENSOR_CONTROL = 2
-MODE_MANUAL = 3
-MODE_UNBALANCED = 4
-MODE_HUMIDITY_CONTROL_VALUE = 112
-MODE_CO2_CONTROL_VALUE = 144
-MODE_AUTOMATIC_VALUE = 16
-
-# In sensor control the selector lives in REGISTER_CURRENT_LEVEL, not the mode
-# register, so read and write share this mapping.
-SENSOR_MODE_TO_RAW_VALUE: dict[str, int] = {
-    "humidity_control": MODE_HUMIDITY_CONTROL_VALUE,
-    "co2_control": MODE_CO2_CONTROL_VALUE,
-    "automatic": MODE_AUTOMATIC_VALUE,
-}
-RAW_VALUE_TO_SENSOR_MODE: dict[int, str] = {
-    value: mode for mode, value in SENSOR_MODE_TO_RAW_VALUE.items()
 }
 
 # Entities whose values one read-health group delivers; shared by the client
@@ -269,20 +281,6 @@ READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
     "hours": frozenset({"operating_hours"}),
     "control_settings": frozenset(CONTROL_SETTING_REGISTERS),
 }
-
-
-def profile_label(profile: str) -> str:
-    """Return the user-facing label for one supported profile."""
-
-    return MODEL_PROFILE_LABELS.get(profile, "M-WRG")
-
-
-def profile_max_airflow(profile: str) -> int:
-    """Return the max airflow in m³/h for one supported profile."""
-
-    metadata = PROFILE_METADATA.get(profile)
-    return metadata.max_airflow if metadata is not None else 100
-
 
 BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
     {

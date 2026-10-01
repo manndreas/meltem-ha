@@ -10,10 +10,11 @@ Observed hardware behaviour, reverse-engineering results and gateway quirks
 are kept separate:
 
 - [../MELTEM.md](../MELTEM.md): observed register behaviour and traced writes
-- [../DEVELOPER.md](../DEVELOPER.md): implementation notes and hardware
-  findings
+- [../DEVELOPER.md](../DEVELOPER.md): implementation notes and the decisions
+  behind them
 - [../HARDWARE_BACKLOG.md](../HARDWARE_BACKLOG.md),
   [../SETTING_RE_BACKLOG.md](../SETTING_RE_BACKLOG.md): open measurements
+- [../LIVE_GATEWAY_TESTS.md](../LIVE_GATEWAY_TESTS.md): how to measure them
 
 ## Contents
 

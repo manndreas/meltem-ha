@@ -15,6 +15,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -66,6 +67,7 @@ from .models import (
     RoomConfig,
     RoomState,
     WriteConfirmation,
+    WriteValue,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,6 +76,24 @@ async_sleep = asyncio.sleep
 FULL_REFRESH_PLAN = RefreshPlan()
 AIRFLOW_REFRESH_PLAN = RefreshPlan.only(refresh_airflow=True)
 CONTROL_SETTINGS_REFRESH_PLAN = RefreshPlan.only(refresh_control_settings=True)
+
+TRANSPORT_BACKOFF_AFTER_FAILURES = 3
+TRANSPORT_BACKOFF_START_SECONDS = 5.0
+TRANSPORT_BACKOFF_MAX_SECONDS = 60.0
+ROOM_UNAVAILABLE_AFTER_FAILURES = 3
+# The slowest job runs hourly, but the airflow job polls every 10 s, so a unit
+# that answers nothing for this long is genuinely silent.
+ROOM_SILENT_AFTER_SECONDS = 120.0
+# Every unanswered read costs several timeouts, so silent units are polled
+# rarely to keep the shared bus free for the units that still respond.
+SILENT_ROOM_POLL_SECONDS = 60
+PRESET_OPTIMISTIC_SECONDS = 15.0
+# Rounding between m3/h and the raw 0..200 register costs at most 1 m3/h.
+LEVEL_CONFIRM_TOLERANCE = 2
+# Percent-to-m3/h rounding can leave two meant-to-be-equal directions one step apart.
+BALANCED_LEVEL_TOLERANCE = 1
+# Fallback wake-up for the degenerate case of a gateway without any poll job.
+IDLE_TICK_SECONDS = 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,31 +144,11 @@ READ_GROUP_INTERVAL_SECONDS: dict[str, int] = {
     for group_key in job_group.refresh_plan.read_groups()
 }
 
-
-def _room_supports_read_group(room: RoomConfig, group_key: str) -> bool:
-    """Return whether the room has any entity backed by a read group."""
-
-    supported = room.supported_entity_keys
-    return not supported or bool(READ_GROUP_ENTITY_KEYS[group_key] & supported)
-
-
-TRANSPORT_BACKOFF_AFTER_FAILURES = 3
-TRANSPORT_BACKOFF_START_SECONDS = 5.0
-TRANSPORT_BACKOFF_MAX_SECONDS = 60.0
-ROOM_UNAVAILABLE_AFTER_FAILURES = 3
-# The slowest job runs hourly, but the airflow job polls every 10 s, so a unit
-# that answers nothing for this long is genuinely silent.
-ROOM_SILENT_AFTER_SECONDS = 120.0
-# Every unanswered read costs several timeouts, so silent units are polled
-# rarely to keep the shared bus free for the units that still respond.
-SILENT_ROOM_POLL_SECONDS = 60
-PRESET_OPTIMISTIC_SECONDS = 15.0
-# Rounding between m3/h and the raw 0..200 register costs at most 1 m3/h.
-LEVEL_CONFIRM_TOLERANCE = 2
-# Percent-to-m3/h rounding can leave two meant-to-be-equal directions one step apart.
-BALANCED_LEVEL_TOLERANCE = 1
-# Fallback wake-up for the degenerate case of a gateway without any poll job.
-IDLE_TICK_SECONDS = 60.0
+# Readback for each register group a write can target.
+_READBACK_PLANS: dict[str, RefreshPlan] = {
+    "flow_control": AIRFLOW_REFRESH_PLAN,
+    "control_settings": CONTROL_SETTINGS_REFRESH_PLAN,
+}
 
 
 @dataclass(slots=True)
@@ -172,19 +172,21 @@ class _OptimisticOverlay[T]:
     def __init__(
         self,
         ttl_seconds: float,
+        on_change: Callable[[], None],
         matches: Callable[[T, T], bool] = operator.eq,
     ) -> None:
         self._ttl_seconds = ttl_seconds
+        self._on_change = on_change
         self._matches = matches
         self._pending: dict[str, tuple[T, float]] = {}
 
     def set(self, room_key: str, value: T) -> None:
         self._pending[room_key] = (value, time.monotonic() + self._ttl_seconds)
+        self._on_change()
 
-    def clear(self, room_key: str) -> bool:
-        """Drop the overlay and report whether there was one."""
-
-        return self._pending.pop(room_key, None) is not None
+    def clear(self, room_key: str) -> None:
+        if self._pending.pop(room_key, None) is not None:
+            self._on_change()
 
     def get(self, room_key: str, confirmed: T | None) -> T | None:
         """Return the pending value, or ``None`` once it is confirmed or stale."""
@@ -200,6 +202,24 @@ class _OptimisticOverlay[T]:
             del self._pending[room_key]
             return None
         return value
+
+
+def _room_supports_any(room: RoomConfig, entity_keys: frozenset[str]) -> bool:
+    """Return whether the room has any of these entities; no key list means all."""
+
+    supported = room.supported_entity_keys
+    return not supported or bool(entity_keys & supported)
+
+
+def _read_too_old(group_key: str, last_successful_read: datetime) -> bool:
+    """Return whether a group's last successful read is past its stale limit."""
+
+    stale_after = (
+        AIRFLOW_STALE_AFTER_SECONDS
+        if group_key == "flow"
+        else READ_GROUP_INTERVAL_SECONDS[group_key] * 3
+    )
+    return (dt_util.utcnow() - last_successful_read).total_seconds() > stale_after
 
 
 def _levels_reached(
@@ -240,21 +260,28 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self.client = client
         self.rooms = rooms
         self._rooms_by_key = {room.key: room for room in rooms}
-        self._max_requests_per_second = max(0.1, max_requests_per_second)
-        self._tick_seconds = 1.0 / self._max_requests_per_second
+        self._tick_seconds = 1.0 / max(0.1, max_requests_per_second)
         self._gateway_lock = asyncio.Lock()
         self._last_job_error: MeltemModbusError | None = None
         self._consecutive_transport_failures = 0
         self._backoff_seconds: float | None = None
         self._room_failures: dict[str, int] = {}
         self._write_confirmations: dict[str, dict[str, WriteConfirmation]] = {}
-        self._optimistic_presets = _OptimisticOverlay[str](PRESET_OPTIMISTIC_SECONDS)
+        self._optimistic_presets = _OptimisticOverlay[str](
+            PRESET_OPTIMISTIC_SECONDS, self.async_update_listeners
+        )
         self._optimistic_intensive = _OptimisticOverlay[bool](
-            PRESET_OPTIMISTIC_SECONDS, matches=operator.is_
+            PRESET_OPTIMISTIC_SECONDS, self.async_update_listeners, matches=operator.is_
         )
         self._optimistic_levels = _OptimisticOverlay[tuple[int, int]](
-            TARGET_OPTIMISTIC_SECONDS, matches=_levels_reached
+            TARGET_OPTIMISTIC_SECONDS, self.async_update_listeners, matches=_levels_reached
         )
+        # A write under one of these keys shows its value until the readback confirms it.
+        self._overlays: dict[str, _OptimisticOverlay[Any]] = {
+            "airflow_levels": self._optimistic_levels,
+            "preset_mode": self._optimistic_presets,
+            "intensive": self._optimistic_intensive,
+        }
         self._level_locks = {room.key: asyncio.Lock() for room in rooms}
         self._level_fallbacks: dict[str, tuple[str, datetime]] = {}
         self._started_at = time.monotonic()
@@ -271,20 +298,15 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         )
 
     @property
-    def _safe_data(self) -> dict[str, RoomState]:
-        """Return the current data dict, or an empty dict before the first poll."""
-        return self.data if isinstance(self.data, dict) else {}
-
-    @property
     def safe_data(self) -> dict[str, RoomState]:
-        """Public access to the current room state map."""
-        return self._safe_data
+        """Return the current room state map, or an empty dict before the first poll."""
+        return self.data if isinstance(self.data, dict) else {}
 
     @property
     def state_room_count(self) -> int:
         """Return how many rooms currently contain at least one state value."""
 
-        return sum(self._room_state_has_data(state) for state in self._safe_data.values())
+        return sum(self._room_state_has_data(state) for state in self.safe_data.values())
 
     @property
     def last_job_error(self) -> MeltemModbusError | None:
@@ -317,7 +339,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             if silent_for is not None and silent_for > ROOM_SILENT_AFTER_SECONDS:
                 return False
 
-        state = self._safe_data.get(room_key)
+        state = self.safe_data.get(room_key)
         if state is None:
             return False
         return self._room_state_has_data(state)
@@ -327,33 +349,17 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         The overlay is shared so the fan and the select entity never disagree.
         """
-        state = self._safe_data.get(room_key)
+        state = self.safe_data.get(room_key)
         confirmed = state.preset_mode if state else None
         return self._optimistic_presets.get(room_key, confirmed)
-
-    def _set_optimistic_preset_mode(self, room_key: str, preset_mode: str) -> None:
-        self._optimistic_presets.set(room_key, preset_mode)
-        self.async_update_listeners()
-
-    def _clear_optimistic_preset_mode(self, room_key: str) -> None:
-        if self._optimistic_presets.clear(room_key):
-            self.async_update_listeners()
 
     def optimistic_intensive(self, room_key: str) -> bool | None:
         """Return the pending intensive override while the gateway confirms it."""
 
-        state = self._safe_data.get(room_key)
+        state = self.safe_data.get(room_key)
         return self._optimistic_intensive.get(
             room_key, state.intensive_active if state else None
         )
-
-    def _set_optimistic_intensive(self, room_key: str, intensive_active: bool) -> None:
-        self._optimistic_intensive.set(room_key, intensive_active)
-        self.async_update_listeners()
-
-    def _clear_optimistic_intensive(self, room_key: str) -> None:
-        if self._optimistic_intensive.clear(room_key):
-            self.async_update_listeners()
 
     def effective_levels(self, room_key: str) -> tuple[int | None, int | None]:
         """Return the supply/extract targets a fan entity should act on.
@@ -374,7 +380,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     ) -> tuple[tuple[int | None, int | None], str | None]:
         """Return the effective supply/extract pair and where it comes from."""
 
-        state = self._safe_data.get(room_key)
+        state = self.safe_data.get(room_key)
         confirmed: tuple[int | None, int | None] | None = None
         source: str | None = None
         if state is not None:
@@ -410,7 +416,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         if fallback is None:
             return None
         marker, written_at = fallback
-        state = self._safe_data.get(room_key)
+        state = self.safe_data.get(room_key)
         if state is not None:
             health = state.read_health_for("flow_control")
             if (
@@ -465,7 +471,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     def read_group_fresh(self, room_key: str, group_key: str) -> bool:
         """Return whether the group's most recent attempt succeeded recently."""
 
-        state = self._safe_data.get(room_key)
+        state = self.safe_data.get(room_key)
         if state is None:
             return False
         health = state.read_health_for(group_key)
@@ -476,27 +482,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             or health.last_error is not None
         ):
             return False
-
-        stale_after = (
-            AIRFLOW_STALE_AFTER_SECONDS
-            if group_key == "flow"
-            else READ_GROUP_INTERVAL_SECONDS[group_key] * 3
-        )
-        age = (dt_util.utcnow() - health.last_successful_read).total_seconds()
-        return age <= stale_after
-
-    def _set_optimistic_levels(self, room_key: str, supply: int, extract: int) -> None:
-        self._optimistic_levels.set(room_key, (supply, extract))
-        self.async_update_listeners()
-
-    def _clear_optimistic_levels(self, room_key: str) -> None:
-        if self._optimistic_levels.clear(room_key):
-            self.async_update_listeners()
+        return not _read_too_old(group_key, health.last_successful_read)
 
     async def _async_update_data(self) -> dict[str, RoomState]:
         try:
             async with self._gateway_lock:
-                if not self._safe_data:
+                if not self.safe_data:
                     self._last_read_started = time.monotonic()
                     states = await self._read_all_rooms_full()
                     self._on_transport_success()
@@ -524,15 +515,13 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 if self._last_job_error is None:
                     self._on_transport_success()
                 else:
-                    self._consecutive_transport_failures += 1
-                    self._apply_transport_backoff()
+                    self._on_transport_failure()
                 self._confirm_pending_writes(updated_data)
                 self._schedule_next_tick()
                 return updated_data
         except MeltemModbusError as err:
             # Only the initial full read gets here; jobs record errors per room.
-            self._consecutive_transport_failures += 1
-            self._apply_transport_backoff()
+            self._on_transport_failure()
             raise UpdateFailed(str(err)) from err
 
     def _read_spacing_remaining(self, now: float) -> float:
@@ -591,6 +580,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._schedule_next_tick()
         _LOGGER.info("Meltem gateway reachable again, resuming normal polling rate")
 
+    def _on_transport_failure(self) -> None:
+        self._consecutive_transport_failures += 1
+        self._apply_transport_backoff()
+
     def _apply_transport_backoff(self) -> None:
         """Slow down polling while the gateway keeps failing.
 
@@ -625,7 +618,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """
 
         room = self._rooms_by_key[room_key]
-        self._clear_optimistic_preset_mode(room_key)
+        self._optimistic_presets.clear(room_key)
         await self._async_write_with_confirmation(
             room,
             "airflow_levels",
@@ -633,7 +626,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self.client.write_level,
             room,
             level,
-            on_written=lambda: self._set_optimistic_levels(room_key, level, level),
         )
 
     async def async_set_unbalanced_levels(
@@ -646,7 +638,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """
 
         room = self._rooms_by_key[room_key]
-        self._clear_optimistic_preset_mode(room_key)
+        self._optimistic_presets.clear(room_key)
         await self._async_write_with_confirmation(
             room,
             "airflow_levels",
@@ -655,9 +647,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             room,
             supply_level,
             extract_level,
-            on_written=lambda: self._set_optimistic_levels(
-                room_key, supply_level, extract_level
-            ),
         )
 
     async def async_set_direction_level(
@@ -692,7 +681,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 self._record_level_fallback(room_key, LEVEL_WRITE_FALLBACK_BALANCED)
                 return
 
-            operation_mode = self._safe_data.get(
+            operation_mode = self.safe_data.get(
                 room_key, EMPTY_ROOM_STATE
             ).operation_mode
             if (
@@ -743,7 +732,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """Write a new operating mode for one room and refresh afterwards."""
 
         room = self._rooms_by_key[room_key]
-        state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
+        state = self.safe_data.get(room.key, EMPTY_ROOM_STATE)
         supply, extract = self.effective_levels(room_key)
         balanced_level = _first_known(
             supply,
@@ -768,7 +757,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 translation_placeholders={"unit": room.name},
             )
 
-        self._clear_optimistic_levels(room_key)
+        self._optimistic_levels.clear(room_key)
         await self._async_write_with_confirmation(
             room,
             "operation_mode",
@@ -778,14 +767,14 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             operation_mode,
             int(balanced_level or 0),
             int(extract_level or 0),
-            refresh_plan=AIRFLOW_REFRESH_PLAN,
+            refresh_attempts=1,
         )
 
     async def async_set_preset_mode(self, room_key: str, preset_mode: str) -> None:
         """Write one app-style preset mode and refresh afterwards."""
 
         room = self._rooms_by_key[room_key]
-        self._clear_optimistic_levels(room_key)
+        self._optimistic_levels.clear(room_key)
         await self._async_write_with_confirmation(
             room,
             "preset_mode",
@@ -793,19 +782,16 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self.client.write_preset_mode,
             room,
             preset_mode,
-            refresh_plan=AIRFLOW_REFRESH_PLAN,
-            min_refresh_attempts=2,
-            on_written=lambda: self._set_optimistic_preset_mode(room_key, preset_mode),
+            refresh_attempts=2,
         )
 
     async def async_clear_preset_mode(self, room_key: str) -> None:
         """Leave the quick-mode shortcut and keep the current airflow behavior."""
 
-        state = self._safe_data.get(room_key, EMPTY_ROOM_STATE)
-        pending_preset_mode = self.optimistic_preset_mode(room_key)
-        effective_preset_mode = pending_preset_mode or state.preset_mode
-        if effective_preset_mode is None or effective_preset_mode == PRESET_MODE_INACTIVE:
-            self._clear_optimistic_preset_mode(room_key)
+        state = self.safe_data.get(room_key, EMPTY_ROOM_STATE)
+        effective_preset_mode = self.optimistic_preset_mode(room_key) or state.preset_mode
+        if effective_preset_mode in (None, PRESET_MODE_INACTIVE):
+            self._optimistic_presets.clear(room_key)
             return
 
         operation_mode = (
@@ -814,7 +800,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             else OPERATION_MODE_MANUAL
         )
         await self.async_set_operation_mode(room_key, operation_mode)
-        self._clear_optimistic_preset_mode(room_key)
+        self._optimistic_presets.clear(room_key)
 
     async def async_activate_intensive(self, room_key: str) -> None:
         """Start temporary intensive ventilation without changing the base preset."""
@@ -827,9 +813,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self.client.write_preset_mode,
             room,
             PRESET_MODE_INTENSIVE,
-            refresh_plan=AIRFLOW_REFRESH_PLAN,
-            min_refresh_attempts=2,
-            on_written=lambda: self._set_optimistic_intensive(room_key, True),
+            refresh_attempts=2,
         )
 
     async def async_deactivate_intensive(self, room_key: str) -> None:
@@ -842,9 +826,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             False,
             self.client.clear_intensive,
             room,
-            refresh_plan=AIRFLOW_REFRESH_PLAN,
-            min_refresh_attempts=2,
-            on_written=lambda: self._set_optimistic_intensive(room_key, False),
+            refresh_attempts=2,
         )
 
     async def async_set_control_setting(
@@ -864,7 +846,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             room,
             setting_key,
             value,
-            refresh_plan=CONTROL_SETTINGS_REFRESH_PLAN,
+            refresh_attempts=1,
             use_write_result=True,
         )
 
@@ -872,33 +854,26 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self,
         room: RoomConfig,
         write_key: str,
-        expected_value: str | int | bool | tuple[int, int],
+        expected_value: WriteValue,
         write_method: Callable[..., Awaitable[object]],
         *write_args: object,
-        refresh_plan: RefreshPlan | None = None,
-        min_refresh_attempts: int = 1,
+        refresh_attempts: int = 0,
         use_write_result: bool = False,
-        on_written: Callable[[], None] | None = None,
     ) -> None:
-        """Write one setting, preserve confirmed state, and verify by readback."""
+        """Write one setting, preserve confirmed state, and verify by readback.
 
-        readback_plan = refresh_plan or (
-            CONTROL_SETTINGS_REFRESH_PLAN
-            if write_key.startswith("control_setting:")
-            else AIRFLOW_REFRESH_PLAN
-        )
+        Without ``refresh_attempts`` the regular poll jobs confirm the write.
+        """
+
+        readback_plan = _READBACK_PLANS[self._write_group(write_key)]
+        overlay = self._overlays.get(write_key)
         async with self._gateway_lock:
             try:
                 write_result = await write_method(*write_args)
             except Exception as err:
                 # A failed write makes any earlier pending value doubtful.
-                clear_overlay = {
-                    "airflow_levels": self._clear_optimistic_levels,
-                    "preset_mode": self._clear_optimistic_preset_mode,
-                    "intensive": self._clear_optimistic_intensive,
-                }.get(write_key)
-                if clear_overlay is not None:
-                    clear_overlay(room.key)
+                if overlay is not None:
+                    overlay.clear(room.key)
                 self._record_write_pending(room.key, write_key, expected_value)
                 self._set_write_confirmation(
                     room.key,
@@ -922,17 +897,17 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 else expected_value
             )
             self._record_write_pending(room.key, write_key, confirmed_expected)
-            if on_written is not None:
-                on_written()
+            if overlay is not None:
+                overlay.set(room.key, expected_value)
 
-            if refresh_plan is None:
+            if not refresh_attempts:
                 return
 
             await async_sleep(WRITE_SETTLE_SECONDS)
             await self._async_refresh_room_after_write(
                 room,
                 refresh_plan=readback_plan,
-                min_refresh_attempts=min_refresh_attempts,
+                min_refresh_attempts=refresh_attempts,
             )
             self._mark_write_unconfirmed(
                 room.key,
@@ -943,8 +918,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     def update_request_rate(self, max_requests_per_second: float) -> None:
         """Apply a new scheduler request rate without reloading the integration."""
 
-        self._max_requests_per_second = max(0.1, max_requests_per_second)
-        self._tick_seconds = 1.0 / self._max_requests_per_second
+        self._tick_seconds = 1.0 / max(0.1, max_requests_per_second)
         if self._backoff_seconds is None:
             self._schedule_next_tick()
 
@@ -976,8 +950,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """Refresh one room's affected group after a write settles."""
 
         for attempt in range(POST_WRITE_REFRESH_RETRIES + 1):
-            previous_state = self._safe_data.get(room.key, EMPTY_ROOM_STATE)
+            previous_state = self.safe_data.get(room.key, EMPTY_ROOM_STATE)
             self._last_read_started = time.monotonic()
+            failed = False
             try:
                 refreshed_room = await self.client.read_room_state(
                     room,
@@ -990,26 +965,20 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     room.key,
                     err,
                 )
-                failed_state = self._with_read_group_failures(
+                refreshed_room = self._with_read_group_failures(
                     previous_state,
                     room,
                     refresh_plan,
                     err,
                 )
-                updated_states = dict(self._safe_data)
-                updated_states[room.key] = failed_state
-                if failed_state != previous_state:
-                    self.async_set_updated_data(updated_states)
-                self._confirm_pending_writes(updated_states)
-                return
+                failed = True
 
-            updated_states = dict(self._safe_data)
-            updated_states[room.key] = refreshed_room
+            updated_states = {**self.safe_data, room.key: refreshed_room}
             if refreshed_room != previous_state:
                 self.async_set_updated_data(updated_states)
             self._confirm_pending_writes(updated_states)
 
-            if attempt + 1 >= max(1, min_refresh_attempts):
+            if failed or attempt + 1 >= max(1, min_refresh_attempts):
                 return
 
             if attempt < POST_WRITE_REFRESH_RETRIES:
@@ -1081,7 +1050,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         failed_state = state
         attempted_at = dt_util.utcnow()
         for group_key in refresh_plan.read_groups():
-            if not _room_supports_read_group(room, group_key):
+            if not _room_supports_any(room, READ_GROUP_ENTITY_KEYS[group_key]):
                 continue
             previous_health = failed_state.read_health_for(group_key)
             failed_state = failed_state.with_read_health(
@@ -1114,7 +1083,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     def read_group_available(self, room_key: str, group_key: str) -> bool:
         """Return whether a group's values are recent and have recovered."""
 
-        state = self._safe_data.get(room_key)
+        state = self.safe_data.get(room_key)
         if state is None:
             return False
         health = state.read_health_for(group_key)
@@ -1123,18 +1092,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             or health.consecutive_failures >= READ_FAILURE_THRESHOLD
         ):
             return False
-        stale_after = (
-            AIRFLOW_STALE_AFTER_SECONDS
-            if group_key == "flow"
-            else READ_GROUP_INTERVAL_SECONDS[group_key] * 3
-        )
-        age = (dt_util.utcnow() - health.last_successful_read).total_seconds()
-        return age <= stale_after
+        return not _read_too_old(group_key, health.last_successful_read)
 
     def read_group_stale(self, room_key: str, group_key: str) -> bool | None:
         """Return whether a group's last successful read is stale."""
 
-        state = self._safe_data.get(room_key)
+        state = self.safe_data.get(room_key)
         if state is None:
             return None
         health = state.read_health_for(group_key)
@@ -1144,18 +1107,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             return True
         if health.last_successful_read is None:
             return None
-        stale_after = (
-            AIRFLOW_STALE_AFTER_SECONDS
-            if group_key == "flow"
-            else READ_GROUP_INTERVAL_SECONDS[group_key] * 3
-        )
-        age = (dt_util.utcnow() - health.last_successful_read).total_seconds()
-        return age > stale_after
+        return _read_too_old(group_key, health.last_successful_read)
 
     def data_health_stale(self, room_key: str) -> bool | None:
         """Return whether any read group or write confirmation is unhealthy."""
 
-        state = self._safe_data.get(room_key)
+        state = self.safe_data.get(room_key)
         if state is None:
             return None
         if any(
@@ -1185,10 +1142,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     ) -> dict[str, object]:
         """Return per-group read health and write outcomes for one room."""
 
-        state = self._safe_data.get(room_key, EMPTY_ROOM_STATE)
+        state = self.safe_data.get(room_key, EMPTY_ROOM_STATE)
+        room = self._rooms_by_key[room_key]
         attributes = {}
         for group_key in READ_GROUP_ENTITY_KEYS:
-            if not _room_supports_read_group(self._rooms_by_key[room_key], group_key):
+            if not _room_supports_any(room, READ_GROUP_ENTITY_KEYS[group_key]):
                 continue
             health = state.read_health_for(group_key)
             attributes[group_key] = {
@@ -1232,7 +1190,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self,
         room_key: str,
         write_key: str,
-        expected_value: str | int | bool | tuple[int, int],
+        expected_value: WriteValue,
     ) -> None:
         """Record a successful write awaiting device readback."""
 
@@ -1251,7 +1209,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         status: str,
         *,
         error: str | None = None,
-        actual_value: str | int | bool | tuple[int, int] | None = None,
+        actual_value: WriteValue | None = None,
     ) -> None:
         """Update one write outcome without changing its expected value."""
 
@@ -1287,11 +1245,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     def _write_group(write_key: str) -> str:
         if write_key.startswith("control_setting:"):
             return "control_settings"
-        if write_key == "airflow_levels" or write_key in {
-            "operation_mode",
-            "preset_mode",
-            "intensive",
-        }:
+        if write_key in {"airflow_levels", "operation_mode", "preset_mode", "intensive"}:
             return "flow_control"
         raise ValueError(f"Unknown write confirmation key: {write_key}")
 
@@ -1299,7 +1253,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     def _write_readback_value(
         state: RoomState,
         write_key: str,
-    ) -> str | int | bool | tuple[int, int] | None:
+    ) -> WriteValue | None:
         if write_key == "airflow_levels":
             # Only target registers confirm a write; measured airflow lags behind.
             supply, extract = MeltemDataUpdateCoordinator._confirmed_levels(
@@ -1321,8 +1275,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     @staticmethod
     def _write_values_match(
         write_key: str,
-        expected: str | int | bool | tuple[int, int],
-        actual: str | int | bool | tuple[int, int],
+        expected: WriteValue,
+        actual: WriteValue,
     ) -> bool:
         if write_key == "airflow_levels":
             return _levels_reached(actual, expected)  # type: ignore[arg-type]
@@ -1337,59 +1291,54 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             if state is None:
                 continue
             for write_key, confirmation in tuple(confirmations.items()):
-                if confirmation.status in {"failed", "confirmed", "unverifiable"}:
-                    continue
-                group_key = self._write_group(write_key)
-                read_health = state.read_health_for(group_key)
-                if (
-                    read_health.last_attempt is None
-                    or read_health.last_attempt < confirmation.started_at
-                ):
-                    continue
-                if (
-                    read_health.last_error is not None
-                ):
-                    if confirmation.status == "pending":
-                        confirmations[write_key] = replace(
-                            confirmation,
-                            status="unconfirmed",
-                            last_error=read_health.last_error,
-                        )
-                        changed = True
-                    continue
-
-                if write_key == "intensive" and not self._read_since(
-                    state, "intensive", confirmation.started_at
-                ):
-                    # The unit answered the mode read but cannot report intensive (HW-4).
-                    confirmations[write_key] = replace(
-                        confirmation, status="unverifiable", last_error=None
-                    )
-                    changed = True
-                    continue
-
-                actual = self._write_readback_value(state, write_key)
-                if actual is None:
-                    continue
-                status = (
-                    "confirmed"
-                    if self._write_values_match(
-                        write_key,
-                        confirmation.expected_value,
-                        actual,
-                    )
-                    else "mismatch"
-                )
-                if confirmation.status != status or confirmation.actual_value != actual:
-                    confirmations[write_key] = replace(
-                        confirmation,
-                        status=status,
-                        actual_value=actual,
-                        last_error=None,
-                    )
+                checked = self._checked_confirmation(state, write_key, confirmation)
+                if checked is not None:
+                    confirmations[write_key] = checked
                     changed = True
         if changed:
             self.async_update_listeners()
+
+    @classmethod
+    def _checked_confirmation(
+        cls,
+        state: RoomState,
+        write_key: str,
+        confirmation: WriteConfirmation,
+    ) -> WriteConfirmation | None:
+        """Return the new outcome of one write after a readback, or ``None`` if unchanged."""
+
+        if confirmation.status in {"failed", "confirmed", "unverifiable"}:
+            return None
+        read_health = state.read_health_for(cls._write_group(write_key))
+        if (
+            read_health.last_attempt is None
+            or read_health.last_attempt < confirmation.started_at
+        ):
+            return None
+        if read_health.last_error is not None:
+            if confirmation.status != "pending":
+                return None
+            return replace(
+                confirmation, status="unconfirmed", last_error=read_health.last_error
+            )
+
+        if write_key == "intensive" and not cls._read_since(
+            state, "intensive", confirmation.started_at
+        ):
+            # The unit answered the mode read but cannot report intensive (HW-4).
+            return replace(confirmation, status="unverifiable", last_error=None)
+
+        actual = cls._write_readback_value(state, write_key)
+        if actual is None:
+            return None
+        status = (
+            "confirmed"
+            if cls._write_values_match(write_key, confirmation.expected_value, actual)
+            else "mismatch"
+        )
+        if confirmation.status == status and confirmation.actual_value == actual:
+            return None
+        return replace(confirmation, status=status, actual_value=actual, last_error=None)
 
     @staticmethod
     def _read_since(state: RoomState, group_key: str, started_at: datetime) -> bool:
@@ -1418,39 +1367,28 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             _LOGGER.warning("Failed to read room %s for job %s: %s", room.key, job.key, err)
             self._last_job_error = err
             self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
-            failed_state = self._with_read_group_failures(
+            refreshed_state = self._with_read_group_failures(
                 previous_state,
                 room,
                 job.refresh_plan,
                 err,
             )
-            if failed_state != previous_state:
-                state_map = dict(previous_states)
-                state_map[room.key] = failed_state
-                return state_map
-            return previous_states
         else:
             self._last_job_error = None
             self._room_failures.pop(room.key, None)
-            if refreshed_state == previous_state:
-                return previous_states
-            state_map = dict(previous_states)
-            state_map[room.key] = refreshed_state
-        return state_map
+
+        if refreshed_state == previous_state:
+            return previous_states
+        return {**previous_states, room.key: refreshed_state}
 
     def _select_due_job(self, now: float) -> PollJob | None:
-        """Return the next due job, if any."""
+        """Return the job that has been due the longest, if any."""
 
-        if not self._jobs:
-            return None
-
-        due_job: PollJob | None = None
-        for job in self._jobs:
-            if job.next_due > now:
-                continue
-            if due_job is None or job.next_due < due_job.next_due:
-                due_job = job
-        return due_job
+        return min(
+            (job for job in self._jobs if job.next_due <= now),
+            key=operator.attrgetter("next_due"),
+            default=None,
+        )
 
     def _build_jobs(self) -> list[PollJob]:
         """Build the scheduled job list.
@@ -1491,7 +1429,4 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     def _room_needs_job(room: RoomConfig, group: JobGroup) -> bool:
         """Check whether a room has any entities covered by a job."""
 
-        supported = room.supported_entity_keys
-        if not supported:
-            return True
-        return bool(group.entity_keys & supported)
+        return _room_supports_any(room, group.entity_keys)

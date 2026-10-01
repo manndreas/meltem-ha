@@ -3,18 +3,23 @@
 Findings from code review that are **not** fixed in the repository because they
 cannot be decided without a live `M-WRG-GW` gateway and at least one `M-WRG`
 unit. Each entry states what was observed in the code, why a blind fix would be
-irresponsible, what to measure, and which candidate solutions exist.
+irresponsible, what to measure, and which candidate solutions exist. How to
+measure is in [LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md); every entry
+names its tests there.
 
 Related documents:
 
 - `docs/reference/` — manufacturer reference extracted from the Meltem documents
 - `docs/MELTEM.md` — observed register behaviour and traced register writes
-- `docs/DEVELOPER.md` — implementation notes and hardware findings
+- `docs/DEVELOPER.md` — implementation notes and the decisions behind them
 - `docs/SETTING_RE_BACKLOG.md` — app-side settings reverse engineering
 - `docs/TODO.md` — remaining non-hardware work
+- `docs/LIVE_GATEWAY_TESTS.md` — test plan for an AI agent on the live gateway,
+  covering every item below
 
 Status legend: `open` (needs measurement), `parked` (measured, decision
-deferred), `resolved` (move the outcome into `docs/DEVELOPER.md`).
+deferred), `resolved` (move the decision into `docs/DEVELOPER.md` and the
+measured behaviour into `docs/MELTEM.md`).
 
 ---
 
@@ -78,12 +83,14 @@ How this appears in `41120..41124` is not documented. See
    integration behaviour from device behaviour.
 6. Repeat the whole sequence with the candidate fix applied.
 
-`tools/watch_register_changes.py` and `tools/write_registers.py` cover most of
-this; a dedicated script would only need to sequence the steps.
+Tests: [W-8](LIVE_GATEWAY_TESTS.md#w-8--intensive-and-power-off),
+[W-9](LIVE_GATEWAY_TESTS.md#w-9--intensive-ends-by-itself),
+[H-5](LIVE_GATEWAY_TESTS.md#h-5--intensive-from-the-app),
+[H-6](LIVE_GATEWAY_TESTS.md#h-6--keypad-leds-and-physical-state).
 
 ### Candidate solutions
 
-- **A — clear on off only.** Add `_clear_secondary_preset_registers` to the
+- **A — clear on off only.** Prepend the `_CLEAR_INTENSIVE` writes to the
   `off` branch of `write_operating_mode` and to `write_level(0)`. Smallest
   change, but adds two register writes to every power-off.
 - **B — clear on every direct airflow write.** Also covers manual and
@@ -114,11 +121,13 @@ Affected code: `coordinator.async_set_operation_mode`,
 
 ```python
 async with self._gateway_lock:                    # lock held from here
-    await write_...(room, ...)                    # 3-5 writes at 0.1 s gap  ~0.5 s
-  await async_sleep(WRITE_SETTLE_SECONDS)       #                           1.5 s
+    await write_method(*write_args)               # 3-5 writes at 0.1 s gap  ~0.5 s
+    await async_sleep(WRITE_SETTLE_SECONDS)       #                           1.5 s
     await self._async_refresh_room_after_write(   # read
-        room, min_refresh_attempts=2              # + 2.5 s
-    )                                             # + read
+        room,
+        refresh_plan=readback_plan,
+        min_refresh_attempts=refresh_attempts,    # 2: + 2.5 s + read
+    )
 ```
 
 The gateway lock is held for roughly five to six seconds. During that window no
@@ -157,7 +166,12 @@ no timing guidance beyond the RTU frame rules. See
 2. Run the same measurement while a second unit is polled concurrently, to see
    whether interleaved traffic changes the required delay.
 3. Record how long `41121` and `41020/41021` actually need to reflect a write.
-   `docs/DEVELOPER.md` already notes that `41020/41021` lag behind.
+   `docs/MELTEM.md` already notes that `41020/41021` lag behind.
+
+Tests: [W-1](LIVE_GATEWAY_TESTS.md#w-1--balanced-write-41121-readback-and-airflow-lag),
+[W-2](LIVE_GATEWAY_TESTS.md#w-2--settle-delay-sweep),
+[W-3](LIVE_GATEWAY_TESTS.md#w-3--settle-delay-with-interleaved-traffic),
+[W-6](LIVE_GATEWAY_TESTS.md#w-6--41132-commit-latch).
 
 ### Candidate solutions
 
@@ -166,7 +180,7 @@ no timing guidance beyond the RTU frame rules. See
   to the locking model. Lowest risk, do this first.
 - **B — release the lock during the settle sleep.** Largest gain, but depends
   on step 2 of the measurement showing that interleaved traffic is harmless.
-- **C — reduce `min_refresh_attempts` from 2 to 1.** The second read exists
+- **C — reduce `refresh_attempts` from 2 to 1.** The second read exists
   because the first one was observed to be stale. If A shows the settle is
   reliable, the second read becomes unnecessary and saves ~2.5 s.
 - **D — no change.** Six seconds of stale airflow readings after a manual
@@ -215,6 +229,9 @@ Configure the app `Abluft` / `Zuluft` shortcut to several airflows across the
 full range (10, 20, 40, 60, 80, 90, 100 m3/h) and record `41121` / `41122` for
 each. Seven data points would confirm or refute the linear encoding.
 
+Tests: [W-11](LIVE_GATEWAY_TESTS.md#w-11--shortcut-encoding-200--n-on-the-unit),
+[H-4](LIVE_GATEWAY_TESTS.md#h-4--app-shortcut-encoding).
+
 ### Candidate solutions
 
 - **A — keep the current heuristic.** Correct for every value the tested
@@ -240,7 +257,7 @@ fails, it falls back to two registers, and `_decode_intensive_active` then
 returns `None`. On such units the intensive switch in Home Assistant shows
 `unknown` permanently.
 
-`docs/DEVELOPER.md` notes that many devices return Modbus exceptions for
+`docs/MELTEM.md` notes that many devices return Modbus exceptions for
 `41120/41121/41122` until a write has occurred, so the fallback exists for a
 reason. What is not known is whether the five-register read stays unavailable
 forever on some units or only until the first write.
@@ -262,6 +279,10 @@ describe writing these registers. See `docs/reference/modbus.md`.
 2. Perform one airflow write.
 3. Retry the five-register read.
 4. Repeat after a power cycle to see whether the capability is sticky.
+
+Tests: [R-9](LIVE_GATEWAY_TESTS.md#r-9--mode-block-before-any-write),
+[W-5](LIVE_GATEWAY_TESTS.md#w-5--mode-block-after-the-first-write),
+[H-2](LIVE_GATEWAY_TESTS.md#h-2--freshly-powered-unit).
 
 ### Candidate solutions
 
@@ -300,6 +321,8 @@ off state, or whether it needs to be running first.
 From a stopped unit, write `41120 = 4`, `41121 = 0`, `41122 = <raw>`,
 `41132 = 0` and check whether only the extract fan starts.
 
+Tests: [W-12](LIVE_GATEWAY_TESTS.md#w-12--single-direction-start-from-off).
+
 ### Candidate solutions
 
 - **A — keep the current behaviour.** Safe and documented.
@@ -322,11 +345,9 @@ Three changes reduce bus time but were made without a live gateway:
 1. The flow job takes `41121` / `41122` from the `41120` mode block instead of
    reading them again on their own, saving up to two requests per unit every
    10 s. The decoder already trusted the block values for quick-mode detection.
-2. The runtime client runs pymodbus with `retries=0`. The default `retries=3`
-   resent every unanswered request three times before the integration's own
-   reconnecting retry, so one silent register cost about eight timeouts.
-   Since `4.0.0` this is `TransportPolicy` with one retry per request; it is
-   measured as part of HW-7.
+2. Every request is retried at most once (`TransportPolicy`). pymodbus'
+   default `retries=3` had turned one silent register into about eight
+   timeouts. This is measured as part of HW-7.
 3. A unit that has been silent for `ROOM_SILENT_AFTER_SECONDS` is polled at
    most every `SILENT_ROOM_POLL_SECONDS`.
 
@@ -338,6 +359,13 @@ Three changes reduce bus time but were made without a live gateway:
    new transient read failures compared to the previous release.
 3. Power off one unit and confirm that the others still react to fan changes
    within a few seconds.
+
+Tests: measurement 1 in [R-10](LIVE_GATEWAY_TESTS.md#r-10--mode-block-equals-single-reads)
+and [W-10](LIVE_GATEWAY_TESTS.md#w-10--unbalanced-write-and-readback),
+measurement 2 in [T-10](LIVE_GATEWAY_TESTS.md#t-10--24-hour-soak) and
+[H-9](LIVE_GATEWAY_TESTS.md#h-9--real-home-assistant-instance),
+measurement 3 in [T-5](LIVE_GATEWAY_TESTS.md#t-5--silent-address-in-the-integration-client)
+and [H-1](LIVE_GATEWAY_TESTS.md#h-1--powered-off-unit).
 
 ### Candidate solutions
 
@@ -391,10 +419,10 @@ as they are until measured:
 
 ### What to measure
 
-Take the baseline with the pymodbus versions of the tools first (any commit
-before `4.0.0`: `tools/benchmark_gateway.py`,
-`tools/benchmark_integration_like.py`, `tools/profile_register_reads.py`),
-then repeat with the `4.0.0` tools:
+Each measurement is compared with a baseline taken with the pymodbus tools
+from before `4.0.0`
+([P-5](LIVE_GATEWAY_TESTS.md#p-5--baseline-worktree),
+[T-1](LIVE_GATEWAY_TESTS.md#t-1--baseline-with-the-pymodbus-tools)):
 
 1. Latency and timeout rate per scenario, compared with the baseline.
 2. Power off one unit: timeout or code 10/11, requests per job, and whether
@@ -406,6 +434,10 @@ then repeat with the `4.0.0` tools:
    released and the link comes back.
 7. 24 hours of continuous operation with all units; note `link_recycles` and
    the info-level "Recycling the Meltem gateway link" log lines.
+
+These seven measurements are the release gate for `4.0.0`; the tests per
+measurement are listed under
+[Release gate](LIVE_GATEWAY_TESTS.md#release-gate-for-400).
 
 ### Candidate solutions
 
