@@ -36,17 +36,15 @@ class MeltemIntensiveSwitch(MeltemEntity, SwitchEntity):
     """
 
     _requires_fresh_read_group = False
+    _attr_icon = "mdi:fan-plus"
 
     def __init__(self, coordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "intensive", "intensive")
-        self._attr_icon = "mdi:fan-plus"
 
     @property
     def is_on(self) -> bool | None:
         optimistic = self.coordinator.optimistic_intensive(self.room.key)
-        if optimistic is not None:
-            return optimistic
-        return self.room_state.intensive_active
+        return self.room_state.intensive_active if optimistic is None else optimistic
 
     async def async_turn_on(self, **kwargs) -> None:
         await self.coordinator.async_activate_intensive(self.room.key)

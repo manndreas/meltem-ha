@@ -13,7 +13,7 @@ from modbus_connection import (
     ModbusSerialParams,
     ModbusTimeoutError,
 )
-from modbus_connection.mock import MockModbusConnection, MockModbusUnit, ReadEvent
+from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
 from custom_components.meltem_ventilation.const import (
     BASE_SUPPORTED_ENTITY_KEYS,
@@ -29,10 +29,7 @@ from custom_components.meltem_ventilation.device import PolicyUnit
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
-    _base_supported_entity_keys,
-    _is_plausible_co2,
-    _is_plausible_humidity,
-    _is_plausible_voc,
+    _is_plausible,
     build_serial_params,
     derive_balanced_airflow,
     detect_slave_details,
@@ -41,11 +38,18 @@ from custom_components.meltem_ventilation.modbus_helpers import (
     prepare_unit,
     read_gateway_node_count,
     resolve_preferred_port_path,
+    supported_entity_keys_for_profile,
 )
 
 _PORT = "/dev/ttyACM0"
 # Product ID 116852 as a little-endian uint32.
 _PRODUCT_ID_WORDS = [0xC874, 0x0001]
+_CAPABILITY_REGISTERS = (
+    REGISTER_HUMIDITY_EXTRACT_AIR,
+    REGISTER_HUMIDITY_SUPPLY_AIR,
+    REGISTER_CO2_EXTRACT_AIR,
+    REGISTER_VOC_SUPPLY_AIR,
+)
 
 
 @pytest.fixture(name="gateway")
@@ -60,6 +64,10 @@ def unit_fixture() -> MockModbusUnit:
 
 def _reads(unit: MockModbusUnit) -> list[tuple[int, int]]:
     return [(event.address, event.count) for event in unit.read_events]
+
+
+async def _discover(gateway: MockModbusUnit) -> list[int]:
+    return await discover_gateway_nodes(gateway, _PORT, start=2, end=16)
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +85,7 @@ class TestResolvePreferredPortPath:
             "custom_components.meltem_ventilation.modbus_helpers.Path.exists",
             return_value=False,
         ):
-            assert resolve_preferred_port_path("/dev/ttyACM0") == "/dev/ttyACM0"
+            assert resolve_preferred_port_path(_PORT) == _PORT
 
     @pytest.mark.skipif(
         sys.platform == "win32",
@@ -161,61 +169,52 @@ class TestReadGatewayNodeCount:
 
 
 class TestDiscoverGatewayNodes:
-    async def test_reads_the_bridge_registers(self, gateway: MockModbusUnit) -> None:
-        gateway.holding.update(
-            {
-                REGISTER_GATEWAY_NUMBER_OF_NODES: 6,
-                REGISTER_GATEWAY_NODE_ADDRESS_1: [3, 2, 4, 5, 7, 6],
-            }
-        )
-
-        discovered = await discover_gateway_nodes(gateway, _PORT, start=2, end=16)
-
-        assert discovered == [3, 2, 4, 5, 7, 6]
-        assert _reads(gateway) == [
-            (REGISTER_GATEWAY_NUMBER_OF_NODES, 1),
-            (REGISTER_GATEWAY_NODE_ADDRESS_1, 6),
-        ]
-
-    async def test_ignores_zero_out_of_range_and_duplicate_addresses(
-        self, gateway: MockModbusUnit
+    @pytest.mark.parametrize(
+        ("addresses", "expected"),
+        [
+            pytest.param([3, 2, 4, 5, 7, 6], [3, 2, 4, 5, 7, 6], id="gateway-order"),
+            pytest.param([0, 1, 3, 17, 5, 5], [3, 5], id="zero-out-of-range-and-duplicates"),
+        ],
+    )
+    async def test_reads_the_bridge_registers(
+        self, gateway: MockModbusUnit, addresses: list[int], expected: list[int]
     ) -> None:
         gateway.holding.update(
             {
-                REGISTER_GATEWAY_NUMBER_OF_NODES: 6,
-                REGISTER_GATEWAY_NODE_ADDRESS_1: [0, 1, 3, 17, 5, 5],
+                REGISTER_GATEWAY_NUMBER_OF_NODES: len(addresses),
+                REGISTER_GATEWAY_NODE_ADDRESS_1: addresses,
             }
         )
 
-        discovered = await discover_gateway_nodes(gateway, _PORT, start=2, end=16)
-
-        assert discovered == [3, 5]
+        assert await _discover(gateway) == expected
+        assert _reads(gateway) == [
+            (REGISTER_GATEWAY_NUMBER_OF_NODES, 1),
+            (REGISTER_GATEWAY_NODE_ADDRESS_1, len(addresses)),
+        ]
 
     async def test_caps_the_address_list_at_32_nodes(
         self, gateway: MockModbusUnit
     ) -> None:
         gateway.holding[REGISTER_GATEWAY_NUMBER_OF_NODES] = 99
 
-        await discover_gateway_nodes(gateway, _PORT, start=2, end=16)
+        await _discover(gateway)
 
-        assert gateway.read_events[-1] == ReadEvent(
-            "holding", REGISTER_GATEWAY_NODE_ADDRESS_1, 32
-        )
+        assert _reads(gateway)[-1] == (REGISTER_GATEWAY_NODE_ADDRESS_1, 32)
 
     async def test_no_configured_nodes_yields_no_units(
         self, gateway: MockModbusUnit
     ) -> None:
         gateway.holding[REGISTER_GATEWAY_NUMBER_OF_NODES] = 0
 
-        assert await discover_gateway_nodes(gateway, _PORT, start=2, end=16) == []
-        assert len(gateway.read_events) == 1
+        assert await _discover(gateway) == []
+        assert _reads(gateway) == [(REGISTER_GATEWAY_NUMBER_OF_NODES, 1)]
 
     async def test_a_silent_gateway_yields_no_units(
         self, gateway: MockModbusUnit
     ) -> None:
         gateway.fail_requests(ModbusTimeoutError("silent"))
 
-        assert await discover_gateway_nodes(gateway, _PORT, start=2, end=16) == []
+        assert await _discover(gateway) == []
 
     async def test_an_unreadable_address_list_yields_no_units(
         self, gateway: MockModbusUnit
@@ -223,13 +222,13 @@ class TestDiscoverGatewayNodes:
         gateway.holding[REGISTER_GATEWAY_NUMBER_OF_NODES] = 2
         gateway.fail_read(REGISTER_GATEWAY_NODE_ADDRESS_1, IllegalDataAddressError())
 
-        assert await discover_gateway_nodes(gateway, _PORT, start=2, end=16) == []
+        assert await _discover(gateway) == []
 
     async def test_a_dead_link_is_raised(self, gateway: MockModbusUnit) -> None:
         gateway.fail_requests(ModbusConnectionError("no port"))
 
         with pytest.raises(MeltemConnectionError, match=_PORT):
-            await discover_gateway_nodes(gateway, _PORT, start=2, end=16)
+            await _discover(gateway)
 
 
 # ---------------------------------------------------------------------------
@@ -273,19 +272,14 @@ class TestDetectSlaveDetails:
         self, unit: MockModbusUnit
     ) -> None:
         unit.holding[REGISTER_PRODUCT_ID] = _PRODUCT_ID_WORDS
-        for register in (
-            REGISTER_HUMIDITY_EXTRACT_AIR,
-            REGISTER_HUMIDITY_SUPPLY_AIR,
-            REGISTER_CO2_EXTRACT_AIR,
-            REGISTER_VOC_SUPPLY_AIR,
-        ):
+        for register in _CAPABILITY_REGISTERS:
             unit.fail_read(register, IllegalDataAddressError())
 
         profile, preview, keys = await detect_slave_details(unit)
 
         assert profile == "plain"
         assert preview == "ID 116852 | basic"
-        assert set(keys) == _base_supported_entity_keys()
+        assert set(keys) == BASE_SUPPORTED_ENTITY_KEYS
 
     async def test_implausible_values_do_not_count_as_capabilities(
         self, unit: MockModbusUnit
@@ -328,69 +322,46 @@ class TestDetectSlaveDetails:
 
 
 class TestDeriveBalancedAirflow:
-    def test_returns_average_when_flows_match_closely(self) -> None:
-        assert derive_balanced_airflow(30, 30) == 30
-        assert derive_balanced_airflow(30, 31) == 30
-
-    def test_returns_none_when_flows_diverge(self) -> None:
-        assert derive_balanced_airflow(30, 40) is None
-
-    def test_returns_existing_single_value_when_one_side_missing(self) -> None:
-        assert derive_balanced_airflow(30, None) == 30
-        assert derive_balanced_airflow(None, 45) == 45
+    @pytest.mark.parametrize(
+        ("extract", "supply", "expected"),
+        [
+            pytest.param(30, 30, 30, id="equal"),
+            pytest.param(30, 31, 30, id="close"),
+            pytest.param(30, 40, None, id="diverging"),
+            pytest.param(30, None, 30, id="supply-missing"),
+            pytest.param(None, 45, 45, id="extract-missing"),
+        ],
+    )
+    def test_balanced_airflow(
+        self, extract: int | None, supply: int | None, expected: int | None
+    ) -> None:
+        assert derive_balanced_airflow(extract, supply) == expected
 
 
 class TestPlausibilityChecks:
     @pytest.mark.parametrize(
-        "value,expected",
+        ("key", "minimum", "maximum"),
         [
-            (None, False),
-            (-1, False),
-            (0, True),
-            (50, True),
-            (100, True),
-            (101, False),
+            ("humidity_extract_air", 0, 100),
+            ("humidity_supply_air", 0, 100),
+            ("co2_extract_air", 250, 10000),
+            ("voc_supply_air", 0, 10000),
         ],
     )
-    def test_is_plausible_humidity(self, value, expected) -> None:
-        assert _is_plausible_humidity(value) == expected
-
-    @pytest.mark.parametrize(
-        "value,expected",
-        [
-            (None, False),
-            (249, False),
-            (250, True),
-            (400, True),
-            (10000, True),
-            (10001, False),
-        ],
-    )
-    def test_is_plausible_co2(self, value, expected) -> None:
-        assert _is_plausible_co2(value) == expected
-
-    @pytest.mark.parametrize(
-        "value,expected",
-        [
-            (None, False),
-            (-1, False),
-            (0, True),
-            (500, True),
-            (10000, True),
-            (10001, False),
-        ],
-    )
-    def test_is_plausible_voc(self, value, expected) -> None:
-        assert _is_plausible_voc(value) == expected
+    def test_only_values_in_the_sensor_range_are_plausible(
+        self, key: str, minimum: int, maximum: int
+    ) -> None:
+        assert not _is_plausible(key, None)
+        assert not _is_plausible(key, minimum - 1)
+        assert _is_plausible(key, minimum)
+        assert _is_plausible(key, maximum)
+        assert not _is_plausible(key, maximum + 1)
 
 
-class TestBaseEntityKeys:
-    def test_contains_all_required_keys(self) -> None:
-        assert BASE_SUPPORTED_ENTITY_KEYS.issubset(_base_supported_entity_keys())
+class TestSupportedEntityKeysForProfile:
+    def test_plain_units_get_only_the_base_keys(self) -> None:
+        keys = set(supported_entity_keys_for_profile("ii_plain"))
 
-    def test_returns_set(self) -> None:
-        result = _base_supported_entity_keys()
-        assert isinstance(result, set)
-        assert len(result) > 10
-        assert "outdoor_air_temperature" not in result
-        assert "extract_air_temperature" not in result
+        assert keys == BASE_SUPPORTED_ENTITY_KEYS
+        assert "outdoor_air_temperature" not in keys
+        assert "extract_air_temperature" not in keys

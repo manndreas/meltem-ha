@@ -7,7 +7,8 @@ tables of the unit manuals.
 Most of this integration's gateway knowledge comes from hardware observation,
 not from these documents: USB serial Modbus, the bridge address
 `device_id=1`, and discovery via `43901` / `43902..`. Those observations are
-in [../DEVELOPER.md](../DEVELOPER.md).
+in [../MELTEM.md](../MELTEM.md#discovery-and-unit-list), the discovery model
+in [../DEVELOPER.md](../DEVELOPER.md#discovery-model).
 
 ## Purpose
 

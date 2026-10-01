@@ -16,10 +16,13 @@ gateways, Home Assistant hosts, or other connected equipment.
 - support for Meltem `M-WRG-S` and `M-WRG-II` unit families
 - automatic discovery of configured units via the `M-WRG-GW` gateway
 - per-unit profile selection during setup
-- temperature, airflow, filter and operating-hour sensors
+- temperature, airflow, filter and operating-hour sensors, plus humidity, CO2
+  and VOC sensors depending on the profile
 - separate supply air and extract air fan entities per unit
-- app-style quick modes and sensor-driven control modes
+- app-style quick modes, sensor-driven control modes and an intensive
+  ventilation switch
 - writable humidity and CO2 control thresholds for supported profiles
+- automation triggers and conditions for a due filter change
 - USB discovery for the Meltem gateway
 
 ## Controlling a unit
@@ -31,9 +34,9 @@ Each unit is exposed as two `fan` entities:
 
 Setting both to the same value runs the unit balanced. Setting them to
 different values switches it to unbalanced operation, and setting one to zero
-reproduces the extract-only or supply-only shortcuts of the Meltem app. When
-both are zero, the unit is switched off; turning it back on starts both
-directions again.
+runs the unit extract-only or supply-only, like the `Abluft` / `Zuluft`
+shortcuts of the Meltem app but with the airflow you set. When both are zero,
+the unit is switched off; turning it back on starts both directions again.
 
 A new fan value is shown immediately and confirmed by the next airflow poll a
 few seconds later; the `level_source` attribute tells whether a fan currently
@@ -133,6 +136,10 @@ Some diagnostic entities such as operating hours remain disabled by default.
 Firmware and hardware details are shown on the device card instead of as
 separate version sensors.
 
+**Read health** turns on when a group of values of a unit could not be read
+recently, or when a command failed or was not confirmed by the unit. Its
+attributes show the details per group and for the last commands.
+
 ## Troubleshooting
 
 ### No units found
@@ -142,6 +149,14 @@ Check that:
 - the gateway is powered and reachable over USB
 - the units were already added in the Meltem app
 - the units are fully configured in the `M-WRG-GW` gateway
+
+### A single unit is unavailable
+
+A unit that stops answering is marked unavailable after a few failed polls,
+while the other units keep working. It is then polled less often, so it does
+not slow down the others, and comes back on its own once it answers again.
+Check its power supply and the radio link to the gateway; the **Read health**
+attributes and the diagnostics download show which reads failed.
 
 ### Serial port shared with another integration
 
@@ -180,16 +195,16 @@ logger:
 ## Support
 
 Please include Home Assistant logs and a short description of your unit/gateway
-setup when opening an issue.
+setup when opening an issue; [SUPPORT.md](./SUPPORT.md) lists what helps.
 
 Additional project docs:
 
-- [CHANGELOG.md](./CHANGELOG.md)
-- [CONTRIBUTING.md](./CONTRIBUTING.md)
-- [SUPPORT.md](./SUPPORT.md)
-- [docs/reference/](./docs/reference/README.md)
-- [docs/MELTEM.md](./docs/MELTEM.md)
-- [docs/DEVELOPER.md](./docs/DEVELOPER.md)
-- [docs/HARDWARE_BACKLOG.md](./docs/HARDWARE_BACKLOG.md)
-- [docs/SETTING_RE_BACKLOG.md](./docs/SETTING_RE_BACKLOG.md)
-- [docs/TODO.md](./docs/TODO.md)
+- [CHANGELOG.md](./CHANGELOG.md): release history
+- [CONTRIBUTING.md](./CONTRIBUTING.md): development setup and guidelines
+- [docs/reference/](./docs/reference/README.md): manufacturer reference
+- [docs/MELTEM.md](./docs/MELTEM.md): observed hardware behavior
+- [docs/DEVELOPER.md](./docs/DEVELOPER.md): implementation notes
+- [docs/HARDWARE_BACKLOG.md](./docs/HARDWARE_BACKLOG.md): open hardware questions
+- [docs/LIVE_GATEWAY_TESTS.md](./docs/LIVE_GATEWAY_TESTS.md): test plan for a live gateway
+- [docs/SETTING_RE_BACKLOG.md](./docs/SETTING_RE_BACKLOG.md): parked reverse engineering of app settings
+- [docs/TODO.md](./docs/TODO.md): open non-hardware work

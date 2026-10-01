@@ -5,29 +5,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import dataclass
 import statistics
 import time
+from dataclasses import dataclass
 
-from modbus_connection import (
-    ModbusConnectionError,
-    ModbusError,
-    ModbusSerialParams,
-    ModbusUnit,
-)
+from modbus_connection import ModbusError, ModbusUnit
 from modbus_connection.tmodbus import ModbusConnection
 
+from tools._link import DEFAULT_PORT, GATEWAY_DEVICE_ID, discover_units, open_link, run
 
-FIXED_BAUDRATE = 19200
-FIXED_BYTESIZE = 8
-FIXED_PARITY = "E"
-FIXED_STOPBITS = 1
-FIXED_TIMEOUT = 0.8
-DEFAULT_GATEWAY_DEVICE_ID = 1
-DEFAULT_PORT = "/dev/ttyACM0"
-
-REGISTER_GATEWAY_NUMBER_OF_NODES = 43901
-REGISTER_GATEWAY_NODE_ADDRESS_1 = 43902
 REGISTER_EXTRACT_AIR_FLOW = 41020
 REGISTER_SUPPLY_AIR_FLOW = 41021
 REGISTER_ERROR_STATUS = 41016
@@ -64,32 +50,6 @@ async def read_block(unit: ModbusUnit, *, address: int, count: int, gap: float) 
     elapsed_ms = (time.perf_counter() - start) * 1000
     await asyncio.sleep(gap)
     return Sample(True, elapsed_ms, str(registers))
-
-
-async def discover_units(gateway: ModbusUnit, *, gap: float) -> list[int]:
-    """Read configured unit addresses from bridge registers."""
-
-    try:
-        (node_count,) = await gateway.read_holding_registers(
-            REGISTER_GATEWAY_NUMBER_OF_NODES, 1
-        )
-    except ModbusConnectionError:
-        raise
-    except ModbusError as err:
-        raise RuntimeError(f"failed to read bridge node count: {err}") from err
-    await asyncio.sleep(gap)
-
-    try:
-        addresses = await gateway.read_holding_registers(
-            REGISTER_GATEWAY_NODE_ADDRESS_1, max(1, min(32, node_count))
-        )
-    except ModbusConnectionError:
-        raise
-    except ModbusError as err:
-        raise RuntimeError("failed to read bridge node addresses") from err
-    await asyncio.sleep(gap)
-
-    return [int(value) for value in addresses if int(value) != 0]
 
 
 def scenario_requests(name: str) -> list[tuple[int, int, str]]:
@@ -163,7 +123,7 @@ def parse_args() -> argparse.Namespace:
         description="Benchmark simple request patterns against a Meltem gateway."
     )
     parser.add_argument("--port", default=DEFAULT_PORT)
-    parser.add_argument("--gateway-id", type=int, default=DEFAULT_GATEWAY_DEVICE_ID)
+    parser.add_argument("--gateway-id", type=int, default=GATEWAY_DEVICE_ID)
     parser.add_argument(
         "--scenario",
         choices=[
@@ -191,28 +151,9 @@ async def main() -> int:
     args = parse_args()
     # The gap is slept explicitly outside the measured latency, so the link
     # itself adds no extra spacing.
-    connection = ModbusConnection(
-        ModbusSerialParams(
-            device=args.port,
-            baudrate=FIXED_BAUDRATE,
-            bytesize=FIXED_BYTESIZE,
-            parity=FIXED_PARITY,
-            stopbits=FIXED_STOPBITS,
-        ),
-        timeout=FIXED_TIMEOUT,
-    )
-
-    try:
-        await connection.connect()
-    except ModbusConnectionError as err:
-        print(f"ERROR: could not open serial connection on {args.port}: {err}")
-        return 2
-
-    try:
+    async with open_link(args.port, message_spacing=None) as link:
         if args.units == "auto":
-            units = await discover_units(
-                connection.for_unit(args.gateway_id), gap=args.gap
-            )
+            units = await discover_units(link.for_unit(args.gateway_id), gap=args.gap)
         else:
             units = [int(part) for part in args.units.split(",") if part.strip()]
 
@@ -223,32 +164,30 @@ async def main() -> int:
         print()
 
         samples = await run_scenario(
-            connection,
+            link,
             units=units,
             scenario=args.scenario,
             cycles=args.cycles,
             gap=args.gap,
         )
 
-        oks = [sample for sample in samples if sample.ok]
-        errors = [sample for sample in samples if not sample.ok]
-        latencies = [sample.latency_ms for sample in oks]
+    oks = [sample for sample in samples if sample.ok]
+    errors = [sample for sample in samples if not sample.ok]
+    latencies = [sample.latency_ms for sample in oks]
 
-        print()
-        print("summary:")
-        print(f"  total requests: {len(samples)}")
-        print(f"  successful:     {len(oks)}")
-        print(f"  failed:         {len(errors)}")
-        if latencies:
-            print(f"  avg latency:    {statistics.mean(latencies):.1f} ms")
-            print(f"  p95 latency:    {statistics.quantiles(latencies, n=20)[18]:.1f} ms" if len(latencies) >= 20 else f"  max latency:    {max(latencies):.1f} ms")
-        return 0 if not errors else 1
-    except ModbusConnectionError as err:
-        print(f"ERROR: lost the serial connection on {args.port}: {err}")
-        return 2
-    finally:
-        await connection.close()
+    print()
+    print("summary:")
+    print(f"  total requests: {len(samples)}")
+    print(f"  successful:     {len(oks)}")
+    print(f"  failed:         {len(errors)}")
+    if latencies:
+        print(f"  avg latency:    {statistics.mean(latencies):.1f} ms")
+        if len(latencies) >= 20:
+            print(f"  p95 latency:    {statistics.quantiles(latencies, n=20)[18]:.1f} ms")
+        else:
+            print(f"  max latency:    {max(latencies):.1f} ms")
+    return 0 if not errors else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    run(main)

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError
@@ -36,6 +39,16 @@ from custom_components.meltem_ventilation.modbus_helpers import (
 # ---------------------------------------------------------------------------
 
 _PATCHES_BASE = "custom_components.meltem_ventilation.config_flow"
+_PORT = "/dev/ttyACM0"
+_STABLE_PORT = "/dev/serial/by-id/test"
+_USB_DISCOVERY = UsbServiceInfo(
+    device=_PORT,
+    vid="10AC",
+    pid="010A",
+    serial_number="gw-1",
+    manufacturer="Honeywell",
+    description="Modbus",
+)
 
 
 @pytest.fixture(autouse=True, name="gateway_link")
@@ -78,16 +91,78 @@ def _patch_scan_error(error: Exception):
     )
 
 
-def _patch_detect(profile="plain", preview="ID 2 | basic", keys=None):
-    keys = keys or ["level", "extract_air_flow", "supply_air_flow"]
+def _patch_detect(profile: str = "plain", preview: str = "ID 2 | basic"):
     return patch(
         f"{_PATCHES_BASE}.detect_slave_details",
-        new=AsyncMock(return_value=(profile, preview, keys)),
+        new=AsyncMock(return_value=(profile, preview, [])),
     )
 
 
-def _patch_resolve(port="/dev/serial/by-id/test"):
+def _patch_resolve(port: str = _STABLE_PORT):
     return patch(f"{_PATCHES_BASE}.resolve_preferred_port_path", return_value=port)
+
+
+def _patch_resolve_unchanged():
+    return patch(
+        f"{_PATCHES_BASE}.resolve_preferred_port_path", side_effect=lambda port: port
+    )
+
+
+async def _async_submit_port(hass: HomeAssistant, port: str = _PORT) -> ConfigFlowResult:
+    """Start the user flow and submit the serial port."""
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PORT: port}
+    )
+
+
+async def _async_submit_usb_port(hass: HomeAssistant) -> ConfigFlowResult:
+    """Start the USB discovery flow and confirm the discovered port."""
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USB}, data=_USB_DISCOVERY
+    )
+    assert result["step_id"] == "confirm_usb"
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PORT: _PORT}
+    )
+
+
+async def _async_open_option(
+    hass: HomeAssistant, entry: MockConfigEntry, step_id: str
+) -> ConfigFlowResult:
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": step_id}
+    )
+
+
+async def _async_submit_connection(
+    hass: HomeAssistant, entry: MockConfigEntry, port: str
+) -> ConfigFlowResult:
+    """Open the connection options and submit ``port`` with a request rate of 5."""
+
+    result = await _async_open_option(hass, entry, "edit_connection")
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_PORT: port, CONF_MAX_REQUESTS_PER_SECOND: 5.0}
+    )
+
+
+async def _async_submit_profiles(
+    hass: HomeAssistant, result: ConfigFlowResult, profiles: dict[str, str]
+) -> ConfigFlowResult:
+    return await hass.config_entries.flow.async_configure(result["flow_id"], profiles)
+
+
+def _attach_coordinator(entry: MockConfigEntry, **methods: Any) -> SimpleNamespace:
+    """Give the entry a running coordinator that offers only ``methods``."""
+
+    coordinator = SimpleNamespace(**methods)
+    entry.runtime_data = SimpleNamespace(coordinator=coordinator)
+    return coordinator
 
 
 # ---------------------------------------------------------------------------
@@ -103,63 +178,27 @@ class TestConfigFlowUser:
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "user"
 
-    async def test_user_step_cannot_connect_shows_error(
-        self, hass: HomeAssistant
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            (MeltemConnectionError("fail"), "cannot_connect"),
+            (ValueError("invalid port"), "unknown"),
+        ],
+    )
+    async def test_scan_errors_are_shown_on_the_form(
+        self, hass: HomeAssistant, error: Exception, expected: str
     ) -> None:
-        with (
-            _patch_scan_error(MeltemConnectionError("fail")),
-            _patch_resolve(),
-        ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_USER}
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM0",
-                },
-            )
+        with _patch_scan_error(error), _patch_resolve():
+            result = await _async_submit_port(hass)
 
         assert result["type"] == FlowResultType.FORM
-        assert result["errors"] == {"base": "cannot_connect"}
-
-    async def test_user_step_unexpected_error_shows_unknown(
-        self, hass: HomeAssistant
-    ) -> None:
-        with (
-            _patch_scan_error(ValueError("invalid port")),
-            _patch_resolve(),
-        ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_USER}
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "not-a-port",
-                },
-            )
-
-        assert result["type"] == FlowResultType.FORM
-        assert result["errors"] == {"base": "unknown"}
+        assert result["errors"] == {"base": expected}
 
     async def test_user_step_no_devices_found_shows_error(
         self, hass: HomeAssistant
     ) -> None:
-        with (
-            _patch_validate_ok(),
-            _patch_scan([]),
-            _patch_resolve(),
-        ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_USER}
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM0",
-                },
-            )
+        with _patch_scan([]), _patch_resolve():
+            result = await _async_submit_port(hass)
 
         assert result["type"] == FlowResultType.FORM
         assert result["errors"] == {"base": "no_devices_found"}
@@ -167,21 +206,8 @@ class TestConfigFlowUser:
     async def test_user_step_success_proceeds_to_profiles(
         self, hass: HomeAssistant
     ) -> None:
-        with (
-            _patch_validate_ok(),
-            _patch_scan([2]),
-            _patch_detect(),
-            _patch_resolve(),
-        ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_USER}
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM0",
-                },
-            )
+        with _patch_scan([2]), _patch_detect(), _patch_resolve():
+            result = await _async_submit_port(hass)
 
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "profiles"
@@ -200,12 +226,7 @@ class TestConfigFlowUser:
         gateway_link.for_unit(3).fail_requests(ModbusTimeoutError("silent"))
 
         with _patch_resolve():
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_USER}
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"], {CONF_PORT: "/dev/ttyACM0"}
-            )
+            result = await _async_submit_port(hass)
 
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "profiles"
@@ -238,12 +259,7 @@ class TestConfigFlowUser:
             patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=_recording_unit),
             _patch_resolve(),
         ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_USER}
-            )
-            await hass.config_entries.flow.async_configure(
-                result["flow_id"], {CONF_PORT: "/dev/ttyACM0"}
-            )
+            await _async_submit_port(hass)
 
         # Releasing the last hold would close the port in between.
         assert holds[:3] == ["take 1", "take 2", "take 3"]
@@ -256,12 +272,7 @@ class TestConfigFlowUser:
             patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=_conflicting_unit),
             _patch_resolve(),
         ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_USER}
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"], {CONF_PORT: "/dev/ttyACM0"}
-            )
+            result = await _async_submit_port(hass)
 
         assert result["type"] == FlowResultType.FORM
         assert result["errors"] == {"base": "port_in_use"}
@@ -276,30 +287,13 @@ class TestConfigFlowProfiles:
     async def test_profiles_step_creates_entry(
         self, hass: HomeAssistant
     ) -> None:
-        with (
-            _patch_validate_ok(),
-            _patch_scan([2]),
-            _patch_detect("fc", "ID 2 | CO2", ["level", "co2_extract_air"]),
-            _patch_resolve("/dev/serial/by-id/test"),
-        ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_USER}
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM0",
-                },
-            )
-            # Now at profiles step — select a profile.
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {"slave_2": "ii_fc"},
-            )
+        with _patch_scan([2]), _patch_detect("fc", "ID 2 | CO2"), _patch_resolve():
+            result = await _async_submit_port(hass)
+            result = await _async_submit_profiles(hass, result, {"slave_2": "ii_fc"})
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["title"] == "Meltem Gateway M-WRG-GW"
-        assert result["data"][CONF_PORT] == "/dev/serial/by-id/test"
+        assert result["data"][CONF_PORT] == _STABLE_PORT
         assert result["data"][CONF_MAX_REQUESTS_PER_SECOND] == DEFAULT_MAX_REQUESTS_PER_SECOND
         rooms = result["data"][CONF_ROOMS]
         assert len(rooms) == 1
@@ -307,33 +301,15 @@ class TestConfigFlowProfiles:
         assert rooms[0]["slave"] == 2
         entry = result["result"]
         assert (entry.version, entry.minor_version) == (1, 2)
-        assert entry.unique_id == "/dev/serial/by-id/test"
+        assert entry.unique_id == _STABLE_PORT
 
     async def test_profiles_step_multiple_units(
         self, hass: HomeAssistant
     ) -> None:
-        with (
-            _patch_validate_ok(),
-            _patch_scan([2, 3]),
-            _patch_detect("plain", "ID 2 | basic", ["level"]),
-            _patch_resolve("/dev/serial/by-id/test"),
-        ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_USER}
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM0",
-                },
-            )
-            # Two units discovered — both get the same detect result.
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    "slave_2": "ii_plain",
-                    "slave_3": "ii_f",
-                },
+        with _patch_scan([2, 3]), _patch_detect(), _patch_resolve():
+            result = await _async_submit_port(hass)
+            result = await _async_submit_profiles(
+                hass, result, {"slave_2": "ii_plain", "slave_3": "ii_f"}
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -347,25 +323,9 @@ class TestConfigFlowProfiles:
     ) -> None:
         hass.config.language = "de"
 
-        with (
-            _patch_validate_ok(),
-            _patch_scan([2]),
-            _patch_detect("fc", "ID 2 | CO2", ["level", "co2_extract_air"]),
-            _patch_resolve("/dev/serial/by-id/test"),
-        ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_USER}
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM0",
-                },
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {"slave_2": "ii_fc"},
-            )
+        with _patch_scan([2]), _patch_detect("fc", "ID 2 | CO2"), _patch_resolve():
+            result = await _async_submit_port(hass)
+            result = await _async_submit_profiles(hass, result, {"slave_2": "ii_fc"})
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["data"][CONF_ROOMS][0]["profile"] == "ii_fc"
@@ -373,34 +333,8 @@ class TestConfigFlowProfiles:
     async def test_usb_flow_shows_unit_previews_in_the_description(
         self, hass: HomeAssistant
     ) -> None:
-        discovery_info = UsbServiceInfo(
-            device="/dev/ttyACM0",
-            vid="10AC",
-            pid="010A",
-            serial_number="gw-1",
-            manufacturer="Honeywell",
-            description="Modbus",
-        )
-
-        with (
-            _patch_validate_ok(),
-            _patch_scan([2]),
-            _patch_detect("fc", "ID 2 | CO2", ["level", "co2_extract_air"]),
-            _patch_resolve("/dev/serial/by-id/test"),
-        ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": config_entries.SOURCE_USB},
-                data=discovery_info,
-            )
-            assert result["step_id"] == "confirm_usb"
-
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM0",
-                },
-            )
+        with _patch_scan([2]), _patch_detect("fc", "ID 2 | CO2"), _patch_resolve():
+            result = await _async_submit_usb_port(hass)
 
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "profiles"
@@ -410,27 +344,8 @@ class TestConfigFlowProfiles:
     async def test_usb_flow_returns_to_confirm_usb_on_scan_error(
         self, hass: HomeAssistant
     ) -> None:
-        discovery_info = UsbServiceInfo(
-            device="/dev/ttyACM0",
-            vid="10AC",
-            pid="010A",
-            serial_number="gw-1",
-            manufacturer="Honeywell",
-            description="Modbus",
-        )
-
         with _patch_scan_error(MeltemConnectionError("fail")):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": config_entries.SOURCE_USB},
-                data=discovery_info,
-            )
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM0",
-                },
-            )
+            result = await _async_submit_usb_port(hass)
 
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "confirm_usb"
@@ -448,33 +363,22 @@ class TestConfigFlowEndToEnd:
     ) -> None:
         """Walk through the entire user flow: user step → profiles → entry creation."""
         with (
-            _patch_validate_ok(),
             _patch_scan([2, 3]),
-            _patch_detect("fc_voc", "ID 2 | VOC", ["level", "voc_supply_air"]),
+            _patch_detect("fc_voc", "ID 2 | VOC"),
             _patch_resolve("/dev/serial/by-id/stable"),
         ):
-            # Step 1: user
             result = await hass.config_entries.flow.async_init(
                 DOMAIN, context={"source": config_entries.SOURCE_USER}
             )
             assert result["step_id"] == "user"
 
-            # Step 2: submit port
             result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM0",
-                },
+                result["flow_id"], {CONF_PORT: _PORT}
             )
             assert result["step_id"] == "profiles"
 
-            # Step 3: submit profiles
-            result = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {
-                    "slave_2": "ii_fc_voc",
-                    "slave_3": "ii_fc",
-                },
+            result = await _async_submit_profiles(
+                hass, result, {"slave_2": "ii_fc_voc", "slave_3": "ii_fc"}
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -491,63 +395,54 @@ class TestConfigFlowEndToEnd:
 # ---------------------------------------------------------------------------
 
 
-class TestOptionsFlow:
-    @staticmethod
-    def _setup_entry(hass: HomeAssistant) -> MockConfigEntry:
-        entry = MockConfigEntry(
-            domain=DOMAIN,
-            title="Meltem",
-            data={
-                CONF_PORT: "/dev/serial/by-id/test",
-                CONF_MAX_REQUESTS_PER_SECOND: 2.0,
-                CONF_ROOMS: [
-                    {
-                        "key": "unit_1",
-                        "name": "Unit 1",
-                        "slave": 2,
-                        "profile": "ii_plain",
-                        "preview": "ID 2 | basic",
-                        "supported_entity_keys": ["level"],
-                    }
-                ],
-            },
-            options={},
-            version=1,
-            source="user",
-        )
-        entry.add_to_hass(hass)
-        return entry
+@pytest.fixture(name="entry")
+def entry_fixture(hass: HomeAssistant) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Meltem",
+        data={
+            CONF_PORT: _STABLE_PORT,
+            CONF_MAX_REQUESTS_PER_SECOND: 2.0,
+            CONF_ROOMS: [
+                {
+                    "key": "unit_1",
+                    "name": "Unit 1",
+                    "slave": 2,
+                    "profile": "ii_plain",
+                    "preview": "ID 2 | basic",
+                    "supported_entity_keys": ["level"],
+                }
+            ],
+        },
+        options={},
+        version=1,
+        source="user",
+    )
+    entry.add_to_hass(hass)
+    return entry
 
+
+class TestOptionsFlow:
     async def test_options_init_shows_menu(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        entry = self._setup_entry(hass)
         result = await hass.config_entries.options.async_init(entry.entry_id)
         assert result["type"] == FlowResultType.MENU
         assert result["step_id"] == "init"
 
     async def test_options_survive_an_entry_that_never_finished_setup(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
         """A retrying entry has no runtime_data, but options must stay usable."""
-        entry = self._setup_entry(hass)
         assert not hasattr(entry, "runtime_data")
 
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        edit_profiles = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {"next_step_id": "edit_profiles"},
-        )
+        edit_profiles = await _async_open_option(hass, entry, "edit_profiles")
         assert edit_profiles["step_id"] == "edit_profiles"
         assert "Hardware ID 2 | basic" in (
             edit_profiles["description_placeholders"]["unit_details"]
         )
 
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {"next_step_id": "rescan_units"},
-        )
+        result = await _async_open_option(hass, entry, "rescan_units")
         rescan = await hass.config_entries.options.async_configure(
             result["flow_id"], {}
         )
@@ -555,78 +450,41 @@ class TestOptionsFlow:
         assert rescan["errors"] == {"base": "cannot_connect"}
 
     async def test_options_edit_connection_reloads_without_a_coordinator(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        entry = self._setup_entry(hass)
-
-        with patch(
-            "custom_components.meltem_ventilation.config_flow.resolve_preferred_port_path",
-            side_effect=lambda port: port,
-        ), patch.object(
-            hass.config_entries, "async_reload", new=AsyncMock()
-        ) as mock_reload:
-            result = await hass.config_entries.options.async_init(entry.entry_id)
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {"next_step_id": "edit_connection"},
-            )
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/serial/by-id/test",
-                    CONF_MAX_REQUESTS_PER_SECOND: 5.0,
-                },
-            )
+        with (
+            _patch_resolve_unchanged(),
+            patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload,
+        ):
+            result = await _async_submit_connection(hass, entry, _STABLE_PORT)
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
         mock_reload.assert_awaited_once_with(entry.entry_id)
 
     async def test_options_init_routes_to_edit_connection(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        entry = self._setup_entry(hass)
-
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {"next_step_id": "edit_connection"},
-        )
+        result = await _async_open_option(hass, entry, "edit_connection")
 
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "edit_connection"
 
     async def test_options_edit_connection_updates_entry_and_reloads_when_port_changes(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        entry = self._setup_entry(hass)
-        entry.runtime_data = type(
-            "RuntimeData",
-            (),
-            {"coordinator": type("Coordinator", (), {"update_request_rate": MagicMock()})()},
-        )()
+        _attach_coordinator(entry, update_request_rate=MagicMock())
 
-        with patch(
-            "custom_components.meltem_ventilation.config_flow.read_gateway_node_count",
-            new=AsyncMock(return_value=1),
-        ) as validate_connection, patch(
-            "custom_components.meltem_ventilation.config_flow.resolve_preferred_port_path",
-            side_effect=lambda port: (
-                "/dev/serial/by-id/new-port" if port == "/dev/ttyACM1" else port
+        with (
+            _patch_validate_ok() as validate_connection,
+            patch(
+                f"{_PATCHES_BASE}.resolve_preferred_port_path",
+                side_effect=lambda port: (
+                    "/dev/serial/by-id/new-port" if port == "/dev/ttyACM1" else port
+                ),
             ),
         ):
-            result = await hass.config_entries.options.async_init(entry.entry_id)
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {"next_step_id": "edit_connection"},
-            )
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM1",
-                    CONF_MAX_REQUESTS_PER_SECOND: 5.0,
-                },
-            )
+            result = await _async_submit_connection(hass, entry, "/dev/ttyACM1")
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert entry.data[CONF_PORT] == "/dev/serial/by-id/new-port"
@@ -635,65 +493,30 @@ class TestOptionsFlow:
         validate_connection.assert_awaited_once()
 
     async def test_options_edit_connection_reports_a_port_held_with_other_settings(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        entry = self._setup_entry(hass)
-
-        with patch(
-            f"{_PATCHES_BASE}.async_get_temporary_unit", new=_conflicting_unit
-        ), patch(
-            f"{_PATCHES_BASE}.resolve_preferred_port_path", side_effect=lambda port: port
+        with (
+            patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=_conflicting_unit),
+            _patch_resolve_unchanged(),
         ):
-            result = await hass.config_entries.options.async_init(entry.entry_id)
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {"next_step_id": "edit_connection"},
-            )
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM1",
-                    CONF_MAX_REQUESTS_PER_SECOND: 5.0,
-                },
-            )
+            result = await _async_submit_connection(hass, entry, "/dev/ttyACM1")
 
         assert result["type"] == FlowResultType.FORM
         assert result["errors"] == {"base": "port_in_use"}
-        assert entry.data[CONF_PORT] == "/dev/serial/by-id/test"
+        assert entry.data[CONF_PORT] == _STABLE_PORT
 
     async def test_options_edit_connection_ignores_an_equivalent_port_path(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
         """A stored raw path that resolves to the stored by-id path is no change."""
-        entry = self._setup_entry(hass)
-        coordinator = type(
-            "Coordinator",
-            (),
-            {"update_request_rate": MagicMock()},
-        )()
-        entry.runtime_data = type("RuntimeData", (), {"coordinator": coordinator})()
+        _attach_coordinator(entry, update_request_rate=MagicMock())
 
-        with patch(
-            "custom_components.meltem_ventilation.config_flow.read_gateway_node_count",
-            new=AsyncMock(return_value=1),
-        ) as validate_connection, patch(
-            "custom_components.meltem_ventilation.config_flow.resolve_preferred_port_path",
-            return_value="/dev/serial/by-id/test",
-        ), patch.object(
-            hass.config_entries, "async_reload", new=AsyncMock()
-        ) as mock_reload:
-            result = await hass.config_entries.options.async_init(entry.entry_id)
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {"next_step_id": "edit_connection"},
-            )
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {
-                    CONF_PORT: "/dev/ttyACM0",
-                    CONF_MAX_REQUESTS_PER_SECOND: 5.0,
-                },
-            )
+        with (
+            _patch_validate_ok() as validate_connection,
+            _patch_resolve(),
+            patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload,
+        ):
+            result = await _async_submit_connection(hass, entry, _PORT)
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         validate_connection.assert_not_called()
@@ -701,32 +524,11 @@ class TestOptionsFlow:
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
 
     async def test_options_edit_connection_updates_request_rate_without_reload(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        entry = self._setup_entry(hass)
-        coordinator = type(
-            "Coordinator",
-            (),
-            {"update_request_rate": MagicMock()},
-        )()
-        entry.runtime_data = type(
-            "RuntimeData",
-            (),
-            {"coordinator": coordinator},
-        )()
+        coordinator = _attach_coordinator(entry, update_request_rate=MagicMock())
 
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {"next_step_id": "edit_connection"},
-        )
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {
-                CONF_PORT: "/dev/serial/by-id/test",
-                CONF_MAX_REQUESTS_PER_SECOND: 5.0,
-            },
-        )
+        result = await _async_submit_connection(hass, entry, _STABLE_PORT)
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["data"][CONF_MAX_REQUESTS_PER_SECOND] == 5.0
@@ -734,65 +536,35 @@ class TestOptionsFlow:
         coordinator.update_request_rate.assert_called_once_with(5.0)
 
     async def test_options_edit_profiles_updates_existing_rooms(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        entry = self._setup_entry(hass)
-        entry.data[CONF_ROOMS][0]["name"] = "Living Room"
-        entry.runtime_data = type(
-            "RuntimeData",
-            (),
-            {
-                "coordinator": type(
-                    "Coordinator",
-                    (),
-                    {
-                        "async_probe_slave_details": AsyncMock(
-                            return_value=("fc", "ID 99 | CO2", ["level", "co2_extract_air"])
-                        )
-                    },
-                )()
-            },
-        )()
+        probe = AsyncMock(return_value=("fc", "ID 99 | CO2", []))
+        _attach_coordinator(entry, async_probe_slave_details=probe)
 
         with patch.object(
             hass.config_entries, "async_reload", new=AsyncMock()
         ) as mock_reload:
-            result = await hass.config_entries.options.async_init(entry.entry_id)
+            result = await _async_open_option(hass, entry, "edit_profiles")
             result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {"next_step_id": "edit_profiles"},
-            )
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {"slave_2": "ii_fc"},
+                result["flow_id"], {"slave_2": "ii_fc"}
             )
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         mock_reload.assert_awaited_once_with(entry.entry_id)
+        # Showing and submitting the form must not probe the unit twice.
+        assert probe.await_count == 1
         assert entry.data[CONF_ROOMS][0]["profile"] == "ii_fc"
         assert entry.data[CONF_ROOMS][0]["preview"] == "ID 99 | CO2"
         assert "co2_extract_air" in entry.data[CONF_ROOMS][0]["supported_entity_keys"]
         assert "humidity_extract_air" in entry.data[CONF_ROOMS][0]["supported_entity_keys"]
 
     async def test_options_edit_profiles_shows_the_device_name_from_the_registry(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        entry = self._setup_entry(hass)
-        entry.runtime_data = type(
-            "RuntimeData",
-            (),
-            {
-                "coordinator": type(
-                    "Coordinator",
-                    (),
-                    {
-                        "async_probe_slave_details": AsyncMock(
-                            return_value=("fc", "ID 99 | CO2", ["level"])
-                        )
-                    },
-                )()
-            },
-        )()
+        _attach_coordinator(
+            entry,
+            async_probe_slave_details=AsyncMock(return_value=("fc", "ID 99 | CO2", [])),
+        )
 
         registry = dr.async_get(hass)
         device = registry.async_get_or_create(
@@ -802,45 +574,9 @@ class TestOptionsFlow:
         )
         registry.async_update_device(device.id, name_by_user="Bad")
 
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {"next_step_id": "edit_profiles"},
-        )
+        result = await _async_open_option(hass, entry, "edit_profiles")
 
         assert result["step_id"] == "edit_profiles"
         assert result["description_placeholders"]["unit_details"] == (
             "- **2**: Bad, Hardware ID 99 | CO2"
         )
-
-    async def test_options_edit_profiles_probes_each_unit_once(
-        self, hass: HomeAssistant
-    ) -> None:
-        entry = self._setup_entry(hass)
-        entry.data[CONF_ROOMS][0]["name"] = "Living Room"
-        probe = AsyncMock(
-            side_effect=[
-                ("fc", "ID 99 | CO2", ["level", "co2_extract_air"]),
-            ]
-        )
-        entry.runtime_data = type(
-            "RuntimeData",
-            (),
-            {"coordinator": type("Coordinator", (), {"async_probe_slave_details": probe})()},
-        )()
-
-        with patch.object(
-            hass.config_entries, "async_reload", new=AsyncMock()
-        ):
-            result = await hass.config_entries.options.async_init(entry.entry_id)
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {"next_step_id": "edit_profiles"},
-            )
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {"slave_2": "ii_fc"},
-            )
-
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert probe.await_count == 1

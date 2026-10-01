@@ -6,12 +6,15 @@ the coordinator, entities, and Modbus client can share a stable contract.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .coordinator import MeltemDataUpdateCoordinator
+
+# A mode or preset name, a level, a flag, or a supply/extract level pair.
+type WriteValue = str | int | bool | tuple[int, int]
 
 
 @dataclass(slots=True, frozen=True)
@@ -36,18 +39,18 @@ class ReadHealth:
     last_error: str | None = None
 
 
+EMPTY_READ_HEALTH = ReadHealth()
+
+
 @dataclass(slots=True, frozen=True)
 class WriteConfirmation:
     """Outcome of one requested write and its device readback."""
 
-    expected_value: str | int | bool | tuple[int, int]
+    expected_value: WriteValue
     started_at: datetime
     status: str = "pending"
-    actual_value: str | int | bool | tuple[int, int] | None = None
+    actual_value: WriteValue | None = None
     last_error: str | None = None
-
-
-EMPTY_READ_HEALTH = ReadHealth()
 
 
 @dataclass(slots=True, frozen=True)
@@ -58,31 +61,36 @@ class RoomState:
     outdoor_air_temperature: float | None = None
     extract_air_temperature: float | None = None
     supply_air_temperature: float | None = None
-    error_status: bool | None = None
-    filter_change_due: bool | None = None
-    frost_protection_active: bool | None = None
-    rf_comm_status: bool | None = None
     humidity_extract_air: int | None = None
     humidity_supply_air: int | None = None
     co2_extract_air: int | None = None
     voc_supply_air: int | None = None
     extract_air_flow: int | None = None
     supply_air_flow: int | None = None
-    group_read_health: tuple[tuple[str, ReadHealth], ...] = ()
+
+    error_status: bool | None = None
+    filter_change_due: bool | None = None
+    frost_protection_active: bool | None = None
+    rf_comm_status: bool | None = None
+
     operation_mode: str | None = None
     preset_mode: str | None = None
     intensive_active: bool | None = None
-    days_until_filter_change: int | None = None
-    operating_hours: int | None = None
     target_level: int | None = None
     extract_target_level: int | None = None
+
+    days_until_filter_change: int | None = None
+    operating_hours: int | None = None
     software_version: int | None = None
+
     humidity_starting_point: int | None = None
     humidity_min_level: int | None = None
     humidity_max_level: int | None = None
     co2_starting_point: int | None = None
     co2_min_level: int | None = None
     co2_max_level: int | None = None
+
+    group_read_health: tuple[tuple[str, ReadHealth], ...] = ()
 
     def read_health_for(self, group_key: str) -> ReadHealth:
         """Return the last recorded health for one read group."""
@@ -121,9 +129,8 @@ class RefreshPlan:
 
             RefreshPlan.only(refresh_airflow=True)
         """
-        base = dict.fromkeys(cls.__dataclass_fields__, False)
-        base.update(kwargs)
-        return cls(**base)
+        flags = dict.fromkeys((field.name for field in fields(cls)), False)
+        return cls(**(flags | kwargs))
 
     def read_groups(self) -> tuple[str, ...]:
         """Return the read-health groups this plan refreshes."""

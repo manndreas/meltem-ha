@@ -6,8 +6,9 @@ entity shows the value the unit actually stored after step normalization.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
+from operator import attrgetter
 
 from homeassistant.components.number import (
     NumberEntity,
@@ -36,67 +37,37 @@ class MeltemControlSettingNumberDescription(NumberEntityDescription):
     value_fn: Callable[[RoomState], int | None]
 
 
+def _control_setting(
+    key: str,
+    icon: str,
+    supported_profiles: frozenset[str],
+    unit: str = PERCENTAGE,
+) -> MeltemControlSettingNumberDescription:
+    """Describe one control setting within the manufacturer's limits."""
+
+    minimum, maximum, step = CONTROL_SETTING_LIMITS[key]
+    return MeltemControlSettingNumberDescription(
+        key=key,
+        native_min_value=minimum,
+        native_max_value=maximum,
+        native_step=step,
+        native_unit_of_measurement=unit,
+        icon=icon,
+        supported_profiles=supported_profiles,
+        # Setting keys double as RoomState field names.
+        value_fn=attrgetter(key),
+    )
+
+
 CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] = (
-    MeltemControlSettingNumberDescription(
-        key="humidity_starting_point",
-        native_min_value=CONTROL_SETTING_LIMITS["humidity_starting_point"][0],
-        native_max_value=CONTROL_SETTING_LIMITS["humidity_starting_point"][1],
-        native_step=CONTROL_SETTING_LIMITS["humidity_starting_point"][2],
-        native_unit_of_measurement=PERCENTAGE,
-        icon="mdi:water-percent",
-        supported_profiles=HUMIDITY_PROFILES,
-        value_fn=lambda state: state.humidity_starting_point,
+    _control_setting("humidity_starting_point", "mdi:water-percent", HUMIDITY_PROFILES),
+    _control_setting("humidity_min_level", "mdi:fan-minus", HUMIDITY_PROFILES),
+    _control_setting("humidity_max_level", "mdi:fan-plus", HUMIDITY_PROFILES),
+    _control_setting(
+        "co2_starting_point", "mdi:molecule-co2", CO2_PROFILES, CONCENTRATION_PARTS_PER_MILLION
     ),
-    MeltemControlSettingNumberDescription(
-        key="humidity_min_level",
-        native_min_value=CONTROL_SETTING_LIMITS["humidity_min_level"][0],
-        native_max_value=CONTROL_SETTING_LIMITS["humidity_min_level"][1],
-        native_step=CONTROL_SETTING_LIMITS["humidity_min_level"][2],
-        native_unit_of_measurement=PERCENTAGE,
-        icon="mdi:fan-minus",
-        supported_profiles=HUMIDITY_PROFILES,
-        value_fn=lambda state: state.humidity_min_level,
-    ),
-    MeltemControlSettingNumberDescription(
-        key="humidity_max_level",
-        native_min_value=CONTROL_SETTING_LIMITS["humidity_max_level"][0],
-        native_max_value=CONTROL_SETTING_LIMITS["humidity_max_level"][1],
-        native_step=CONTROL_SETTING_LIMITS["humidity_max_level"][2],
-        native_unit_of_measurement=PERCENTAGE,
-        icon="mdi:fan-plus",
-        supported_profiles=HUMIDITY_PROFILES,
-        value_fn=lambda state: state.humidity_max_level,
-    ),
-    MeltemControlSettingNumberDescription(
-        key="co2_starting_point",
-        native_min_value=CONTROL_SETTING_LIMITS["co2_starting_point"][0],
-        native_max_value=CONTROL_SETTING_LIMITS["co2_starting_point"][1],
-        native_step=CONTROL_SETTING_LIMITS["co2_starting_point"][2],
-        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
-        icon="mdi:molecule-co2",
-        supported_profiles=CO2_PROFILES,
-        value_fn=lambda state: state.co2_starting_point,
-    ),
-    MeltemControlSettingNumberDescription(
-        key="co2_min_level",
-        native_min_value=CONTROL_SETTING_LIMITS["co2_min_level"][0],
-        native_max_value=CONTROL_SETTING_LIMITS["co2_min_level"][1],
-        native_step=CONTROL_SETTING_LIMITS["co2_min_level"][2],
-        native_unit_of_measurement=PERCENTAGE,
-        icon="mdi:fan-minus",
-        supported_profiles=CO2_PROFILES,
-        value_fn=lambda state: state.co2_min_level,
-    ),
-    MeltemControlSettingNumberDescription(
-        key="co2_max_level",
-        native_min_value=CONTROL_SETTING_LIMITS["co2_max_level"][0],
-        native_max_value=CONTROL_SETTING_LIMITS["co2_max_level"][1],
-        native_step=CONTROL_SETTING_LIMITS["co2_max_level"][2],
-        native_unit_of_measurement=PERCENTAGE,
-        icon="mdi:fan-plus",
-        supported_profiles=CO2_PROFILES,
-        value_fn=lambda state: state.co2_max_level,
-    ),
+    _control_setting("co2_min_level", "mdi:fan-minus", CO2_PROFILES),
+    _control_setting("co2_max_level", "mdi:fan-plus", CO2_PROFILES),
 )
 
 
@@ -109,17 +80,12 @@ async def async_setup_entry(
 
     runtime_data: MeltemRuntimeData = entry.runtime_data
     coordinator = runtime_data.coordinator
-
-    entities: list[NumberEntity] = []
-    for room in coordinator.rooms:
-        for description in CONTROL_SETTING_DESCRIPTIONS:
-            if room_supports_entity(
-                room, description.key, description.supported_profiles
-            ):
-                entities.append(
-                    MeltemControlSettingNumber(coordinator, room, description)
-                )
-    async_add_entities(entities)
+    async_add_entities(
+        MeltemControlSettingNumber(coordinator, room, description)
+        for room in coordinator.rooms
+        for description in CONTROL_SETTING_DESCRIPTIONS
+        if room_supports_entity(room, description.key, description.supported_profiles)
+    )
 
 
 class MeltemControlSettingNumber(MeltemEntity, NumberEntity):
@@ -145,7 +111,5 @@ class MeltemControlSettingNumber(MeltemEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_set_control_setting(
-            self.room.key,
-            self.entity_description.key,
-            int(round(value)),
+            self.room.key, self.entity_description.key, round(value)
         )

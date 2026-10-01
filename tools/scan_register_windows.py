@@ -9,27 +9,16 @@ function 0x03 (holding registers) and/or 0x04 (input registers).
 from __future__ import annotations
 
 import argparse
-import asyncio
 from dataclasses import dataclass
 
 from modbus_connection import (
     ModbusConnectionError,
     ModbusError,
-    ModbusSerialParams,
     ModbusTimeoutError,
     ModbusUnit,
 )
-from modbus_connection.tmodbus import ModbusConnection
 
-
-FIXED_BAUDRATE = 19200
-FIXED_BYTESIZE = 8
-FIXED_PARITY = "E"
-FIXED_STOPBITS = 1
-FIXED_TIMEOUT = 0.8
-DEFAULT_PORT = "/dev/ttyACM0"
-REQUEST_GAP_SECONDS = 0.1
-MAX_REGISTERS_PER_READ = 120
+from tools._link import DEFAULT_PORT, MAX_REGISTERS_PER_READ, open_link, run
 
 
 @dataclass(frozen=True)
@@ -167,31 +156,13 @@ async def main() -> int:
     function_names = (
         ("holding", "input") if args.function == "both" else (args.function,)
     )
-
-    connection = ModbusConnection(
-        ModbusSerialParams(
-            device=args.port,
-            baudrate=FIXED_BAUDRATE,
-            bytesize=FIXED_BYTESIZE,
-            parity=FIXED_PARITY,
-            stopbits=FIXED_STOPBITS,
-        ),
-        timeout=FIXED_TIMEOUT,
-        message_spacing=REQUEST_GAP_SECONDS,
-    )
-    try:
-        await connection.connect()
-    except ModbusConnectionError as err:
-        print(f"ERROR: could not open serial connection on {args.port}: {err}")
-        return 2
-
-    unit = connection.for_unit(args.slave)
     totals: dict[str, dict[str, int]] = {
         name: {"ok": 0, "partial": 0, "error": 0, "none": 0, "empty": 0}
         for name in function_names
     }
 
-    try:
+    async with open_link(args.port) as link:
+        unit = link.for_unit(args.slave)
         print(
             f"scanning slave {args.slave} on {args.port} "
             f"from {args.start} to {args.end} "
@@ -217,22 +188,17 @@ async def main() -> int:
                     print(format_result(result))
             current += step
 
-        print()
-        print("summary:")
-        for function_name in function_names:
-            summary = totals[function_name]
-            print(
-                f"  {function_name:<7} ok={summary['ok']:<3} "
-                f"partial={summary['partial']:<3} error={summary['error']:<3} "
-                f"none={summary['none']:<3} empty={summary['empty']:<3}"
-            )
-        return 0
-    except ModbusConnectionError as err:
-        print(f"ERROR: lost the serial connection on {args.port}: {err}")
-        return 2
-    finally:
-        await connection.close()
+    print()
+    print("summary:")
+    for function_name in function_names:
+        summary = totals[function_name]
+        print(
+            f"  {function_name:<7} ok={summary['ok']:<3} "
+            f"partial={summary['partial']:<3} error={summary['error']:<3} "
+            f"none={summary['none']:<3} empty={summary['empty']:<3}"
+        )
+    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    run(main)

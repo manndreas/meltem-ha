@@ -26,19 +26,14 @@ _ROOM = RoomConfig(
     slave=2,
     preview="ID 116852 | basic",
 )
-_ROOM_CONSTRAINED = RoomConfig(
-    key="unit_2",
-    name="Unit 2",
-    profile="ii_plain",
-    slave=3,
-    supported_entity_keys=frozenset({"error_status"}),
-)
+_DESCRIPTIONS = {description.key: description for description in BINARY_SENSOR_DESCRIPTIONS}
 
 
 def _fake_coordinator(data: dict[str, RoomState] | None = None) -> MagicMock:
     coordinator = MagicMock(spec=MeltemDataUpdateCoordinator)
     coordinator.data = data or {}
     type(coordinator).safe_data = property(lambda self: self.data if isinstance(self.data, dict) else {})
+    coordinator.last_update_success = True
     coordinator.async_add_listener = MagicMock(return_value=lambda: None)
     coordinator.read_group_for_entity.side_effect = lambda key: {
         "error_status": "status",
@@ -50,11 +45,8 @@ def _fake_coordinator(data: dict[str, RoomState] | None = None) -> MagicMock:
     return coordinator
 
 
-def _find_desc(key: str):
-    for d in BINARY_SENSOR_DESCRIPTIONS:
-        if d.key == key:
-            return d
-    raise ValueError(f"No binary sensor description with key {key!r}")
+def _entity(coordinator: MagicMock, key: str) -> MeltemBinarySensorEntity:
+    return MeltemBinarySensorEntity(coordinator, _ROOM, _DESCRIPTIONS[key])
 
 
 # ---------------------------------------------------------------------------
@@ -64,16 +56,12 @@ def _find_desc(key: str):
 
 class TestBinarySensorEntityCreation:
     def test_unique_id_format(self) -> None:
-        coordinator = _fake_coordinator()
-        desc = _find_desc("error_status")
-        entity = MeltemBinarySensorEntity(coordinator, _ROOM, desc)
+        entity = _entity(_fake_coordinator(), "error_status")
         assert entity.unique_id == f"{DOMAIN}_unit_1_error_status"
 
     def test_device_info(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=7)})
-        desc = _find_desc("error_status")
-        entity = MeltemBinarySensorEntity(coordinator, _ROOM, desc)
-        info = entity.device_info
+        info = _entity(coordinator, "error_status").device_info
         assert (DOMAIN, "unit_1") in info["identifiers"]
         assert info["manufacturer"] == "Meltem"
         assert info["sw_version"] == "7"
@@ -81,7 +69,6 @@ class TestBinarySensorEntityCreation:
 
     def test_data_health_entity_reports_group_details(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState()})
-        coordinator.last_update_success = True
         coordinator.data_health_stale.return_value = True
         coordinator.data_health_attributes.return_value = {
             "flow": {
@@ -110,67 +97,30 @@ class TestBinarySensorEntityCreation:
 
 
 # ---------------------------------------------------------------------------
-#  is_on property
+#  State
 # ---------------------------------------------------------------------------
 
 
 class TestBinarySensorIsOn:
-    @pytest.mark.parametrize(
-        "key,state_kwargs,expected",
-        [
-            ("error_status", {"error_status": True}, True),
-            ("error_status", {"error_status": False}, False),
-            ("error_status", {}, None),
-            ("frost_protection_active", {"frost_protection_active": True}, True),
-            ("frost_protection_active", {"frost_protection_active": False}, False),
-            ("filter_change_due", {"filter_change_due": True}, True),
-            ("filter_change_due", {"filter_change_due": False}, False),
-            ("rf_comm_status", {"rf_comm_status": True}, True),
-        ],
-    )
-    def test_is_on_reflects_state(
-        self, key: str, state_kwargs: dict, expected: bool | None
-    ) -> None:
-        state = RoomState(**state_kwargs)
-        coordinator = _fake_coordinator(data={"unit_1": state})
-        desc = _find_desc(key)
-        entity = MeltemBinarySensorEntity(coordinator, _ROOM, desc)
-        assert entity.is_on is expected
+    @pytest.mark.parametrize("key", list(_DESCRIPTIONS))
+    @pytest.mark.parametrize("value", [True, False, None])
+    def test_is_on_reflects_state(self, key: str, value: bool | None) -> None:
+        coordinator = _fake_coordinator(data={"unit_1": RoomState(**{key: value})})
+        assert _entity(coordinator, key).is_on is value
 
-    def test_status_binary_sensor_is_unavailable_when_its_group_is_stale(self) -> None:
-        coordinator = _fake_coordinator(data={"unit_1": RoomState(error_status=False)})
-        coordinator.last_update_success = True
-        coordinator.read_group_available.return_value = False
-        entity = MeltemBinarySensorEntity(coordinator, _ROOM, _find_desc("error_status"))
-
-        assert entity.available is False
-
-
-# ---------------------------------------------------------------------------
-#  State updates
-# ---------------------------------------------------------------------------
-
-
-class TestBinarySensorStateUpdate:
     def test_value_changes_when_coordinator_data_changes(self) -> None:
-        state = RoomState(error_status=False)
-        coordinator = _fake_coordinator(data={"unit_1": state})
-        desc = _find_desc("error_status")
-        entity = MeltemBinarySensorEntity(coordinator, _ROOM, desc)
+        coordinator = _fake_coordinator(data={"unit_1": RoomState(error_status=False)})
+        entity = _entity(coordinator, "error_status")
         assert entity.is_on is False
 
         coordinator.data = {"unit_1": RoomState(error_status=True)}
         assert entity.is_on is True
 
-
-# ---------------------------------------------------------------------------
-#  Missing room fallback
-# ---------------------------------------------------------------------------
-
-
-class TestBinarySensorFallback:
     def test_missing_room_returns_none(self) -> None:
-        coordinator = _fake_coordinator(data={})
-        desc = _find_desc("error_status")
-        entity = MeltemBinarySensorEntity(coordinator, _ROOM, desc)
-        assert entity.is_on is None
+        assert _entity(_fake_coordinator(data={}), "error_status").is_on is None
+
+    def test_status_binary_sensor_is_unavailable_when_its_group_is_stale(self) -> None:
+        coordinator = _fake_coordinator(data={"unit_1": RoomState(error_status=False)})
+        coordinator.read_group_available.return_value = False
+
+        assert _entity(coordinator, "error_status").available is False

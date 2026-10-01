@@ -6,6 +6,8 @@ integration has always read, so the gateway sees the same requests as before.
 
 from __future__ import annotations
 
+from functools import partial
+
 from modbus_connection.model import Component, float32, raw_register, uint32
 
 from ..const import (
@@ -37,6 +39,10 @@ from ..const import (
     REGISTER_SUPPLY_AIR_TEMPERATURE,
     REGISTER_VOC_SUPPLY_AIR,
 )
+
+# The gateway sends 32-bit values low word first.
+_float32 = partial(float32, word_order="little")
+_uint32 = partial(uint32, word_order="little")
 
 
 class Register(Component):
@@ -93,9 +99,9 @@ class Temperatures(Component):
         (REGISTER_EXTRACT_AIR_TEMPERATURE, REGISTER_EXHAUST_AIR_TEMPERATURE + 1),
     )
 
-    extract_air_temperature = float32(REGISTER_EXTRACT_AIR_TEMPERATURE, word_order="little")
-    outdoor_air_temperature = float32(REGISTER_OUTDOOR_AIR_TEMPERATURE, word_order="little")
-    exhaust_temperature = float32(REGISTER_EXHAUST_AIR_TEMPERATURE, word_order="little")
+    extract_air_temperature = _float32(REGISTER_EXTRACT_AIR_TEMPERATURE)
+    outdoor_air_temperature = _float32(REGISTER_OUTDOOR_AIR_TEMPERATURE)
+    exhaust_temperature = _float32(REGISTER_EXHAUST_AIR_TEMPERATURE)
 
 
 class SupplyTemperature(Component):
@@ -105,7 +111,7 @@ class SupplyTemperature(Component):
         (REGISTER_SUPPLY_AIR_TEMPERATURE, REGISTER_SUPPLY_AIR_TEMPERATURE + 1),
     )
 
-    supply_air_temperature = float32(REGISTER_SUPPLY_AIR_TEMPERATURE, word_order="little")
+    supply_air_temperature = _float32(REGISTER_SUPPLY_AIR_TEMPERATURE)
 
 
 class ExtractAirQuality(Component):
@@ -131,7 +137,7 @@ class OperatingHours(Component):
 
     register_ranges = ((REGISTER_OPERATING_HOURS, REGISTER_OPERATING_HOURS + 1),)
 
-    operating_hours = uint32(REGISTER_OPERATING_HOURS, word_order="little")
+    operating_hours = _uint32(REGISTER_OPERATING_HOURS)
 
 
 class ControlSettings(Component):
@@ -152,4 +158,4 @@ class ProductId(Component):
 
     register_ranges = ((REGISTER_PRODUCT_ID, REGISTER_PRODUCT_ID + 1),)
 
-    product_id = uint32(REGISTER_PRODUCT_ID, word_order="little")
+    product_id = _uint32(REGISTER_PRODUCT_ID)

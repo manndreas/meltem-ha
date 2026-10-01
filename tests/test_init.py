@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -46,7 +49,9 @@ from custom_components.meltem_ventilation.models import (
 #  Helpers
 # ---------------------------------------------------------------------------
 
-MINIMAL_ROOM = {
+_INIT = "custom_components.meltem_ventilation"
+_PORT = "/dev/serial/by-id/test-device"
+_ROOM = {
     "key": "unit_1",
     "name": "Unit 1",
     "slave": 2,
@@ -55,24 +60,61 @@ MINIMAL_ROOM = {
     "supported_entity_keys": sorted(BASE_SUPPORTED_ENTITY_KEYS),
 }
 
-MINIMAL_ENTRY_DATA = {
-    CONF_PORT: "/dev/serial/by-id/test-device",
-    CONF_MAX_REQUESTS_PER_SECOND: 2.0,
-    CONF_ROOMS: [MINIMAL_ROOM],
-}
 
-
-def _mock_config_entry(**overrides) -> MockConfigEntry:
-    return MockConfigEntry(
+def _entry(
+    hass: HomeAssistant,
+    *,
+    port: str = _PORT,
+    rooms: list[dict[str, Any]] | None = None,
+    options: dict[str, Any] | None = None,
+    entry_id: str = "test-entry-id",
+    version: int = 1,
+    minor_version: int = 2,
+) -> MockConfigEntry:
+    entry = MockConfigEntry(
         domain=DOMAIN,
         title="Meltem",
-        data=overrides.get("data", deepcopy(MINIMAL_ENTRY_DATA)),
-        options=overrides.get("options", {}),
-        entry_id=overrides.get("entry_id", "test-entry-id"),
-        version=overrides.get("version", 1),
-        minor_version=overrides.get("minor_version", 2),
+        data={
+            CONF_PORT: port,
+            CONF_MAX_REQUESTS_PER_SECOND: 2.0,
+            CONF_ROOMS: deepcopy(rooms or [_ROOM]),
+        },
+        options=options or {},
+        entry_id=entry_id,
+        version=version,
+        minor_version=minor_version,
         source="user",
     )
+    entry.add_to_hass(hass)
+    return entry
+
+
+def _register_entity(
+    hass: HomeAssistant, entry: MockConfigEntry, platform: str, key: str
+) -> er.RegistryEntry:
+    return er.async_get(hass).async_get_or_create(
+        platform, DOMAIN, f"{DOMAIN}_unit_1_{key}", config_entry=entry
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SetupMocks:
+    resolve_port: MagicMock
+    client_cls: MagicMock
+    coordinator_cls: MagicMock
+    forward: AsyncMock
+
+
+@pytest.fixture
+def setup_mocks(hass: HomeAssistant) -> Iterator[_SetupMocks]:
+    """Run async_setup_entry without a gateway and without platforms."""
+    with (
+        patch(f"{_INIT}.resolve_preferred_port_path", side_effect=lambda port: port) as resolve,
+        patch(f"{_INIT}.MeltemModbusClient", autospec=True) as client_cls,
+        patch(f"{_INIT}.MeltemDataUpdateCoordinator", autospec=True) as coordinator_cls,
+        patch.object(hass.config_entries, "async_forward_entry_setups", new=AsyncMock()) as forward,
+    ):
+        yield _SetupMocks(resolve, client_cls, coordinator_cls, forward)
 
 
 # ---------------------------------------------------------------------------
@@ -81,497 +123,166 @@ def _mock_config_entry(**overrides) -> MockConfigEntry:
 
 
 class TestAsyncSetupEntry:
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda p: p,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
     async def test_setup_creates_coordinator_and_forwards_platforms(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
     ) -> None:
-        """async_setup_entry should create client + coordinator, do first refresh,
-        store runtime data, and forward platforms."""
-        mock_coordinator = mock_coordinator_cls.return_value
-        mock_coordinator.async_refresh = AsyncMock()
-
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
-
-        created_tasks = []
-
-        def _create_background_task(_hass, coro, _name, **kwargs):
-            created_tasks.append(coro)
-            coro.close()
-            return MagicMock()
+        entry = _entry(hass)
 
         with patch.object(
-            hass.config_entries,
-            "async_forward_entry_setups",
-            new=AsyncMock(),
-        ) as mock_forward, patch.object(
-            entry, "async_create_background_task", side_effect=_create_background_task
-        ):
-            result = await async_setup_entry(hass, entry)
+            entry,
+            "async_create_background_task",
+            side_effect=lambda _hass, coro, _name, **_kwargs: coro.close(),
+        ) as create_task:
+            assert await async_setup_entry(hass, entry) is True
 
-        assert result is True
-        mock_client_cls.assert_called_once()
-        mock_coordinator_cls.assert_called_once()
-        mock_forward.assert_awaited_once_with(entry, PLATFORMS)
+        setup_mocks.client_cls.assert_called_once()
+        setup_mocks.coordinator_cls.assert_called_once()
+        setup_mocks.forward.assert_awaited_once_with(entry, PLATFORMS)
         # The first refresh runs in the background so setup stays fast.
-        assert len(created_tasks) == 1
-        assert hasattr(entry, "runtime_data")
+        create_task.assert_called_once()
+        assert isinstance(entry.runtime_data, MeltemRuntimeData)
 
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda port: port,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
     async def test_setup_failure_after_coordinator_removes_runtime_data(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
     ) -> None:
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
+        setup_mocks.forward.side_effect = RuntimeError("platform failed")
+        entry = _entry(hass)
 
-        with (
-            patch.object(
-                hass.config_entries,
-                "async_forward_entry_setups",
-                new=AsyncMock(side_effect=RuntimeError("platform failed")),
-            ),
-            pytest.raises(RuntimeError, match="platform failed"),
-        ):
+        with pytest.raises(RuntimeError, match="platform failed"):
             await async_setup_entry(hass, entry)
 
         assert not hasattr(entry, "runtime_data")
-        mock_client_cls.return_value.shutdown.assert_called_once()
+        setup_mocks.client_cls.return_value.shutdown.assert_called_once()
 
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda port: port,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    async def test_unreachable_gateway_retries_setup(
-        self,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
-    ) -> None:
-        mock_client_cls.return_value.async_validate_gateway.side_effect = (
-            MeltemConnectionError("no answer")
-        )
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
-
-        with pytest.raises(ConfigEntryNotReady):
-            await async_setup_entry(hass, entry)
-
-        mock_client_cls.return_value.shutdown.assert_called_once()
-
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda port: port,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    async def test_port_held_with_other_link_settings_fails_setup(
-        self,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
-    ) -> None:
-        mock_client_cls.return_value.async_validate_gateway.side_effect = (
-            HomeAssistantError("already in use with different link settings")
-        )
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
-
-        with pytest.raises(ConfigEntryError):
-            await async_setup_entry(hass, entry)
-
-        mock_client_cls.return_value.shutdown.assert_called_once()
-
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda port: port,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
-    async def test_client_takes_its_units_from_the_modbus_integration(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
-    ) -> None:
-        mock_coordinator_cls.return_value.async_refresh = AsyncMock()
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
-
-        with (
-            patch(
-                "custom_components.meltem_ventilation.async_get_unit"
-            ) as mock_get_unit,
-            patch.object(
-                hass.config_entries,
-                "async_forward_entry_setups",
-                new=AsyncMock(),
+    @pytest.mark.parametrize(
+        ("error", "raised"),
+        [
+            (MeltemConnectionError("no answer"), ConfigEntryNotReady),
+            (
+                HomeAssistantError("already in use with different link settings"),
+                ConfigEntryError,
             ),
-        ):
+        ],
+        ids=("unreachable-gateway", "port-held-with-other-link-settings"),
+    )
+    async def test_failed_gateway_validation_shuts_the_client_down(
+        self,
+        hass: HomeAssistant,
+        setup_mocks: _SetupMocks,
+        error: Exception,
+        raised: type[Exception],
+    ) -> None:
+        client = setup_mocks.client_cls.return_value
+        client.async_validate_gateway.side_effect = error
+        entry = _entry(hass)
+
+        with pytest.raises(raised):
             await async_setup_entry(hass, entry)
-            unit_factory = mock_client_cls.call_args.args[0]
+
+        client.shutdown.assert_called_once()
+
+    async def test_client_takes_its_units_from_the_modbus_integration(
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
+    ) -> None:
+        entry = _entry(hass)
+
+        with patch(f"{_INIT}.async_get_unit") as get_unit:
+            await async_setup_entry(hass, entry)
+            unit_factory = setup_mocks.client_cls.call_args.args[0]
             unit_factory(2)
 
-        mock_get_unit.assert_called_once_with(
-            hass,
-            entry,
-            build_serial_params(MINIMAL_ENTRY_DATA[CONF_PORT]),
-            2,
-        )
+        get_unit.assert_called_once_with(hass, entry, build_serial_params(_PORT), 2)
 
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
     async def test_setup_normalizes_port_path(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        hass: HomeAssistant,
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
     ) -> None:
-        mock_coordinator = mock_coordinator_cls.return_value
-        mock_coordinator.async_refresh = AsyncMock()
+        setup_mocks.resolve_port.side_effect = lambda _port: "/dev/serial/by-id/normalized"
+        entry = _entry(hass, port="/dev/ttyACM0")
 
-        data = deepcopy(MINIMAL_ENTRY_DATA)
-        data[CONF_PORT] = "/dev/ttyACM0"
-        entry = _mock_config_entry(data=data)
-        entry.add_to_hass(hass)
+        await async_setup_entry(hass, entry)
 
-        with (
-            patch(
-                "custom_components.meltem_ventilation.resolve_preferred_port_path",
-                return_value="/dev/serial/by-id/normalized",
-            ),
-            patch.object(
-                hass.config_entries,
-                "async_forward_entry_setups",
-                new=AsyncMock(),
-            ),
-        ):
-            await async_setup_entry(hass, entry)
+        assert entry.data[CONF_PORT] == entry.unique_id == "/dev/serial/by-id/normalized"
 
-        # The entry data should have been updated.
-        assert entry.data[CONF_PORT] == "/dev/serial/by-id/normalized"
-        assert entry.unique_id == "/dev/serial/by-id/normalized"
-
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda p: p,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
     async def test_setup_derives_missing_entity_keys_from_the_profile(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
     ) -> None:
         """Legacy rooms without stored keys get their profile's entities, no probe."""
-        mock_coordinator_cls.return_value.async_refresh = AsyncMock()
-
-        data = deepcopy(MINIMAL_ENTRY_DATA)
-        data[CONF_ROOMS] = [
-            {"key": "unit_1", "name": "Unit 1", "slave": 2, "profile": "ii_fc"}
-        ]
-        entry = _mock_config_entry(data=data)
-        entry.add_to_hass(hass)
-
-        with patch.object(
-            hass.config_entries,
-            "async_forward_entry_setups",
-            new=AsyncMock(),
-        ):
-            await async_setup_entry(hass, entry)
-
-        room = mock_coordinator_cls.call_args.kwargs["rooms"][0]
-        assert room.supported_entity_keys == frozenset(
-            supported_entity_keys_for_profile("ii_fc")
+        entry = _entry(
+            hass, rooms=[{"key": "unit_1", "name": "Unit 1", "slave": 2, "profile": "ii_fc"}]
         )
+
+        await async_setup_entry(hass, entry)
+
+        room = setup_mocks.coordinator_cls.call_args.kwargs["rooms"][0]
+        assert room.supported_entity_keys == frozenset(supported_entity_keys_for_profile("ii_fc"))
         # The stored entry is not rewritten.
         assert "supported_entity_keys" not in entry.data[CONF_ROOMS][0]
 
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda port: port,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
     async def test_setup_completes_stale_entity_keys_with_the_profile(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
     ) -> None:
         """Keys stored by an older release still get entities added later."""
-        mock_coordinator_cls.return_value.async_refresh = AsyncMock()
-        data = deepcopy(MINIMAL_ENTRY_DATA)
-        data[CONF_ROOMS] = [
-            {
-                **MINIMAL_ROOM,
-                "profile": "ii_fc",
-                "supported_entity_keys": ["extract_air_flow", "humidity_extract_air"],
-            }
-        ]
-        entry = _mock_config_entry(data=data)
-        entry.add_to_hass(hass)
-
-        with patch.object(
-            hass.config_entries,
-            "async_forward_entry_setups",
-            new=AsyncMock(),
-        ):
-            await async_setup_entry(hass, entry)
-
-        room = mock_coordinator_cls.call_args.kwargs["rooms"][0]
-        assert set(supported_entity_keys_for_profile("ii_fc")).issubset(
-            room.supported_entity_keys
+        stored_keys = ["extract_air_flow", "humidity_extract_air"]
+        entry = _entry(
+            hass,
+            rooms=[{**_ROOM, "profile": "ii_fc", "supported_entity_keys": stored_keys}],
         )
-        assert entry.data[CONF_ROOMS][0]["supported_entity_keys"] == [
-            "extract_air_flow",
-            "humidity_extract_air",
+
+        await async_setup_entry(hass, entry)
+
+        room = setup_mocks.coordinator_cls.call_args.kwargs["rooms"][0]
+        assert set(supported_entity_keys_for_profile("ii_fc")) <= room.supported_entity_keys
+        assert entry.data[CONF_ROOMS][0]["supported_entity_keys"] == stored_keys
+
+    @pytest.mark.parametrize(
+        ("platform", "key"),
+        [
+            pytest.param("fan", "level", id="single-fan"),
+            pytest.param("number", "supply_level", id="level-number"),
+            pytest.param("button", "activate_intensive", id="intensive-button"),
+            pytest.param("binary_sensor", "intensive_active", id="intensive-binary-sensor"),
+            pytest.param("sensor", "co2_extract_air", id="previous-profile-sensor"),
+            pytest.param("number", "co2_max_level", id="previous-profile-number"),
+            pytest.param("select", "operation_mode", id="previous-profile-select"),
+        ],
+    )
+    @pytest.mark.usefixtures("setup_mocks")
+    async def test_setup_removes_obsolete_entities(
+        self, hass: HomeAssistant, platform: str, key: str,
+    ) -> None:
+        entry = _entry(hass)
+        obsolete = _register_entity(hass, entry, platform, key)
+        kept = [
+            _register_entity(hass, entry, "sensor", "operating_hours"),
+            _register_entity(hass, entry, "sensor", "exhaust_temperature"),
         ]
 
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda p: p,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
-    async def test_setup_removes_entities_replaced_by_the_directional_fans(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
-    ) -> None:
-        mock_coordinator = mock_coordinator_cls.return_value
-        mock_coordinator.async_refresh = AsyncMock()
-
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
+        await async_setup_entry(hass, entry)
 
         registry = er.async_get(hass)
-        obsolete = registry.async_get_or_create(
-            "fan", DOMAIN, f"{DOMAIN}_unit_1_level", config_entry=entry
-        )
-        obsolete_number = registry.async_get_or_create(
-            "number", DOMAIN, f"{DOMAIN}_unit_1_supply_level", config_entry=entry
-        )
-        obsolete_button = registry.async_get_or_create(
-            "button", DOMAIN, f"{DOMAIN}_unit_1_activate_intensive", config_entry=entry
-        )
-        obsolete_binary_sensor = registry.async_get_or_create(
-            "binary_sensor", DOMAIN, f"{DOMAIN}_unit_1_intensive_active", config_entry=entry
-        )
-        kept = registry.async_get_or_create(
-            "sensor", DOMAIN, f"{DOMAIN}_unit_1_operating_hours", config_entry=entry
-        )
-
-        with patch.object(
-            hass.config_entries,
-            "async_forward_entry_setups",
-            new=AsyncMock(),
-        ):
-            await async_setup_entry(hass, entry)
-
         assert registry.async_get(obsolete.entity_id) is None
-        assert registry.async_get(obsolete_number.entity_id) is None
-        assert registry.async_get(obsolete_button.entity_id) is None
-        assert registry.async_get(obsolete_binary_sensor.entity_id) is None
-        assert registry.async_get(kept.entity_id) is not None
+        assert all(registry.async_get(entity.entity_id) for entity in kept)
 
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda port: port,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
-    async def test_setup_removes_entities_from_the_previous_profile(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
-    ) -> None:
-        mock_coordinator_cls.return_value.async_refresh = AsyncMock()
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
-        registry = er.async_get(hass)
-        old_co2 = registry.async_get_or_create(
-            "sensor", DOMAIN, f"{DOMAIN}_unit_1_co2_extract_air", config_entry=entry
-        )
-        old_threshold = registry.async_get_or_create(
-            "number", DOMAIN, f"{DOMAIN}_unit_1_co2_max_level", config_entry=entry
-        )
-        old_sensor_mode = registry.async_get_or_create(
-            "select", DOMAIN, f"{DOMAIN}_unit_1_operation_mode", config_entry=entry
-        )
-        kept = registry.async_get_or_create(
-            "sensor", DOMAIN, f"{DOMAIN}_unit_1_exhaust_temperature", config_entry=entry
-        )
-
-        with patch.object(
-            hass.config_entries,
-            "async_forward_entry_setups",
-            new=AsyncMock(),
-        ):
-            await async_setup_entry(hass, entry)
-
-        assert registry.async_get(old_co2.entity_id) is None
-        assert registry.async_get(old_threshold.entity_id) is None
-        assert registry.async_get(old_sensor_mode.entity_id) is None
-        assert registry.async_get(kept.entity_id) is not None
-
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda p: p,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
+    @pytest.mark.usefixtures("setup_mocks")
     async def test_setup_keeps_obsolete_entities_of_other_entries(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
+        self, hass: HomeAssistant,
     ) -> None:
         """Room keys are only unique per gateway."""
-        mock_coordinator = mock_coordinator_cls.return_value
-        mock_coordinator.async_refresh = AsyncMock()
+        entry = _entry(hass)
+        foreign = _register_entity(hass, _entry(hass, entry_id="other-entry-id"), "fan", "level")
 
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
-        other_entry = _mock_config_entry(entry_id="other-entry-id")
-        other_entry.add_to_hass(hass)
+        await async_setup_entry(hass, entry)
 
-        registry = er.async_get(hass)
-        foreign = registry.async_get_or_create(
-            "fan", DOMAIN, f"{DOMAIN}_unit_1_level", config_entry=other_entry
-        )
+        assert er.async_get(hass).async_get(foreign.entity_id) is not None
 
-        with patch.object(
-            hass.config_entries,
-            "async_forward_entry_setups",
-            new=AsyncMock(),
-        ):
-            await async_setup_entry(hass, entry)
-
-        assert registry.async_get(foreign.entity_id) is not None
-
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda p: p,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
     async def test_setup_respects_option_max_request_rate(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
     ) -> None:
-        mock_coordinator = mock_coordinator_cls.return_value
-        mock_coordinator.async_refresh = AsyncMock()
+        entry = _entry(hass, options={CONF_MAX_REQUESTS_PER_SECOND: 5.0})
 
-        entry = _mock_config_entry(
-            options={CONF_MAX_REQUESTS_PER_SECOND: 5.0}
-        )
-        entry.add_to_hass(hass)
+        await async_setup_entry(hass, entry)
 
-        with patch.object(
-            hass.config_entries,
-            "async_forward_entry_setups",
-            new=AsyncMock(),
-        ):
-            await async_setup_entry(hass, entry)
-
-        call_kwargs = mock_coordinator_cls.call_args
-        assert call_kwargs.kwargs["max_requests_per_second"] == 5.0
+        assert setup_mocks.coordinator_cls.call_args.kwargs["max_requests_per_second"] == 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -580,66 +291,41 @@ class TestAsyncSetupEntry:
 
 
 class TestAsyncUnloadEntry:
-    async def test_unload_removes_runtime_data_and_shuts_the_client_down(
-        self, hass: HomeAssistant,
+    @pytest.mark.parametrize("unloaded", [True, False])
+    async def test_coordinator_and_client_shut_down_only_after_the_platforms(
+        self, hass: HomeAssistant, unloaded: bool,
     ) -> None:
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
-
-        mock_client = MagicMock()
-        mock_coordinator = MagicMock()
-        mock_coordinator.client = mock_client
-        mock_coordinator.async_shutdown = AsyncMock()
-        entry.runtime_data = MeltemRuntimeData(coordinator=mock_coordinator)
+        entry = _entry(hass)
+        coordinator = MagicMock()
+        coordinator.async_shutdown = AsyncMock()
+        entry.runtime_data = MeltemRuntimeData(coordinator=coordinator)
 
         with patch.object(
             hass.config_entries,
             "async_unload_platforms",
-            new=AsyncMock(return_value=True),
+            new=AsyncMock(return_value=unloaded),
         ):
-            result = await async_unload_entry(hass, entry)
+            assert await async_unload_entry(hass, entry) is unloaded
 
-        assert result is True
-        mock_client.shutdown.assert_called_once()
+        assert coordinator.async_shutdown.await_count == int(unloaded)
+        assert coordinator.client.shutdown.call_count == int(unloaded)
 
-    async def test_unload_returns_false_on_platform_failure(
-        self, hass: HomeAssistant,
-    ) -> None:
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
 
-        mock_client = MagicMock()
-        mock_coordinator = MagicMock()
-        mock_coordinator.client = mock_client
-        entry.runtime_data = MeltemRuntimeData(coordinator=mock_coordinator)
-
-        with patch.object(
-            hass.config_entries,
-            "async_unload_platforms",
-            new=AsyncMock(return_value=False),
-        ):
-            result = await async_unload_entry(hass, entry)
-
-        assert result is False
+# ---------------------------------------------------------------------------
+#  async_migrate_entry
+# ---------------------------------------------------------------------------
 
 
 class TestAsyncMigrateEntry:
     async def test_migration_renames_the_airflow_health_entity(
         self, hass: HomeAssistant
     ) -> None:
-        entry = _mock_config_entry(minor_version=1)
-        entry.add_to_hass(hass)
-        registry = er.async_get(hass)
-        legacy = registry.async_get_or_create(
-            "binary_sensor",
-            DOMAIN,
-            f"{DOMAIN}_unit_1_airflow_data_stale",
-            config_entry=entry,
-        )
+        entry = _entry(hass, minor_version=1)
+        legacy = _register_entity(hass, entry, "binary_sensor", "airflow_data_stale")
 
         assert await async_migrate_entry(hass, entry) is True
 
-        migrated = registry.async_get(legacy.entity_id)
+        migrated = er.async_get(hass).async_get(legacy.entity_id)
         assert migrated is not None
         assert migrated.unique_id == f"{DOMAIN}_unit_1_data_health"
         assert entry.minor_version == 2
@@ -647,66 +333,35 @@ class TestAsyncMigrateEntry:
     async def test_migration_keeps_an_existing_data_health_entity(
         self, hass: HomeAssistant
     ) -> None:
-        entry = _mock_config_entry(minor_version=1)
-        entry.add_to_hass(hass)
-        registry = er.async_get(hass)
-        legacy = registry.async_get_or_create(
-            "binary_sensor",
-            DOMAIN,
-            f"{DOMAIN}_unit_1_airflow_data_stale",
-            config_entry=entry,
-        )
-        current = registry.async_get_or_create(
-            "binary_sensor",
-            DOMAIN,
-            f"{DOMAIN}_unit_1_data_health",
-            config_entry=entry,
-        )
+        entry = _entry(hass, minor_version=1)
+        legacy = _register_entity(hass, entry, "binary_sensor", "airflow_data_stale")
+        current = _register_entity(hass, entry, "binary_sensor", "data_health")
 
         assert await async_migrate_entry(hass, entry) is True
 
-        assert registry.async_get(legacy.entity_id).unique_id == (
-            f"{DOMAIN}_unit_1_airflow_data_stale"
-        )
-        assert registry.async_get(current.entity_id).unique_id == (
-            f"{DOMAIN}_unit_1_data_health"
-        )
+        registry = er.async_get(hass)
+        assert registry.async_get(legacy.entity_id).unique_id == legacy.unique_id
+        assert registry.async_get(current.entity_id).unique_id == current.unique_id
 
     async def test_migration_rejects_a_newer_major_version(
         self, hass: HomeAssistant
     ) -> None:
-        entry = _mock_config_entry(version=2, minor_version=1)
-        entry.add_to_hass(hass)
+        entry = _entry(hass, version=2, minor_version=1)
 
         assert await async_migrate_entry(hass, entry) is False
 
 
-@patch(
-    "custom_components.meltem_ventilation.resolve_preferred_port_path",
-    side_effect=lambda port: port,
-)
-@patch("custom_components.meltem_ventilation.MeltemModbusClient", autospec=True)
-@patch(
-    "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator", autospec=True
-)
+# ---------------------------------------------------------------------------
+#  Device registry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("setup_mocks")
 class TestDeviceRegistrySync:
-    @staticmethod
-    async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-        with patch.object(
-            hass.config_entries,
-            "async_forward_entry_setups",
-            new=AsyncMock(),
-        ):
-            await async_setup_entry(hass, entry)
+    async def test_setup_registers_the_gateway_device(self, hass: HomeAssistant) -> None:
+        entry = _entry(hass)
 
-    async def test_setup_registers_the_gateway_device(
-        self, mock_coordinator_cls, _mock_client_cls, _mock_resolve, hass: HomeAssistant
-    ) -> None:
-        mock_coordinator_cls.return_value.async_refresh = AsyncMock()
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
-
-        await self._setup(hass, entry)
+        await async_setup_entry(hass, entry)
 
         gateway = dr.async_get(hass).async_get_device_by_identifier(
             (DOMAIN, entry.entry_id), entry.entry_id
@@ -715,11 +370,9 @@ class TestDeviceRegistrySync:
         assert gateway.model == "M-WRG-GW"
 
     async def test_setup_removes_devices_of_unconfigured_units(
-        self, mock_coordinator_cls, _mock_client_cls, _mock_resolve, hass: HomeAssistant
+        self, hass: HomeAssistant
     ) -> None:
-        mock_coordinator_cls.return_value.async_refresh = AsyncMock()
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
+        entry = _entry(hass)
         registry = dr.async_get(hass)
         configured = registry.async_get_or_create(
             config_entry_id=entry.entry_id, identifiers={(DOMAIN, "unit_1")}
@@ -728,7 +381,7 @@ class TestDeviceRegistrySync:
             config_entry_id=entry.entry_id, identifiers={(DOMAIN, "unit_9")}
         )
 
-        await self._setup(hass, entry)
+        await async_setup_entry(hass, entry)
 
         assert registry.async_get(configured.id) is not None
         assert registry.async_get(dropped.id) is None
@@ -760,8 +413,7 @@ class TestSharedModbusConnection:
 
     async def test_unload_releases_the_link(self, hass: HomeAssistant) -> None:
         links: list[MockModbusConnection] = []
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
+        entry = _entry(hass)
 
         with self._patch_link(links):
             assert await hass.config_entries.async_setup(entry.entry_id)
@@ -780,8 +432,7 @@ class TestSharedModbusConnection:
         self, hass: HomeAssistant
     ) -> None:
         links: list[MockModbusConnection] = []
-        entry = _mock_config_entry()
-        entry.add_to_hass(hass)
+        entry = _entry(hass)
 
         with self._patch_link(links, gateway_silent=True):
             await hass.config_entries.async_setup(entry.entry_id)

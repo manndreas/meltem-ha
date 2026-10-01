@@ -12,23 +12,11 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 
-from modbus_connection import (
-    ModbusConnectionError,
-    ModbusError,
-    ModbusSerialParams,
-    ModbusUnit,
-)
-from modbus_connection.tmodbus import ModbusConnection
+from modbus_connection import ModbusConnectionError, ModbusError, ModbusUnit
 
+from tools._link import DEFAULT_PORT, open_link, parse_register_range, run
 
-FIXED_BAUDRATE = 19200
-FIXED_BYTESIZE = 8
-FIXED_PARITY = "E"
-FIXED_STOPBITS = 1
-FIXED_TIMEOUT = 0.8
-DEFAULT_PORT = "/dev/ttyACM0"
 DEFAULT_INTERVAL = 1.0
-REQUEST_GAP_SECONDS = 0.1
 
 
 @dataclass(frozen=True)
@@ -54,23 +42,8 @@ DEFAULT_RANGES: tuple[RegisterRange, ...] = (
 def parse_range(value: str) -> RegisterRange:
     """Parse one CLI range in either start:count or start-end form."""
 
-    if ":" in value:
-        start_s, count_s = value.split(":", 1)
-        start = int(start_s)
-        count = int(count_s)
-        if count <= 0:
-            raise argparse.ArgumentTypeError("count must be > 0")
-        return RegisterRange(start, count)
-
-    if "-" in value:
-        start_s, end_s = value.split("-", 1)
-        start = int(start_s)
-        end = int(end_s)
-        if end < start:
-            raise argparse.ArgumentTypeError("end must be >= start")
-        return RegisterRange(start, end - start + 1)
-
-    raise argparse.ArgumentTypeError("range must use start:count or start-end")
+    start, end = parse_register_range(value)
+    return RegisterRange(start, end - start + 1)
 
 
 async def read_range(
@@ -112,28 +85,10 @@ def parse_args() -> argparse.Namespace:
 async def main() -> int:
     args = parse_args()
     ranges = tuple(args.ranges) if args.ranges else DEFAULT_RANGES
-
-    connection = ModbusConnection(
-        ModbusSerialParams(
-            device=args.port,
-            baudrate=FIXED_BAUDRATE,
-            bytesize=FIXED_BYTESIZE,
-            parity=FIXED_PARITY,
-            stopbits=FIXED_STOPBITS,
-        ),
-        timeout=FIXED_TIMEOUT,
-        message_spacing=REQUEST_GAP_SECONDS,
-    )
-    try:
-        await connection.connect()
-    except ModbusConnectionError as err:
-        print(f"ERROR: could not open serial connection on {args.port}: {err}")
-        return 2
-
-    unit = connection.for_unit(args.slave)
     previous: dict[RegisterRange, tuple[int, ...] | None] = {}
 
-    try:
+    async with open_link(args.port) as link:
+        unit = link.for_unit(args.slave)
         print(f"watching slave {args.slave} on {args.port}")
         print("ranges:")
         for register_range in ranges:
@@ -158,15 +113,7 @@ async def main() -> int:
                     )
 
             await asyncio.sleep(args.interval)
-    except ModbusConnectionError as err:
-        print(f"ERROR: lost the serial connection on {args.port}: {err}")
-        return 2
-    finally:
-        await connection.close()
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(asyncio.run(main()))
-    except KeyboardInterrupt:
-        raise SystemExit(0) from None
+    run(main)
