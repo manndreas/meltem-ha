@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import importlib.util
 from pathlib import Path
 import statistics
 import sys
 import time
 
-from pymodbus.client import ModbusSerialClient
+from modbus_connection import ModbusConnectionError, ModbusError, ModbusSerialParams
+from modbus_connection.tmodbus import ModbusConnection
 
 DEFAULT_PORT = "/dev/ttyACM0"
 DEFAULT_GATEWAY_DEVICE_ID = 1
@@ -23,17 +26,26 @@ def _install_homeassistant_stub() -> None:
 
     homeassistant_module = type(sys)("homeassistant")
     const_module = type(sys)("homeassistant.const")
+    util_module = type(sys)("homeassistant.util")
+    dt_module = type(sys)("homeassistant.util.dt")
 
     class Platform:
         SENSOR = "sensor"
         BINARY_SENSOR = "binary_sensor"
         NUMBER = "number"
         SELECT = "select"
+        FAN = "fan"
+        SWITCH = "switch"
 
     const_module.Platform = Platform
+    dt_module.utcnow = lambda: datetime.now(UTC)
+    util_module.dt = dt_module
     homeassistant_module.const = const_module
+    homeassistant_module.util = util_module
     sys.modules.setdefault("homeassistant", homeassistant_module)
     sys.modules.setdefault("homeassistant.const", const_module)
+    sys.modules.setdefault("homeassistant.util", util_module)
+    sys.modules.setdefault("homeassistant.util.dt", dt_module)
 
 
 def _ensure_package_stub() -> None:
@@ -84,43 +96,18 @@ modbus_client_module = _load_module(
     "custom_components/meltem_ventilation/modbus_client.py",
 )
 
-FIXED_BAUDRATE = const_module.FIXED_BAUDRATE
-FIXED_BYTESIZE = const_module.FIXED_BYTESIZE
-FIXED_PARITY = const_module.FIXED_PARITY
-FIXED_STOPBITS = const_module.FIXED_STOPBITS
 FIXED_TIMEOUT = const_module.FIXED_TIMEOUT
 
 RefreshPlan = models_module.RefreshPlan
 RoomConfig = models_module.RoomConfig
 RoomState = models_module.RoomState
 MeltemModbusClient = modbus_client_module.MeltemModbusClient
-SerialSettings = modbus_helpers_module.SerialSettings
+MeltemConnectionError = modbus_helpers_module.MeltemConnectionError
+build_serial_params = modbus_helpers_module.build_serial_params
 detect_slave_details = modbus_helpers_module.detect_slave_details
 discover_gateway_nodes = modbus_helpers_module.discover_gateway_nodes
-build_client = modbus_helpers_module.build_client
-
-
-def _install_pymodbus_compat() -> None:
-    """Accept both `device_id=` and `slave=` on this local pymodbus version."""
-
-    original_read = ModbusSerialClient.read_holding_registers
-    original_write = ModbusSerialClient.write_register
-
-    def compat_read(self, *args, **kwargs):
-        if "device_id" in kwargs and "slave" not in kwargs:
-            kwargs["slave"] = kwargs.pop("device_id")
-        return original_read(self, *args, **kwargs)
-
-    def compat_write(self, *args, **kwargs):
-        if "device_id" in kwargs and "slave" not in kwargs:
-            kwargs["slave"] = kwargs.pop("device_id")
-        return original_write(self, *args, **kwargs)
-
-    ModbusSerialClient.read_holding_registers = compat_read
-    ModbusSerialClient.write_register = compat_write
-
-
-_install_pymodbus_compat()
+new_transport_policy = modbus_helpers_module.new_transport_policy
+prepare_unit = modbus_helpers_module.prepare_unit
 
 
 @dataclass
@@ -130,6 +117,29 @@ class Sample:
     ok: bool
     latency_ms: float
     detail: str
+
+
+def open_connection(port: str) -> ModbusConnection:
+    """Open the gateway link the way Home Assistant's modbus integration does.
+
+    The timeout and spacing are asked for per unit by ``prepare_unit``.
+    """
+
+    params: ModbusSerialParams = build_serial_params(port)
+    return ModbusConnection(params)
+
+
+async def read_raw(
+    connection: ModbusConnection, slave: int, address: int, count: int
+) -> list[int] | None:
+    """Read raw holding registers next to the client, or None if refused."""
+
+    try:
+        return await connection.for_unit(slave).read_holding_registers(address, count)
+    except ModbusConnectionError:
+        raise
+    except ModbusError:
+        return None
 
 
 def _profile_from_detected_suffix(suffix: str) -> str:
@@ -142,22 +152,19 @@ def _profile_from_detected_suffix(suffix: str) -> str:
     return mapping.get(suffix, "ii_plain")
 
 
-def discover_rooms(settings: SerialSettings) -> list[RoomConfig]:
+async def discover_rooms(connection: ModbusConnection, port: str) -> list[RoomConfig]:
     """Discover configured rooms and probe their supported keys."""
 
-    client = build_client(settings)
-    try:
-        if not client.connect():
-            raise RuntimeError(f"Could not open serial connection on {settings.port}")
-        slaves = discover_gateway_nodes(client, settings.port, start=2, end=16)
-    finally:
-        client.close()
+    policy = new_transport_policy()
+    gateway = prepare_unit(
+        connection.for_unit(DEFAULT_GATEWAY_DEVICE_ID), DEFAULT_GATEWAY_DEVICE_ID, policy
+    )
+    slaves = await discover_gateway_nodes(gateway, port, start=2, end=16)
 
     rooms: list[RoomConfig] = []
     for index, slave in enumerate(slaves, start=1):
-        detected_profile, preview, supported_entity_keys = detect_slave_details(
-            settings,
-            slave,
+        detected_profile, preview, supported_entity_keys = await detect_slave_details(
+            prepare_unit(connection.for_unit(slave), slave, policy)
         )
         rooms.append(
             RoomConfig(
@@ -172,7 +179,13 @@ def discover_rooms(settings: SerialSettings) -> list[RoomConfig]:
     return rooms
 
 
-def run_full_cycles(
+def _room_at(rooms: list[RoomConfig], room_index: int) -> RoomConfig:
+    if room_index < 1 or room_index > len(rooms):
+        raise RuntimeError(f"room_index must be between 1 and {len(rooms)}")
+    return rooms[room_index - 1]
+
+
+async def run_full_cycles(
     client: MeltemModbusClient,
     rooms: list[RoomConfig],
     cycles: int,
@@ -187,7 +200,7 @@ def run_full_cycles(
         for room in rooms:
             start = time.perf_counter()
             try:
-                state = client.read_room_state(
+                state = await client.read_room_state(
                     room,
                     previous_states.get(room.key, RoomState()),
                     RefreshPlan(),
@@ -220,7 +233,7 @@ def run_full_cycles(
     return samples
 
 
-def run_scheduler_cycles(
+async def run_scheduler_cycles(
     client: MeltemModbusClient,
     rooms: list[RoomConfig],
     cycles: int,
@@ -256,7 +269,7 @@ def run_scheduler_cycles(
             for room in rooms:
                 start = time.perf_counter()
                 try:
-                    state = client.read_room_state(
+                    state = await client.read_room_state(
                         room,
                         previous_states.get(room.key, RoomState()),
                         plan,
@@ -289,8 +302,32 @@ def run_scheduler_cycles(
     return samples
 
 
-def run_write_refresh(
+async def _timed_write(
     client: MeltemModbusClient,
+    room: RoomConfig,
+    target: int,
+    label: str,
+    samples: list[Sample],
+) -> None:
+    """Write one balanced target and record how long the write sequence took."""
+
+    start = time.perf_counter()
+    await client.write_level(room, target)
+    samples.append(
+        Sample(
+            ok=True,
+            latency_ms=(time.perf_counter() - start) * 1000,
+            detail=f"slave {room.slave} {label} target={target}",
+        )
+    )
+    print(
+        f"  unit {room.slave:>2} {label + '_target':<23} OK   {samples[-1].latency_ms:>6.1f} ms  target={target}"
+    )
+
+
+async def run_write_refresh(
+    client: MeltemModbusClient,
+    connection: ModbusConnection,
     rooms: list[RoomConfig],
     room_index: int,
     delta: int,
@@ -300,21 +337,15 @@ def run_write_refresh(
 ) -> list[Sample]:
     """Write one balanced airflow target, poll until applied, then restore."""
 
-    if room_index < 1 or room_index > len(rooms):
-        raise RuntimeError(f"room_index must be between 1 and {len(rooms)}")
+    room = _room_at(rooms, room_index)
 
-    room = rooms[room_index - 1]
-
-    def read_raw_snapshot() -> dict[str, object]:
-        modbus = client._ensure_client()
-        mode_block = client._read_optional_uint16_block(modbus, room.slave, 41120, 3)
-        flow_block = client._read_optional_uint16_block(modbus, room.slave, 41020, 2)
+    async def read_raw_snapshot() -> dict[str, object]:
         return {
-            "mode_block_41120_41122": mode_block,
-            "flow_block_41020_41021": flow_block,
+            "mode_block_41120_41122": await read_raw(connection, room.slave, 41120, 3),
+            "flow_block_41020_41021": await read_raw(connection, room.slave, 41020, 2),
         }
 
-    baseline_state = client.read_room_state(
+    baseline_state = await client.read_room_state(
         room,
         RoomState(),
         RefreshPlan.only(refresh_airflow=True),
@@ -326,10 +357,10 @@ def run_write_refresh(
     target_flow = max(0, baseline_flow + delta)
     samples: list[Sample] = []
 
-    def poll_until(expected: int, phase: str) -> None:
+    async def poll_until(expected: int, phase: str) -> None:
         for attempt in range(1, max_polls + 1):
             start = time.perf_counter()
-            state = client.read_room_state(
+            state = await client.read_room_state(
                 room,
                 baseline_state,
                 RefreshPlan.only(refresh_airflow=True),
@@ -345,7 +376,7 @@ def run_write_refresh(
             )
             if ok:
                 return
-            time.sleep(poll_interval)
+            await asyncio.sleep(poll_interval)
         raise RuntimeError(
             f"{phase} did not reach expected airflow {expected} for slave {room.slave}"
         )
@@ -353,44 +384,22 @@ def run_write_refresh(
     print(
         f"write_refresh room_index={room_index} slave={room.slave} baseline={baseline_flow} target={target_flow}"
     )
-    print(f"  raw before: {read_raw_snapshot()}")
+    print(f"  raw before: {await read_raw_snapshot()}")
 
-    start = time.perf_counter()
-    client.write_level(room, target_flow)
-    samples.append(
-        Sample(
-            ok=True,
-            latency_ms=(time.perf_counter() - start) * 1000,
-            detail=f"slave {room.slave} write target={target_flow}",
-        )
-    )
-    print(
-        f"  unit {room.slave:>2} write_target            OK   {samples[-1].latency_ms:>6.1f} ms  target={target_flow}"
-    )
-    print(f"  raw after write: {read_raw_snapshot()}")
-    time.sleep(settle_seconds)
-    poll_until(target_flow, "post_write")
+    await _timed_write(client, room, target_flow, "write", samples)
+    print(f"  raw after write: {await read_raw_snapshot()}")
+    await asyncio.sleep(settle_seconds)
+    await poll_until(target_flow, "post_write")
 
-    start = time.perf_counter()
-    client.write_level(room, baseline_flow)
-    samples.append(
-        Sample(
-            ok=True,
-            latency_ms=(time.perf_counter() - start) * 1000,
-            detail=f"slave {room.slave} restore target={baseline_flow}",
-        )
-    )
-    print(
-        f"  unit {room.slave:>2} restore_target          OK   {samples[-1].latency_ms:>6.1f} ms  target={baseline_flow}"
-    )
-    print(f"  raw after restore: {read_raw_snapshot()}")
-    time.sleep(settle_seconds)
-    poll_until(baseline_flow, "post_restore")
+    await _timed_write(client, room, baseline_flow, "restore", samples)
+    print(f"  raw after restore: {await read_raw_snapshot()}")
+    await asyncio.sleep(settle_seconds)
+    await poll_until(baseline_flow, "post_restore")
 
     return samples
 
 
-def run_write_idle_check(
+async def run_write_idle_check(
     client: MeltemModbusClient,
     rooms: list[RoomConfig],
     room_index: int,
@@ -399,20 +408,17 @@ def run_write_idle_check(
 ) -> list[Sample]:
     """Write once, leave the gateway idle, then read back exactly once."""
 
-    if room_index < 1 or room_index > len(rooms):
-        raise RuntimeError(f"room_index must be between 1 and {len(rooms)}")
+    room = _room_at(rooms, room_index)
 
-    room = rooms[room_index - 1]
-
-    def read_airflow() -> int | None:
-        state = client.read_room_state(
+    async def read_airflow() -> int | None:
+        state = await client.read_room_state(
             room,
             RoomState(),
             RefreshPlan.only(refresh_airflow=True),
         )
         return state.target_level or state.supply_air_flow
 
-    baseline_flow = read_airflow()
+    baseline_flow = await read_airflow()
     if baseline_flow is None:
         raise RuntimeError(f"Could not determine baseline airflow for slave {room.slave}")
 
@@ -423,24 +429,13 @@ def run_write_idle_check(
         f"write_idle_check room_index={room_index} slave={room.slave} baseline={baseline_flow} target={target_flow} idle={idle_seconds}s"
     )
 
-    start = time.perf_counter()
-    client.write_level(room, target_flow)
-    samples.append(
-        Sample(
-            ok=True,
-            latency_ms=(time.perf_counter() - start) * 1000,
-            detail=f"slave {room.slave} write target={target_flow}",
-        )
-    )
-    print(
-        f"  unit {room.slave:>2} write_target            OK   {samples[-1].latency_ms:>6.1f} ms  target={target_flow}"
-    )
+    await _timed_write(client, room, target_flow, "write", samples)
 
     print(f"  idling for {idle_seconds:.1f}s without reads")
-    time.sleep(idle_seconds)
+    await asyncio.sleep(idle_seconds)
 
     start = time.perf_counter()
-    airflow_after_idle = read_airflow()
+    airflow_after_idle = await read_airflow()
     samples.append(
         Sample(
             ok=airflow_after_idle == target_flow,
@@ -452,24 +447,13 @@ def run_write_idle_check(
         f"  unit {room.slave:>2} read_after_idle         {'OK ' if samples[-1].ok else 'ERR'}  {samples[-1].latency_ms:>6.1f} ms  airflow={airflow_after_idle} expected={target_flow}"
     )
 
-    start = time.perf_counter()
-    client.write_level(room, baseline_flow)
-    samples.append(
-        Sample(
-            ok=True,
-            latency_ms=(time.perf_counter() - start) * 1000,
-            detail=f"slave {room.slave} restore target={baseline_flow}",
-        )
-    )
-    print(
-        f"  unit {room.slave:>2} restore_target          OK   {samples[-1].latency_ms:>6.1f} ms  target={baseline_flow}"
-    )
+    await _timed_write(client, room, baseline_flow, "restore", samples)
 
     print("  idling for 5.0s before final readback")
-    time.sleep(5.0)
+    await asyncio.sleep(5.0)
 
     start = time.perf_counter()
-    restored_airflow = read_airflow()
+    restored_airflow = await read_airflow()
     samples.append(
         Sample(
             ok=restored_airflow == baseline_flow,
@@ -484,8 +468,9 @@ def run_write_idle_check(
     return samples
 
 
-def run_write_observe(
+async def run_write_observe(
     client: MeltemModbusClient,
+    connection: ModbusConnection,
     rooms: list[RoomConfig],
     room_index: int,
     delta: int,
@@ -494,30 +479,22 @@ def run_write_observe(
 ) -> list[Sample]:
     """Write once, then observe several candidate readback registers over time."""
 
-    if room_index < 1 or room_index > len(rooms):
-        raise RuntimeError(f"room_index must be between 1 and {len(rooms)}")
+    room = _room_at(rooms, room_index)
 
-    room = rooms[room_index - 1]
+    async def single(address: int) -> int | None:
+        registers = await read_raw(connection, room.slave, address, 1)
+        return None if registers is None else registers[0]
 
-    def snapshot() -> dict[str, object]:
-        modbus = client._ensure_client()
+    async def snapshot() -> dict[str, object]:
         return {
-            "flow_block_41020_41021": client._read_optional_uint16_block(
-                modbus, room.slave, 41020, 2
-            ),
-            "mode_41120": client._read_optional_uint16(modbus, room.slave, 41120),
-            "current_level_41121": client._read_optional_uint16(
-                modbus, room.slave, 41121
-            ),
-            "extract_target_41122": client._read_optional_uint16(
-                modbus, room.slave, 41122
-            ),
-            "software_version_40004": client._read_optional_uint16(
-                modbus, room.slave, 40004
-            ),
+            "flow_block_41020_41021": await read_raw(connection, room.slave, 41020, 2),
+            "mode_41120": await single(41120),
+            "current_level_41121": await single(41121),
+            "extract_target_41122": await single(41122),
+            "software_version_40004": await single(40004),
         }
 
-    baseline_flow_block = snapshot().get("flow_block_41020_41021")
+    baseline_flow_block = (await snapshot()).get("flow_block_41020_41021")
     baseline_flow = None
     if isinstance(baseline_flow_block, list) and len(baseline_flow_block) >= 2:
         baseline_flow = baseline_flow_block[1]
@@ -530,26 +507,15 @@ def run_write_observe(
     print(
         f"write_observe room_index={room_index} slave={room.slave} baseline={baseline_flow} target={target_flow} observe={observe_seconds}s interval={sample_interval}s"
     )
-    print(f"  snapshot before: {snapshot()}")
+    print(f"  snapshot before: {await snapshot()}")
 
-    start = time.perf_counter()
-    client.write_level(room, target_flow)
-    samples.append(
-        Sample(
-            ok=True,
-            latency_ms=(time.perf_counter() - start) * 1000,
-            detail=f"slave {room.slave} write target={target_flow}",
-        )
-    )
-    print(
-        f"  unit {room.slave:>2} write_target            OK   {samples[-1].latency_ms:>6.1f} ms  target={target_flow}"
-    )
+    await _timed_write(client, room, target_flow, "write", samples)
 
     checks = max(1, int(observe_seconds / sample_interval))
     for index in range(1, checks + 1):
-        time.sleep(sample_interval)
+        await asyncio.sleep(sample_interval)
         start = time.perf_counter()
-        snap = snapshot()
+        snap = await snapshot()
         samples.append(
             Sample(
                 ok=True,
@@ -561,27 +527,17 @@ def run_write_observe(
             f"  unit {room.slave:>2} observe_{index:<15} OK   {samples[-1].latency_ms:>6.1f} ms  {snap}"
         )
 
-    start = time.perf_counter()
-    client.write_level(room, baseline_flow)
-    samples.append(
-        Sample(
-            ok=True,
-            latency_ms=(time.perf_counter() - start) * 1000,
-            detail=f"slave {room.slave} restore target={baseline_flow}",
-        )
-    )
-    print(
-        f"  unit {room.slave:>2} restore_target          OK   {samples[-1].latency_ms:>6.1f} ms  target={baseline_flow}"
-    )
+    await _timed_write(client, room, baseline_flow, "restore", samples)
 
-    time.sleep(5.0)
-    print(f"  snapshot after restore: {snapshot()}")
+    await asyncio.sleep(5.0)
+    print(f"  snapshot after restore: {await snapshot()}")
 
     return samples
 
 
-def run_airflow_long_observe(
+async def run_airflow_long_observe(
     client: MeltemModbusClient,
+    connection: ModbusConnection,
     rooms: list[RoomConfig],
     room_index: int,
     target: int,
@@ -591,40 +547,25 @@ def run_airflow_long_observe(
 ) -> list[Sample]:
     """Write one target, read only airflow sparsely for a longer period, then restore."""
 
-    if room_index < 1 or room_index > len(rooms):
-        raise RuntimeError(f"room_index must be between 1 and {len(rooms)}")
+    room = _room_at(rooms, room_index)
 
-    room = rooms[room_index - 1]
-
-    def read_flow_block() -> list[int] | None:
-        modbus = client._ensure_client()
-        return client._read_optional_uint16_block(modbus, room.slave, 41020, 2)
+    async def read_flow_block() -> list[int] | None:
+        return await read_raw(connection, room.slave, 41020, 2)
 
     samples: list[Sample] = []
 
     print(
         f"airflow_long_observe room_index={room_index} slave={room.slave} target={target} observe={observe_seconds}s interval={sample_interval}s restore={restore_target}"
     )
-    print(f"  flow before: {read_flow_block()}")
+    print(f"  flow before: {await read_flow_block()}")
 
-    start = time.perf_counter()
-    client.write_level(room, target)
-    samples.append(
-        Sample(
-            ok=True,
-            latency_ms=(time.perf_counter() - start) * 1000,
-            detail=f"slave {room.slave} write target={target}",
-        )
-    )
-    print(
-        f"  unit {room.slave:>2} write_target            OK   {samples[-1].latency_ms:>6.1f} ms  target={target}"
-    )
+    await _timed_write(client, room, target, "write", samples)
 
     checks = max(1, int(observe_seconds / sample_interval))
     for index in range(1, checks + 1):
-        time.sleep(sample_interval)
+        await asyncio.sleep(sample_interval)
         start = time.perf_counter()
-        flow_block = read_flow_block()
+        flow_block = await read_flow_block()
         samples.append(
             Sample(
                 ok=True,
@@ -636,21 +577,10 @@ def run_airflow_long_observe(
             f"  unit {room.slave:>2} observe_{index:<15} OK   {samples[-1].latency_ms:>6.1f} ms  flow={flow_block}"
         )
 
-    start = time.perf_counter()
-    client.write_level(room, restore_target)
-    samples.append(
-        Sample(
-            ok=True,
-            latency_ms=(time.perf_counter() - start) * 1000,
-            detail=f"slave {room.slave} restore target={restore_target}",
-        )
-    )
-    print(
-        f"  unit {room.slave:>2} restore_target          OK   {samples[-1].latency_ms:>6.1f} ms  target={restore_target}"
-    )
+    await _timed_write(client, room, restore_target, "restore", samples)
 
-    time.sleep(10.0)
-    print(f"  flow after restore: {read_flow_block()}")
+    await asyncio.sleep(10.0)
+    print(f"  flow after restore: {await read_flow_block()}")
 
     return samples
 
@@ -687,36 +617,35 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
+async def main() -> int:
     args = parse_args()
 
-    const_module.REQUEST_GAP_SECONDS = args.gap
-    modbus_client_module.REQUEST_GAP_SECONDS = args.gap
+    # prepare_unit reads the spacing from its module when it sets a unit up.
     modbus_helpers_module.REQUEST_GAP_SECONDS = args.gap
 
-    settings = SerialSettings(
-        port=args.port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
-        timeout=float(FIXED_TIMEOUT),
-    )
-
-    rooms = discover_rooms(settings)
-    print(f"rooms: {[room.slave for room in rooms]}")
-    print(f"mode: {args.mode}")
-    print(f"gap: {args.gap}s")
-    print(f"cycles: {args.cycles}")
-    print()
-
-    client = MeltemModbusClient(settings)
+    # The first request opens the link, after every unit asked for its
+    # timeout, just like the shared connection in Home Assistant.
+    connection = open_connection(args.port)
     try:
+        try:
+            rooms = await discover_rooms(connection, args.port)
+        except MeltemConnectionError as err:
+            print(f"ERROR: could not open serial connection on {args.port}: {err}")
+            return 2
+        print(f"rooms: {[room.slave for room in rooms]}")
+        print(f"mode: {args.mode}")
+        print(f"gap: {args.gap}s")
+        print(f"timeout: {FIXED_TIMEOUT}s")
+        print(f"cycles: {args.cycles}")
+        print()
+
+        client = MeltemModbusClient(connection.for_unit, port=args.port)
         if args.mode == "full":
-            samples = run_full_cycles(client, rooms, args.cycles)
+            samples = await run_full_cycles(client, rooms, args.cycles)
         elif args.mode == "airflow_long_observe":
-            samples = run_airflow_long_observe(
+            samples = await run_airflow_long_observe(
                 client,
+                connection,
                 rooms,
                 args.room_index,
                 args.target,
@@ -725,8 +654,9 @@ def main() -> int:
                 args.restore_target,
             )
         elif args.mode == "write_observe":
-            samples = run_write_observe(
+            samples = await run_write_observe(
                 client,
+                connection,
                 rooms,
                 args.room_index,
                 args.delta,
@@ -734,7 +664,7 @@ def main() -> int:
                 args.sample_interval,
             )
         elif args.mode == "write_idle_check":
-            samples = run_write_idle_check(
+            samples = await run_write_idle_check(
                 client,
                 rooms,
                 args.room_index,
@@ -742,8 +672,9 @@ def main() -> int:
                 args.idle_seconds,
             )
         elif args.mode == "write_refresh":
-            samples = run_write_refresh(
+            samples = await run_write_refresh(
                 client,
+                connection,
                 rooms,
                 args.room_index,
                 args.delta,
@@ -752,9 +683,9 @@ def main() -> int:
                 args.max_polls,
             )
         else:
-            samples = run_scheduler_cycles(client, rooms, args.cycles)
+            samples = await run_scheduler_cycles(client, rooms, args.cycles)
     finally:
-        client.close()
+        await connection.close()
 
     oks = [sample for sample in samples if sample.ok]
     latencies = [sample.latency_ms for sample in oks]
@@ -774,4 +705,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))

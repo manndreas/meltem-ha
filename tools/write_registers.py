@@ -8,9 +8,10 @@ register writes during reverse-engineering sessions.
 from __future__ import annotations
 
 import argparse
-import time
+import asyncio
 
-from pymodbus.client import ModbusSerialClient
+from modbus_connection import ModbusConnectionError, ModbusError, ModbusSerialParams
+from modbus_connection.tmodbus import ModbusConnection
 
 
 FIXED_BAUDRATE = 19200
@@ -20,23 +21,6 @@ FIXED_STOPBITS = 1
 FIXED_TIMEOUT = 0.8
 DEFAULT_PORT = "/dev/ttyACM0"
 REQUEST_GAP_SECONDS = 0.1
-
-
-def compat_write(client: ModbusSerialClient, *, slave: int, address: int, value: int):
-    """Write one holding register with either pymodbus keyword variant."""
-
-    try:
-        return client.write_register(
-            address=address,
-            value=value,
-            device_id=slave,
-        )
-    except TypeError:
-        return client.write_register(
-            address=address,
-            value=value,
-            slave=slave,
-        )
 
 
 def parse_write(value: str) -> tuple[int, int]:
@@ -64,35 +48,39 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
+async def main() -> int:
     args = parse_args()
 
-    client = ModbusSerialClient(
-        port=args.port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
+    connection = ModbusConnection(
+        ModbusSerialParams(
+            device=args.port,
+            baudrate=FIXED_BAUDRATE,
+            bytesize=FIXED_BYTESIZE,
+            parity=FIXED_PARITY,
+            stopbits=FIXED_STOPBITS,
+        ),
         timeout=FIXED_TIMEOUT,
+        message_spacing=REQUEST_GAP_SECONDS,
     )
-    if not client.connect():
-        print(f"ERROR: could not open serial connection on {args.port}")
+    try:
+        await connection.connect()
+    except ModbusConnectionError as err:
+        print(f"ERROR: could not open serial connection on {args.port}: {err}")
         return 2
 
+    unit = connection.for_unit(args.slave)
     try:
         for address, value in args.write:
-            response = compat_write(
-                client,
-                slave=args.slave,
-                address=address,
-                value=value,
-            )
-            print(f"write {address}={value} -> {response}")
-            time.sleep(REQUEST_GAP_SECONDS)
+            try:
+                await unit.write_register(address, value)
+            except ModbusError as err:
+                print(f"write {address}={value} -> {type(err).__name__}: {err}")
+                continue
+            print(f"write {address}={value} -> ok")
         return 0
     finally:
-        client.close()
+        await connection.close()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))
