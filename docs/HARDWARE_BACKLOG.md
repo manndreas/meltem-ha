@@ -114,7 +114,7 @@ Affected code: `coordinator.async_set_operation_mode`,
 
 ```python
 async with self._gateway_lock:                    # lock held from here
-    await executor(write_...)                     # 3-5 writes at 0.1 s gap  ~0.5 s
+    await write_...(room, ...)                    # 3-5 writes at 0.1 s gap  ~0.5 s
   await async_sleep(WRITE_SETTLE_SECONDS)       #                           1.5 s
     await self._async_refresh_room_after_write(   # read
         room, min_refresh_attempts=2              # + 2.5 s
@@ -312,7 +312,7 @@ From a stopped unit, write `41120 = 4`, `41121 = 0`, `41122 = <raw>`,
 
 Priority: medium
 Status: open
-Affected code: `modbus_client._read_mode_group`, `modbus_client._ensure_client`,
+Affected code: `modbus_client._read_mode_group`, `device/transport.py`,
 `coordinator._job_interval`
 
 ### Observation
@@ -325,6 +325,8 @@ Three changes reduce bus time but were made without a live gateway:
 2. The runtime client runs pymodbus with `retries=0`. The default `retries=3`
    resent every unanswered request three times before the integration's own
    reconnecting retry, so one silent register cost about eight timeouts.
+   Since `4.0.0` this is `TransportPolicy` with one retry per request; it is
+   measured as part of HW-7.
 3. A unit that has been silent for `ROOM_SILENT_AFTER_SECONDS` is polled at
    most every `SILENT_ROOM_POLL_SECONDS`.
 
@@ -340,5 +342,56 @@ Three changes reduce bus time but were made without a live gateway:
 ### Candidate solutions
 
 - **A — keep the changes** if all three measurements are clean.
-- **B — `retries=1`** if step 2 shows more transient failures.
+- **B — a second retry** in `TransportPolicy` if step 2 shows more transient
+  failures.
 - **C — restore the single reads** if step 1 shows differing values.
+
+---
+
+## HW-7 — Validate the tmodbus transport on the real gateway
+
+Priority: high (blocks the `4.0.0` release)
+Status: open
+Affected code: `device/transport.py`, `device/components.py`,
+`modbus_helpers.prepare_unit`, `modbus_client._poll`
+
+### Observation
+
+`4.0.0` replaces the own pymodbus client with Home Assistant's shared Modbus
+connection (tmodbus via `modbus-connection`). The request shapes and their
+order are unchanged and covered by tests against an in-memory gateway, but
+every timing and error finding in this backlog was measured with pymodbus.
+
+### Why this cannot be decided blind
+
+1. tmodbus frames, waits, and times out differently from pymodbus; the gateway
+   is known to be sensitive to pacing.
+2. Whether a powered-off unit shows up as a timeout or as a gateway exception
+   (code 10/11) decides how the timeout counter behaves.
+3. tmodbus retries `SERVER_DEVICE_BUSY` (code 6) internally for up to 60 s
+   while the gateway lock is held.
+
+### What to measure
+
+Take the baseline with the pymodbus versions of the tools first (any commit
+before `4.0.0`: `tools/benchmark_gateway.py`,
+`tools/benchmark_integration_like.py`, `tools/profile_register_reads.py`),
+then repeat with the `4.0.0` tools:
+
+1. Latency and timeout rate per scenario, compared with the baseline.
+2. Power off one unit: timeout or code 10/11, timeouts per job, and whether
+   the link is recycled although other units still answer.
+3. A freshly powered unit: the fallback from five to two mode registers (HW-4).
+4. Write confirmation via `41121` and the settle time after writes (HW-2).
+5. Whether the gateway ever answers with code 6.
+6. Unplug and replug the USB cable; reload and unload the entry: the port is
+   released and the link comes back.
+7. 24 hours of continuous operation with all units.
+
+### Candidate solutions
+
+- **A — release** if all measurements match the baseline.
+- **B — tune** `REQUEST_GAP_SECONDS`, `FIXED_TIMEOUT`, or
+  `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS` from the measurements.
+- **C — count gateway exceptions as timeouts** if a powered-off unit answers
+  with code 11 and the link still needs recycling.

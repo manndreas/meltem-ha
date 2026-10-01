@@ -28,6 +28,10 @@ pip install -r requirements-test.txt
 
 Do not install `homeassistant`, `pytest` or `pytest-asyncio` separately -
 `pytest-homeassistant-custom-component` pins the matching versions.
+`requirements-test.txt` adds the `modbus-connection` and `tmodbus` versions
+that Home Assistant's Modbus integration ships, because the integration gets
+its serial link from there. Tests never open a serial port; they run against
+`modbus_connection.mock.MockModbusConnection`.
 
 Run tests and lint with:
 

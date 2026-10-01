@@ -42,8 +42,12 @@ These are the most important practical findings from the latest hardware tests:
   values
 - room entities stay unavailable until the first poll returns at least one
   state value
-- unloading waits for an active serial operation and then shuts the shared
-  client down for good, so a late post-write readback cannot reopen the port
+- unloading shuts the client down for good, so a late post-write readback
+  cannot reach the link; Home Assistant's `modbus` integration closes the
+  serial port once the entry has released its units
+- since `4.0.0` all of this runs over Home Assistant's shared Modbus
+  connection (tmodbus) instead of an own pymodbus client; the hardware
+  findings above were measured with pymodbus and are re-checked in HW-7
 
 ## Scope
 
@@ -135,25 +139,69 @@ Implementation rules:
 
 - Keep a pause between Modbus requests.
   Current implementation: `REQUEST_GAP_SECONDS = 0.1`
-- Retry transient read failures with a reconnect-based second attempt.
+- Retry a request at most once, see [Transport](#transport-home-assistants-shared-modbus-connection).
 - Serialize all periodic reads and writes through one shared gateway lock.
 - Use one scheduled read job at a time.
 - Prefer grouped block reads over single-register reads.
 
-## Pymodbus quirk in Home Assistant
+## Transport: Home Assistant's shared Modbus connection
 
-The integration requires `pymodbus >= 3.13`, where the client calls used here
-expect `device_id=...`, not `slave=...`.
+Since `4.0.0` the integration has no serial client of its own. It asks Home
+Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
 
-This is important for:
+- `async_get_unit(hass, entry, params, unit_id)` at runtime; the units are
+  released when the entry unloads, and the link closes after the last holder
+- `async_get_temporary_unit(hass, params, unit_id)` in the config flow
+- the backend is always tmodbus via `modbus-connection`; HA `2026.10` pins
+  `modbus-connection` `4.12.3`, the first version with `require_timeout` and
+  the device-modelling framework used here, hence the minimum HA version
+- link parameters are fixed in `build_serial_params`: 19200 baud, 8E1, RTU
+- another integration that uses the same port with other link settings makes
+  setup fail with `ConfigEntryError` (config flow: `cannot_connect`)
+- every unit asks for `set_message_spacing(REQUEST_GAP_SECONDS)` and
+  `require_timeout(FIXED_TIMEOUT)` before its first request (`prepare_unit`);
+  both are floors, so another consumer of the same port can only raise them
 
-- discovery scan reads
-- regular reads
-- register writes
+Register blocks are `Component`s in `device/components.py`. Each one pins
+`register_ranges` to exactly the block the pymodbus client read, so the gateway
+sees the same requests in the same order. `tests/test_modbus_client.py`
+checks this with the mock's `read_events`. Do not merge blocks without a
+benchmark on the real gateway.
 
-If `slave=` is used, Home Assistant may fail with errors such as:
+The retry rules live in `device/transport.py` (`TransportPolicy`, one shared
+instance per gateway link):
 
-- `TypeError(... got an unexpected keyword argument 'slave')`
+| Error | Behavior |
+|---|---|
+| `ModbusTimeoutError`, `ModbusProtocolError` | retry once; counts toward the timeout counter |
+| `GatewayTargetError`, `GatewayPathUnavailableError` | retry once; resets the counter, the gateway answered |
+| `ModbusConnectionError` | wait `TRANSPORT_RETRY_DELAY_SECONDS`, retry once; the library reconnects |
+| `ClientClosedError` | no retry |
+| other `ModbusExceptionError` | no retry; resets the counter |
+| `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS` timeouts in a row, across all units | `disconnect()`; the next request reopens the link |
+
+The client maps `ModbusConnectionError` to `MeltemConnectionError` and every
+other `ModbusError` to `MeltemModbusError`. When a unit times out before any
+of its blocks answered in a job, the rest of that job is skipped and all of
+its groups are marked failed, so a silent unit costs one timeout plus one
+retry per job instead of one per block. tmodbus retries `SERVER_DEVICE_BUSY`
+(code 6) internally; whether the gateway ever sends it is open (HW-7).
+
+How the hardware findings are implemented now:
+
+| Finding | Implementation |
+|---|---|
+| The gateway needs a pause between requests | `REQUEST_GAP_SECONDS` via `set_message_spacing` in `prepare_unit` |
+| 0.8 s is enough for the gateway to answer | `FIXED_TIMEOUT` via `require_timeout` in `prepare_unit` |
+| pymodbus' default resend turned one unanswered register into about eight timeouts | `TransportPolicy` retries once, without disconnecting |
+| Units reject `41120..41124` until a first write (HW-4) | `mode` → `mode_short` → single reads in `MeltemModbusClient._read_mode_block`, backoff per `(slave, component)` |
+| `41121`/`41122` come with the mode block | `_read_mode_group` only reads them on their own without a block |
+| `41121` holds the sensor-mode selector in sensor modes | `_read_mode_group` derives the target from the measured airflow there |
+| `41000` and `41004` are swapped on the gateway | field mapping of `Temperatures` in `device/components.py` |
+| 32-bit values are word-swapped | `word_order="little"` on `float32` and `uint32` fields |
+| Mode writes only take effect after `41132` | `Command` component, written last in every mode and preset sequence |
+| Discovery runs on the gateway's own unit 1 | `MeltemGateway` in `device/device.py` |
+| A silent unit must not drag down the others | per-job skip in `MeltemModbusClient._poll`, `SILENT_ROOM_POLL_SECONDS` in the coordinator |
 
 ## Discovery model
 
@@ -252,9 +300,10 @@ Current design:
 - a unit that has not answered for `ROOM_SILENT_AFTER_SECONDS` is polled at
   most every `SILENT_ROOM_POLL_SECONDS`, because every unanswered read costs
   timeouts on the shared bus
-- the runtime client disables pymodbus' internal resend (`retries=0`); the
-  client's own reconnecting retry already covers a lost frame, and the default
-  `retries=3` turned one unanswered register into about eight timeouts
+- every request is retried at most once (see
+  [Transport](#transport-home-assistants-shared-modbus-connection)); the
+  pymodbus client's default `retries=3` had turned one unanswered register
+  into about eight timeouts
 
 Current job groups:
 
@@ -748,11 +797,12 @@ Retries should not be used aggressively for normal Modbus exception responses:
 
 Current implementation direction:
 
-- retry lock/transport errors
-- avoid repeated retries on plain `ExceptionResponse(...)`
+- retry timeouts, garbled frames, and a lost link once; never retry a plain
+  Modbus exception response
+- reopen the link only after several timeouts in a row with no answer in
+  between, so one silent unit does not reset the link for the others
 - do not force immediate readback confirmation after normal airflow writes
-- keep pymodbus' own resend disabled for the runtime client (`retries=0`);
-  setup probes keep the pymodbus default because they have no retry layer
+- the setup probes use the same retry rules as the runtime client
 
 ### Temperatures are not identical conceptually
 
@@ -864,7 +914,7 @@ Setup never probes the gateway for entity metadata:
 - globally removed entities from older releases are handled by the same
   platform-aware registry cleanup
 - devices of units that a rescan no longer reports are removed on setup; unit
-  devices are linked to the gateway device via `via_device`
+  devices are linked to the gateway device via `via_device_id`
 
 A fresh setup should therefore not be needed for normal profile changes or
 upgrades. Remove and re-add the config entry only when its stored data is
@@ -888,7 +938,15 @@ bridge in some environments.
 - `custom_components/meltem_ventilation/config_flow.py`
   setup, USB discovery, gateway-backed unit discovery, profile selection
 - `custom_components/meltem_ventilation/modbus_client.py`
-  low-level Modbus reads/writes and timing behavior
+  async room reads, mode decoding, and write sequences
+- `custom_components/meltem_ventilation/modbus_helpers.py`
+  link parameters, unit preparation, discovery, and setup probes
+- `custom_components/meltem_ventilation/device/components.py`
+  one `Component` per register block, pinned to the established requests
+- `custom_components/meltem_ventilation/device/device.py`
+  room, probe, and gateway devices built from those components
+- `custom_components/meltem_ventilation/device/transport.py`
+  retry policy shared by all units on the gateway link
 - `custom_components/meltem_ventilation/coordinator.py`
   rotating refresh plan, optimistic state, write orchestration
 - `custom_components/meltem_ventilation/const.py`
@@ -901,9 +959,14 @@ bridge in some environments.
 ## Tests
 
 The test suite runs against a real Home Assistant test environment provided by
-`pytest-homeassistant-custom-component`, which requires Python 3.14. It covers
-the Modbus helper layer, the coordinator, and every entity platform, including:
+`pytest-homeassistant-custom-component`, which requires Python 3.14. Modbus
+traffic runs against `modbus_connection.mock.MockModbusConnection`, an
+in-memory register bank, so the request shapes, the retry policy, and the
+decoding are tested together. It covers the Modbus layer, the coordinator,
+and every entity platform, including:
 
+- request parity with the blocks the pymodbus client read
+- the retry policy: one retry, link recycling, gateway errors
 - gateway-backed discovery via `43901` / `43902..`
 - minimal setup-time capability probing
 - balanced airflow derivation and per-profile scaling
@@ -950,14 +1013,18 @@ ha core logs | grep meltem_ventilation
 5. Confirm the correct model profiles were chosen.
 6. Only then investigate individual register behavior.
 
-Useful local tools in this repo:
+Useful local tools in this repo (async, on `modbus-connection` with tmodbus
+since `4.0.0`; any earlier commit has the pymodbus versions):
 
 - `tools/probe_airios_bridge.py`
   confirms whether the bridge path on `device_id=1` responds and returns the
   configured unit list
 - `tools/benchmark_gateway.py`
   compares different request patterns, gaps, and block-read candidates against
-  a locally attached gateway
+  a locally attached gateway; the gap is slept outside the measured latency
+- `tools/benchmark_integration_like.py`
+  drives the integration's own client through scheduler-like loops and write
+  experiments
 
 ## Things to be careful with in future changes
 
