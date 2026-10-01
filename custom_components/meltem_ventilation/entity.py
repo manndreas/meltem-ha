@@ -70,7 +70,7 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
             name=f"{INTEGRATION_NAME} {self.room.name}",
             hw_version=self._hw_version,
             sw_version=str(sw_version) if sw_version is not None else None,
-            via_device=self.coordinator.gateway_identifier,
+            via_device_id=self.coordinator.gateway_device_id,
         )
 
     @property

@@ -1,8 +1,16 @@
-"""Tests for Modbus helpers and the MeltemModbusClient runtime class."""
+"""Tests for how MeltemModbusClient reads and decodes one room.
+
+The client runs against an in-memory gateway, so every test exercises the
+real request shapes, the retry policy, and the decode logic together.
+"""
 
 from __future__ import annotations
 
+import struct
+
 import pytest
+from modbus_connection import IllegalDataAddressError
+from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
 from custom_components.meltem_ventilation.const import (
     MODE_AUTOMATIC_VALUE,
@@ -11,383 +19,137 @@ from custom_components.meltem_ventilation.const import (
     MODE_MANUAL,
     MODE_SENSOR_CONTROL,
     MODE_UNBALANCED,
-    REGISTER_CO2_EXTRACT_AIR,
     REGISTER_CURRENT_LEVEL,
+    REGISTER_EXHAUST_AIR_TEMPERATURE,
     REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
     REGISTER_EXTRACT_AIR_TEMPERATURE,
-    REGISTER_GATEWAY_NODE_ADDRESS_1,
-    REGISTER_GATEWAY_NUMBER_OF_NODES,
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_STARTING_POINT,
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_MODE,
-    REGISTER_PRODUCT_ID,
-    REGISTER_VOC_SUPPLY_AIR,
+    REGISTER_PRESET_MODE,
+    REGISTER_SUPPLY_AIR_TEMPERATURE,
 )
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
-from custom_components.meltem_ventilation.modbus_helpers import (
-    MeltemModbusError,
-    SerialSettings,
-    derive_balanced_airflow,
-    detect_slave_details_with_client,
-    discover_gateway_nodes,
-)
+from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
 from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
 
+_PLAIN = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+_FC = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc", slave=2)
+_FLOW = RefreshPlan.only(refresh_airflow=True)
+_CONTROL_SETTINGS = RefreshPlan.only(refresh_control_settings=True)
+_REJECTED = IllegalDataAddressError()
+
+
+@pytest.fixture(autouse=True)
+def _no_transport_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
+    )
+
+
+@pytest.fixture(name="link")
+def link_fixture() -> MockModbusConnection:
+    return MockModbusConnection()
+
+
+@pytest.fixture(name="client")
+def client_fixture(link: MockModbusConnection) -> MeltemModbusClient:
+    return MeltemModbusClient(link.for_unit, port="/dev/ttyACM0")
+
+
+@pytest.fixture(name="unit")
+def unit_fixture(link: MockModbusConnection) -> MockModbusUnit:
+    return link.for_unit(2)
+
+
+def _seed(
+    unit: MockModbusUnit,
+    *,
+    flow: tuple[int, int] = (30, 30),
+    mode: list[int] | None = None,
+) -> None:
+    """Seed extract/supply airflow and, optionally, the 41120..41124 mode block."""
+
+    unit.holding[REGISTER_EXTRACT_AIR_FLOW] = list(flow)
+    if mode is not None:
+        unit.holding[REGISTER_MODE] = list(mode)
+
+
+def _reject_long_mode_read(unit: MockModbusUnit) -> None:
+    """Behave like HW-4 units: the 5-register read fails, the short one works."""
+
+    unit.fail_read(REGISTER_PRESET_MODE, _REJECTED)
+
+
+def _reject_all_mode_reads(unit: MockModbusUnit) -> None:
+    unit.fail_read(REGISTER_MODE, _REJECTED)
+    unit.fail_read(REGISTER_CURRENT_LEVEL, _REJECTED)
+
+
+def _float_words(value: float) -> list[int]:
+    high, low = struct.unpack(">HH", struct.pack(">f", value))
+    return [low, high]
+
+
+def _reads(unit: MockModbusUnit) -> list[tuple[int, int]]:
+    return [(event.address, event.count) for event in unit.read_events]
+
+
 # ---------------------------------------------------------------------------
-#  Test doubles
+#  Request shapes
 # ---------------------------------------------------------------------------
 
 
-class _FakeResponse:
-    def __init__(self, registers: list[int], error: bool = False) -> None:
-        self.registers = registers
-        self._error = error
-
-    def isError(self) -> bool:
-        return self._error
-
-
-class _DispatchingClient:
-    """Fake Modbus client that returns pre-configured register maps."""
-
-    def __init__(self, register_map: dict[tuple[int, int], list[int]]) -> None:
-        self._register_map = register_map
-        self.calls: list[tuple[int, int, int]] = []
-
-    def read_holding_registers(self, *, address: int, count: int, device_id: int):
-        self.calls.append((device_id, address, count))
-        registers = self._register_map.get((address, count))
-        if registers is None:
-            return _FakeResponse([], error=True)
-        return _FakeResponse(registers)
-
-
-class _RegisterSimulator:
-    """Small register bank implementing the Pymodbus calls used by the client."""
-
-    def __init__(
-        self,
-        registers: dict[tuple[int, int], int],
-        read_errors: set[tuple[int, int, int]] | None = None,
+class TestRequestShapes:
+    async def test_full_read_keeps_the_established_block_order(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
-        self.registers = dict(registers)
-        self.read_errors = set(read_errors or ())
-        self.read_calls: list[tuple[int, int, int]] = []
-        self.write_calls: list[tuple[int, int, int]] = []
-        self._connected = True
+        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc_voc", slave=2)
 
-    def is_socket_open(self) -> bool:
-        return self._connected
+        await client.read_room_state(room, RoomState(), RefreshPlan())
 
-    def connect(self) -> bool:
-        self._connected = True
-        return True
-
-    def close(self) -> None:
-        self._connected = False
-
-    def read_holding_registers(
-        self, *, address: int, count: int, device_id: int
-    ) -> _FakeResponse:
-        request = (device_id, address, count)
-        self.read_calls.append(request)
-        values = [
-            self.registers.get((device_id, address + offset))
-            for offset in range(count)
-        ]
-        if request in self.read_errors or any(value is None for value in values):
-            return _FakeResponse([], error=True)
-        return _FakeResponse([int(value) for value in values if value is not None])
-
-    def write_register(
-        self, *, address: int, value: int, device_id: int
-    ) -> _FakeResponse:
-        self.write_calls.append((device_id, address, value))
-        self.registers[(device_id, address)] = value
-        return _FakeResponse([value])
-
-
-# ---------------------------------------------------------------------------
-#  derive_balanced_airflow
-# ---------------------------------------------------------------------------
-
-
-class TestDeriveBalancedAirflow:
-    def test_returns_average_when_flows_match_closely(self) -> None:
-        assert derive_balanced_airflow(30, 30) == 30
-        assert derive_balanced_airflow(30, 31) == 30
-
-    def test_returns_none_when_flows_diverge(self) -> None:
-        assert derive_balanced_airflow(30, 40) is None
-
-    def test_returns_existing_single_value_when_one_side_missing(self) -> None:
-        assert derive_balanced_airflow(30, None) == 30
-        assert derive_balanced_airflow(None, 45) == 45
-
-
-# ---------------------------------------------------------------------------
-#  Gateway discovery
-# ---------------------------------------------------------------------------
-
-
-class TestGatewayDiscovery:
-    def test_discovers_gateway_nodes_from_bridge_registers(self) -> None:
-        client = _DispatchingClient(
-            {
-                (REGISTER_GATEWAY_NUMBER_OF_NODES, 1): [6],
-                (REGISTER_GATEWAY_NODE_ADDRESS_1, 6): [3, 2, 4, 5, 7, 6],
-            }
-        )
-
-        discovered = discover_gateway_nodes(client, "/dev/ttyACM0", start=2, end=16)
-
-        assert discovered == [3, 2, 4, 5, 7, 6]
-
-    def test_ignores_zero_and_out_of_range_addresses(self) -> None:
-        client = _DispatchingClient(
-            {
-                (REGISTER_GATEWAY_NUMBER_OF_NODES, 1): [6],
-                (REGISTER_GATEWAY_NODE_ADDRESS_1, 6): [0, 1, 3, 17, 5, 5],
-            }
-        )
-
-        discovered = discover_gateway_nodes(client, "/dev/ttyACM0", start=2, end=16)
-
-        assert discovered == [3, 5]
-
-
-# ---------------------------------------------------------------------------
-#  Setup probe
-# ---------------------------------------------------------------------------
-
-
-class TestSetupProbe:
-    def test_detects_voc_profile_and_uses_minimal_reads(self) -> None:
-        client = _DispatchingClient(
-            {
-                (REGISTER_PRODUCT_ID, 2): [0xC874, 0x0001],
-                (REGISTER_HUMIDITY_EXTRACT_AIR, 1): [45],
-                (REGISTER_HUMIDITY_SUPPLY_AIR, 1): [48],
-                (REGISTER_CO2_EXTRACT_AIR, 1): [800],
-                (REGISTER_VOC_SUPPLY_AIR, 1): [120],
-            }
-        )
-
-        detected_profile, preview, supported_entity_keys = (
-            detect_slave_details_with_client(client, 4)
-        )
-
-        assert detected_profile == "fc_voc"
-        assert preview == "ID 116852 | VOC"
-        assert "humidity_extract_air" in supported_entity_keys
-        assert "humidity_supply_air" in supported_entity_keys
-        assert "co2_extract_air" in supported_entity_keys
-        assert "voc_supply_air" in supported_entity_keys
-        assert client.calls == [
-            (4, REGISTER_PRODUCT_ID, 2),
-            (4, REGISTER_HUMIDITY_EXTRACT_AIR, 1),
-            (4, REGISTER_HUMIDITY_SUPPLY_AIR, 1),
-            (4, REGISTER_CO2_EXTRACT_AIR, 1),
-            (4, REGISTER_VOC_SUPPLY_AIR, 1),
+        assert _reads(unit) == [
+            (41020, 2),
+            (41000, 6),
+            (41009, 2),
+            (41006, 2),
+            (41011, 3),
+            (41016, 3),
+            (41027, 1),
+            (41030, 2),
+            (40004, 1),
+            (42000, 6),
+            (40101, 1),
+            (41120, 5),
         ]
 
-    def test_detects_plain_profile_when_capabilities_are_missing(self) -> None:
-        client = _DispatchingClient(
-            {
-                (REGISTER_PRODUCT_ID, 2): [0xC874, 0x0001],
-            }
-        )
-
-        detected_profile, preview, supported_entity_keys = (
-            detect_slave_details_with_client(client, 2)
-        )
-
-        assert detected_profile == "plain"
-        assert preview == "ID 116852 | basic"
-        assert "humidity_extract_air" not in supported_entity_keys
-        assert "co2_extract_air" not in supported_entity_keys
-        assert "voc_supply_air" not in supported_entity_keys
-
-
-# ---------------------------------------------------------------------------
-#  Float read (NaN handling)
-# ---------------------------------------------------------------------------
-
-
-class TestFloatRead:
-    def test_nan_temperature_is_returned_as_none(self) -> None:
-        settings = SerialSettings(
-            port="/dev/null",
-            baudrate=19200,
-            bytesize=8,
-            parity="E",
-            stopbits=1,
-            timeout=0.8,
-        )
-        client = MeltemModbusClient(settings)
-        # Monkey-patch the retry wrapper to return NaN registers directly.
-        client._read_holding_registers_with_retry = (
-            lambda *_args, **_kwargs: _FakeResponse([0x0000, 0x7FC0])
-        )
-
-        value = client._read_float32_word_swap(2, 41009)
-
-        assert value is None
-
-
-class TestRetryableTransportError:
-    def test_detects_retryable_lock_and_transport_errors(self) -> None:
-        settings = SerialSettings(
-            port="/dev/null",
-            baudrate=19200,
-            bytesize=8,
-            parity="E",
-            stopbits=1,
-            timeout=0.8,
-        )
-        client = MeltemModbusClient(settings)
-
-        assert client._is_retryable_transport_error(
-            RuntimeError("Could not exclusively lock port /dev/ttyACM0")
-        )
-        assert client._is_retryable_transport_error(
-            OSError("Resource temporarily unavailable")
-        )
-        assert client._is_retryable_transport_error(
-            TimeoutError("timed out waiting for response")
-        )
-        assert client._is_retryable_transport_error(
-            ConnectionError("transport fail")
-        )
-
-    def test_does_not_treat_plain_modbus_exception_as_retryable_transport_error(self) -> None:
-        settings = SerialSettings(
-            port="/dev/null",
-            baudrate=19200,
-            bytesize=8,
-            parity="E",
-            stopbits=1,
-            timeout=0.8,
-        )
-        client = MeltemModbusClient(settings)
-
-        assert not client._is_retryable_transport_error(
-            RuntimeError("ExceptionResponse(dev_id=4, status=1)")
-        )
-
-
-# ---------------------------------------------------------------------------
-#  read_room_state
-# ---------------------------------------------------------------------------
-
-
-class TestReadRoomState:
-    @staticmethod
-    def _build_client() -> MeltemModbusClient:
-        settings = SerialSettings(
-            port="/dev/null",
-            baudrate=19200,
-            bytesize=8,
-            parity="E",
-            stopbits=1,
-            timeout=0.8,
-        )
-        client = MeltemModbusClient(settings)
-        client._ensure_client = lambda: object()
-        client._read_status_group = lambda *_a, **_kw: (None, None, None)
-        client._supports = lambda _room, _key: True
-        client._read_optional_uint32_word_swap = lambda *_a, **_kw: None
-        return client
-
-    @staticmethod
-    def _build_simulated_client(
-        registers: dict[tuple[int, int], int],
-        read_errors: set[tuple[int, int, int]] | None = None,
-    ) -> tuple[MeltemModbusClient, _RegisterSimulator]:
-        settings = SerialSettings(
-            port="/dev/null",
-            baudrate=19200,
-            bytesize=8,
-            parity="E",
-            stopbits=1,
-            timeout=0.8,
-        )
-        client = MeltemModbusClient(settings)
-        simulator = _RegisterSimulator(registers, read_errors)
-        client._client = simulator
-        return client, simulator
-
-    def test_register_simulator_reads_and_writes_control_settings(
-        self, monkeypatch: pytest.MonkeyPatch
+    async def test_plain_profile_reads_only_the_exhaust_temperature(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
-        monkeypatch.setattr(
-            "custom_components.meltem_ventilation.modbus_client.sync_sleep",
-            lambda _seconds: None,
+        unit.holding[REGISTER_EXTRACT_AIR_TEMPERATURE] = (
+            _float_words(20.0) + _float_words(5.0) + _float_words(21.0)
         )
-        register_values = [55, 10, 90, 800, 10, 90]
-        registers = {
-            (2, REGISTER_HUMIDITY_STARTING_POINT + offset): value
-            for offset, value in enumerate(register_values)
-        }
-        client, simulator = self._build_simulated_client(registers)
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_f", slave=2)
-        plan = RefreshPlan.only(refresh_control_settings=True)
 
-        state = client.read_room_state(room, RoomState(), plan)
-        assert state.humidity_starting_point == 55
-        assert state.read_health_for("control_settings").consecutive_failures == 0
-        assert simulator.read_calls == [(2, REGISTER_HUMIDITY_STARTING_POINT, 6)]
+        state = await client.read_room_state(
+            _PLAIN,
+            RoomState(),
+            RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),
+        )
 
-        assert client.write_control_setting(room, "humidity_starting_point", 70) == 70
-        assert simulator.write_calls == [(2, REGISTER_HUMIDITY_STARTING_POINT, 70)]
+        assert _reads(unit) == [(REGISTER_EXHAUST_AIR_TEMPERATURE, 2)]
+        assert state.exhaust_temperature == 21.0
+        assert state.outdoor_air_temperature is None
+        assert state.extract_air_temperature is None
+        assert state.supply_air_temperature is None
 
-        confirmed = client.read_room_state(room, state, plan)
-        assert confirmed.humidity_starting_point == 70
-        assert simulator.read_calls[-1] == (2, REGISTER_HUMIDITY_STARTING_POINT, 6)
-
-    def test_register_simulator_reports_read_error_and_recovery(
-        self, monkeypatch: pytest.MonkeyPatch
+    async def test_unsupported_control_settings_are_not_read(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
-        monkeypatch.setattr(
-            "custom_components.meltem_ventilation.modbus_client.sync_sleep",
-            lambda _seconds: None,
-        )
-        registers = {
-            (2, REGISTER_HUMIDITY_STARTING_POINT + offset): value
-            for offset, value in enumerate([55, 10, 90, 800, 10, 90])
-        }
-        failed_request = (2, REGISTER_HUMIDITY_STARTING_POINT, 6)
-        client, simulator = self._build_simulated_client(
-            registers,
-            read_errors={failed_request},
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_f", slave=2)
-        plan = RefreshPlan.only(refresh_control_settings=True)
-        previous = RoomState(humidity_starting_point=50)
-
-        failed = client.read_room_state(room, previous, plan)
-        failed_health = failed.read_health_for("control_settings")
-        assert failed.humidity_starting_point == 50
-        assert failed_health.consecutive_failures == 1
-        assert failed_health.last_error is not None
-
-        simulator.read_errors.clear()
-        recovered = client.read_room_state(room, failed, plan)
-        recovered_health = recovered.read_health_for("control_settings")
-        assert recovered.humidity_starting_point == 55
-        assert recovered_health.consecutive_failures == 0
-        assert recovered_health.last_error is None
-
-    def test_register_simulator_skips_unsupported_control_settings(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            "custom_components.meltem_ventilation.modbus_client.sync_sleep",
-            lambda _seconds: None,
-        )
-        client, simulator = self._build_simulated_client({})
         room = RoomConfig(
             key="unit_1",
             name="Unit 1",
@@ -396,438 +158,234 @@ class TestReadRoomState:
             supported_entity_keys=frozenset({"extract_air_flow"}),
         )
 
-        state = client.read_room_state(
-            room,
-            RoomState(),
-            RefreshPlan.only(refresh_control_settings=True),
-        )
+        state = await client.read_room_state(room, RoomState(), _CONTROL_SETTINGS)
 
-        assert simulator.read_calls == []
+        assert _reads(unit) == []
         assert state.read_health_for("control_settings").last_attempt is None
 
-    def test_target_level_uses_scaled_raw_target_readback_when_available(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (65, 65)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = (
-            lambda _slave, address: (
-                120
-                if address == REGISTER_CURRENT_LEVEL
-                else None
-            )
+
+# ---------------------------------------------------------------------------
+#  Measured values
+# ---------------------------------------------------------------------------
+
+
+class TestMeasuredValues:
+    async def test_fc_voc_profile_reads_temperatures_and_air_quality(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        unit.holding.update(
+            {
+                REGISTER_EXTRACT_AIR_TEMPERATURE: (
+                    _float_words(22.0) + _float_words(5.5) + _float_words(19.0)
+                ),
+                REGISTER_SUPPLY_AIR_TEMPERATURE: _float_words(18.5),
+                REGISTER_HUMIDITY_EXTRACT_AIR: [44, 780],
+                REGISTER_HUMIDITY_SUPPLY_AIR: [46, 0, 120],
+            }
         )
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 120, 0, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc_voc", slave=2)
 
-        state = client.read_room_state(
-            room,
-            RoomState(target_level=30),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
-        assert state.target_level == 60
-        assert state.extract_target_level is None
-
-    def test_airflow_read_health_tracks_failure_and_recovery(self) -> None:
-        client = self._build_client()
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-        airflow_fails = False
-
-        def _read_block(_slave, address, count):
-            if address == REGISTER_EXTRACT_AIR_FLOW:
-                if airflow_fails:
-                    raise MeltemModbusError("airflow block read failed")
-                return [30, 30]
-            if address == REGISTER_MODE:
-                return [MODE_MANUAL, 120, 0, 0, 0][:count]
-            raise AssertionError(f"unexpected block read {address}/{count}")
-
-        client._read_uint16_block = _read_block
-        client._read_uint16 = lambda *_a, **_kw: 120
-
-        first = client.read_room_state(
+        state = await client.read_room_state(
             room,
             RoomState(),
-            RefreshPlan.only(refresh_airflow=True),
+            RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),
         )
 
+        assert state.extract_air_temperature == 22.0
+        assert state.outdoor_air_temperature == 5.5
+        assert state.exhaust_temperature == 19.0
+        assert state.supply_air_temperature == 18.5
+        assert state.humidity_extract_air == 44
+        assert state.humidity_supply_air == 46
+        assert state.co2_extract_air == 780
+        assert state.voc_supply_air == 120
+
+    async def test_nan_temperature_keeps_the_previous_value(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        unit.holding[REGISTER_SUPPLY_AIR_TEMPERATURE] = [0x0000, 0x7FC0]
+        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_f", slave=2)
+        plan = RefreshPlan.only(refresh_temperatures=True)
+
+        assert (await client.read_room_state(room, RoomState(), plan)).supply_air_temperature is None
+        previous = RoomState(supply_air_temperature=19.5)
+        state = await client.read_room_state(room, previous, plan)
+        assert state.supply_air_temperature == 19.5
+
+    async def test_operating_hours_are_a_little_endian_uint32(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        unit.holding[41030] = [5, 1]
+
+        state = await client.read_room_state(
+            _PLAIN, RoomState(), RefreshPlan.only(refresh_operating_hours=True)
+        )
+
+        assert state.operating_hours == 65541
+
+
+# ---------------------------------------------------------------------------
+#  Read health
+# ---------------------------------------------------------------------------
+
+
+class TestReadHealth:
+    async def test_airflow_health_tracks_failure_and_recovery(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
+
+        first = await client.read_room_state(_PLAIN, RoomState(), _FLOW)
         assert first.supply_air_flow == 30
         first_health = first.read_health_for("flow")
         assert first_health.last_successful_read is not None
         assert first_health.consecutive_failures == 0
         assert first_health.last_error is None
 
-        airflow_fails = True
-        failed = client.read_room_state(
-            room,
-            first,
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, _REJECTED)
+        failed = await client.read_room_state(_PLAIN, first, _FLOW)
         assert failed.supply_air_flow == 30
         failed_health = failed.read_health_for("flow")
         assert failed_health.last_successful_read == first_health.last_successful_read
         assert failed_health.consecutive_failures == 1
-        assert failed_health.last_error == "airflow block read failed"
+        assert failed_health.last_error is not None
 
-        airflow_fails = False
-        recovered = client.read_room_state(
-            room,
-            failed,
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, None)
+        recovered = await client.read_room_state(_PLAIN, failed, _FLOW)
         recovered_health = recovered.read_health_for("flow")
-        assert recovered_health.last_successful_read is not None
         assert recovered_health.consecutive_failures == 0
         assert recovered_health.last_error is None
 
-    def test_control_setting_read_health_tracks_failure_and_recovery(self) -> None:
-        client = self._build_client()
+    async def test_control_settings_round_trip_and_recover(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        unit.holding[REGISTER_HUMIDITY_STARTING_POINT] = [55, 10, 90, 800, 10, 90]
+        unit.fail_read(REGISTER_HUMIDITY_STARTING_POINT, _REJECTED)
         room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_f", slave=2)
-        control_settings_fail = True
 
-        def _read_block(_slave, address, count):
-            if address != 42000 or count != 6:
-                raise AssertionError(f"unexpected block read {address}/{count}")
-            if control_settings_fail:
-                raise MeltemModbusError("control settings block failed")
-            return [55, 10, 90, 800, 10, 90]
-
-        client._read_uint16_block = _read_block
-        previous = RoomState(humidity_starting_point=50)
-        failed = client.read_room_state(
-            room,
-            previous,
-            RefreshPlan.only(refresh_control_settings=True),
+        failed = await client.read_room_state(
+            room, RoomState(humidity_starting_point=50), _CONTROL_SETTINGS
         )
-
-        assert failed.humidity_starting_point == 50
         health = failed.read_health_for("control_settings")
+        assert failed.humidity_starting_point == 50
         assert health.consecutive_failures == 1
         assert health.last_successful_read is None
-        assert health.last_error == "control settings block failed"
+        assert health.last_error is not None
 
-        control_settings_fail = False
-        recovered = client.read_room_state(
-            room,
-            failed,
-            RefreshPlan.only(refresh_control_settings=True),
-        )
-
-        assert recovered.humidity_starting_point == 55
+        unit.fail_read(REGISTER_HUMIDITY_STARTING_POINT, None)
+        recovered = await client.read_room_state(room, failed, _CONTROL_SETTINGS)
         health = recovered.read_health_for("control_settings")
+        assert recovered.humidity_starting_point == 55
         assert health.consecutive_failures == 0
-        assert health.last_successful_read is not None
         assert health.last_error is None
 
-    def test_target_level_falls_back_to_balanced_airflow_when_raw_target_missing(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (65, 65)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: None
+        assert await client.write_control_setting(room, "humidity_starting_point", 70) == 70
+        confirmed = await client.read_room_state(room, recovered, _CONTROL_SETTINGS)
+        assert confirmed.humidity_starting_point == 70
 
-        def _no_mode_block(*_a, **_kw):
-            raise MeltemModbusError("mode block unavailable")
 
-        client._read_holding_registers_with_retry = _no_mode_block
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+# ---------------------------------------------------------------------------
+#  Airflow targets
+# ---------------------------------------------------------------------------
 
-        state = client.read_room_state(
-            room,
-            RoomState(target_level=30),
-            RefreshPlan.only(refresh_airflow=True),
-        )
+
+class TestAirflowTargets:
+    async def test_balanced_target_uses_the_scaled_readback(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, flow=(65, 65), mode=[MODE_MANUAL, 120, 0, 0, 0])
+
+        state = await client.read_room_state(_PLAIN, RoomState(target_level=30), _FLOW)
+
+        assert state.target_level == 60
+        assert state.extract_target_level is None
+
+    async def test_target_falls_back_to_balanced_airflow(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, flow=(65, 65))
+        _reject_all_mode_reads(unit)
+
+        state = await client.read_room_state(_PLAIN, RoomState(target_level=30), _FLOW)
 
         assert state.target_level == 65
         assert state.extract_target_level is None
 
-    def test_target_level_is_none_when_airflows_diverge(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 40)
-        client._supports = lambda _room, key: key != "operation_mode"
-        client._read_uint16 = lambda *_a, **_kw: None
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+    @pytest.mark.parametrize("previous_target", [None, 55])
+    async def test_target_is_cleared_when_airflows_diverge(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        previous_target: int | None,
+    ) -> None:
+        _seed(unit, flow=(30, 40))
+        _reject_all_mode_reads(unit)
 
-        state = client.read_room_state(
-            room,
-            RoomState(),
-            RefreshPlan.only(refresh_airflow=True),
+        state = await client.read_room_state(
+            _PLAIN, RoomState(target_level=previous_target), _FLOW
         )
 
         assert state.target_level is None
 
-    def test_target_level_clears_stale_balanced_value_when_flows_diverge(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 40)
-        client._supports = lambda _room, key: key != "operation_mode"
-        client._read_uint16 = lambda *_a, **_kw: None
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(target_level=55),
-            RefreshPlan.only(refresh_airflow=True),
+    async def test_mode_block_supplies_the_targets_without_extra_reads(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 120, 0, 0, 0])
+        manual = await client.read_room_state(
+            _PLAIN, RoomState(operation_mode="manual", extract_target_level=60), _FLOW
         )
 
-        assert state.target_level is None
-
-    def test_failed_optional_target_level_read_enters_temporary_backoff(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        calls: list[int] = []
-
-        def _patched_read_uint16(_slave, address):
-            calls.append(address)
-            if address == REGISTER_CURRENT_LEVEL:
-                raise MeltemModbusError("unsupported current level readback")
-            return None
-
-        client._read_uint16 = _patched_read_uint16
-
-        def _no_mode_block(*_a, **_kw):
-            raise MeltemModbusError("mode block unavailable")
-
-        client._read_holding_registers_with_retry = _no_mode_block
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        first = client.read_room_state(
-            room,
-            RoomState(),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-        second = client.read_room_state(
-            room,
-            first,
-            RefreshPlan.only(refresh_airflow=True),
+        _seed(unit, mode=[MODE_UNBALANCED, 120, 120, 0, 0])
+        unbalanced = await client.read_room_state(
+            _PLAIN, RoomState(operation_mode="unbalanced"), _FLOW
         )
 
-        assert first.target_level == 30
-        assert second.target_level == 30
-        assert calls.count(REGISTER_CURRENT_LEVEL) == 1
+        assert manual.target_level == 60
+        assert manual.extract_target_level is None
+        assert unbalanced.extract_target_level == 60
+        assert _reads(unit) == [(41020, 2), (41120, 5)] * 2
 
-    def test_optional_read_backoff_caps_failure_counter(self) -> None:
-        client = self._build_client()
-        key = (2, REGISTER_CURRENT_LEVEL, 1)
-        client._optional_read_failures[key] = 1024
+    async def test_extract_target_is_read_on_its_own_after_the_short_block(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, flow=(60, 40), mode=[MODE_UNBALANCED, 120, 80, 0, 0])
+        _reject_long_mode_read(unit)
 
-        client._mark_optional_read_failure(key, MeltemModbusError("read failed"))
-
-        assert client._optional_read_failures[key] == 5
-        assert client._is_optional_read_backed_off(key)
-
-    def test_mode_block_supplies_the_target_registers_without_extra_reads(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        read_addresses: list[int] = []
-
-        def _patched_read_uint16(_slave, address):
-            read_addresses.append(address)
-            return None
-
-        client._read_uint16 = _patched_read_uint16
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 120, 0, 0, 0]
-        )
-        manual_state = client.read_room_state(
-            room,
-            RoomState(operation_mode="manual", extract_target_level=60),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_UNBALANCED, 120, 120, 0, 0]
-        )
-        unbalanced_state = client.read_room_state(
-            room,
-            RoomState(operation_mode="unbalanced"),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
-        assert manual_state.target_level == 60
-        assert manual_state.extract_target_level is None
-        assert unbalanced_state.extract_target_level == 60
-        assert read_addresses == []
-
-    def test_extract_target_is_read_separately_after_the_short_mode_block(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (60, 40)
-        client._supports = lambda _room, _key: True
-        read_addresses: list[int] = []
-
-        def _patched_read_uint16(_slave, address):
-            read_addresses.append(address)
-            return 80 if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL else None
-
-        def _patched_read_block(_slave, address, count):
-            if address == REGISTER_MODE and count == 5:
-                raise MeltemModbusError("five-register mode block unavailable")
-            if address == REGISTER_MODE and count == 2:
-                return [MODE_UNBALANCED, 120]
-            raise AssertionError(f"unexpected block read {address}/{count}")
-
-        client._read_uint16 = _patched_read_uint16
-        client._read_uint16_block = _patched_read_block
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(),
-            RefreshPlan.only(refresh_airflow=True),
-        )
+        state = await client.read_room_state(_PLAIN, RoomState(), _FLOW)
 
         assert state.target_level == 60
         assert state.extract_target_level == 40
-        assert read_addresses == [REGISTER_EXTRACT_AIR_TARGET_LEVEL]
+        assert _reads(unit) == [
+            (41020, 2),
+            (41120, 5),
+            (41120, 2),
+            (REGISTER_EXTRACT_AIR_TARGET_LEVEL, 1),
+        ]
 
-    def test_unbalanced_app_preset_targets_decode_to_airflow_values(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 0)
-        client._supports = lambda _room, _key: True
+    async def test_unbalanced_app_preset_targets_decode_to_airflow(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, flow=(30, 0), mode=[MODE_UNBALANCED, 0, 203, 0, 0])
 
-        def _patched_read_uint16(_slave, address):
-            if address == REGISTER_CURRENT_LEVEL:
-                return 0
-            if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL:
-                return 203
-            return None
-
-        client._read_uint16 = _patched_read_uint16
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_UNBALANCED, 0, 203, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(operation_mode="unbalanced"),
-            RefreshPlan.only(refresh_airflow=True),
+        state = await client.read_room_state(
+            _PLAIN, RoomState(operation_mode="unbalanced"), _FLOW
         )
 
         assert state.target_level == 0
         assert state.extract_target_level == 30
 
-    def test_quick_mode_code_is_not_decoded_as_an_unbalanced_target(self) -> None:
+    async def test_quick_mode_code_is_not_decoded_as_an_unbalanced_target(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
         """227..230 share the >200 range but decode far above the rated airflow."""
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 0)
-        client._supports = lambda _room, _key: True
+        _seed(unit, flow=(30, 0), mode=[MODE_UNBALANCED, 229, 229, 0, 0])
 
-        def _patched_read_uint16(_slave, address):
-            if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL:
-                return 229
-            return None
-
-        client._read_uint16 = _patched_read_uint16
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_UNBALANCED, 229, 229, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(operation_mode="unbalanced"),
-            RefreshPlan.only(refresh_airflow=True),
+        state = await client.read_room_state(
+            _PLAIN, RoomState(operation_mode="unbalanced"), _FLOW
         )
 
         assert state.target_level is None
         assert state.extract_target_level is None
-
-    def test_preset_mode_is_decoded_from_app_preset_code(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: 229
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 229, 0, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(operation_mode="manual"),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
-        assert state.preset_mode == "medium"
-
-    def test_extract_only_preset_mode_is_decoded_from_unbalanced_app_code(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (50, 0)
-        client._supports = lambda _room, _key: True
-
-        def _patched_read_uint16(_slave, address):
-            if address == REGISTER_CURRENT_LEVEL:
-                return 0
-            if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL:
-                return 205
-            return None
-
-        client._read_uint16 = _patched_read_uint16
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_UNBALANCED, 0, 205, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(operation_mode="unbalanced"),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
-        assert state.preset_mode == "extract_only"
-
-    def test_raw_200_unbalanced_value_is_not_misdecoded_as_extract_only_preset(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (100, 0)
-        client._supports = lambda _room, _key: True
-
-        def _patched_read_uint16(_slave, address):
-            if address == REGISTER_CURRENT_LEVEL:
-                return 0
-            if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL:
-                return 200
-            return None
-
-        client._read_uint16 = _patched_read_uint16
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_UNBALANCED, 0, 200, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(operation_mode="unbalanced", preset_mode="extract_only"),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
-        assert state.extract_target_level == 100
-        assert state.preset_mode is None
-
-    def test_preset_mode_clears_when_switching_to_automatic_mode(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: MODE_AUTOMATIC_VALUE
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_SENSOR_CONTROL, MODE_AUTOMATIC_VALUE, 0, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(operation_mode="manual", preset_mode="low"),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
-        assert state.operation_mode == "automatic"
-        assert state.preset_mode is None
 
     @pytest.mark.parametrize(
         ("mode_value", "expected_mode"),
@@ -837,341 +395,244 @@ class TestReadRoomState:
             (MODE_AUTOMATIC_VALUE, "automatic"),
         ],
     )
-    def test_sensor_mode_selector_is_not_decoded_as_a_target_level(
-        self, mode_value: int, expected_mode: str,
+    async def test_sensor_mode_selector_is_not_decoded_as_a_target(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        mode_value: int,
+        expected_mode: str,
     ) -> None:
         """41121 carries 112/144/16 there, which would scale to 56/72/8 m3/h."""
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (24, 24)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: mode_value
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_SENSOR_CONTROL, mode_value, 0, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc", slave=2)
+        _seed(unit, flow=(24, 24), mode=[MODE_SENSOR_CONTROL, mode_value, 0, 0, 0])
 
-        state = client.read_room_state(
-            room,
-            RoomState(),
-            RefreshPlan.only(refresh_airflow=True),
-        )
+        state = await client.read_room_state(_FC, RoomState(), _FLOW)
 
         assert state.operation_mode == expected_mode
         # Derived from the measured airflow, not from the mode selector.
         assert state.target_level == 24
 
-    def test_non_intensive_preset_decodes_normally_when_secondary_registers_are_cleared(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: 228
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 228, 0, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 
-        state = client.read_room_state(
-            room,
-            RoomState(preset_mode="intensive"),
-            RefreshPlan.only(refresh_airflow=True),
-        )
+# ---------------------------------------------------------------------------
+#  Optional mode reads and their backoff
+# ---------------------------------------------------------------------------
 
-        assert state.preset_mode == "low"
 
-    def test_active_intensive_does_not_override_previous_quick_mode(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: 229
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 229, 0, MODE_MANUAL, 227]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+class TestModeReadBackoff:
+    async def test_failed_current_level_read_is_backed_off(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit)
+        _reject_all_mode_reads(unit)
 
-        state = client.read_room_state(
-            room,
-            RoomState(preset_mode="medium"),
-            RefreshPlan.only(refresh_airflow=True),
+        first = await client.read_room_state(_PLAIN, RoomState(), _FLOW)
+        second = await client.read_room_state(_PLAIN, first, _FLOW)
+
+        assert first.target_level == 30
+        assert second.target_level == 30
+        assert _reads(unit).count((REGISTER_CURRENT_LEVEL, 1)) == 1
+
+    def test_backoff_caps_the_failure_counter(self, client: MeltemModbusClient) -> None:
+        key = (2, "current_level")
+        client._optional_read_failures[key] = 1024
+
+        client._mark_optional_read_failure(key, MeltemModbusError("read failed"))
+
+        assert client._optional_read_failures[key] == 5
+        assert client._is_optional_read_backed_off(key)
+
+    async def test_successful_write_clears_the_backoff(
+        self, client: MeltemModbusClient
+    ) -> None:
+        names = ("mode", "mode_short", "current_level", "extract_target_level")
+        for name in names:
+            client._mark_optional_read_failure((2, name), MeltemModbusError("no"))
+
+        await client.write_level(_PLAIN, 40)
+
+        for name in names:
+            assert not client._is_optional_read_backed_off((2, name))
+
+
+# ---------------------------------------------------------------------------
+#  Operating mode, presets, and intensive
+# ---------------------------------------------------------------------------
+
+
+class TestModeDecoding:
+    async def test_preset_is_decoded_from_the_app_code(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 229, 0, 0, 0])
+
+        state = await client.read_room_state(
+            _PLAIN, RoomState(operation_mode="manual"), _FLOW
         )
 
         assert state.preset_mode == "medium"
-        assert state.intensive_active is True
 
-    def test_active_intensive_reports_the_base_quick_mode_after_a_restart(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: 228
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 228, 0, MODE_MANUAL, 227]
+    async def test_extract_only_preset_is_decoded_from_the_unbalanced_code(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, flow=(50, 0), mode=[MODE_UNBALANCED, 0, 205, 0, 0])
+
+        state = await client.read_room_state(
+            _PLAIN, RoomState(operation_mode="unbalanced"), _FLOW
         )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 
-        state = client.read_room_state(
-            room,
-            RoomState(),
-            RefreshPlan.only(refresh_airflow=True),
+        assert state.preset_mode == "extract_only"
+
+    async def test_raw_200_is_not_misdecoded_as_extract_only(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, flow=(100, 0), mode=[MODE_UNBALANCED, 0, 200, 0, 0])
+
+        state = await client.read_room_state(
+            _PLAIN,
+            RoomState(operation_mode="unbalanced", preset_mode="extract_only"),
+            _FLOW,
+        )
+
+        assert state.extract_target_level == 100
+        assert state.preset_mode is None
+
+    async def test_preset_clears_in_automatic_mode(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_SENSOR_CONTROL, MODE_AUTOMATIC_VALUE, 0, 0, 0])
+
+        state = await client.read_room_state(
+            _FC, RoomState(operation_mode="manual", preset_mode="low"), _FLOW
+        )
+
+        assert state.operation_mode == "automatic"
+        assert state.preset_mode is None
+
+    async def test_cleared_shadow_registers_decode_the_base_preset(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 228, 0, 0, 0])
+
+        state = await client.read_room_state(
+            _PLAIN, RoomState(preset_mode="intensive"), _FLOW
         )
 
         assert state.preset_mode == "low"
+
+    @pytest.mark.parametrize(
+        ("current_level", "previous_preset", "expected_preset"),
+        [
+            (229, "medium", "medium"),
+            (228, None, "low"),
+            (230, "medium", "high"),
+        ],
+        ids=["keeps-base", "after-restart", "base-changes"],
+    )
+    async def test_active_intensive_reports_the_base_preset(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        current_level: int,
+        previous_preset: str | None,
+        expected_preset: str,
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, current_level, 0, MODE_MANUAL, 227])
+
+        state = await client.read_room_state(
+            _PLAIN, RoomState(preset_mode=previous_preset), _FLOW
+        )
+
+        assert state.preset_mode == expected_preset
         assert state.intensive_active is True
 
-    def test_base_quick_mode_changes_are_seen_during_intensive(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: 230
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 230, 0, MODE_MANUAL, 227]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+    async def test_inactive_intensive_is_reported_as_false(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 229, 0, 0, 0])
 
-        state = client.read_room_state(
-            room,
-            RoomState(preset_mode="medium"),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
-        assert state.preset_mode == "high"
-
-    def test_inactive_intensive_override_is_reported_as_false(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: 229
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 229, 0, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(intensive_active=True),
-            RefreshPlan.only(refresh_airflow=True),
+        state = await client.read_room_state(
+            _PLAIN, RoomState(intensive_active=True), _FLOW
         )
 
         assert state.intensive_active is False
 
-    def test_medium_to_intensive_to_medium_readback_does_not_flip_to_high(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+    async def test_medium_intensive_medium_does_not_flip_to_high(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        state = RoomState()
+        for block in (
+            [MODE_MANUAL, 229, 0, 0, 0],
+            [MODE_MANUAL, 229, 0, MODE_MANUAL, 227],
+            [MODE_MANUAL, 229, 0, 0, 0],
+        ):
+            _seed(unit, mode=block)
+            state = await client.read_room_state(_PLAIN, state, _FLOW)
 
-        sequences = [
-            ([MODE_MANUAL, 229, 0, 0, 0], 229, RoomState()),
-            ([MODE_MANUAL, 229, 0, MODE_MANUAL, 227], 229, RoomState(preset_mode="medium")),
-            ([MODE_MANUAL, 229, 0, 0, 0], 229, RoomState(preset_mode="intensive")),
-        ]
-
-        final_state = None
-        for block, raw_current, previous_state in sequences:
-            client._read_uint16 = lambda *_a, raw_current=raw_current, **_kw: raw_current
-            client._read_holding_registers_with_retry = (
-                lambda *_a, block=block, **_kw: _FakeResponse(registers=block)
-            )
-            final_state = client.read_room_state(
-                room,
-                previous_state,
-                RefreshPlan.only(refresh_airflow=True),
-            )
-
-        assert final_state is not None
-        assert final_state.preset_mode == "medium"
-
-    def test_two_register_fallback_clears_previous_preset_when_runtime_state_is_plain_manual(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: 120
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 120, 0, 0, 0]
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        client._mark_optional_read_failure(
-            (room.slave, REGISTER_MODE, 5),
-            MeltemModbusError("mode block unavailable"),
-        )
-
-        state = client.read_room_state(
-            room,
-            RoomState(operation_mode="manual", preset_mode="medium"),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
-        assert state.operation_mode == "manual"
-        assert state.preset_mode is None
-
-    def test_preset_mode_falls_back_to_previous_value_when_all_mode_reads_are_unavailable(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: 120
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        client._mark_optional_read_failure(
-            (room.slave, REGISTER_MODE, 5),
-            MeltemModbusError("five-register mode block unavailable"),
-        )
-        client._mark_optional_read_failure(
-            (room.slave, REGISTER_MODE, 2),
-            MeltemModbusError("two-register mode block unavailable"),
-        )
-
-        state = client.read_room_state(
-            room,
-            RoomState(operation_mode="manual", preset_mode="medium"),
-            RefreshPlan.only(refresh_airflow=True),
-        )
-
-        assert state.operation_mode == "manual"
         assert state.preset_mode == "medium"
 
-    def test_operation_mode_falls_back_to_two_register_read_when_five_register_read_fails(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: 229
 
-        def _patched_read_block(_slave, address, count):
-            if address == REGISTER_MODE and count == 5:
-                raise MeltemModbusError("five-register mode block unavailable")
-            if address == REGISTER_MODE and count == 2:
-                return [MODE_MANUAL, 229]
-            raise AssertionError(f"unexpected block read {address}/{count}")
+class TestShortModeFallback:
+    async def test_operation_mode_comes_from_the_short_read(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 229, 0, 0, 0])
+        _reject_long_mode_read(unit)
 
-        client._read_uint16_block = _patched_read_block
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(),
-            RefreshPlan.only(refresh_airflow=True),
-        )
+        state = await client.read_room_state(_PLAIN, RoomState(), _FLOW)
 
         assert state.operation_mode == "manual"
         assert state.preset_mode == "medium"
         assert state.intensive_active is None
 
-    def test_two_register_fallback_keeps_intensive_without_flagging_its_health(self) -> None:
+    async def test_short_read_keeps_intensive_without_flagging_its_health(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
         """Units that only reject the long read (HW-4) are not failing."""
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: 229
+        _seed(unit, mode=[MODE_MANUAL, 229, 0, 0, 0])
+        _reject_long_mode_read(unit)
 
-        def _patched_read_block(_slave, address, count):
-            if address == REGISTER_MODE and count == 5:
-                raise MeltemModbusError("five-register mode block unavailable")
-            if address == REGISTER_MODE and count == 2:
-                return [MODE_MANUAL, 229]
-            raise AssertionError(f"unexpected block read {address}/{count}")
-
-        client._read_uint16_block = _patched_read_block
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client.read_room_state(
-            room,
-            RoomState(intensive_active=True),
-            RefreshPlan.only(refresh_airflow=True),
+        state = await client.read_room_state(
+            _PLAIN, RoomState(intensive_active=True), _FLOW
         )
 
         assert state.intensive_active is True
         assert state.read_health_for("flow_control").last_error is None
         assert state.read_health_for("intensive").last_attempt is None
 
-    def test_two_register_fallback_clears_previous_preset_for_known_non_preset_mode(self) -> None:
-        client = self._build_client()
-        client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
-        client._supports = lambda _room, _key: True
-        client._read_uint16 = lambda *_a, **_kw: MODE_AUTOMATIC_VALUE
+    async def test_short_read_clears_the_preset_in_plain_manual_mode(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 120, 0, 0, 0])
+        _reject_long_mode_read(unit)
 
-        def _patched_read_block(_slave, address, count):
-            if address == REGISTER_MODE and count == 5:
-                raise MeltemModbusError("five-register mode block unavailable")
-            if address == REGISTER_MODE and count == 2:
-                return [MODE_SENSOR_CONTROL, MODE_AUTOMATIC_VALUE]
-            raise AssertionError(f"unexpected block read {address}/{count}")
+        state = await client.read_room_state(
+            _PLAIN, RoomState(operation_mode="manual", preset_mode="medium"), _FLOW
+        )
 
-        client._read_uint16_block = _patched_read_block
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc", slave=2)
+        assert state.operation_mode == "manual"
+        assert state.preset_mode is None
 
-        state = client.read_room_state(
-            room,
-            RoomState(operation_mode="manual", preset_mode="low"),
-            RefreshPlan.only(refresh_airflow=True),
+    async def test_short_read_clears_the_preset_in_a_sensor_mode(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_SENSOR_CONTROL, MODE_AUTOMATIC_VALUE, 0, 0, 0])
+        _reject_long_mode_read(unit)
+
+        state = await client.read_room_state(
+            _FC, RoomState(operation_mode="manual", preset_mode="low"), _FLOW
         )
 
         assert state.operation_mode == "automatic"
         assert state.preset_mode is None
 
-    def test_successful_write_clears_optional_airflow_backoff(self) -> None:
-        client = self._build_client()
-        client._write_uint16 = lambda *_a, **_kw: None
-        client._ensure_client = lambda: object()
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+    async def test_preset_is_kept_when_no_mode_read_answers(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 120, 0, 0, 0])
+        unit.fail_read(REGISTER_MODE, _REJECTED)
 
-        client._mark_optional_read_failure(
-            (room.slave, REGISTER_MODE, 2),
-            MeltemModbusError("two-register mode block unavailable"),
-        )
-        client._mark_optional_read_failure(
-            (room.slave, REGISTER_MODE, 5),
-            MeltemModbusError("five-register mode block unavailable"),
-        )
-        client._mark_optional_read_failure(
-            (room.slave, REGISTER_CURRENT_LEVEL, 1),
-            MeltemModbusError("current airflow read unavailable"),
-        )
-        client._mark_optional_read_failure(
-            (room.slave, REGISTER_EXTRACT_AIR_TARGET_LEVEL, 1),
-            MeltemModbusError("extract target read unavailable"),
+        state = await client.read_room_state(
+            _PLAIN, RoomState(operation_mode="manual", preset_mode="medium"), _FLOW
         )
 
-        client.write_level(room, 40)
-
-        assert not client._is_optional_read_backed_off((room.slave, REGISTER_MODE, 2))
-        assert not client._is_optional_read_backed_off((room.slave, REGISTER_MODE, 5))
-        assert not client._is_optional_read_backed_off((room.slave, REGISTER_CURRENT_LEVEL, 1))
-        assert not client._is_optional_read_backed_off((room.slave, REGISTER_EXTRACT_AIR_TARGET_LEVEL, 1))
-
-    def test_plain_profile_reads_only_exhaust_temperature(self) -> None:
-        client = self._build_client()
-        client._read_temperature_if_due = (
-            lambda _room, key, _reg, _prev, _should, **_kwargs: {
-                "exhaust_temperature": 21.0,
-            }.get(key)
-        )
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-
-        state = client._read_profile_state(
-            room,
-            RoomState(),
-            RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),
-        )
-
-        assert state.exhaust_temperature == 21.0
-        assert state.outdoor_air_temperature is None
-        assert state.extract_air_temperature is None
-        assert state.supply_air_temperature is None
-
-    def test_fc_voc_profile_reads_environment_values(self) -> None:
-        client = self._build_client()
-        client._read_optional_uint16_block = lambda _slave, reg, _count, **_kwargs: {
-            REGISTER_EXTRACT_AIR_TEMPERATURE: [220, 1800, 50, 1900, 0, 0],
-            REGISTER_HUMIDITY_EXTRACT_AIR: [44, 780],
-            REGISTER_HUMIDITY_SUPPLY_AIR: [46, 0, 120],
-        }.get(reg)
-        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc_voc", slave=2)
-
-        state = client._read_profile_state(
-            room,
-            RoomState(),
-            RefreshPlan.only(refresh_temperatures=True, refresh_environment=True),
-        )
-
-        assert state.humidity_extract_air == 44
-        assert state.humidity_supply_air == 46
-        assert state.co2_extract_air == 780
-        assert state.voc_supply_air == 120
+        assert state.operation_mode == "manual"
+        assert state.preset_mode == "medium"

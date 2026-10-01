@@ -1,13 +1,18 @@
-"""Tests for MeltemModbusClient runtime — connection, retry, read, write paths."""
+"""Tests for the MeltemModbusClient lifecycle, error handling, and writes."""
 
 from __future__ import annotations
 
-import threading
-from unittest.mock import MagicMock, call, patch
-
 import pytest
+from homeassistant.exceptions import HomeAssistantError
+from modbus_connection import (
+    IllegalDataValueError,
+    ModbusConnectionError,
+    ModbusTimeoutError,
+)
+from modbus_connection.mock import MockModbusConnection, MockModbusUnit, WriteEvent
 
 from custom_components.meltem_ventilation.const import (
+    DEFAULT_GATEWAY_DEVICE_ID,
     MODE_AUTOMATIC_VALUE,
     MODE_CO2_CONTROL_VALUE,
     MODE_HUMIDITY_CONTROL_VALUE,
@@ -21,944 +26,489 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_CO2_MAX_LEVEL,
     REGISTER_CO2_STARTING_POINT,
     REGISTER_CURRENT_LEVEL,
+    REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+    REGISTER_GATEWAY_NODE_ADDRESS_1,
+    REGISTER_GATEWAY_NUMBER_OF_NODES,
     REGISTER_HUMIDITY_MAX_LEVEL,
     REGISTER_HUMIDITY_MIN_LEVEL,
     REGISTER_HUMIDITY_STARTING_POINT,
     REGISTER_MODE,
     REGISTER_PRESET_MODE,
     REGISTER_PRESET_VALUE,
+    REGISTER_PRODUCT_ID,
 )
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
-    SerialSettings,
 )
 from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
 
-# ---------------------------------------------------------------------------
-#  Helpers
-# ---------------------------------------------------------------------------
-
-_SETTINGS = SerialSettings(
-    port="/dev/ttyACM0",
-    baudrate=19200,
-    bytesize=8,
-    parity="E",
-    stopbits=1,
-    timeout=0.8,
-)
-
+_PORT = "/dev/ttyACM0"
 _ROOM = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 _ROOM_S = RoomConfig(key="unit_s", name="Unit S", profile="s_plain", slave=3)
 _ROOM_FC_VOC = RoomConfig(key="unit_v", name="Unit V", profile="ii_fc_voc", slave=4)
 
 
-class _FakeResponse:
-    def __init__(self, registers=None, error=False):
-        self.registers = registers or []
-        self._error = error
+@pytest.fixture(name="sleeps")
+def sleeps_fixture(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    sleeps: list[float] = []
 
-    def isError(self) -> bool:
-        return self._error
+    async def _sleep(seconds: float) -> None:
+        sleeps.append(seconds)
 
-
-class _FakeWriteResponse:
-    def __init__(self, error=False):
-        self._error = error
-
-    def isError(self) -> bool:
-        return self._error
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
+    )
+    return sleeps
 
 
-def _failing_client():
-    """Return a MagicMock whose connect() always returns False."""
-    m = MagicMock()
-    m.connect.return_value = False
-    return m
+@pytest.fixture(name="link")
+def link_fixture(sleeps: list[float]) -> MockModbusConnection:
+    return MockModbusConnection()
+
+
+@pytest.fixture(name="client")
+def client_fixture(link: MockModbusConnection) -> MeltemModbusClient:
+    return MeltemModbusClient(link.for_unit, port=_PORT)
+
+
+def _writes(unit: MockModbusUnit) -> list[WriteEvent]:
+    events: list[WriteEvent] = []
+    unit.on_write(events.append)
+    return events
+
+
+def _written(events: list[WriteEvent]) -> list[tuple[int, int]]:
+    return [(event.address, event.values[0]) for event in events]
 
 
 # ---------------------------------------------------------------------------
-#  Connection management — _ensure_client
+#  Units and link timing
 # ---------------------------------------------------------------------------
 
 
-class TestEnsureClient:
-    def test_returns_existing_client_when_socket_open(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        client._client = mock_pymodbus
+class TestUnits:
+    async def test_every_unit_asks_for_the_gateway_timing(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        await client.read_room_state(_ROOM, RoomState(), RefreshPlan.only(refresh_airflow=True))
 
-        result = client._ensure_client()
-        assert result is mock_pymodbus
+        unit = link.for_unit(2)
+        assert unit.message_spacing == 0.1
+        assert unit.required_timeout == 0.8
 
-    def test_reconnects_when_socket_not_open(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = False
-        mock_pymodbus.connect.return_value = True
-        client._client = mock_pymodbus
+    async def test_each_unit_is_requested_once(
+        self, link: MockModbusConnection
+    ) -> None:
+        requested: list[int] = []
 
-        result = client._ensure_client()
-        assert result is mock_pymodbus
-        mock_pymodbus.connect.assert_called_once()
+        def _factory(unit_id: int) -> MockModbusUnit:
+            requested.append(unit_id)
+            return link.for_unit(unit_id)
 
-    def test_runtime_client_disables_pymodbus_retries(self) -> None:
-        """The own reconnecting retry already covers lost frames."""
-        client = MeltemModbusClient(_SETTINGS)
-        fresh = MagicMock()
-        fresh.connect.return_value = True
+        client = MeltemModbusClient(_factory, port=_PORT)
+        plan = RefreshPlan.only(refresh_airflow=True)
+        for _ in range(2):
+            await client.read_room_state(_ROOM, RoomState(), plan)
+            await client.read_room_state(_ROOM_S, RoomState(), plan)
 
-        with patch(
-            "custom_components.meltem_ventilation.modbus_client.build_client",
-            return_value=fresh,
-        ) as mock_build:
-            client._ensure_client()
+        assert requested == [2, 3]
 
-        mock_build.assert_called_once_with(_SETTINGS, retries=0)
+    async def test_answered_reads_update_the_silence_timer(
+        self, client: MeltemModbusClient
+    ) -> None:
+        assert client.seconds_since_successful_read(2) is None
 
-    def test_builds_new_client_after_stale_one_fails(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        stale = MagicMock()
-        stale.is_socket_open.return_value = False
-        stale.connect.return_value = False
-        client._client = stale
+        await client.read_room_state(_ROOM, RoomState(), RefreshPlan.only(refresh_airflow=True))
 
-        fresh = MagicMock()
-        fresh.connect.return_value = True
-
-        with (
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                return_value=fresh,
-            ),
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.sync_sleep",
-            ),
-        ):
-            result = client._ensure_client()
-
-        assert result is fresh
-        stale.close.assert_called()
-
-    def test_retries_up_to_three_times(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        client._client = None
-
-        mock1 = MagicMock()
-        mock1.connect.return_value = False
-        mock2 = MagicMock()
-        mock2.connect.return_value = False
-        mock3 = MagicMock()
-        mock3.connect.return_value = True
-
-        with (
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                side_effect=[mock1, mock2, mock3],
-            ),
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-        ):
-            result = client._ensure_client()
-
-        assert result is mock3
-
-    def test_raises_after_all_retries_fail(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        client._client = None
-
-        mock_fail = MagicMock()
-        mock_fail.connect.return_value = False
-
-        with (
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                return_value=mock_fail,
-            ),
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            pytest.raises(MeltemModbusError, match="Could not connect"),
-        ):
-            client._ensure_client()
+        assert client.seconds_since_successful_read(2) is not None
+        assert client.seconds_since_successful_read(3) is None
 
 
-class TestClose:
-    def test_waits_for_an_active_gateway_operation(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        client._client = mock_pymodbus
-        operation_started = threading.Event()
-        release_operation = threading.Event()
-        close_finished = threading.Event()
+# ---------------------------------------------------------------------------
+#  Gateway operations
+# ---------------------------------------------------------------------------
 
-        def _run_operation() -> None:
-            with client._gateway_operation("testing serialization"):
-                operation_started.set()
-                release_operation.wait()
 
-        operation_thread = threading.Thread(target=_run_operation)
-        operation_thread.start()
-        assert operation_started.wait(timeout=1)
+class TestGatewayOperations:
+    async def test_validate_reads_the_gateway_node_count(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        gateway = link.for_unit(DEFAULT_GATEWAY_DEVICE_ID)
+        gateway.holding[REGISTER_GATEWAY_NUMBER_OF_NODES] = 1
 
-        close_thread = threading.Thread(
-            target=lambda: (client.close(), close_finished.set())
+        await client.async_validate_gateway()
+
+        assert [(e.address, e.count) for e in gateway.read_events] == [
+            (REGISTER_GATEWAY_NUMBER_OF_NODES, 1)
+        ]
+
+    async def test_validate_reports_a_silent_gateway(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        link.for_unit(DEFAULT_GATEWAY_DEVICE_ID).fail_requests(ModbusTimeoutError("silent"))
+
+        with pytest.raises(MeltemModbusError):
+            await client.async_validate_gateway()
+
+    async def test_validate_passes_a_link_conflict_through(self) -> None:
+        def _conflicting(_unit_id: int) -> MockModbusUnit:
+            raise HomeAssistantError("already in use with different link settings")
+
+        client = MeltemModbusClient(_conflicting, port=_PORT)
+
+        with pytest.raises(HomeAssistantError) as err:
+            await client.async_validate_gateway()
+
+        assert not isinstance(err.value, MeltemModbusError)
+
+    async def test_discovery_uses_the_gateway_unit(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        link.for_unit(DEFAULT_GATEWAY_DEVICE_ID).holding.update(
+            {REGISTER_GATEWAY_NUMBER_OF_NODES: 2, REGISTER_GATEWAY_NODE_ADDRESS_1: [2, 3]}
         )
-        close_thread.start()
-        assert not close_finished.wait(timeout=0.05)
 
-        release_operation.set()
-        operation_thread.join(timeout=1)
-        close_thread.join(timeout=1)
+        assert await client.discover_gateway_units(2, 16) == [2, 3]
 
-        assert close_finished.is_set()
-        mock_pymodbus.close.assert_called_once()
-        assert client._client is None
+    async def test_probe_uses_the_room_unit(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        link.for_unit(4).holding[REGISTER_PRODUCT_ID] = [0xC874, 0x0001]
 
-    def test_normalizes_connect_exceptions(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        client._client = None
+        _profile, preview, _keys = await client.probe_slave_details(4)
 
-        broken = MagicMock()
-        broken.connect.side_effect = OSError("serial busy")
-
-        with (
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                return_value=broken,
-            ),
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            pytest.raises(MeltemModbusError, match="serial busy"),
-        ):
-            client._ensure_client()
+        assert preview is not None
+        assert preview.startswith("ID 116852 |")
 
 
 # ---------------------------------------------------------------------------
-#  close / shutdown
+#  Failures while reading
 # ---------------------------------------------------------------------------
 
 
-class TestCloseAndShutdown:
-    def test_close_closes_and_clears_client(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        client._client = mock_pymodbus
+class TestReadFailures:
+    async def test_a_lost_link_is_raised_after_one_paused_retry(
+        self,
+        client: MeltemModbusClient,
+        link: MockModbusConnection,
+        sleeps: list[float],
+    ) -> None:
+        unit = link.for_unit(2)
+        unit.fail_requests(ModbusConnectionError("unplugged"))
 
-        client.close()
-        mock_pymodbus.close.assert_called_once()
-        assert client._client is None
+        with pytest.raises(MeltemConnectionError, match=_PORT):
+            await client.read_room_state(_ROOM, RoomState(), RefreshPlan())
 
-    def test_close_noop_when_no_client(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        client._client = None
-        client.close()  # Should not raise.
+        assert len(unit.read_events) == 2
+        assert sleeps == [0.5]
 
-    def test_shutdown_prevents_reopening_the_port(self) -> None:
-        """A late post-write readback after unload must not lock the port again."""
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        client._client = mock_pymodbus
+    async def test_a_silent_unit_ends_the_job_after_its_first_block(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        unit = link.for_unit(2)
+        unit.fail_requests(ModbusTimeoutError("silent"))
+        previous = RoomState(supply_air_flow=30, operation_mode="manual")
 
+        state = await client.read_room_state(_ROOM, previous, RefreshPlan())
+
+        assert [(e.address, e.count) for e in unit.read_events] == [
+            (REGISTER_EXTRACT_AIR_FLOW, 2)
+        ] * 2
+        assert state.supply_air_flow == 30
+        assert state.operation_mode == "manual"
+        for group in ("flow", "flow_control", "status", "temperature", "hours"):
+            assert state.read_health_for(group).consecutive_failures == 1
+
+    async def test_a_silent_unit_does_not_affect_its_neighbours(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        link.for_unit(2).fail_requests(ModbusTimeoutError("silent"))
+        link.for_unit(3).holding[REGISTER_EXTRACT_AIR_FLOW] = [40, 40]
+        plan = RefreshPlan.only(refresh_airflow=True)
+
+        await client.read_room_state(_ROOM, RoomState(), plan)
+        state = await client.read_room_state(_ROOM_S, RoomState(), plan)
+
+        assert state.supply_air_flow == 40
+        assert state.read_health_for("flow").consecutive_failures == 0
+
+    async def test_shutdown_rejects_later_operations(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
         client.shutdown()
 
-        mock_pymodbus.close.assert_called_once()
-        with (
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client"
-            ) as mock_build,
-            pytest.raises(MeltemConnectionError, match="shut down"),
-        ):
-            client.read_room_state(_ROOM, RoomState(), RefreshPlan())
-        mock_build.assert_not_called()
+        with pytest.raises(MeltemConnectionError, match="shut down"):
+            await client.read_room_state(_ROOM, RoomState(), RefreshPlan())
+        with pytest.raises(MeltemConnectionError, match="shut down"):
+            await client.write_level(_ROOM, 40)
+
+        assert link.for_unit(2).read_events == []
 
 
 # ---------------------------------------------------------------------------
-#  _read_holding_registers_with_retry
-# ---------------------------------------------------------------------------
-
-
-class TestReadHoldingRegistersWithRetry:
-    def test_returns_response_on_success(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        expected = _FakeResponse(registers=[42])
-        mock_pymodbus.read_holding_registers.return_value = expected
-        mock_pymodbus.is_socket_open.return_value = True
-        client._client = mock_pymodbus
-
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            result = client._read_holding_registers_with_retry(2, 41000, 1)
-
-        assert result.registers == [42]
-
-    def test_retries_on_transport_exception(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.read_holding_registers.side_effect = [
-            ConnectionError("transport fail"),
-            _FakeResponse(registers=[99]),
-        ]
-        mock_pymodbus.is_socket_open.return_value = True
-        client._client = mock_pymodbus
-
-        # After transport error, close() clears _client.  _ensure_client()
-        # then calls build_client() — patch it to return a fresh mock whose
-        # read_holding_registers returns the second side_effect value.
-        rebuilt = MagicMock()
-        rebuilt.connect.return_value = True
-        rebuilt.is_socket_open.return_value = True
-        rebuilt.read_holding_registers.return_value = _FakeResponse(registers=[99])
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                return_value=rebuilt,
-            ),
-        ):
-            result = client._read_holding_registers_with_retry(2, 41000, 1)
-
-        assert result.registers == [99]
-
-    def test_raises_on_persistent_transport_error(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.read_holding_registers.side_effect = ConnectionError("fail")
-        mock_pymodbus.is_socket_open.return_value = True
-        client._client = mock_pymodbus
-
-        # After first transport error, close() + _ensure_client() rebuilds.
-        # The rebuilt client also raises, so the second attempt fails too.
-        rebuilt = MagicMock()
-        rebuilt.connect.return_value = True
-        rebuilt.is_socket_open.return_value = True
-        rebuilt.read_holding_registers.side_effect = ConnectionError("fail again")
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                return_value=rebuilt,
-            ),
-            pytest.raises(MeltemModbusError, match="Read raised"),
-        ):
-            client._read_holding_registers_with_retry(2, 41000, 1)
-
-    def test_raises_on_error_response(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.read_holding_registers.return_value = _FakeResponse(error=True)
-        client._client = mock_pymodbus
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            pytest.raises(MeltemModbusError, match="Read failed"),
-        ):
-            client._read_holding_registers_with_retry(2, 41000, 1)
-
-    def test_raises_on_none_response(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.read_holding_registers.return_value = None
-        client._client = mock_pymodbus
-
-        rebuilt = MagicMock()
-        rebuilt.connect.return_value = True
-        rebuilt.is_socket_open.return_value = True
-        rebuilt.read_holding_registers.return_value = None
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                return_value=rebuilt,
-            ),
-            pytest.raises(MeltemModbusError, match="no response|Read failed"),
-        ):
-            client._read_holding_registers_with_retry(2, 41000, 1)
-
-    def test_reconnects_after_missing_response(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.read_holding_registers.return_value = None
-        client._client = mock_pymodbus
-
-        rebuilt = MagicMock()
-        rebuilt.connect.return_value = True
-        rebuilt.is_socket_open.return_value = True
-        rebuilt.read_holding_registers.return_value = _FakeResponse(registers=[7])
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                return_value=rebuilt,
-            ),
-        ):
-            result = client._read_holding_registers_with_retry(2, 41000, 1)
-
-        assert result.registers == [7]
-
-    def test_raises_on_insufficient_registers(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.read_holding_registers.return_value = _FakeResponse(
-            registers=[1]
-        )
-        client._client = mock_pymodbus
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            pytest.raises(MeltemModbusError, match="insufficient|Read failed"),
-        ):
-            client._read_holding_registers_with_retry(2, 41000, 3)
-
-
-# ---------------------------------------------------------------------------
-#  write_level
+#  Writes
 # ---------------------------------------------------------------------------
 
 
 class TestWriteLevel:
-    def test_zero_level_sends_mode_off(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    async def test_zero_level_switches_the_unit_off(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(2))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_level(_ROOM, 0)
+        await client.write_level(_ROOM, 0)
 
-        calls = mock_pymodbus.write_register.call_args_list
-        # First call: MODE
-        assert calls[0] == call(address=REGISTER_MODE, value=MODE_OFF, device_id=2)
-        # Second call: CURRENT_LEVEL = 0
-        assert calls[1] == call(
-            address=REGISTER_CURRENT_LEVEL, value=0, device_id=2
-        )
-        # Third call: APPLY
-        assert calls[2] == call(address=REGISTER_APPLY, value=0, device_id=2)
+        assert _written(events) == [
+            (REGISTER_MODE, MODE_OFF),
+            (REGISTER_CURRENT_LEVEL, 0),
+            (REGISTER_APPLY, 0),
+        ]
+        assert {event.function_code for event in events} == {0x06}
 
-    def test_nonzero_level_sends_mode_manual(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    async def test_level_is_scaled_to_the_raw_range(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(2))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_level(_ROOM, 50)
+        await client.write_level(_ROOM, 50)
 
-        calls = mock_pymodbus.write_register.call_args_list
-        assert calls[0] == call(address=REGISTER_MODE, value=MODE_MANUAL, device_id=2)
+        assert _written(events) == [
+            (REGISTER_MODE, MODE_MANUAL),
+            (REGISTER_CURRENT_LEVEL, 100),
+            (REGISTER_APPLY, 0),
+        ]
 
-    def test_level_scales_to_raw_200_range(self) -> None:
-        """For ii_plain (max=100), level 50 → raw 100."""
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    async def test_s_profile_scales_to_its_own_maximum(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(3))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_level(_ROOM, 50)
+        await client.write_level(_ROOM_S, 97)
 
-        # raw = round(50 * 200 / 100) = 100
-        level_call = mock_pymodbus.write_register.call_args_list[1]
-        assert level_call == call(
-            address=REGISTER_CURRENT_LEVEL, value=100, device_id=2
-        )
+        assert _written(events)[1] == (REGISTER_CURRENT_LEVEL, 200)
 
-    def test_level_scaling_for_s_profile(self) -> None:
-        """For s_plain (max=97), level 97 → raw 200."""
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    async def test_a_rejected_write_is_raised(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        unit = link.for_unit(2)
+        events = _writes(unit)
+        unit.fail_write(REGISTER_CURRENT_LEVEL, IllegalDataValueError())
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_level(_ROOM_S, 97)
+        with pytest.raises(MeltemModbusError):
+            await client.write_level(_ROOM, 50)
 
-        # raw = round(97 * 200 / 97) = 200
-        level_call = mock_pymodbus.write_register.call_args_list[1]
-        assert level_call == call(
-            address=REGISTER_CURRENT_LEVEL, value=200, device_id=3
-        )
+        # The APPLY latch must not fire after a half-written request.
+        assert _written(events) == [(REGISTER_MODE, MODE_MANUAL)]
 
-    def test_write_error_raises(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse(error=True)
-        client._client = mock_pymodbus
+    async def test_an_unanswered_write_is_retried_once(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        unit = link.for_unit(2)
+        unit.fail_write(REGISTER_APPLY, ModbusTimeoutError("silent"))
 
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            pytest.raises(MeltemModbusError, match="Write failed"),
-        ):
-            client.write_level(_ROOM, 50)
+        with pytest.raises(MeltemModbusError):
+            await client.write_level(_ROOM, 50)
 
-
-# ---------------------------------------------------------------------------
-#  write_unbalanced_levels
-# ---------------------------------------------------------------------------
+        unit.fail_write(REGISTER_APPLY, None)
+        await client.write_level(_ROOM, 50)
+        assert unit.holding[REGISTER_APPLY] == 0
 
 
 class TestWriteUnbalancedLevels:
-    def test_sends_mode_unbalanced_and_both_levels(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    async def test_writes_mode_and_both_levels(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(2))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_unbalanced_levels(_ROOM, 60, 40)
+        await client.write_unbalanced_levels(_ROOM, 60, 40)
 
-        calls = mock_pymodbus.write_register.call_args_list
-        assert calls[0] == call(
-            address=REGISTER_MODE, value=MODE_UNBALANCED, device_id=2
-        )
-        # Supply: raw = round(60 * 200 / 100) = 120
-        assert calls[1] == call(
-            address=REGISTER_CURRENT_LEVEL, value=120, device_id=2
-        )
-        # Extract: raw = round(40 * 200 / 100) = 80
-        assert calls[2] == call(
-            address=REGISTER_EXTRACT_AIR_TARGET_LEVEL, value=80, device_id=2
-        )
-        assert calls[3] == call(address=REGISTER_APPLY, value=0, device_id=2)
+        assert _written(events) == [
+            (REGISTER_MODE, MODE_UNBALANCED),
+            (REGISTER_CURRENT_LEVEL, 120),
+            (REGISTER_EXTRACT_AIR_TARGET_LEVEL, 80),
+            (REGISTER_APPLY, 0),
+        ]
 
-    def test_raw_levels_clamped_to_0_200(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    async def test_raw_levels_are_clamped(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(2))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_unbalanced_levels(_ROOM, 999, -10)
+        await client.write_unbalanced_levels(_ROOM, 999, -10)
 
-        calls = mock_pymodbus.write_register.call_args_list
-        # Supply 999 → min(200, round(999*200/100)) → 200
-        assert calls[1].kwargs["value"] == 200 or calls[1][1]["value"] == 200
-        # Extract -10 → max(0, round(-10*200/100)) → 0
-        assert calls[2].kwargs["value"] == 0 or calls[2][1]["value"] == 0
+        assert _written(events)[1:3] == [
+            (REGISTER_CURRENT_LEVEL, 200),
+            (REGISTER_EXTRACT_AIR_TARGET_LEVEL, 0),
+        ]
 
 
 class TestWriteOperatingMode:
-    def test_humidity_control_writes_sensor_control_magic_value(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    @pytest.mark.parametrize(
+        ("operation_mode", "selector"),
+        [
+            ("humidity_control", MODE_HUMIDITY_CONTROL_VALUE),
+            ("co2_control", MODE_CO2_CONTROL_VALUE),
+            ("automatic", MODE_AUTOMATIC_VALUE),
+        ],
+    )
+    async def test_sensor_modes_write_the_selector(
+        self,
+        client: MeltemModbusClient,
+        link: MockModbusConnection,
+        operation_mode: str,
+        selector: int,
+    ) -> None:
+        events = _writes(link.for_unit(4))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_operating_mode(_ROOM_FC_VOC, "humidity_control", 45, 45)
+        await client.write_operating_mode(_ROOM_FC_VOC, operation_mode, 45, 45)
 
-        assert mock_pymodbus.write_register.call_args_list == [
-            call(address=REGISTER_MODE, value=MODE_SENSOR_CONTROL, device_id=4),
-            call(
-                address=REGISTER_CURRENT_LEVEL,
-                value=MODE_HUMIDITY_CONTROL_VALUE,
-                device_id=4,
-            ),
-            call(address=REGISTER_APPLY, value=0, device_id=4),
+        assert _written(events) == [
+            (REGISTER_MODE, MODE_SENSOR_CONTROL),
+            (REGISTER_CURRENT_LEVEL, selector),
+            (REGISTER_APPLY, 0),
         ]
 
-    def test_co2_control_writes_sensor_control_magic_value(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    async def test_unbalanced_mode_keeps_both_levels(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(2))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_operating_mode(_ROOM_FC_VOC, "co2_control", 45, 45)
+        await client.write_operating_mode(_ROOM, "unbalanced", 60, 40)
 
-        assert mock_pymodbus.write_register.call_args_list[0] == call(
-            address=REGISTER_MODE,
-            value=MODE_SENSOR_CONTROL,
-            device_id=4,
-        )
-        assert mock_pymodbus.write_register.call_args_list[1] == call(
-            address=REGISTER_CURRENT_LEVEL,
-            value=MODE_CO2_CONTROL_VALUE,
-            device_id=4,
-        )
-
-    def test_automatic_writes_sensor_control_magic_value(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
-
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_operating_mode(_ROOM_FC_VOC, "automatic", 45, 45)
-
-        assert mock_pymodbus.write_register.call_args_list[1] == call(
-            address=REGISTER_CURRENT_LEVEL,
-            value=MODE_AUTOMATIC_VALUE,
-            device_id=4,
-        )
-
-    def test_unbalanced_mode_preserves_both_levels(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
-
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_operating_mode(_ROOM, "unbalanced", 60, 40)
-
-        assert mock_pymodbus.write_register.call_args_list == [
-            call(address=REGISTER_MODE, value=MODE_UNBALANCED, device_id=2),
-            call(address=REGISTER_CURRENT_LEVEL, value=120, device_id=2),
-            call(address=REGISTER_EXTRACT_AIR_TARGET_LEVEL, value=80, device_id=2),
-            call(address=REGISTER_APPLY, value=0, device_id=2),
+        assert _written(events) == [
+            (REGISTER_MODE, MODE_UNBALANCED),
+            (REGISTER_CURRENT_LEVEL, 120),
+            (REGISTER_EXTRACT_AIR_TARGET_LEVEL, 80),
+            (REGISTER_APPLY, 0),
         ]
+
+    async def test_off_mode_clears_the_level(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(2))
+
+        await client.write_operating_mode(_ROOM, "off", 60, 40)
+
+        assert _written(events) == [
+            (REGISTER_MODE, MODE_OFF),
+            (REGISTER_CURRENT_LEVEL, 0),
+            (REGISTER_APPLY, 0),
+        ]
+
+    async def test_unknown_mode_is_rejected_before_writing(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(2))
+
+        with pytest.raises(MeltemModbusError, match="Unsupported operating mode"):
+            await client.write_operating_mode(_ROOM, "turbo", 60, 40)
+
+        assert events == []
 
 
 class TestWritePresetMode:
-    def test_medium_writes_manual_preset_code(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    async def test_quick_mode_clears_the_shadow_registers_first(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(2))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_preset_mode(_ROOM, "medium")
+        await client.write_preset_mode(_ROOM, "medium")
 
-        assert mock_pymodbus.write_register.call_args_list == [
-            call(address=REGISTER_PRESET_MODE, value=0, device_id=2),
-            call(address=REGISTER_PRESET_VALUE, value=0, device_id=2),
-            call(address=REGISTER_MODE, value=MODE_MANUAL, device_id=2),
-            call(
-                address=REGISTER_CURRENT_LEVEL,
-                value=PRESET_MODE_CODE_MEDIUM,
-                device_id=2,
-            ),
-            call(address=REGISTER_APPLY, value=0, device_id=2),
+        assert _written(events) == [
+            (REGISTER_PRESET_MODE, 0),
+            (REGISTER_PRESET_VALUE, 0),
+            (REGISTER_MODE, MODE_MANUAL),
+            (REGISTER_CURRENT_LEVEL, PRESET_MODE_CODE_MEDIUM),
+            (REGISTER_APPLY, 0),
         ]
 
-    def test_intensive_writes_secondary_preset_registers(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    async def test_intensive_writes_only_the_shadow_registers(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(2))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_preset_mode(_ROOM, "intensive")
+        await client.write_preset_mode(_ROOM, "intensive")
 
-        assert mock_pymodbus.write_register.call_args_list == [
-            call(address=REGISTER_PRESET_MODE, value=MODE_MANUAL, device_id=2),
-            call(
-                address=REGISTER_PRESET_VALUE,
-                value=PRESET_MODE_CODE_INTENSIVE,
-                device_id=2,
-            ),
-            call(address=REGISTER_APPLY, value=0, device_id=2),
+        assert _written(events) == [
+            (REGISTER_PRESET_MODE, MODE_MANUAL),
+            (REGISTER_PRESET_VALUE, PRESET_MODE_CODE_INTENSIVE),
+            (REGISTER_APPLY, 0),
         ]
 
-    def test_leaving_intensive_clears_secondary_preset_registers_first(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+    async def test_clearing_intensive_leaves_the_base_mode_alone(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        events = _writes(link.for_unit(2))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_preset_mode(_ROOM, "low")
+        await client.clear_intensive(_ROOM)
 
-        assert mock_pymodbus.write_register.call_args_list[:2] == [
-            call(address=REGISTER_PRESET_MODE, value=0, device_id=2),
-            call(address=REGISTER_PRESET_VALUE, value=0, device_id=2),
+        assert _written(events) == [
+            (REGISTER_PRESET_MODE, 0),
+            (REGISTER_PRESET_VALUE, 0),
+            (REGISTER_APPLY, 0),
         ]
+
+    async def test_unknown_preset_is_rejected(self, client: MeltemModbusClient) -> None:
+        with pytest.raises(MeltemModbusError, match="Unsupported preset mode"):
+            await client.write_preset_mode(_ROOM, "turbo")
 
 
 class TestWriteControlSetting:
-    def test_humidity_setting_writes_expected_register(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
-
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_control_setting(_ROOM_FC_VOC, "humidity_starting_point", 50)
-
-        mock_pymodbus.write_register.assert_called_once_with(
-            address=REGISTER_HUMIDITY_STARTING_POINT,
-            value=50,
-            device_id=4,
-        )
-
-    def test_co2_setting_writes_expected_register(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
-
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_control_setting(_ROOM_FC_VOC, "co2_starting_point", 850)
-
-        mock_pymodbus.write_register.assert_called_once_with(
-            address=REGISTER_CO2_STARTING_POINT,
-            value=850,
-            device_id=4,
-        )
-
     @pytest.mark.parametrize(
         ("setting_key", "value", "register", "expected"),
         [
+            ("humidity_starting_point", 50, REGISTER_HUMIDITY_STARTING_POINT, 50),
+            ("co2_starting_point", 850, REGISTER_CO2_STARTING_POINT, 850),
             ("humidity_starting_point", 99, REGISTER_HUMIDITY_STARTING_POINT, 80),
             ("humidity_max_level", 0, REGISTER_HUMIDITY_MAX_LEVEL, 10),
             ("co2_starting_point", 1800, REGISTER_CO2_STARTING_POINT, 1200),
             ("co2_max_level", 0, REGISTER_CO2_MAX_LEVEL, 10),
+            ("humidity_min_level", 15, REGISTER_HUMIDITY_MIN_LEVEL, 20),
+        ],
+        ids=[
+            "humidity",
+            "co2",
+            "humidity-upper-bound",
+            "humidity-lower-bound",
+            "co2-upper-bound",
+            "co2-lower-bound",
+            "step",
         ],
     )
-    def test_setting_values_are_clamped_to_manufacturer_bounds(
-        self, setting_key: str, value: int, register: int, expected: int,
+    async def test_writes_the_clamped_and_stepped_value(
+        self,
+        client: MeltemModbusClient,
+        link: MockModbusConnection,
+        setting_key: str,
+        value: int,
+        register: int,
+        expected: int,
     ) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
+        events = _writes(link.for_unit(4))
 
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            client.write_control_setting(_ROOM_FC_VOC, setting_key, value)
+        written = await client.write_control_setting(_ROOM_FC_VOC, setting_key, value)
 
-        mock_pymodbus.write_register.assert_called_once_with(
-            address=register,
-            value=expected,
-            device_id=4,
-        )
+        assert written == expected
+        assert _written(events) == [(register, expected)]
 
-    def test_setting_values_are_snapped_to_the_manufacturer_step(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse()
-        client._client = mock_pymodbus
-
-        with patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"):
-            written = client.write_control_setting(
-                _ROOM_FC_VOC, "humidity_min_level", 15
-            )
-
-        assert written == 20
-        mock_pymodbus.write_register.assert_called_once_with(
-            address=REGISTER_HUMIDITY_MIN_LEVEL,
-            value=20,
-            device_id=4,
-        )
+    async def test_unknown_setting_is_rejected(self, client: MeltemModbusClient) -> None:
+        with pytest.raises(MeltemModbusError, match="Unsupported control setting"):
+            await client.write_control_setting(_ROOM_FC_VOC, "turbo", 1)
 
 
 # ---------------------------------------------------------------------------
-#  _write_uint16
-# ---------------------------------------------------------------------------
-
-
-class TestWriteUint16:
-    def test_raises_on_error_response(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = _FakeWriteResponse(error=True)
-        client._client = mock_pymodbus
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            pytest.raises(MeltemModbusError, match="Write failed"),
-        ):
-            client._write_uint16(2, 41120, 3)
-
-    def test_raises_on_none_response(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = None
-        client._client = mock_pymodbus
-
-        rebuilt = MagicMock()
-        rebuilt.connect.return_value = True
-        rebuilt.is_socket_open.return_value = True
-        rebuilt.write_register.return_value = None
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                return_value=rebuilt,
-            ),
-            pytest.raises(MeltemModbusError, match="no response"),
-        ):
-            client._write_uint16(2, 41120, 3)
-
-        assert client._client is None
-
-    def test_reconnects_after_missing_response(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.return_value = None
-        client._client = mock_pymodbus
-
-        rebuilt = MagicMock()
-        rebuilt.connect.return_value = True
-        rebuilt.is_socket_open.return_value = True
-        rebuilt.write_register.return_value = _FakeWriteResponse()
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                return_value=rebuilt,
-            ),
-        ):
-            client._write_uint16(2, 41120, 3)
-
-        rebuilt.write_register.assert_called_once()
-
-    def test_raises_on_transport_exception(self) -> None:
-        """An OSError is a transport failure, so it is retried before giving up."""
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.write_register.side_effect = OSError("write failed")
-        client._client = mock_pymodbus
-
-        with (
-            patch.object(client, "_ensure_client", return_value=mock_pymodbus),
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            pytest.raises(MeltemModbusError, match="write failed"),
-        ):
-            client._write_uint16(2, 41120, 3)
-
-        assert client._client is None
-
-    def test_non_transport_exception_is_not_retried(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.write_register.side_effect = ValueError("bad value")
-        client._client = mock_pymodbus
-
-        with pytest.raises(MeltemModbusError, match="bad value"):
-            client._write_uint16(2, 41120, 3)
-
-        assert mock_pymodbus.write_register.call_count == 1
-        assert client._client is None
-
-
-# ---------------------------------------------------------------------------
-#  read_room_state end-to-end (light integration)
-# ---------------------------------------------------------------------------
-
-
-class TestReadRoomStateEndToEnd:
-    def test_closes_connection_on_unexpected_error(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.read_holding_registers.side_effect = RuntimeError("unexpected")
-        client._client = mock_pymodbus
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            pytest.raises(MeltemModbusError, match="Could not connect|Unexpected error"),
-        ):
-            client.read_room_state(_ROOM, RoomState(), RefreshPlan())
-
-        assert client._client is None  # Connection was closed.
-
-    def test_reraises_modbus_error_as_is(self) -> None:
-        """MeltemModbusError from _ensure_client propagates through read_room_state.
-
-        Note: error *responses* are swallowed by _read_optional_* helpers and
-        do not propagate.  The realistic scenario for MeltemModbusError
-        reaching the caller is a connection-level failure in _ensure_client.
-        """
-        client = MeltemModbusClient(_SETTINGS)
-        # No client set — _ensure_client will call build_client which we make fail.
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                side_effect=lambda *_a, **_kw: _failing_client(),
-            ),
-            pytest.raises(MeltemModbusError, match="Could not connect"),
-        ):
-            client.read_room_state(_ROOM, RoomState(), RefreshPlan())
-
-    def test_lost_connection_mid_read_is_not_swallowed(self) -> None:
-        """Optional reads hide Modbus errors, but never a dead transport."""
-        client = MeltemModbusClient(_SETTINGS)
-        mock_pymodbus = MagicMock()
-        mock_pymodbus.is_socket_open.return_value = True
-        mock_pymodbus.read_holding_registers.side_effect = ConnectionError("transport fail")
-        client._client = mock_pymodbus
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                side_effect=lambda *_a, **_kw: _failing_client(),
-            ),
-            pytest.raises(MeltemConnectionError),
-        ):
-            client.read_room_state(_ROOM, RoomState(), RefreshPlan())
-
-    def test_reads_after_a_reconnect_use_the_new_transport(self) -> None:
-        """A reconnect must not leave later reads of the same job on a dead client."""
-        client = MeltemModbusClient(_SETTINGS)
-        stale = MagicMock()
-        stale.is_socket_open.return_value = True
-        stale.read_holding_registers.side_effect = ConnectionError("transport fail")
-        client._client = stale
-
-        rebuilt = MagicMock()
-        rebuilt.connect.return_value = True
-        rebuilt.is_socket_open.return_value = True
-        rebuilt.read_holding_registers.return_value = _FakeResponse(registers=[7] * 6)
-
-        with (
-            patch("custom_components.meltem_ventilation.modbus_client.sync_sleep"),
-            patch(
-                "custom_components.meltem_ventilation.modbus_client.build_client",
-                return_value=rebuilt,
-            ),
-        ):
-            client.read_room_state(_ROOM, RoomState(), RefreshPlan())
-
-        assert stale.read_holding_registers.call_count == 1
-        assert rebuilt.read_holding_registers.call_count > 1
-
-
-# ---------------------------------------------------------------------------
-#  _supports helper
+#  Small helpers
 # ---------------------------------------------------------------------------
 
 
 class TestSupportsHelper:
-    def test_returns_true_when_no_constraints(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
+    def test_returns_true_when_no_constraints(self, client: MeltemModbusClient) -> None:
         assert client._supports(_ROOM, "anything")
 
-    def test_returns_true_for_listed_key(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
+    def test_returns_true_only_for_listed_keys(self, client: MeltemModbusClient) -> None:
         room = RoomConfig(
             key="r",
             name="R",
@@ -968,18 +518,3 @@ class TestSupportsHelper:
         )
         assert client._supports(room, "exhaust_temperature")
         assert not client._supports(room, "humidity_extract_air")
-
-
-# ---------------------------------------------------------------------------
-#  _coalesce
-# ---------------------------------------------------------------------------
-
-
-class TestCoalesce:
-    def test_returns_value_when_not_none(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        assert client._coalesce(42, 99) == 42
-
-    def test_returns_previous_when_none(self) -> None:
-        client = MeltemModbusClient(_SETTINGS)
-        assert client._coalesce(None, 99) == 99

@@ -4,8 +4,12 @@
 # pytest and pytest-asyncio versions, so those must NOT be installed
 # separately - doing so silently breaks the pinned combination.
 # It also dictates the minimum Python version used in CI.
-pytest-homeassistant-custom-component==0.13.354
-# Same version that Home Assistant pins in package_constraints.txt, so tests
-# run against the pymodbus that users actually get.
-pymodbus[serial]==3.13.1
+pytest-homeassistant-custom-component==0.13.367
+# Home Assistant 2026.10 pins these for its modbus integration, which hands out
+# the shared serial link. The 2026.9 test harness above still ships 4.10.0,
+# which lacks require_timeout and Device, so the newer pin is installed on top.
+modbus-connection[tmodbus]==4.12.3
+tmodbus==0.6.2
+# The modbus integration still imports pymodbus for its YAML hubs.
+pymodbus==3.13.1
 ruff==0.15.20
