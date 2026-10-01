@@ -173,12 +173,13 @@ class TestMeltemPresetModeSelect:
         )
         assert entity.current_option == "medium"
 
-    def test_missing_preset_mode_is_unknown(self) -> None:
+    def test_missing_preset_with_known_mode_means_no_quick_mode(self) -> None:
+        """The decoder reports a plain manual or unbalanced state as None."""
         entity = _build_preset_entity(
             "ii_plain",
             state=RoomState(operation_mode="unbalanced"),
         )
-        assert entity.current_option is None
+        assert entity.current_option == PRESET_MODE_INACTIVE
 
     def test_single_direction_states_are_reported_as_individual(self) -> None:
         """extract_only/supply_only are expressed by the two fan entities."""

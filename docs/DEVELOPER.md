@@ -241,6 +241,14 @@ Current design:
   separated by `REQUEST_GAP_SECONDS`
 - airflow-level writes rely on the normal scheduler for later readback instead
   of forcing an immediate confirmation poll
+- the flow job takes `41121`/`41122` from the `41120` mode block and only
+  reads them on their own when the block is unavailable
+- a unit that has not answered for `ROOM_SILENT_AFTER_SECONDS` is polled at
+  most every `SILENT_ROOM_POLL_SECONDS`, because every unanswered read costs
+  timeouts on the shared bus
+- the runtime client disables pymodbus' internal resend (`retries=0`); the
+  client's own reconnecting retry already covers a lost frame, and the default
+  `retries=3` turned one unanswered register into about eight timeouts
 
 Current job groups:
 
@@ -267,18 +275,54 @@ the read. A successful read in another group does not clear that failure.
 Expected groups are derived from each room's supported entities, so a register
 that a device profile does not expose is not reported as a failed read.
 
-Entities are available only while their own group's last successful read is
-fresh. Airflow uses a 30-second freshness limit; other groups use three times
-their polling interval. The `data_health` diagnostic binary sensor and the
-Home Assistant system-health page expose per-group read status and write
-confirmation details without issuing extra gateway requests.
+Read-only entities are available only while their own group's last successful
+read is fresh. Airflow uses a 30-second freshness limit; other groups use three
+times their polling interval. Control entities (fans, selects, the intensive
+switch) stay available while the unit answers and report `unknown` values
+instead, so a command can still be sent. The `data_health` diagnostic binary
+sensor and the Home Assistant system-health page expose per-group read status
+and write confirmation details without issuing extra gateway requests. Its
+attributes are excluded from the recorder because they change on every poll.
 
 A successful Modbus write call confirms only that the write operation was
-accepted at the transport/protocol layer. Entity state remains at its last
-confirmed value until the associated group has been read after that write was
-started. A matching readback confirms the write; a different value is reported
-as a mismatch, and a failed readback remains unconfirmed. Cached values from
-before the write cannot confirm it.
+accepted at the transport/protocol layer. Control entities show the written
+value as pending (`level_source: pending` on the fans) until the associated
+group has been read after the write, or until the pending window expires.
+Only target registers confirm an airflow write; the measured airflow lags
+behind and never does. A matching readback confirms the write; a different
+value is reported as a mismatch, and a failed readback remains unconfirmed.
+Cached values from before the write cannot confirm it. A failed write drops any
+pending value. Failed, mismatched, or unconfirmed writes flag `data_health` for
+`WRITE_HEALTH_RETENTION_SECONDS` and then only remain visible as attributes.
+
+Units that answer the two-register mode read but reject the five-register one
+(HW-4) do not record an `intensive` read failure; the intensive state is simply
+unknown there.
+
+Write errors reach the UI as translated `HomeAssistantError`s (`exceptions` in
+`strings.json`) instead of an "Unknown error".
+
+## Directional fan writes
+
+Both fans write through `coordinator.async_set_direction_level`, which resolves
+the opposite direction and writes under one per-unit lock. Two quick or
+concurrent commands (for example a scene setting both fans) therefore build on
+each other's pending value instead of on the stale cache.
+
+Decision rules, in order:
+
+- opposite direction unknown: a non-zero value is written balanced to both
+  directions and reported as `last_write_fallback`; switching a single
+  direction off is refused with `opposite_airflow_unknown`
+- measured opposite airflow within `LEVEL_CONFIRM_TOLERANCE` of the own
+  measured airflow counts as one balanced value, so jitter does not force
+  unbalanced operation
+- levels at most `BALANCED_LEVEL_TOLERANCE` apart, a stopped unit, or leaving
+  sensor control with a non-zero value: balanced write
+- otherwise: unbalanced write with the opposite direction kept
+
+`fan.turn_on` without a percentage does nothing on a running fan, because
+re-sending the measured level would end a running sensor mode.
 
 Local benchmark results on the tested gateway so far:
 
@@ -669,6 +713,7 @@ unavailable rather than showing frozen values:
 - a unit is considered unavailable after `ROOM_UNAVAILABLE_AFTER_FAILURES`
   consecutive failures, or after `ROOM_SILENT_AFTER_SECONDS` without any
   successful read, even if the gateway itself still answers
+- silent units are polled less often so they do not starve the others
 - units that still respond keep working independently
 - polling backs off progressively while the gateway stays unreachable
 - writes fail until communication is restored
@@ -691,6 +736,8 @@ Current implementation direction:
 - retry lock/transport errors
 - avoid repeated retries on plain `ExceptionResponse(...)`
 - do not force immediate readback confirmation after normal airflow writes
+- keep pymodbus' own resend disabled for the runtime client (`retries=0`);
+  setup probes keep the pymodbus default because they have no retry layer
 
 ### Temperatures are not identical conceptually
 
