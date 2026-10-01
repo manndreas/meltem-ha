@@ -36,7 +36,21 @@ def sleeps_fixture(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 @pytest.fixture(name="policy")
 def policy_fixture() -> TransportPolicy:
-    return TransportPolicy(disconnect_after_timeouts=3, connection_retry_delay=_RETRY_DELAY)
+    # No quiet window, so the timeout count alone decides.
+    return TransportPolicy(
+        disconnect_after_timeouts=3,
+        link_quiet_seconds=0,
+        connection_retry_delay=_RETRY_DELAY,
+    )
+
+
+@pytest.fixture(name="quiet_policy")
+def quiet_policy_fixture() -> TransportPolicy:
+    return TransportPolicy(
+        disconnect_after_timeouts=3,
+        link_quiet_seconds=10,
+        connection_retry_delay=_RETRY_DELAY,
+    )
 
 
 @pytest.fixture(name="unit")
@@ -171,14 +185,78 @@ class TestLinkRecycling:
         assert await _run(policy, unit, operation) == [1]
 
 
+class TestQuietWindow:
+    async def test_a_recent_answer_keeps_the_link_up(
+        self, quiet_policy: TransportPolicy, unit: AsyncMock
+    ) -> None:
+        """Other units answered a moment ago, so the silent one is the problem."""
+        await _run(quiet_policy, unit, AsyncMock(return_value=[1]))
+        silent = AsyncMock(side_effect=ModbusTimeoutError("silent"))
+
+        for _ in range(3):
+            with pytest.raises(ModbusTimeoutError):
+                await _run(quiet_policy, unit, silent)
+
+        unit.disconnect.assert_not_awaited()
+
+    async def test_a_fresh_link_is_not_recycled_at_once(
+        self, quiet_policy: TransportPolicy, unit: AsyncMock
+    ) -> None:
+        silent = AsyncMock(side_effect=ModbusTimeoutError("silent"))
+
+        for _ in range(2):
+            with pytest.raises(ModbusTimeoutError):
+                await _run(quiet_policy, unit, silent)
+
+        unit.disconnect.assert_not_awaited()
+
+    async def test_a_link_quiet_for_the_whole_window_is_recycled_once(
+        self, quiet_policy: TransportPolicy, unit: AsyncMock
+    ) -> None:
+        silent = AsyncMock(side_effect=ModbusTimeoutError("silent"))
+        quiet_policy._quiet_since -= 11
+
+        for _ in range(3):
+            with pytest.raises(ModbusTimeoutError):
+                await _run(quiet_policy, unit, silent)
+
+        # Recycling starts a new quiet window, so the next timeouts wait for it.
+        unit.disconnect.assert_awaited_once()
+        assert quiet_policy.diagnostics()["link_recycles"] == 1
+
+    async def test_an_exception_response_proves_the_link_is_alive(
+        self, quiet_policy: TransportPolicy, unit: AsyncMock
+    ) -> None:
+        quiet_policy._quiet_since -= 11
+        operation = AsyncMock(
+            side_effect=[
+                ModbusTimeoutError("silent"),
+                ModbusTimeoutError("silent"),
+                IllegalDataAddressError(),
+                ModbusTimeoutError("silent"),
+                ModbusTimeoutError("silent"),
+                ModbusTimeoutError("silent"),
+                ModbusTimeoutError("silent"),
+            ]
+        )
+
+        for _ in range(4):
+            with pytest.raises((ModbusTimeoutError, IllegalDataAddressError)):
+                await _run(quiet_policy, unit, operation)
+
+        unit.disconnect.assert_not_awaited()
+
+
 class TestReadAnswerAge:
     async def test_only_answered_reads_count(
         self, policy: TransportPolicy, unit: AsyncMock
     ) -> None:
         assert policy.seconds_since_read_answer(2) is None
+        assert policy.diagnostics()["seconds_since_any_answer"] is None
 
         await policy.run(unit, 2, AsyncMock(), 41120, 1, is_read=False)
         assert policy.seconds_since_read_answer(2) is None
+        assert policy.diagnostics()["seconds_since_any_answer"] is not None
 
         await _run(policy, unit, AsyncMock(return_value=[1, 2]))
         age = policy.seconds_since_read_answer(2)

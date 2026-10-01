@@ -37,6 +37,8 @@ async def discover_units(gateway: ModbusUnit) -> list[int]:
         (node_count,) = await gateway.read_holding_registers(
             REGISTER_GATEWAY_NUMBER_OF_NODES, 1
         )
+    except ModbusConnectionError:
+        raise
     except ModbusError as err:
         raise RuntimeError(f"failed to read bridge node count: {err}") from err
 
@@ -44,6 +46,8 @@ async def discover_units(gateway: ModbusUnit) -> list[int]:
         addresses = await gateway.read_holding_registers(
             REGISTER_GATEWAY_NODE_ADDRESS_1, max(1, min(32, node_count))
         )
+    except ModbusConnectionError:
+        raise
     except ModbusError as err:
         raise RuntimeError(f"failed to read bridge node addresses: {err}") from err
 
@@ -120,6 +124,9 @@ async def main() -> int:
                 line.append(f"u{unit}:{flows[0]}/{flows[1]}{marker}")
             print("  ".join(line), flush=True)
             await asyncio.sleep(args.interval)
+    except ModbusConnectionError as err:
+        print(f"ERROR: lost the serial connection on {args.port}: {err}")
+        return 2
     finally:
         await connection.close()
 

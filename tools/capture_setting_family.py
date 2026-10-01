@@ -308,6 +308,9 @@ async def main() -> int:
 
     try:
         values = await capture_snapshot(connection.for_unit(args.slave), family=family)
+    except ModbusConnectionError as err:
+        print(f"ERROR: lost the serial connection on {args.port}: {err}")
+        return 2
     finally:
         await connection.close()
 

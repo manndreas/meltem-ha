@@ -59,6 +59,9 @@ async def main() -> int:
             print(f"  restored 41121={restored} flow={flow_restored}")
 
         return 0
+    except (t.ModbusConnectionError, t.MeltemConnectionError) as err:
+        print(f"ERROR: lost the serial connection on {port}: {err}")
+        return 2
     finally:
         await connection.close()
 

@@ -157,10 +157,14 @@ Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
   the device-modelling framework used here, hence the minimum HA version
 - link parameters are fixed in `build_serial_params`: 19200 baud, 8E1, RTU
 - another integration that uses the same port with other link settings makes
-  setup fail with `ConfigEntryError` (config flow: `cannot_connect`)
+  setup fail with `ConfigEntryError` (config flow: `port_in_use`)
 - every unit asks for `set_message_spacing(REQUEST_GAP_SECONDS)` and
   `require_timeout(FIXED_TIMEOUT)` before its first request (`prepare_unit`);
-  both are floors, so another consumer of the same port can only raise them
+  both are floors, so another consumer of the same port can only raise them.
+  A YAML hub with `timeout: 3` on the same port would make every silent unit
+  cost 3 s per attempt instead of 0.8 s
+- the config flow reads the unit list and probes every unit on one temporary
+  link, so the port is opened once per step
 
 Register blocks are `Component`s in `device/components.py`. Each one pins
 `register_ranges` to exactly the block the pymodbus client read, so the gateway
@@ -178,14 +182,35 @@ instance per gateway link):
 | `ModbusConnectionError` | wait `TRANSPORT_RETRY_DELAY_SECONDS`, retry once; the library reconnects |
 | `ClientClosedError` | no retry |
 | other `ModbusExceptionError` | no retry; resets the counter |
-| `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS` timeouts in a row, across all units | `disconnect()`; the next request reopens the link |
+| `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS` timeouts in a row, across all units, and no answer at all for `TRANSPORT_LINK_QUIET_SECONDS` | `disconnect()`; the next request reopens the link, and a new quiet window starts |
+
+The quiet window keeps silent units from recycling a link their neighbours
+still answer on, also when two silent units or two jobs of one silent unit
+follow each other. Any answer counts, including exception responses. The
+diagnostics download shows `link_recycles`, `consecutive_timeouts`, and
+`seconds_since_any_answer` under `coordinator.transport`; a recycle is logged
+at info level.
 
 The client maps `ModbusConnectionError` to `MeltemConnectionError` and every
 other `ModbusError` to `MeltemModbusError`. When a unit times out before any
 of its blocks answered in a job, the rest of that job is skipped and all of
 its groups are marked failed, so a silent unit costs one timeout plus one
-retry per job instead of one per block. tmodbus retries `SERVER_DEVICE_BUSY`
-(code 6) internally; whether the gateway ever sends it is open (HW-7).
+retry per job instead of one per block. The same holds when a unit falls
+silent during the mode reads: the first timeout there ends the job. Only an
+exception response starts the mode backoff, because only that is the HW-4
+refusal; a timeout is retried on the next flow job. The setup probe also stops
+at the first timeout of a unit.
+
+Open until measured on the gateway (HW-7):
+
+- If the gateway answers code 10/11 for a powered-off unit instead of timing
+  out, the per-job skip does not apply, because `Device.async_poll` only
+  raises timeouts. In the in-memory gateway such a unit costs 28 requests for
+  a full read and 8 for a flow job, each retried once, and the mode reads go
+  into backoff.
+- tmodbus retries `SERVER_DEVICE_BUSY` (code 6) internally for up to 60 s with
+  growing waits. The link and `_gateway_lock` stay held that long, so writes
+  from the UI wait too. `modbus-connection` does not make this configurable.
 
 How the hardware findings are implemented now:
 
@@ -194,14 +219,14 @@ How the hardware findings are implemented now:
 | The gateway needs a pause between requests | `REQUEST_GAP_SECONDS` via `set_message_spacing` in `prepare_unit` |
 | 0.8 s is enough for the gateway to answer | `FIXED_TIMEOUT` via `require_timeout` in `prepare_unit` |
 | pymodbus' default resend turned one unanswered register into about eight timeouts | `TransportPolicy` retries once, without disconnecting |
-| Units reject `41120..41124` until a first write (HW-4) | `mode` → `mode_short` → single reads in `MeltemModbusClient._read_mode_block`, backoff per `(slave, component)` |
+| Units reject `41120..41124` until a first write (HW-4) | `mode` → `mode_short` → single reads in `MeltemModbusClient._read_mode_block`, backoff per `(slave, component)` on exception responses only |
 | `41121`/`41122` come with the mode block | `_read_mode_group` only reads them on their own without a block |
 | `41121` holds the sensor-mode selector in sensor modes | `_read_mode_group` derives the target from the measured airflow there |
 | `41000` and `41004` are swapped on the gateway | field mapping of `Temperatures` in `device/components.py` |
 | 32-bit values are word-swapped | `word_order="little"` on `float32` and `uint32` fields |
 | Mode writes only take effect after `41132` | `Command` component, written last in every mode and preset sequence |
 | Discovery runs on the gateway's own unit 1 | `MeltemGateway` in `device/device.py` |
-| A silent unit must not drag down the others | per-job skip in `MeltemModbusClient._poll`, `SILENT_ROOM_POLL_SECONDS` in the coordinator |
+| A silent unit must not drag down the others | per-job skip in `MeltemModbusClient._poll` and `_read_mode_component`, quiet window in `TransportPolicy`, `SILENT_ROOM_POLL_SECONDS` in the coordinator |
 
 ## Discovery model
 
@@ -966,7 +991,10 @@ decoding are tested together. It covers the Modbus layer, the coordinator,
 and every entity platform, including:
 
 - request parity with the blocks the pymodbus client read
-- the retry policy: one retry, link recycling, gateway errors
+- the retry policy: one retry, the quiet window before recycling the link,
+  gateway errors
+- setup and unload through Home Assistant's real `modbus` integration on an
+  in-memory link, including the release of the port
 - gateway-backed discovery via `43901` / `43902..`
 - minimal setup-time capability probing
 - balanced airflow derivation and per-profile scaling

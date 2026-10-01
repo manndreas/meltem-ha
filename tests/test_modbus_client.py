@@ -9,7 +9,7 @@ from __future__ import annotations
 import struct
 
 import pytest
-from modbus_connection import IllegalDataAddressError
+from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
 from custom_components.meltem_ventilation.const import (
@@ -430,6 +430,23 @@ class TestModeReadBackoff:
         assert first.target_level == 30
         assert second.target_level == 30
         assert _reads(unit).count((REGISTER_CURRENT_LEVEL, 1)) == 1
+
+    async def test_a_unit_falling_silent_ends_the_mode_reads(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        """Only refused registers (HW-4) back off; a timeout ends the job."""
+        _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
+        unit.fail_read(REGISTER_MODE, ModbusTimeoutError("silent"))
+
+        state = await client.read_room_state(
+            _PLAIN, RoomState(operation_mode="manual"), _FLOW
+        )
+
+        assert _reads(unit) == [(41020, 2), (41120, 5), (41120, 5)]
+        assert state.operation_mode == "manual"
+        assert state.read_health_for("flow").consecutive_failures == 0
+        assert state.read_health_for("flow_control").consecutive_failures == 1
+        assert not client._is_optional_read_backed_off((2, "mode"))
 
     def test_backoff_caps_the_failure_counter(self, client: MeltemModbusClient) -> None:
         key = (2, "current_level")

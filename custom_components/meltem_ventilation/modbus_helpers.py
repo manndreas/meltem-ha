@@ -21,6 +21,7 @@ from modbus_connection import (
     ModbusConnectionError,
     ModbusError,
     ModbusSerialParams,
+    ModbusTimeoutError,
     ModbusUnit,
 )
 
@@ -35,6 +36,7 @@ from .const import (
     PROFILE_METADATA,
     REQUEST_GAP_SECONDS,
     TRANSPORT_DISCONNECT_AFTER_TIMEOUTS,
+    TRANSPORT_LINK_QUIET_SECONDS,
     TRANSPORT_RETRY_DELAY_SECONDS,
 )
 from .device import MeltemGateway, MeltemProbe, PolicyUnit, TransportPolicy
@@ -108,6 +110,7 @@ def new_transport_policy() -> TransportPolicy:
 
     return TransportPolicy(
         disconnect_after_timeouts=TRANSPORT_DISCONNECT_AFTER_TIMEOUTS,
+        link_quiet_seconds=TRANSPORT_LINK_QUIET_SECONDS,
         connection_retry_delay=TRANSPORT_RETRY_DELAY_SECONDS,
     )
 
@@ -243,6 +246,9 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None, list[
             await getattr(probe, name).async_update()
         except ModbusConnectionError as err:
             raise MeltemConnectionError(str(err)) from err
+        except ModbusTimeoutError:
+            # A silent unit would only time out on every further probe.
+            break
         except ModbusError:
             continue
         answered.add(name)

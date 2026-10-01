@@ -20,6 +20,7 @@ from homeassistant.util import dt as dt_util
 from modbus_connection import (
     ModbusConnectionError,
     ModbusError,
+    ModbusExceptionError,
     ModbusTimeoutError,
     ModbusUnit,
 )
@@ -145,6 +146,11 @@ class MeltemModbusClient:
         """
 
         return self._policy.seconds_since_read_answer(slave)
+
+    def transport_diagnostics(self) -> dict[str, float | int | None]:
+        """Return the health counters of the gateway link."""
+
+        return self._policy.diagnostics()
 
     def shutdown(self) -> None:
         """Reject every later operation, so a late readback cannot reach the link."""
@@ -709,7 +715,12 @@ class MeltemModbusClient:
         name: str,
         read_group: str | tuple[str, ...],
     ) -> Component | None:
-        """Read one mode-family component with temporary backoff."""
+        """Read one mode-family component.
+
+        Only exception responses start the temporary backoff: they mean the
+        unit refuses the registers (HW-4). A timeout means the unit went
+        silent, so the rest of the job is skipped instead.
+        """
 
         if self._unit_silent_error is not None:
             self._record_group_read_error(read_group, self._unit_silent_error)
@@ -728,8 +739,15 @@ class MeltemModbusClient:
             await component.async_update()
         except ModbusConnectionError:
             raise
-        except ModbusError as err:
+        except ModbusTimeoutError as err:
+            self._unit_silent_error = err
+            self._record_group_read_error(read_group, err)
+            return None
+        except ModbusExceptionError as err:
             self._mark_optional_read_failure(key, err)
+            self._record_group_read_error(read_group, err)
+            return None
+        except ModbusError as err:
             self._record_group_read_error(read_group, err)
             return None
 
