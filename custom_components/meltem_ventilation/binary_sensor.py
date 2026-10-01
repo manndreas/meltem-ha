@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ALL_PROFILES
+from .coordinator import READ_GROUP_ENTITY_KEYS
 from .entity import MeltemEntity, room_supports_entity
 from .models import MeltemRuntimeData, RoomState
 
@@ -110,6 +111,8 @@ class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:fan-alert"
+    # The timestamps change on every poll and would bloat the recorder.
+    _unrecorded_attributes = frozenset({*READ_GROUP_ENTITY_KEYS, "writes"})
 
     def __init__(self, coordinator, room) -> None:
         super().__init__(coordinator, room, "data_health", "data_health")

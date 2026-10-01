@@ -15,6 +15,7 @@ import logging
 from copy import deepcopy
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
@@ -105,6 +106,8 @@ def _async_remove_unsupported_entities(
             expected[f"{DOMAIN}_{room.key}_data_health"] = (
                 ENTITY_PLATFORM_BY_KEY["data_health"].value
             )
+    # Gateway-level entity, not tied to any room.
+    expected[f"{DOMAIN}_{entry.entry_id}_modbus_device_path"] = Platform.SENSOR.value
 
     for existing in list(registry.entities.values()):
         if existing.config_entry_id != entry.entry_id:
@@ -122,9 +125,6 @@ def _async_remove_unsupported_entities(
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Meltem Modbus from a config entry."""
-
-    if hasattr(entry, "runtime_data"):
-        object.__delattr__(entry, "runtime_data")
 
     entry_data = dict(entry.data)
     # Resolution walks /dev/serial/by-id, so it must not run in the event loop.
@@ -315,4 +315,6 @@ async def async_remove_config_entry_device(
     """
 
     configured = {(DOMAIN, str(room["key"])) for room in entry.data[CONF_ROOMS]}
+    # The gateway device carries the connection diagnostics.
+    configured.add((DOMAIN, entry.entry_id))
     return not any(identifier in configured for identifier in device.identifiers)

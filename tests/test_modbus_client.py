@@ -525,9 +525,11 @@ class TestReadRoomState:
         client._read_airflow_pair = lambda *_a, **_kw: (65, 65)
         client._supports = lambda _room, _key: True
         client._read_uint16 = lambda *_a, **_kw: None
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 120, 0, 0, 0]
-        )
+
+        def _no_mode_block(*_a, **_kw):
+            raise MeltemModbusError("mode block unavailable")
+
+        client._read_holding_registers_with_retry = _no_mode_block
         room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 
         state = client.read_room_state(
@@ -582,9 +584,11 @@ class TestReadRoomState:
             return None
 
         client._read_uint16 = _patched_read_uint16
-        client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 60, 0, 0, 0]
-        )
+
+        def _no_mode_block(*_a, **_kw):
+            raise MeltemModbusError("mode block unavailable")
+
+        client._read_holding_registers_with_retry = _no_mode_block
         room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 
         first = client.read_room_state(
@@ -612,7 +616,7 @@ class TestReadRoomState:
         assert client._optional_read_failures[key] == 5
         assert client._is_optional_read_backed_off(key)
 
-    def test_extract_target_is_only_read_in_unbalanced_mode(self) -> None:
+    def test_mode_block_supplies_the_target_registers_without_extra_reads(self) -> None:
         client = self._build_client()
         client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
         client._supports = lambda _room, _key: True
@@ -620,10 +624,6 @@ class TestReadRoomState:
 
         def _patched_read_uint16(_slave, address):
             read_addresses.append(address)
-            if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL:
-                return 120
-            if address == REGISTER_CURRENT_LEVEL:
-                return 120
             return None
 
         client._read_uint16 = _patched_read_uint16
@@ -639,7 +639,7 @@ class TestReadRoomState:
         )
 
         client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_UNBALANCED, 120, 0, 0, 0]
+            registers=[MODE_UNBALANCED, 120, 120, 0, 0]
         )
         unbalanced_state = client.read_room_state(
             room,
@@ -647,9 +647,41 @@ class TestReadRoomState:
             RefreshPlan.only(refresh_airflow=True),
         )
 
+        assert manual_state.target_level == 60
         assert manual_state.extract_target_level is None
         assert unbalanced_state.extract_target_level == 60
-        assert read_addresses.count(REGISTER_EXTRACT_AIR_TARGET_LEVEL) == 1
+        assert read_addresses == []
+
+    def test_extract_target_is_read_separately_after_the_short_mode_block(self) -> None:
+        client = self._build_client()
+        client._read_airflow_pair = lambda *_a, **_kw: (60, 40)
+        client._supports = lambda _room, _key: True
+        read_addresses: list[int] = []
+
+        def _patched_read_uint16(_slave, address):
+            read_addresses.append(address)
+            return 80 if address == REGISTER_EXTRACT_AIR_TARGET_LEVEL else None
+
+        def _patched_read_block(_slave, address, count):
+            if address == REGISTER_MODE and count == 5:
+                raise MeltemModbusError("five-register mode block unavailable")
+            if address == REGISTER_MODE and count == 2:
+                return [MODE_UNBALANCED, 120]
+            raise AssertionError(f"unexpected block read {address}/{count}")
+
+        client._read_uint16 = _patched_read_uint16
+        client._read_uint16_block = _patched_read_block
+        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+
+        state = client.read_room_state(
+            room,
+            RoomState(),
+            RefreshPlan.only(refresh_airflow=True),
+        )
+
+        assert state.target_level == 60
+        assert state.extract_target_level == 40
+        assert read_addresses == [REGISTER_EXTRACT_AIR_TARGET_LEVEL]
 
     def test_unbalanced_app_preset_targets_decode_to_airflow_values(self) -> None:
         client = self._build_client()
@@ -913,7 +945,7 @@ class TestReadRoomState:
         client._supports = lambda _room, _key: True
         client._read_uint16 = lambda *_a, **_kw: 120
         client._read_holding_registers_with_retry = lambda *_a, **_kw: _FakeResponse(
-            registers=[MODE_MANUAL, 229, 0, 0, 0]
+            registers=[MODE_MANUAL, 120, 0, 0, 0]
         )
         room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 
@@ -982,7 +1014,8 @@ class TestReadRoomState:
         assert state.preset_mode == "medium"
         assert state.intensive_active is None
 
-    def test_two_register_fallback_preserves_previous_intensive_active_state(self) -> None:
+    def test_two_register_fallback_keeps_intensive_without_flagging_its_health(self) -> None:
+        """Units that only reject the long read (HW-4) are not failing."""
         client = self._build_client()
         client._read_airflow_pair = lambda *_a, **_kw: (30, 30)
         client._supports = lambda _room, _key: True
@@ -1006,9 +1039,7 @@ class TestReadRoomState:
 
         assert state.intensive_active is True
         assert state.read_health_for("flow_control").last_error is None
-        assert state.read_health_for("intensive").last_error == (
-            "five-register mode block unavailable"
-        )
+        assert state.read_health_for("intensive").last_attempt is None
 
     def test_two_register_fallback_clears_previous_preset_for_known_non_preset_mode(self) -> None:
         client = self._build_client()

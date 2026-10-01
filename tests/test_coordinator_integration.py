@@ -87,6 +87,9 @@ class _FakeClient:
     def probe_slave_details(self, slave: int):
         return ("plain", None, ["level"])
 
+    def seconds_since_successful_read(self, slave: int) -> float | None:
+        return None
+
 
 def _mock_entry(hass: HomeAssistant) -> MockConfigEntry:
     entry = MockConfigEntry(domain=DOMAIN, title="Meltem", version=1, source="user")

@@ -7,7 +7,6 @@ sends both values and switches the unit to unbalanced mode.
 
 from __future__ import annotations
 
-import logging
 import math
 
 from homeassistant.components.fan import FanEntity, FanEntityFeature
@@ -21,18 +20,15 @@ from homeassistant.util.percentage import (
 from homeassistant.util.scaling import int_states_in_range
 
 from .const import (
-    OPERATION_MODE_OFF,
-    SENSOR_OPERATION_MODES,
+    DIRECTION_EXTRACT,
+    DIRECTION_SUPPLY,
+    LEVEL_WRITE_FALLBACK_BALANCED,
     profile_max_airflow,
 )
 from .entity import MeltemEntity, room_supports_entity
 from .models import MeltemRuntimeData, RoomConfig
 
-DIRECTION_SUPPLY = "supply"
-DIRECTION_EXTRACT = "extract"
-
 DEFAULT_TURN_ON_PERCENTAGE = 50
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -72,7 +68,7 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         entity_key = f"{direction}_level"
         super().__init__(coordinator, room, entity_key, entity_key)
         self._direction = direction
-        self._last_write_fallback: str | None = None
+        self._last_on_percentage: int | None = None
         self._attr_icon = (
             "mdi:home-import-outline" if direction == DIRECTION_SUPPLY else "mdi:home-export-outline"
         )
@@ -81,27 +77,27 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, str | bool | int | None]:
-        """Expose when a fan write must use a balanced fallback."""
+        """Expose where the level comes from and when a write needs a fallback."""
 
+        other_level = self._other_level
         attributes: dict[str, str | bool | int | None] = {
-            "opposite_airflow": self._other_level,
-            "opposite_airflow_known": self._other_level is not None,
+            "opposite_airflow": other_level,
+            "opposite_airflow_known": other_level is not None,
+            "level_source": self.coordinator.level_source(self.room.key),
         }
-        if self._last_write_fallback is not None:
-            attributes["last_write_fallback"] = self._last_write_fallback
-        elif self._other_level is None:
-            attributes["next_write_fallback"] = "both_directions_balanced_manual"
+        fallback = self.coordinator.level_write_fallback(self.room.key)
+        if fallback is not None:
+            attributes["last_write_fallback"] = fallback
+        elif other_level is None:
+            attributes["next_write_fallback"] = LEVEL_WRITE_FALLBACK_BALANCED
         if self.room_state.operation_mode is None:
             attributes["operating_mode_known"] = False
             attributes["fan_write_may_override_mode"] = True
         return attributes
 
     def _handle_coordinator_update(self) -> None:
-        if self._last_write_fallback is not None and self.coordinator.read_group_fresh(
-            self.room.key,
-            "flow_control",
-        ):
-            self._last_write_fallback = None
+        if percentage := self.percentage:
+            self._last_on_percentage = percentage
         super()._handle_coordinator_update()
 
     @property
@@ -139,7 +135,10 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         **kwargs,
     ) -> None:
         if percentage is None:
-            percentage = self.percentage or DEFAULT_TURN_ON_PERCENTAGE
+            if self.is_on:
+                # Re-sending the current level would end a running sensor mode.
+                return
+            percentage = self._last_on_percentage or DEFAULT_TURN_ON_PERCENTAGE
         if percentage == 0:
             percentage = DEFAULT_TURN_ON_PERCENTAGE
         await self.async_set_percentage(percentage)
@@ -150,55 +149,10 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
     async def async_set_percentage(self, percentage: int) -> None:
         normalized = max(0, min(100, int(percentage)))
         # Home Assistant works in percent, the coordinator in m3/h.
-        own_level = _percentage_to_level(normalized, self.room.profile)
-        other_level = self._other_level
-        if other_level is None:
-            self._last_write_fallback = "both_directions_balanced_manual"
-            _LOGGER.warning(
-                "Room %s (slave %s): opposite airflow is unknown; setting both "
-                "directions to %s m3/h in balanced manual mode. This may "
-                "override the current operating mode.",
-                self.room.name,
-                self.room.slave,
-                own_level,
-            )
-            await self.coordinator.async_set_level(self.room.key, own_level)
-            return
-
-        operation_mode = self.room_state.operation_mode
-        if operation_mode is None:
-            self._last_write_fallback = "unknown_mode_overridden"
-            _LOGGER.warning(
-                "Room %s (slave %s): operating mode is unknown; explicit fan "
-                "command may override the current mode.",
-                self.room.name,
-                self.room.slave,
-            )
-        # Starting from a stopped unit, run both directions rather than
-        # dropping straight into single-direction operation.
-        starting_from_off = operation_mode == OPERATION_MODE_OFF
-        # Under sensor control both fans only report fluctuating measurements,
-        # so writing one direction would pin the other to a sampled value.
-        # Turning a direction off still has to reach the unbalanced path.
-        leaving_sensor_control = (
-            own_level > 0 and operation_mode in SENSOR_OPERATION_MODES
-        )
-
-        if own_level == other_level or starting_from_off or leaving_sensor_control:
-            # Equal levels are the balanced case; writing them as unbalanced
-            # would leave the unit in a mode it cannot return from.
-            await self.coordinator.async_set_level(self.room.key, own_level)
-            return
-
-        if self._direction == DIRECTION_SUPPLY:
-            supply_level, extract_level = own_level, other_level
-        else:
-            supply_level, extract_level = other_level, own_level
-
-        await self.coordinator.async_set_unbalanced_levels(
+        await self.coordinator.async_set_direction_level(
             self.room.key,
-            supply_level,
-            extract_level,
+            self._direction,
+            _percentage_to_level(normalized, self.room.profile),
         )
 
 

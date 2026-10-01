@@ -100,6 +100,14 @@ class TestBinarySensorEntityCreation:
         assert entity.extra_state_attributes["flow"]["consecutive_failures"] == 3
         assert entity.entity_category.value == "diagnostic"
 
+    def test_data_health_details_stay_out_of_the_recorder(self) -> None:
+        """The timestamps change on every poll."""
+        entity = MeltemDataHealthBinarySensor(_fake_coordinator(), _ROOM)
+
+        assert {"flow", "flow_control", "intensive", "writes"} <= (
+            entity._unrecorded_attributes
+        )
+
 
 # ---------------------------------------------------------------------------
 #  is_on property

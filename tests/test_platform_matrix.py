@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -238,3 +239,41 @@ async def test_diagnostic_connection_entities_are_created_once_and_disabled(
 
 async def _noop_refresh(self) -> None:
     return None
+
+
+async def test_device_path_sensor_keeps_its_registry_entry_across_reloads(
+    hass: HomeAssistant, setup_profile
+) -> None:
+    """The registry cleanup must not recreate it, which would drop user settings."""
+    with_serial_stubs = pytest.MonkeyPatch()
+    with_serial_stubs.setattr(
+        "custom_components.meltem_ventilation.MeltemModbusClient.ensure_connected",
+        lambda self: None,
+    )
+    with_serial_stubs.setattr(
+        "custom_components.meltem_ventilation.coordinator."
+        "MeltemDataUpdateCoordinator.async_refresh",
+        _noop_refresh,
+    )
+    registry = er.async_get(hass)
+    try:
+        _, entry_id = await setup_profile("ii_plain")
+        path_entity = next(
+            entity
+            for entity in registry.entities.values()
+            if entity.config_entry_id == entry_id
+            and entity.unique_id.endswith("_modbus_device_path")
+        )
+        registry.async_update_entity(path_entity.entity_id, name="Gateway port")
+
+        assert await hass.config_entries.async_reload(entry_id)
+        await hass.async_block_till_done()
+    finally:
+        with_serial_stubs.undo()
+
+    reloaded = registry.async_get(path_entity.entity_id)
+    assert reloaded is not None
+    assert reloaded.id == path_entity.id
+    assert reloaded.name == "Gateway port"
+    device = dr.async_get(hass).async_get(reloaded.device_id)
+    assert (DOMAIN, entry_id) in device.identifiers

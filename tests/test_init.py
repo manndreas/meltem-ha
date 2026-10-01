@@ -703,3 +703,13 @@ class TestAsyncRemoveConfigEntryDevice:
             await async_remove_config_entry_device(hass, entry, self._device("unit_9"))
             is True
         )
+
+    async def test_gateway_device_cannot_be_removed(self, hass: HomeAssistant) -> None:
+        entry = _mock_config_entry()
+
+        assert (
+            await async_remove_config_entry_device(
+                hass, entry, self._device(entry.entry_id)
+            )
+            is False
+        )

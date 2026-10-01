@@ -384,3 +384,11 @@ class TestBuildClient:
                 stopbits=1,
                 timeout=0.8,
             )
+
+    def test_passes_explicit_retries(self) -> None:
+        with patch(
+            "custom_components.meltem_ventilation.modbus_helpers.ModbusSerialClient"
+        ) as MockClient:
+            build_client(_SETTINGS, retries=0)
+
+        assert MockClient.call_args.kwargs["retries"] == 0

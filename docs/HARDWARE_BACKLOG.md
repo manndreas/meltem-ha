@@ -225,6 +225,9 @@ returns `None`. On such units the intensive switch in Home Assistant shows
 reason. What is not known is whether the five-register read stays unavailable
 forever on some units or only until the first write.
 
+The `intensive` read group is no longer marked failed when the two-register
+fallback succeeds, so these units do not keep `data_health` permanently on.
+
 ### What to measure
 
 1. On a freshly powered unit, attempt the five-register read at `41120` and
@@ -250,7 +253,7 @@ forever on some units or only until the first write.
 
 Priority: informational
 Status: parked
-Affected code: `fan.MeltemDirectionalFanEntity.async_set_percentage`
+Affected code: `coordinator.async_set_direction_level`
 
 ### Observation
 
@@ -275,3 +278,40 @@ From a stopped unit, write `41120 = 4`, `41121 = 0`, `41122 = <raw>`,
 - **A — keep the current behaviour.** Safe and documented.
 - **B — allow direct single-direction start** if the measurement shows the unit
   accepts it.
+
+---
+
+## HW-6 — Verify the reduced read and retry pattern
+
+Priority: medium
+Status: open
+Affected code: `modbus_client._read_mode_group`, `modbus_client._ensure_client`,
+`coordinator._job_interval`
+
+### Observation
+
+Three changes reduce bus time but were made without a live gateway:
+
+1. The flow job takes `41121` / `41122` from the `41120` mode block instead of
+   reading them again on their own, saving up to two requests per unit every
+   10 s. The decoder already trusted the block values for quick-mode detection.
+2. The runtime client runs pymodbus with `retries=0`. The default `retries=3`
+   resent every unanswered request three times before the integration's own
+   reconnecting retry, so one silent register cost about eight timeouts.
+3. A unit that has been silent for `ROOM_SILENT_AFTER_SECONDS` is polled at
+   most every `SILENT_ROOM_POLL_SECONDS`.
+
+### What to measure
+
+1. Compare `41121` / `41122` from the five-register block with single-register
+   reads after balanced, unbalanced, preset, and app-shortcut writes.
+2. Run the integration for a day with all units online and check the logs for
+   new transient read failures compared to the previous release.
+3. Power off one unit and confirm that the others still react to fan changes
+   within a few seconds.
+
+### Candidate solutions
+
+- **A — keep the changes** if all three measurements are clean.
+- **B — `retries=1`** if step 2 shows more transient failures.
+- **C — restore the single reads** if step 1 shows differing values.

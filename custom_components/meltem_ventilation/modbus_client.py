@@ -120,6 +120,9 @@ _RETRYABLE_MESSAGE_MARKERS = (
 _OPTIONAL_READ_BACKOFF_START_SECONDS = 30.0
 _OPTIONAL_READ_BACKOFF_MAX_SECONDS = 300.0
 _OPTIONAL_READ_BACKOFF_MAX_FAILURES = 5
+# pymodbus resends every unanswered request 3 times by default. The client has
+# its own reconnecting retry, so a silent unit would otherwise cost ~8 timeouts.
+_PYMODBUS_RETRIES = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -163,6 +166,7 @@ class MeltemModbusClient:
         self._last_successful_read_by_slave: dict[int, float] = {}
         self._last_airflow_read_error: str | None = None
         self._read_group_errors: dict[str, str] = {}
+        self._read_group_skipped: set[str] = set()
 
     def seconds_since_successful_read(self, slave: int) -> float | None:
         """Return the age of the last answered register read for one unit.
@@ -254,6 +258,7 @@ class MeltemModbusClient:
 
         with self._gateway_operation(f"reading room {room.key}"):
             self._read_group_errors = {}
+            self._read_group_skipped = set()
             # Fail fast on a dead transport: every read below is optional
             # and would otherwise silently report "nothing changed".
             self._ensure_client()
@@ -374,6 +379,8 @@ class MeltemModbusClient:
         group_health = dict(previous_state.group_read_health)
         now = dt_util.utcnow()
         for group_key in groups_to_update:
+            if group_key in self._read_group_skipped:
+                continue
             if not any(self._supports(room, key) for key in group_entities[group_key]):
                 continue
 
@@ -564,7 +571,7 @@ class MeltemModbusClient:
         for connect_attempt in range(3):
             if connect_attempt > 0:
                 sync_sleep(0.5)
-            self._client = build_client(self._settings)
+            self._client = build_client(self._settings, retries=_PYMODBUS_RETRIES)
             try:
                 if self._client.connect():
                     return self._client
@@ -1200,6 +1207,10 @@ class MeltemModbusClient:
             )
             if mode_block is not None:
                 self._read_group_errors.pop("flow_control", None)
+                # The unit answers, it just lacks the long read (HW-4), so the
+                # intensive state is unknown rather than a read failure.
+                self._read_group_errors.pop("intensive", None)
+                self._read_group_skipped.add("intensive")
         return mode_block, False
 
     def _read_mode_group(
@@ -1218,10 +1229,16 @@ class MeltemModbusClient:
             if mode_block is not None and len(mode_block) >= 2
             else previous_state.operation_mode
         )
-        raw_current_level = self._read_optional_airflow_uint16(
-            room.slave,
-            REGISTER_CURRENT_LEVEL,
-            read_group="flow_control",
+        # 41121/41122 are part of the mode block, so only read them on their
+        # own when the block did not deliver them.
+        raw_current_level = (
+            mode_block[1]
+            if mode_block is not None and len(mode_block) >= 2
+            else self._read_optional_airflow_uint16(
+                room.slave,
+                REGISTER_CURRENT_LEVEL,
+                read_group="flow_control",
+            )
         )
 
         raw_extract_target: int | None = None
@@ -1230,10 +1247,14 @@ class MeltemModbusClient:
                 room,
                 raw_current_level,
             )
-            raw_extract_target = self._read_optional_airflow_uint16(
-                room.slave,
-                REGISTER_EXTRACT_AIR_TARGET_LEVEL,
-                read_group="flow_control",
+            raw_extract_target = (
+                mode_block[2]
+                if full_mode_block_available and mode_block is not None
+                else self._read_optional_airflow_uint16(
+                    room.slave,
+                    REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+                    read_group="flow_control",
+                )
             )
             extract_target_level = (
                 self._decode_unbalanced_target_readback(room, raw_extract_target)
