@@ -233,10 +233,10 @@ Current design:
 - scheduler cadence is derived from `max_requests_per_second`; despite the
   legacy option name, this limits job starts, not individual wire requests
 - post-write readbacks count as job starts for that cap, and a job that would
-  start too early is skipped and rescheduled
+  start too early is skipped and rescheduled; readbacks wait for the next slot
 - the first full read after setup reads the rooms one after another and
-  keeps the same cap between them; when it fails completely, the next attempt
-  waits `TRANSPORT_BACKOFF_START_SECONDS` instead of the request interval
+  keeps the same cap between them; when no room returns state values, the next
+  attempt waits `TRANSPORT_BACKOFF_START_SECONDS` instead of the request interval
 - Home Assistant's `DataUpdateCoordinator` schedules the next refresh from
   `int(loop.time())`, so sub-second intervals would fire up to a second early;
   the coordinator adds the current fractional loop second to compensate
@@ -275,7 +275,9 @@ Current target intervals:
 Each supported read group tracks its own last attempt, last successful read,
 consecutive failures, and most recent error. Optional Modbus failures preserve
 the last cached value, but only affect the health of the group that performed
-the read. A successful read in another group does not clear that failure.
+the read. Invalid decoded values also preserve the last cached value but mark
+their read group as failed. A successful read in another group does not clear
+that failure.
 Expected groups are derived from each room's supported entities, so a register
 that a device profile does not expose is not reported as a failed read. The
 group-to-entity mapping lives in `const.READ_GROUP_ENTITY_KEYS` and
@@ -297,7 +299,8 @@ accepted at the transport/protocol layer. Control entities show the written
 value as pending (`level_source: pending` on the fans) until the associated
 group has been read after the write, or until the pending window expires.
 Only target registers confirm an airflow write; the measured airflow lags
-behind and never does. A matching readback confirms the write; a different
+behind and never does. A target derived from measured airflow is only used for
+display, not confirmation. A matching readback confirms the write; a different
 value is reported as a mismatch, and a failed readback remains unconfirmed.
 Cached values from before the write cannot confirm it. A failed write drops any
 pending value. Failed, mismatched, or unconfirmed writes flag `data_health` for

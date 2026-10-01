@@ -20,7 +20,7 @@
 - A unit that does not answer at all ends its poll job after the first
   unanswered block instead of timing out on every block; this also applies to
   the mode registers and to the setup probe.
-- Setup now checks the gateway by reading its unit count, and the setup 
+- Setup now checks the gateway by reading its unit count.
 - The system information page no longer shows the serial port path in the
   last scheduler error.
 - A minimum level above the maximum level of the humidity or CO2 control is
@@ -31,14 +31,22 @@
   registers instead of timing out on them as well.
 - A gateway that does not answer at startup is retried every 5 seconds
   instead of at the request rate, and the first full read keeps the request
-  rate between units.
+  rate between units. A first read where no unit returns any state values
+  also uses this backoff.
+- Post-write readbacks wait for the configured request-rate slot.
+- An invalid sensor value keeps the last known value but marks its read group
+  as failed instead of refreshing the timestamp of stale data.
+- Only a valid target-register readback confirms an airflow write; a target
+  derived from measured airflow cannot confirm it.
 - A pending fan, quick-mode or intensive value disappears when its window
   ends, even if no poll follows.
-- Entries from older releases no longer poll registers of  `write_registers`
-  stops at the first failed write unless `--keep-going` is given.sensors that the
-  selected profile does not have.probes
-  follow the same retry rules as normal polling. The setup dialog opens the
-  serial port once for reading the unit list and probing the units.
+- Entries from older releases no longer poll registers of sensors that the
+  selected profile does not have.
+- Setup probes follow the same retry rules as normal polling. The setup
+  dialog opens the serial port once for reading the unit list and probing
+  the units.
+- `write_registers` stops at the first failed write unless `--keep-going`
+  is given.
 - The diagnostics download shows how often the serial link was reopened.
 - In unbalanced mode, a failed read of the mode registers keeps the last
   supply target instead of clearing it, as it already did for the extract
