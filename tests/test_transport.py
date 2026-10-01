@@ -19,9 +19,10 @@ from modbus_connection.mock import MockModbusConnection
 from custom_components.meltem_ventilation.device import PolicyUnit, TransportPolicy
 
 _RETRY_DELAY = 0.5
+_SILENT = ModbusTimeoutError("silent")
 
 
-@pytest.fixture(name="sleeps")
+@pytest.fixture(name="sleeps", autouse=True)
 def sleeps_fixture(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     sleeps: list[float] = []
 
@@ -34,23 +35,23 @@ def sleeps_fixture(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return sleeps
 
 
+def _policy(link_quiet_seconds: float) -> TransportPolicy:
+    return TransportPolicy(
+        disconnect_after_timeouts=3,
+        link_quiet_seconds=link_quiet_seconds,
+        connection_retry_delay=_RETRY_DELAY,
+    )
+
+
 @pytest.fixture(name="policy")
 def policy_fixture() -> TransportPolicy:
     # No quiet window, so the timeout count alone decides.
-    return TransportPolicy(
-        disconnect_after_timeouts=3,
-        link_quiet_seconds=0,
-        connection_retry_delay=_RETRY_DELAY,
-    )
+    return _policy(link_quiet_seconds=0)
 
 
 @pytest.fixture(name="quiet_policy")
 def quiet_policy_fixture() -> TransportPolicy:
-    return TransportPolicy(
-        disconnect_after_timeouts=3,
-        link_quiet_seconds=10,
-        connection_retry_delay=_RETRY_DELAY,
-    )
+    return _policy(link_quiet_seconds=10)
 
 
 @pytest.fixture(name="unit")
@@ -58,15 +59,28 @@ def unit_fixture() -> AsyncMock:
     return AsyncMock()
 
 
-async def _run(policy: TransportPolicy, unit: AsyncMock, operation: AsyncMock):
+async def _run(policy: TransportPolicy, unit: AsyncMock, operation: AsyncMock) -> object:
     return await policy.run(unit, 2, operation, 41020, 2, is_read=True)
+
+
+async def _run_failing(
+    policy: TransportPolicy,
+    unit: AsyncMock,
+    operation: AsyncMock,
+    *,
+    times: int = 1,
+    expected: type[Exception] | tuple[type[Exception], ...] = ModbusTimeoutError,
+) -> None:
+    for _ in range(times):
+        with pytest.raises(expected):
+            await _run(policy, unit, operation)
 
 
 class TestRetry:
     @pytest.mark.parametrize(
         "error",
-        [ModbusTimeoutError("silent"), ModbusProtocolError("garbled")],
-        ids=["timeout", "protocol"],
+        [_SILENT, ModbusProtocolError("garbled"), GatewayTargetError()],
+        ids=["timeout", "protocol", "silent-unit-behind-the-gateway"],
     )
     async def test_an_unanswered_request_is_retried_once(
         self, policy: TransportPolicy, unit: AsyncMock, error: Exception
@@ -79,10 +93,9 @@ class TestRetry:
     async def test_a_second_timeout_is_raised(
         self, policy: TransportPolicy, unit: AsyncMock
     ) -> None:
-        operation = AsyncMock(side_effect=ModbusTimeoutError("silent"))
+        operation = AsyncMock(side_effect=_SILENT)
 
-        with pytest.raises(ModbusTimeoutError):
-            await _run(policy, unit, operation)
+        await _run_failing(policy, unit, operation)
 
         assert operation.await_count == 2
 
@@ -99,8 +112,7 @@ class TestRetry:
     ) -> None:
         operation = AsyncMock(side_effect=ClientClosedError("closed"))
 
-        with pytest.raises(ClientClosedError):
-            await _run(policy, unit, operation)
+        await _run_failing(policy, unit, operation, expected=ClientClosedError)
 
         assert operation.await_count == 1
         assert sleeps == []
@@ -115,46 +127,27 @@ class TestRetry:
     ) -> None:
         operation = AsyncMock(side_effect=error)
 
-        with pytest.raises(type(error)):
-            await _run(policy, unit, operation)
+        await _run_failing(policy, unit, operation, expected=type(error))
 
         assert operation.await_count == 1
-
-    async def test_a_silent_unit_behind_the_gateway_is_retried_once(
-        self, policy: TransportPolicy, unit: AsyncMock
-    ) -> None:
-        operation = AsyncMock(side_effect=[GatewayTargetError(), [5]])
-
-        assert await _run(policy, unit, operation) == [5]
 
 
 class TestLinkRecycling:
     async def test_consecutive_timeouts_drop_the_link(
         self, policy: TransportPolicy, unit: AsyncMock
     ) -> None:
-        operation = AsyncMock(side_effect=ModbusTimeoutError("silent"))
+        operation = AsyncMock(side_effect=_SILENT)
 
-        with pytest.raises(ModbusTimeoutError):
-            await _run(policy, unit, operation)
+        await _run_failing(policy, unit, operation)
         unit.disconnect.assert_not_awaited()
 
-        with pytest.raises(ModbusTimeoutError):
-            await _run(policy, unit, operation)
+        await _run_failing(policy, unit, operation)
         unit.disconnect.assert_awaited_once()
 
     async def test_an_answer_resets_the_timeout_count(
         self, policy: TransportPolicy, unit: AsyncMock
     ) -> None:
-        operation = AsyncMock(
-            side_effect=[
-                ModbusTimeoutError("silent"),
-                [1],
-                ModbusTimeoutError("silent"),
-                [1],
-                ModbusTimeoutError("silent"),
-                [1],
-            ]
-        )
+        operation = AsyncMock(side_effect=[_SILENT, [1]] * 3)
 
         for _ in range(3):
             await _run(policy, unit, operation)
@@ -166,9 +159,7 @@ class TestLinkRecycling:
     ) -> None:
         operation = AsyncMock(side_effect=GatewayTargetError())
 
-        for _ in range(3):
-            with pytest.raises(GatewayTargetError):
-                await _run(policy, unit, operation)
+        await _run_failing(policy, unit, operation, times=3, expected=GatewayTargetError)
 
         unit.disconnect.assert_not_awaited()
 
@@ -176,12 +167,10 @@ class TestLinkRecycling:
         self, policy: TransportPolicy, unit: AsyncMock
     ) -> None:
         unit.disconnect.side_effect = ModbusConnectionError("already gone")
-        operation = AsyncMock(
-            side_effect=[ModbusTimeoutError("silent")] * 3 + [[1]]
-        )
+        operation = AsyncMock(side_effect=[_SILENT] * 3 + [[1]])
 
-        with pytest.raises(ModbusTimeoutError):
-            await _run(policy, unit, operation)
+        await _run_failing(policy, unit, operation)
+
         assert await _run(policy, unit, operation) == [1]
 
 
@@ -191,34 +180,24 @@ class TestQuietWindow:
     ) -> None:
         """Other units answered a moment ago, so the silent one is the problem."""
         await _run(quiet_policy, unit, AsyncMock(return_value=[1]))
-        silent = AsyncMock(side_effect=ModbusTimeoutError("silent"))
 
-        for _ in range(3):
-            with pytest.raises(ModbusTimeoutError):
-                await _run(quiet_policy, unit, silent)
+        await _run_failing(quiet_policy, unit, AsyncMock(side_effect=_SILENT), times=3)
 
         unit.disconnect.assert_not_awaited()
 
     async def test_a_fresh_link_is_not_recycled_at_once(
         self, quiet_policy: TransportPolicy, unit: AsyncMock
     ) -> None:
-        silent = AsyncMock(side_effect=ModbusTimeoutError("silent"))
-
-        for _ in range(2):
-            with pytest.raises(ModbusTimeoutError):
-                await _run(quiet_policy, unit, silent)
+        await _run_failing(quiet_policy, unit, AsyncMock(side_effect=_SILENT), times=2)
 
         unit.disconnect.assert_not_awaited()
 
     async def test_a_link_quiet_for_the_whole_window_is_recycled_once(
         self, quiet_policy: TransportPolicy, unit: AsyncMock
     ) -> None:
-        silent = AsyncMock(side_effect=ModbusTimeoutError("silent"))
         quiet_policy._quiet_since -= 11
 
-        for _ in range(3):
-            with pytest.raises(ModbusTimeoutError):
-                await _run(quiet_policy, unit, silent)
+        await _run_failing(quiet_policy, unit, AsyncMock(side_effect=_SILENT), times=3)
 
         # Recycling starts a new quiet window, so the next timeouts wait for it.
         unit.disconnect.assert_awaited_once()
@@ -229,20 +208,16 @@ class TestQuietWindow:
     ) -> None:
         quiet_policy._quiet_since -= 11
         operation = AsyncMock(
-            side_effect=[
-                ModbusTimeoutError("silent"),
-                ModbusTimeoutError("silent"),
-                IllegalDataAddressError(),
-                ModbusTimeoutError("silent"),
-                ModbusTimeoutError("silent"),
-                ModbusTimeoutError("silent"),
-                ModbusTimeoutError("silent"),
-            ]
+            side_effect=[_SILENT] * 2 + [IllegalDataAddressError()] + [_SILENT] * 4
         )
 
-        for _ in range(4):
-            with pytest.raises((ModbusTimeoutError, IllegalDataAddressError)):
-                await _run(quiet_policy, unit, operation)
+        await _run_failing(
+            quiet_policy,
+            unit,
+            operation,
+            times=4,
+            expected=(ModbusTimeoutError, IllegalDataAddressError),
+        )
 
         unit.disconnect.assert_not_awaited()
 

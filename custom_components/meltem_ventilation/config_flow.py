@@ -55,6 +55,15 @@ from .models import MeltemRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
+# Probed sensor suffix to the preselected profile; the series stays M-WRG-II.
+_SUFFIX_DEFAULT_PROFILES = {
+    "plain": "ii_plain",
+    "f": "ii_f",
+    "fc": "ii_fc",
+    "fc_voc": "ii_fc_voc",
+}
+
+type _Probe = Callable[[int], Awaitable[tuple[str, str | None, list[str]]]]
 
 
 def _build_options_result_data(
@@ -66,6 +75,10 @@ def _build_options_result_data(
         **config_entry.options,
         CONF_MAX_REQUESTS_PER_SECOND: request_rate,
     }
+
+
+def _port_schema(default: str) -> vol.Schema:
+    return vol.Schema({vol.Required(CONF_PORT, default=default): str})
 
 
 def _profiles_form(
@@ -182,20 +195,10 @@ def _device_names_by_slave(
 def _detected_profile_default(
     slave: int, detected_profiles_by_slave: Mapping[int, str]
 ) -> str:
-    """Return the default profile selection for a detected unit.
+    """Return the default profile selection for a detected unit."""
 
-    The setup probe determines the suffix part from available sensors.
-    The series default stays on M-WRG-II unless a more specific mapping exists.
-    """
-
-    detected_profile = detected_profiles_by_slave.get(slave)
-    capability_defaults = {
-        "plain": "ii_plain",
-        "f": "ii_f",
-        "fc": "ii_fc",
-        "fc_voc": "ii_fc_voc",
-    }
-    return capability_defaults.get(detected_profile or "", "ii_plain")
+    detected_profile = detected_profiles_by_slave.get(slave) or ""
+    return _SUFFIX_DEFAULT_PROFILES.get(detected_profile, "ii_plain")
 
 
 def _build_rooms_from_profiles(
@@ -270,47 +273,62 @@ async def _temporary_units(
         yield unit_for
 
 
+def _connection_error(err: Exception, action: str, port: str) -> str:
+    """Return the form error for a failed gateway access."""
+
+    if isinstance(err, _PortInUseError):
+        return "port_in_use"
+    if isinstance(err, MeltemModbusError):
+        return "cannot_connect"
+    _LOGGER.error("Unexpected error while %s %s", action, port, exc_info=err)
+    return "unknown"
+
+
+async def _async_probe_units(
+    slaves: list[int], probe: _Probe
+) -> tuple[dict[int, str], dict[int, str]]:
+    """Probe every unit and return its preview and detected profile by address.
+
+    A failed probe leaves the unit plain and without preview. The probed entity
+    keys are dropped: the stored keys always follow the profile the user picks.
+    """
+
+    previews: dict[int, str] = {}
+    profiles: dict[int, str] = {}
+    for slave in slaves:
+        try:
+            profile, preview, _keys = await probe(slave)
+        except MeltemModbusError as err:
+            _LOGGER.warning("Probe failed for Meltem unit at slave %s: %s", slave, err)
+            profile, preview = "plain", None
+        profiles[slave] = profile
+        if preview:
+            previews[slave] = preview
+    return previews, profiles
+
+
 async def _async_discover_units(
     hass, port: str
 ) -> tuple[list[int], dict[int, str], dict[int, str]]:
     """Read the unit list from the gateway and probe every unit on one link.
 
     Returns the unit addresses, their previews, and their detected profiles.
-    The probed entity keys are intentionally not returned: the stored keys are
-    always derived from the profile the user picks afterwards.
     """
-
-    preview_by_slave: dict[int, str] = {}
-    detected_profile_by_slave: dict[int, str] = {}
 
     async with _temporary_units(hass, port) as unit_for:
         _LOGGER.info("Starting Meltem gateway-backed unit discovery on %s", port)
-        discovered_slaves = await discover_gateway_nodes(
+        slaves = await discover_gateway_nodes(
             await unit_for(DEFAULT_GATEWAY_DEVICE_ID),
             port,
             start=DEFAULT_SCAN_SLAVE_START,
             end=DEFAULT_SCAN_SLAVE_END,
         )
-        for slave in discovered_slaves:
-            try:
-                (
-                    detected_profile,
-                    preview,
-                    _supported_entity_keys,
-                ) = await detect_slave_details(await unit_for(slave))
-            except MeltemModbusError as err:
-                _LOGGER.warning(
-                    "Setup probe failed for Meltem unit at slave %s: %s",
-                    slave,
-                    err,
-                )
-                detected_profile = "plain"
-                preview = None
-            detected_profile_by_slave[slave] = detected_profile
-            if preview:
-                preview_by_slave[slave] = preview
 
-    return discovered_slaves, preview_by_slave, detected_profile_by_slave
+        async def probe(slave: int) -> tuple[str, str | None, list[str]]:
+            return await detect_slave_details(await unit_for(slave))
+
+        previews, profiles = await _async_probe_units(slaves, probe)
+    return slaves, previews, profiles
 
 
 async def _async_validate_port(hass, port: str) -> None:
@@ -358,56 +376,18 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Collect the serial port and scan for connected units."""
 
         errors: dict[str, str] = {}
-
         if user_input is not None:
-            selected_port = user_input[CONF_PORT]
-            normalized_port = await _async_resolve_port(self.hass, selected_port)
+            port = await _async_resolve_port(self.hass, user_input[CONF_PORT])
             # Abort before the slow scan when this gateway is already set up.
-            await self.async_set_unique_id(normalized_port)
+            await self.async_set_unique_id(port)
             self._abort_if_unique_id_configured()
-
-            try:
-                (
-                    discovered_slaves,
-                    preview_by_slave,
-                    detected_profile_by_slave,
-                ) = await _async_discover_units(self.hass, normalized_port)
-            except _PortInUseError:
-                errors["base"] = "port_in_use"
-            except MeltemModbusError:
-                errors["base"] = "cannot_connect"
-            except Exception:
-                _LOGGER.exception("Unexpected error while scanning %s", selected_port)
-                errors["base"] = "unknown"
-            else:
-                _LOGGER.info(
-                    "Read configured Meltem units from gateway on %s and found addresses: %s",
-                    selected_port,
-                    discovered_slaves,
-                )
-                if not discovered_slaves:
-                    _LOGGER.warning(
-                        "No supported Meltem M-WRG units found on gateway at %s",
-                        selected_port,
-                    )
-                    errors["base"] = "no_devices_found"
-                else:
-                    self._preview_by_slave = preview_by_slave
-                    self._detected_profile_by_slave = detected_profile_by_slave
-                    self._port = normalized_port
-                    self._discovered_slaves = discovered_slaves
-
-                    return await self.async_step_profiles()
-
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_PORT, default=self._port): str,
-            }
-        )
+            if (error := await self._async_scan(port)) is None:
+                return await self.async_step_profiles()
+            errors["base"] = error
 
         return self.async_show_form(
             step_id="user",
-            data_schema=data_schema,
+            data_schema=_port_schema(self._port),
             errors=errors,
         )
 
@@ -448,15 +428,9 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Render the USB confirmation step."""
 
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_PORT, default=self._port): str,
-            }
-        )
-
         return self.async_show_form(
             step_id="confirm_usb",
-            data_schema=data_schema,
+            data_schema=_port_schema(self._port),
             errors=errors,
             description_placeholders=self._usb_title_placeholders
             or {
@@ -470,34 +444,32 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Scan the gateway for configured units."""
 
         self._port = await _async_resolve_port(self.hass, self._port)
+        if (error := await self._async_scan(self._port)) is not None:
+            return self._show_confirm_usb_form(errors={"base": error})
+        return await self.async_step_profiles()
+
+    async def _async_scan(self, port: str) -> str | None:
+        """Scan the gateway and keep its units; return the form error on failure."""
 
         try:
-            (
-                discovered_slaves,
-                self._preview_by_slave,
-                self._detected_profile_by_slave,
-            ) = await _async_discover_units(self.hass, self._port)
-        except _PortInUseError:
-            return self._show_confirm_usb_form(errors={"base": "port_in_use"})
-        except MeltemModbusError:
-            return self._show_confirm_usb_form(
-                errors={"base": "cannot_connect"},
-            )
-        except Exception:
-            _LOGGER.exception("Unexpected error while scanning %s", self._port)
-            return self._show_confirm_usb_form(errors={"base": "unknown"})
+            slaves, previews, profiles = await _async_discover_units(self.hass, port)
+        except Exception as err:
+            return _connection_error(err, "scanning", port)
 
-        if not discovered_slaves:
-            _LOGGER.info(
-                "Read configured Meltem units from gateway on %s and found no configured addresses",
-                self._port,
-            )
-            return self._show_confirm_usb_form(
-                errors={"base": "no_devices_found"},
-            )
+        _LOGGER.info(
+            "Read configured Meltem units from gateway on %s and found addresses: %s",
+            port,
+            slaves,
+        )
+        if not slaves:
+            _LOGGER.warning("No supported Meltem M-WRG units found on gateway at %s", port)
+            return "no_devices_found"
 
-        self._discovered_slaves = discovered_slaves
-        return await self.async_step_profiles()
+        self._port = port
+        self._discovered_slaves = slaves
+        self._preview_by_slave = previews
+        self._detected_profile_by_slave = profiles
+        return None
 
     async def async_step_profiles(
         self, user_input: dict | None = None
@@ -506,15 +478,6 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if not self._discovered_slaves:
             return await self.async_step_user()
-
-        data_schema, placeholders = _profiles_form(
-            self._discovered_slaves,
-            {
-                slave: _detected_profile_default(slave, self._detected_profile_by_slave)
-                for slave in self._discovered_slaves
-            },
-            self._preview_by_slave,
-        )
 
         if user_input is not None:
             return self.async_create_entry(
@@ -530,6 +493,14 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             )
 
+        data_schema, placeholders = _profiles_form(
+            self._discovered_slaves,
+            {
+                slave: _detected_profile_default(slave, self._detected_profile_by_slave)
+                for slave in self._discovered_slaves
+            },
+            self._preview_by_slave,
+        )
         return self.async_show_form(
             step_id="profiles",
             data_schema=data_schema,
@@ -546,17 +517,14 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
     """
 
     def __init__(self) -> None:
-        self._request_rate_override: float | None = None
         self._discovered_slaves: list[int] = []
         self._preview_by_slave: dict[int, str] = {}
         self._detected_profile_by_slave: dict[int, str] = {}
 
     @property
     def _max_requests_per_second(self) -> float:
-        """Return the pending or currently stored scheduler request rate."""
+        """Return the currently stored scheduler request rate."""
 
-        if self._request_rate_override is not None:
-            return self._request_rate_override
         return float(
             self.config_entry.options.get(
                 CONF_MAX_REQUESTS_PER_SECOND,
@@ -566,6 +534,10 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                 ),
             )
         )
+
+    @property
+    def _existing_rooms(self) -> dict[int, Mapping[str, Any]]:
+        return {int(room["slave"]): room for room in self.config_entry.data[CONF_ROOMS]}
 
     @property
     def _coordinator(self) -> MeltemDataUpdateCoordinator | None:
@@ -609,20 +581,15 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             selected_request_rate = float(user_input[CONF_MAX_REQUESTS_PER_SECOND])
             # The stored path may predate a /dev/serial/by-id symlink, so it has
             # to be normalized too before deciding that the port changed.
-            current_normalized_port = await _async_resolve_port(
+            port_changed = normalized_port != await _async_resolve_port(
                 self.hass, current_port
             )
 
-            if normalized_port != current_normalized_port:
+            if port_changed:
                 try:
                     await _async_validate_port(self.hass, normalized_port)
-                except _PortInUseError:
-                    errors["base"] = "port_in_use"
-                except MeltemModbusError:
-                    errors["base"] = "cannot_connect"
-                except Exception:
-                    _LOGGER.exception("Unexpected error while opening %s", selected_port)
-                    errors["base"] = "unknown"
+                except Exception as err:
+                    errors["base"] = _connection_error(err, "opening", selected_port)
                 else:
                     self.hass.config_entries.async_update_entry(
                         self.config_entry,
@@ -634,29 +601,20 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                     )
 
             if not errors:
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    options={
-                        **self.config_entry.options,
-                        CONF_MAX_REQUESTS_PER_SECOND: selected_request_rate,
-                    },
+                options = _build_options_result_data(
+                    self.config_entry, selected_request_rate
                 )
-                self._request_rate_override = selected_request_rate
-
-                if normalized_port != current_normalized_port:
-                    await self.hass.config_entries.async_reload(self.config_entry.entry_id)
-                elif (coordinator := self._coordinator) is not None:
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, options=options
+                )
+                if not port_changed and (coordinator := self._coordinator) is not None:
                     coordinator.update_request_rate(selected_request_rate)
                 else:
-                    # Entry never finished setup, so there is no scheduler to retune.
+                    # A new port needs a new link, and an entry that never
+                    # finished setup has no scheduler to retune.
                     await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
-                return self.async_create_entry(
-                    title="",
-                    data=_build_options_result_data(
-                        self.config_entry, self._max_requests_per_second
-                    ),
-                )
+                return self.async_create_entry(title="", data=options)
 
             current_port = selected_port
             current_request_rate = selected_request_rate
@@ -680,28 +638,10 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
     ) -> ConfigFlowResult:
         """Edit the profiles for already known units without rescanning."""
 
-        coordinator = self._coordinator
-        existing_rooms = {
-            int(room["slave"]): room for room in self.config_entry.data[CONF_ROOMS]
-        }
+        existing_rooms = self._existing_rooms
         slaves = sorted(existing_rooms)
-
         if not slaves:
             return await self.async_step_rescan_units()
-
-        if user_input is None:
-            self._preview_by_slave = {}
-            for slave in slaves:
-                preview = existing_rooms[slave].get("preview")
-                if coordinator is not None:
-                    try:
-                        _detected_profile, preview, _keys = (
-                            await coordinator.async_probe_slave_details(slave)
-                        )
-                    except MeltemModbusError:
-                        preview = existing_rooms[slave].get("preview")
-                if preview:
-                    self._preview_by_slave[slave] = str(preview)
 
         if user_input is not None:
             return await self._async_apply_profiles(
@@ -716,9 +656,28 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                 }
             )
 
-        data_schema, placeholders = _profiles_form(
+        probed: dict[int, str] = {}
+        if (coordinator := self._coordinator) is not None:
+            probed, _profiles = await _async_probe_units(
+                slaves, coordinator.async_probe_slave_details
+            )
+        self._preview_by_slave = {
+            slave: str(preview)
+            for slave in slaves
+            if (preview := probed.get(slave) or existing_rooms[slave].get("preview"))
+        }
+        return self._show_profiles_form(
+            "edit_profiles",
             slaves,
             {slave: str(existing_rooms[slave]["profile"]) for slave in slaves},
+        )
+
+    def _show_profiles_form(
+        self, step_id: str, slaves: list[int], defaults_by_slave: Mapping[int, str]
+    ) -> ConfigFlowResult:
+        data_schema, placeholders = _profiles_form(
+            slaves,
+            defaults_by_slave,
             self._preview_by_slave,
             _device_names_by_slave(
                 self.hass,
@@ -727,7 +686,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             ),
         )
         return self.async_show_form(
-            step_id="edit_profiles",
+            step_id=step_id,
             data_schema=data_schema,
             description_placeholders=placeholders,
         )
@@ -735,20 +694,14 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
     async def _async_apply_profiles(self, updated_data: dict) -> ConfigFlowResult:
         """Persist changed room profiles and reload the entry."""
 
+        options = _build_options_result_data(
+            self.config_entry, self._max_requests_per_second
+        )
         self.hass.config_entries.async_update_entry(
-            self.config_entry,
-            data=updated_data,
-            options=_build_options_result_data(
-                self.config_entry, self._max_requests_per_second
-            ),
+            self.config_entry, data=updated_data, options=options
         )
         await self.hass.config_entries.async_reload(self.config_entry.entry_id)
-        return self.async_create_entry(
-            title="",
-            data=_build_options_result_data(
-                self.config_entry, self._max_requests_per_second
-            ),
-        )
+        return self.async_create_entry(title="", data=options)
 
     async def async_step_rescan_units(
         self, user_input: dict | None = None
@@ -756,61 +709,42 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         """Rescan the gateway for configured units and update the integration."""
 
         errors: dict[str, str] = {}
-
         if user_input is not None:
-            # Reuse the live coordinator/client so options changes do not race a
-            # second serial connection against the running one.
-            coordinator = self._coordinator
-            if coordinator is None:
-                errors["base"] = "cannot_connect"
-                return self.async_show_form(
-                    step_id="rescan_units",
-                    data_schema=vol.Schema({}),
-                    errors=errors,
-                )
-            try:
-                discovered_slaves = await coordinator.async_discover_gateway_units()
-            except MeltemModbusError:
-                errors["base"] = "cannot_connect"
-            else:
-                _LOGGER.info(
-                    "Rescanned Meltem gateway on %s and found slaves: %s",
-                    self.config_entry.data[CONF_PORT],
-                    discovered_slaves,
-                )
-                if not discovered_slaves:
-                    _LOGGER.warning(
-                        "No supported Meltem M-WRG units found on gateway at %s during rescan",
-                        self.config_entry.data[CONF_PORT],
-                    )
-                    errors["base"] = "no_devices_found"
-                else:
-                    self._preview_by_slave = {}
-                    self._detected_profile_by_slave = {}
-                    for slave in discovered_slaves:
-                        try:
-                            detected_profile, preview, _keys = (
-                                await coordinator.async_probe_slave_details(slave)
-                            )
-                        except MeltemModbusError as err:
-                            _LOGGER.warning(
-                                "Options rescan probe failed for Meltem unit at slave %s: %s",
-                                slave,
-                                err,
-                            )
-                            detected_profile = "plain"
-                            preview = None
-                        self._detected_profile_by_slave[slave] = detected_profile
-                        if preview:
-                            self._preview_by_slave[slave] = preview
-                    self._discovered_slaves = discovered_slaves
-                    return await self.async_step_profiles()
+            if (error := await self._async_rescan()) is None:
+                return await self.async_step_profiles()
+            errors["base"] = error
 
         return self.async_show_form(
             step_id="rescan_units",
             data_schema=vol.Schema({}),
             errors=errors,
         )
+
+    async def _async_rescan(self) -> str | None:
+        """Rescan and keep the units; return the form error on failure."""
+
+        # Reuse the live client so a rescan does not race a second serial connection.
+        if (coordinator := self._coordinator) is None:
+            return "cannot_connect"
+        port = self.config_entry.data[CONF_PORT]
+        try:
+            slaves = await coordinator.async_discover_gateway_units()
+        except MeltemModbusError:
+            return "cannot_connect"
+
+        _LOGGER.info("Rescanned Meltem gateway on %s and found slaves: %s", port, slaves)
+        if not slaves:
+            _LOGGER.warning(
+                "No supported Meltem M-WRG units found on gateway at %s during rescan",
+                port,
+            )
+            return "no_devices_found"
+
+        self._preview_by_slave, self._detected_profile_by_slave = await _async_probe_units(
+            slaves, coordinator.async_probe_slave_details
+        )
+        self._discovered_slaves = slaves
+        return None
 
     async def async_step_profiles(
         self, user_input: dict | None = None
@@ -820,10 +754,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         if not self._discovered_slaves:
             return await self.async_step_init()
 
-        existing_rooms = {
-            int(room["slave"]): room for room in self.config_entry.data[CONF_ROOMS]
-        }
-
+        existing_rooms = self._existing_rooms
         if user_input is not None:
             return await self._async_apply_profiles(
                 {
@@ -840,7 +771,8 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                 }
             )
 
-        data_schema, placeholders = _profiles_form(
+        return self._show_profiles_form(
+            "profiles",
             self._discovered_slaves,
             {
                 slave: str(
@@ -853,15 +785,4 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                 )
                 for slave in self._discovered_slaves
             },
-            self._preview_by_slave,
-            _device_names_by_slave(
-                self.hass,
-                self.config_entry.entry_id,
-                self.config_entry.data[CONF_ROOMS],
-            ),
-        )
-        return self.async_show_form(
-            step_id="profiles",
-            data_schema=data_schema,
-            description_placeholders=placeholders,
         )

@@ -41,7 +41,37 @@ Current project decision as of `2026-04-01`:
 - only revisit it if a new register family, payload hint, or vendor-side clue
   appears
 
-## Latest focused measurement
+## Measurement log
+
+Offline persistence checks, the cloud dependency of the app, and the panel-side
+`Abluft` / `Zuluft` diffs are in
+[MELTEM.md](MELTEM.md#reverse-engineered-app-preset-behavior).
+
+### 2026-03-30 — first traces on slave 5
+
+Changing app settings such as the intensive airflow and leaving the page via
+`Zurueck` produced no visible change in these holding-register windows:
+
+- unit `slave 5`: `42000..42560`
+- gateway `slave 1`: `41980..42540`
+
+Single-register scans then found readable shadow ranges on `slave 5` that
+block reads had hidden, because a window with one unreadable register fails as
+a whole: `51100..51113`, `51120..51133`, `51150..51151`, `52000..52010`.
+
+Observed diff patterns there:
+
+- intensive airflow changed `51100..51112`
+- intensive run-on time produced a broad `+1` increment across
+  `51100..51113`, `51120..51133`, `51150..51151`, and `52000..52010`
+- `Bedienfolie LOW` and `Bedienfolie HIGH` produced the same broad `+1`
+  pattern
+- one `Bedienfolie MED` change produced no diff in these ranges
+
+Interpretation: the shadow words behave like change counters, commit markers,
+version words, or status bitfields, not like the configured values.
+
+### 2026-03-31 — intensive family on slave 2
 
 First targeted `intensive` family capture on `2026-03-31`:
 
@@ -139,6 +169,82 @@ Current interpretation after the A-B-A sequence:
 - the intensive-family search should therefore be parked for now unless a new
   register family, payload path, or independent hardware hint appears
 
+### 2026-04-01 — keypad LOW on slave 2
+
+First keypad/LOW airflow measurement on `2026-04-01`:
+
+- baseline: `tmp/setting-captures/keypad-slave2-20260401-000404-baseline-presets-v2.json`
+- changed in app: LOW airflow target
+- follow-up: `tmp/setting-captures/keypad-slave2-20260401-000540-after-low-change.json`
+- immediate stability check without another app change:
+  `tmp/setting-captures/keypad-slave2-20260401-000623-stability-check.json`
+
+Observed diff shape:
+
+- no change was visible in `40000..40025`, `40200..40209`, `41000..41029`,
+  `41100..41124`, or `42000..42009`
+- `51120..51133` changed together from `69` to `71`
+- `51150..51151` changed from `69` to `71`
+- `52010` changed from `69` to `71`
+- `52008` changed from `5376` to `4352`
+- `52009` changed from `5376` to `5378`, then drifted back to `5376` during
+  the immediate stability check
+- the `71` values in `51120..51133`, `51150..51151`, and `52010` remained
+  stable during the immediate no-change recapture
+
+Current interpretation after the first keypad run:
+
+- unlike the intensive-family experiments, the keypad-family write left one
+  small stable value block instead of only a broad monotonic commit pattern
+- that block is not decoded yet, but it is a much better candidate for a real
+  persisted preset/default value or a closely related payload slot
+- the next best test is one more LOW change to a clearly different target value
+  to see whether `51120..51133` and `52010` move proportionally
+
+Second keypad/LOW airflow measurement on `2026-04-01`:
+
+- baseline: `tmp/setting-captures/keypad-slave2-20260401-000623-stability-check.json`
+- changed in app: LOW airflow target to a second distinct value
+- follow-up: `tmp/setting-captures/keypad-slave2-20260401-000822-after-low-55.json`
+- immediate stability check without another app change:
+  `tmp/setting-captures/keypad-slave2-20260401-000833-stability-check-2.json`
+
+Observed diff shape:
+
+- the readable islands in `40000..42009` again stayed unchanged, including the
+  documented config block `42000..42009`
+- `51120..51133`, `51150..51151`, and `52010` changed from `71` to `73`
+- the immediate no-change recapture then changed the same block again from `73`
+  to `74`
+- `52007..52009` moved alongside the write, but also drifted again on the
+  no-change recapture
+
+Updated interpretation after the second keypad run:
+
+- the keypad family still looks more promising than the intensive family,
+  because it produces a compact repeatable block instead of only broad
+  `51100..` / `52000..` family jumps
+- however, the second run weakens the earlier hypothesis that `51120..51133`
+  and `52010` are a directly readable LOW airflow value or one-to-one payload
+  slot for that value
+- the observed `69 -> 71 -> 71 -> 73 -> 74` series now looks more like family
+  metadata, commit state, or a payload sequence marker that reacts to the
+  keypad-default write path, not like a stable decoded airflow target
+- recommendation: pause the LOW-default hypothesis as a direct register mapping
+  and only revisit this family if a wider register window or independent clue
+  reveals where the actual payload value lives
+
+### 2026-04-01 — control write on `42000`
+
+- a direct local Modbus write on `slave 2` changed `42000` from `70 -> 71`
+  and back to `70`, with exact plain-value readback in `42000`
+- the matching snapshots only changed `42000` itself and one small side effect
+  in `52008..52009` (`5377 -> 5376`) on the forward step; the restore step then
+  changed only `42000`
+- this is a useful contrast to the intensive-default experiments, where app-
+  side changes only produced broad `511xx` / `520xx` meta-word jumps without a
+  directly readable value slot
+
 ## Confirmed local evidence
 
 - documented configuration writes exist for `42000..42009`
@@ -217,69 +323,6 @@ Current status:
 - recommendation: pause this family and move effort to a better control group
   or a different setting family
 
-First keypad/LOW airflow measurement on `2026-04-01`:
-
-- baseline: `tmp/setting-captures/keypad-slave2-20260401-000404-baseline-presets-v2.json`
-- changed in app: LOW airflow target
-- follow-up: `tmp/setting-captures/keypad-slave2-20260401-000540-after-low-change.json`
-- immediate stability check without another app change:
-  `tmp/setting-captures/keypad-slave2-20260401-000623-stability-check.json`
-
-Observed diff shape:
-
-- no change was visible in `40000..40025`, `40200..40209`, `41000..41029`,
-  `41100..41124`, or `42000..42009`
-- `51120..51133` changed together from `69` to `71`
-- `51150..51151` changed from `69` to `71`
-- `52010` changed from `69` to `71`
-- `52008` changed from `5376` to `4352`
-- `52009` changed from `5376` to `5378`, then drifted back to `5376` during
-  the immediate stability check
-- the `71` values in `51120..51133`, `51150..51151`, and `52010` remained
-  stable during the immediate no-change recapture
-
-Current interpretation after the first keypad run:
-
-- unlike the intensive-family experiments, the keypad-family write left one
-  small stable value block instead of only a broad monotonic commit pattern
-- that block is not decoded yet, but it is a much better candidate for a real
-  persisted preset/default value or a closely related payload slot
-- the next best test is one more LOW change to a clearly different target value
-  to see whether `51120..51133` and `52010` move proportionally
-
-Second keypad/LOW airflow measurement on `2026-04-01`:
-
-- baseline: `tmp/setting-captures/keypad-slave2-20260401-000623-stability-check.json`
-- changed in app: LOW airflow target to a second distinct value
-- follow-up: `tmp/setting-captures/keypad-slave2-20260401-000822-after-low-55.json`
-- immediate stability check without another app change:
-  `tmp/setting-captures/keypad-slave2-20260401-000833-stability-check-2.json`
-
-Observed diff shape:
-
-- the readable islands in `40000..42009` again stayed unchanged, including the
-  documented config block `42000..42009`
-- `51120..51133`, `51150..51151`, and `52010` changed from `71` to `73`
-- the immediate no-change recapture then changed the same block again from `73`
-  to `74`
-- `52007..52009` moved alongside the write, but also drifted again on the
-  no-change recapture
-
-Updated interpretation after the second keypad run:
-
-- the keypad family still looks more promising than the intensive family,
-  because it produces a compact repeatable block instead of only broad
-  `51100..` / `52000..` family jumps
-- however, the second run weakens the earlier hypothesis that `51120..51133`
-  and `52010` are a directly readable LOW airflow value or one-to-one payload
-  slot for that value
-- the observed `69 -> 71 -> 71 -> 73 -> 74` series now looks more like family
-  metadata, commit state, or a payload sequence marker that reacts to the
-  keypad-default write path, not like a stable decoded airflow target
-- recommendation: pause the LOW-default hypothesis as a direct register mapping
-  and only revisit this family if a wider register window or independent clue
-  reveals where the actual payload value lives
-
 ### 2. Keypad and preset defaults
 
 Manufacturer documentation: LOW / MEDIUM / HIGH are device parameters 13 / 14 /
@@ -322,6 +365,13 @@ Important caution:
 
 - do not change several shortcut defaults in one run
 - otherwise it becomes hard to separate payload slots inside one family
+
+Current status:
+
+- two LOW runs are done, see
+  [2026-04-01 — keypad LOW on slave 2](#2026-04-01--keypad-low-on-slave-2)
+- result: the compact `51120..` / `51150..` / `52010` block reacts, but behaves
+  like sequence metadata, not like the LOW airflow; parked
 
 ### 3. Cross-ventilation and one-sided airflow defaults
 
@@ -367,16 +417,16 @@ Recommended use:
 - use one humidity or CO2 setting first as a sanity check capture
 - then compare the shape of known documented changes against unknown families
 
-Latest control result on `2026-04-01`:
+Control result: see
+[2026-04-01 — control write on `42000`](#2026-04-01--control-write-on-42000).
 
-- a direct local Modbus write on `slave 2` changed `42000` from `70 -> 71`
-  and back to `70`, with exact plain-value readback in `42000`
-- the matching snapshots only changed `42000` itself and one small side effect
-  in `52008..52009` (`5377 -> 5376`) on the forward step; the restore step then
-  changed only `42000`
-- this is a useful contrast to the intensive-default experiments, where app-
-  side changes only produced broad `511xx` / `520xx` meta-word jumps without a
-  directly readable value slot
+### Other unresolved app pages
+
+Not yet captured at all:
+
+- standby settings
+- acoustic signals
+- VOC / CO2 special configuration pages
 
 ## Capture workflow
 
@@ -385,14 +435,14 @@ Use the family capture tool in `tools/capture_setting_family.py`.
 Example:
 
 ```bash
-python tools/capture_setting_family.py \
+python -m tools.capture_setting_family \
   --port /dev/ttyACM0 \
   --slave 2 \
   --family intensive \
   --label baseline \
   --output-dir tmp/setting-captures
 
-python tools/capture_setting_family.py \
+python -m tools.capture_setting_family \
   --port /dev/ttyACM0 \
   --slave 2 \
   --family intensive \
@@ -410,6 +460,21 @@ Suggested workflow rules:
 - always take the baseline immediately before the app-side change
 - keep screenshots or handwritten notes of the app-side values outside the JSON
   snapshot files
+- leave the app page in a known way, such as `Zurueck`, before the follow-up
+  capture
+- record negative findings, including every searched range without a hit, so
+  the same search space is not scanned again
+
+For ranges outside the known families, `capture_setting_family --range`
+reads arbitrary register ranges (repeatable, `start:count` or `start-end`)
+instead of a family; `--compare-latest` then prints only the differences to
+the previous capture of the same ranges. Suggested order when a new clue
+justifies a search:
+
+1. higher holding-register windows on gateway `slave 1`
+2. higher holding-register windows on the unit itself
+3. other trigger moments: save, back navigation, activating the related
+   runtime mode, app restart
 
 ## Stop criteria
 

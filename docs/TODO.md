@@ -1,69 +1,97 @@
 # Meltem Integration TODO
 
-Stand: 3.0.0
+Status: 4.0.0
 
-Diese Liste enthaelt nur noch offene Punkte. Alles, was frueher hier als
-"erledigt" gefuehrt wurde, ist inzwischen in `CHANGELOG.md` beschrieben.
-Hardware-Befunde und Reverse-Engineering-Notizen stehen in `docs/MELTEM.md`
-und `docs/DEVELOPER.md`, Herstellerangaben in `docs/reference/`.
+This list only holds open items. Everything that used to be listed here as
+done is described in `CHANGELOG.md`. Hardware observations and reverse
+engineering notes are in `docs/MELTEM.md`, implementation notes in
+`docs/DEVELOPER.md`, manufacturer facts in `docs/reference/`.
 
-Offene Punkte, die vor einer Entscheidung eine Messung an echter Hardware
-brauchen, stehen in `docs/HARDWARE_BACKLOG.md`.
+Open items that need a measurement on real hardware before a decision are in
+`docs/HARDWARE_BACKLOG.md`.
 
-## 1. Shortcut-Konfiguration in den Shadow-Bereichen `511xx` / `520xx`
+## 1. Shortcut configuration in the shadow ranges `511xx` / `520xx`
 
-Prioritaet: niedrig
-Status: offen, reines Reverse-Engineering-Interesse
+Priority: low
+Status: open, reverse engineering interest only
 
-Befund:
-- Lokale Panel-Wechsel auf `Abluft` / `Zuluft` aendern nicht `41120..41124`,
-  sondern Shadow-/Meta-Bereiche in `511xx` / `520xx`.
-- Wo die App die eigentliche Shortcut-Konfiguration, also die hinterlegten
-  Volumenstroeme dieser Kurzmodi, ablegt, ist weiterhin unbekannt.
+Finding:
+- Switching the local panel to `Abluft` / `Zuluft` does not change
+  `41120..41124`, but shadow/meta ranges in `511xx` / `520xx`.
+- Where the app stores the actual shortcut configuration, that is the
+  airflows of these shortcuts, is still unknown.
 
-Einordnung:
-- Kein Bug und kein Nutzerproblem: Zu- und Abluft sind seit 3.0.0 direkt ueber
-  die beiden Fan-Entities steuerbar, der geratene Schreibpfad wurde entfernt.
-- Der Lesepfad erkennt weiterhin, wenn Geraet oder App einen solchen Shortcut
-  aktiviert haben.
+Assessment:
+- Not a bug and not a user problem: since 3.0.0 supply and extract air are
+  controlled directly through the two fan entities, and the guessed write path
+  was removed.
+- The read path still detects when the unit or the app activated such a
+  shortcut.
 
-Naechster Schritt:
-- Nur bei Gelegenheit weiter untersuchen, siehe `docs/SETTING_RE_BACKLOG.md`.
-- Herstellerseitig sind die Zu-/Abluft-Volumenstroeme als Geraeteparameter
-  (Kennzahlen 42-47) dokumentiert, ohne Modbus-Zuordnung, siehe
+Next step:
+- Only investigate further when convenient, see `docs/SETTING_RE_BACKLOG.md`.
+- The manufacturer documents the supply/extract airflows as device parameters
+  (IDs 42-47) without a Modbus mapping, see
   `docs/reference/device-parameters.md`.
 
-## 2. `PRODUCT_ID` sprechend decodieren
+## 2. Decode `PRODUCT_ID`
 
-Prioritaet: niedrig
-Status: offen
+Priority: low
+Status: open
 
-Befund:
-- `40002 PRODUCT_ID` wird gelesen und als Rohwert in den Geraeteinformationen
-  angezeigt.
-- Eine Zuordnung zu konkreten Modellbezeichnungen ist nicht bekannt.
+Finding:
+- `40002 PRODUCT_ID` is read and shown as a raw value in the device
+  information.
+- A mapping to concrete model names is not known.
 
-Naechster Schritt:
-- Werte weiterer Geraete sammeln, bevor eine Decodierung geraten wird.
-- Die Herstellerdokumente enthalten weder `116852` noch `VMD-22RPS44`; die
-  Artikelnummern passen nicht, siehe `docs/reference/models.md`.
+Next step:
+- Collect values from more units before guessing a decoding.
+- The manufacturer documents contain neither `116852` nor `VMD-22RPS44`; the
+  article numbers do not match, see `docs/reference/models.md`.
 
-## 3. Test-Harness auf Home Assistant 2026.10 anheben
+## 3. Move the test harness to Home Assistant 2026.10
 
-Prioritaet: mittel
-Status: offen, wartet auf ein Release
+Priority: medium
+Status: open, waiting for a release
 
-Befund:
-- `pytest-homeassistant-custom-component==0.13.367` bringt Home Assistant
-  `2026.9.4` mit, die Integration verlangt aber `2026.10`.
-- `requirements-test.txt` installiert deshalb `modbus-connection` `4.12.3`
-  zusaetzlich; die `modbus`-Integration aus `2026.9.4` laeuft damit, ist aber
-  nicht die, gegen die Nutzer laufen (Halten pro Eintrag und Unit erst ab
-  `2026.10`).
+Finding:
+- `pytest-homeassistant-custom-component==0.13.367` ships Home Assistant
+  `2026.9.4`, but the integration requires `2026.10`.
+- `requirements-test.txt` therefore installs `modbus-connection` `4.12.3` on
+  top; the `modbus` integration from `2026.9.4` runs with it, but it is not the
+  one users run against (holding per entry and unit only from `2026.10`).
 
-Naechster Schritt:
-- Sobald es eine Harness-Version fuer `2026.10` gibt, die Pins in
-  `requirements-test.txt` anheben, die Zusatz-Pins pruefen und die Tests in
-  `tests/test_init.py::TestSharedModbusConnection` gegen die neue
-  `modbus`-Integration laufen lassen.
+Next step:
+- Once a harness version for `2026.10` exists, raise the pins in
+  `requirements-test.txt`, review the extra pins, and run the tests in
+  `tests/test_init.py::TestSharedModbusConnection` against the new `modbus`
+  integration.
+
+## 4. Wider block reads
+
+Priority: low
+Status: open, after the `4.0.0` release gate
+
+Finding:
+- The `register_ranges` of the components reproduce the blocks of the
+  pymodbus client one to one. Merging neighbouring blocks, for example
+  `41016..41021` in one request, would save requests per job.
+
+Next step:
+- Only with a benchmark on the real gateway, see test T-8 in
+  `docs/LIVE_GATEWAY_TESTS.md`. Update the parity test in
+  `tests/test_modbus_client.py` together with the ranges.
+
+## 5. Raw register diagnostics
+
+Priority: low
+Status: open
+
+Finding:
+- The device-modelling framework of `modbus-connection` offers
+  `async_read_raw()`, so raw register diagnostics need almost no own code.
+
+Next step:
+- Decide which ranges may be read and how often, so the diagnostics cannot
+  flood the gateway.
 

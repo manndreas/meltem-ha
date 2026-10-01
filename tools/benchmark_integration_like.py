@@ -5,19 +5,20 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import dataclass
-from datetime import UTC, datetime
 import importlib.util
-from pathlib import Path
 import statistics
 import sys
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 
 from modbus_connection import ModbusConnectionError, ModbusError, ModbusSerialParams
 from modbus_connection.tmodbus import ModbusConnection
 
-DEFAULT_PORT = "/dev/ttyACM0"
-DEFAULT_GATEWAY_DEVICE_ID = 1
+from tools._link import DEFAULT_PORT, GATEWAY_DEVICE_ID
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -97,6 +98,8 @@ modbus_client_module = _load_module(
 )
 
 FIXED_TIMEOUT = const_module.FIXED_TIMEOUT
+MODEL_PROFILES: tuple[str, ...] = const_module.MODEL_PROFILES
+SINGLE_ROOM_MODES = ("write_refresh", "write_idle_check", "write_observe", "airflow_long_observe")
 
 RefreshPlan = models_module.RefreshPlan
 RoomConfig = models_module.RoomConfig
@@ -152,13 +155,19 @@ def _profile_from_detected_suffix(suffix: str) -> str:
     return mapping.get(suffix, "ii_plain")
 
 
-async def discover_rooms(connection: ModbusConnection, port: str) -> list[RoomConfig]:
-    """Discover configured rooms and probe their supported keys."""
+async def discover_rooms(
+    connection: ModbusConnection,
+    port: str,
+    profiles: Mapping[int, str] | None = None,
+) -> list[RoomConfig]:
+    """Discover configured rooms and probe their supported keys.
+
+    The series cannot be probed, so a unit counts as M-WRG-II unless
+    ``profiles`` names its profile by slave address.
+    """
 
     policy = new_transport_policy()
-    gateway = prepare_unit(
-        connection.for_unit(DEFAULT_GATEWAY_DEVICE_ID), DEFAULT_GATEWAY_DEVICE_ID, policy
-    )
+    gateway = prepare_unit(connection.for_unit(GATEWAY_DEVICE_ID), GATEWAY_DEVICE_ID, policy)
     slaves = await discover_gateway_nodes(gateway, port, start=2, end=16)
 
     rooms: list[RoomConfig] = []
@@ -171,12 +180,32 @@ async def discover_rooms(connection: ModbusConnection, port: str) -> list[RoomCo
                 key=f"unit_{index}",
                 name=f"Unit {index}",
                 slave=slave,
-                profile=_profile_from_detected_suffix(detected_profile),
+                profile=(profiles or {}).get(slave)
+                or _profile_from_detected_suffix(detected_profile),
                 preview=preview,
                 supported_entity_keys=frozenset(supported_entity_keys),
             )
         )
     return rooms
+
+
+def print_rooms(rooms: list[RoomConfig]) -> None:
+    """Print the discovered rooms with the position that --room-index uses."""
+
+    print("rooms:")
+    for index, room in enumerate(rooms, start=1):
+        print(f"  {index}: slave {room.slave} {room.profile} ({room.preview})")
+
+
+def parse_profile(value: str) -> tuple[int, str]:
+    """Parse one SLAVE=PROFILE override."""
+
+    slave, separator, profile = value.partition("=")
+    if not separator or not slave.isdigit() or profile not in MODEL_PROFILES:
+        raise argparse.ArgumentTypeError(
+            f"use SLAVE=PROFILE with one of: {', '.join(MODEL_PROFILES)}"
+        )
+    return int(slave), profile
 
 
 def _room_at(rooms: list[RoomConfig], room_index: int) -> RoomConfig:
@@ -604,7 +633,18 @@ def parse_args() -> argparse.Namespace:
         ],
         default="scheduler",
     )
-    parser.add_argument("--room-index", type=int, default=3)
+    parser.add_argument(
+        "--room-index",
+        type=int,
+        help="1-based position in the rooms list; required for the single-room modes.",
+    )
+    parser.add_argument(
+        "--profile",
+        action="append",
+        type=parse_profile,
+        default=[],
+        help="SLAVE=PROFILE, e.g. 3=s_plain for an M-WRG-S. Repeatable.",
+    )
     parser.add_argument("--delta", type=int, default=4)
     parser.add_argument("--settle-seconds", type=float, default=1.5)
     parser.add_argument("--poll-interval", type=float, default=1.0)
@@ -614,7 +654,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-interval", type=float, default=2.0)
     parser.add_argument("--target", type=int, default=10)
     parser.add_argument("--restore-target", type=int, default=60)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.mode in SINGLE_ROOM_MODES and args.room_index is None:
+        parser.error(f"--room-index is required for --mode {args.mode}")
+    return args
 
 
 async def main() -> int:
@@ -628,11 +671,11 @@ async def main() -> int:
     connection = open_connection(args.port)
     try:
         try:
-            rooms = await discover_rooms(connection, args.port)
+            rooms = await discover_rooms(connection, args.port, dict(args.profile))
         except MeltemConnectionError as err:
             print(f"ERROR: could not open serial connection on {args.port}: {err}")
             return 2
-        print(f"rooms: {[room.slave for room in rooms]}")
+        print_rooms(rooms)
         print(f"mode: {args.mode}")
         print(f"gap: {args.gap}s")
         print(f"timeout: {FIXED_TIMEOUT}s")
