@@ -7,7 +7,8 @@ Thanks for helping improve the Meltem Home Assistant integration.
 - This project talks to real Meltem Modbus hardware via the `M-WRG-GW` gateway.
 - Please be conservative with write behavior, timing, retries, and register handling.
 - Read [docs/DEVELOPER.md](./docs/DEVELOPER.md) for implementation notes.
-- Read [docs/MELTEM.md](./docs/MELTEM.md) for the transcribed manufacturer reference.
+- Read [docs/reference/](./docs/reference/README.md) for the manufacturer reference
+  and [docs/MELTEM.md](./docs/MELTEM.md) for observed hardware behavior.
 - Read [docs/HARDWARE_BACKLOG.md](./docs/HARDWARE_BACKLOG.md) before changing
   behavior that still needs verification on a live gateway.
 
