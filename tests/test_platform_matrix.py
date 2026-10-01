@@ -157,8 +157,8 @@ async def test_profile_creates_the_expected_entities(
 ) -> None:
     with_serial_stubs = pytest.MonkeyPatch()
     with_serial_stubs.setattr(
-        "custom_components.meltem_ventilation.MeltemModbusClient.ensure_connected",
-        lambda self: None,
+        "custom_components.meltem_ventilation.MeltemModbusClient.async_validate_gateway",
+        _noop_validate,
     )
     with_serial_stubs.setattr(
         "custom_components.meltem_ventilation.coordinator."
@@ -201,8 +201,8 @@ async def test_diagnostic_connection_entities_are_created_once_and_disabled(
 ) -> None:
     with_serial_stubs = pytest.MonkeyPatch()
     with_serial_stubs.setattr(
-        "custom_components.meltem_ventilation.MeltemModbusClient.ensure_connected",
-        lambda self: None,
+        "custom_components.meltem_ventilation.MeltemModbusClient.async_validate_gateway",
+        _noop_validate,
     )
     with_serial_stubs.setattr(
         "custom_components.meltem_ventilation.coordinator."
@@ -241,13 +241,17 @@ async def _noop_refresh(self) -> None:
     return None
 
 
+async def _noop_validate(self) -> None:
+    return None
+
+
 async def test_unit_devices_hang_off_the_gateway_device(
     hass: HomeAssistant, setup_profile
 ) -> None:
     with_serial_stubs = pytest.MonkeyPatch()
     with_serial_stubs.setattr(
-        "custom_components.meltem_ventilation.MeltemModbusClient.ensure_connected",
-        lambda self: None,
+        "custom_components.meltem_ventilation.MeltemModbusClient.async_validate_gateway",
+        _noop_validate,
     )
     with_serial_stubs.setattr(
         "custom_components.meltem_ventilation.coordinator."
@@ -260,7 +264,7 @@ async def test_unit_devices_hang_off_the_gateway_device(
         with_serial_stubs.undo()
 
     registry = dr.async_get(hass)
-    gateway = registry.async_get_device(identifiers={(DOMAIN, entry_id)})
+    gateway = registry.async_get_device_by_identifier((DOMAIN, entry_id), entry_id)
     assert gateway is not None
     units = [
         device
@@ -279,8 +283,8 @@ async def test_device_path_sensor_keeps_its_registry_entry_across_reloads(
     """The registry cleanup must not recreate it, which would drop user settings."""
     with_serial_stubs = pytest.MonkeyPatch()
     with_serial_stubs.setattr(
-        "custom_components.meltem_ventilation.MeltemModbusClient.ensure_connected",
-        lambda self: None,
+        "custom_components.meltem_ventilation.MeltemModbusClient.async_validate_gateway",
+        _noop_validate,
     )
     with_serial_stubs.setattr(
         "custom_components.meltem_ventilation.coordinator."

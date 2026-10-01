@@ -7,6 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import (
+    ConfigEntryError,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+)
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -25,6 +30,8 @@ from custom_components.meltem_ventilation.const import (
     PLATFORMS,
 )
 from custom_components.meltem_ventilation.modbus_helpers import (
+    MeltemConnectionError,
+    build_serial_params,
     supported_entity_keys_for_profile,
 )
 from custom_components.meltem_ventilation.models import (
@@ -155,6 +162,100 @@ class TestAsyncSetupEntry:
 
         assert not hasattr(entry, "runtime_data")
         mock_client_cls.return_value.shutdown.assert_called_once()
+
+    @patch(
+        "custom_components.meltem_ventilation.resolve_preferred_port_path",
+        side_effect=lambda port: port,
+    )
+    @patch(
+        "custom_components.meltem_ventilation.MeltemModbusClient",
+        autospec=True,
+    )
+    async def test_unreachable_gateway_retries_setup(
+        self,
+        mock_client_cls,
+        _mock_resolve,
+        hass: HomeAssistant,
+    ) -> None:
+        mock_client_cls.return_value.async_validate_gateway.side_effect = (
+            MeltemConnectionError("no answer")
+        )
+        entry = _mock_config_entry()
+        entry.add_to_hass(hass)
+
+        with pytest.raises(ConfigEntryNotReady):
+            await async_setup_entry(hass, entry)
+
+        mock_client_cls.return_value.shutdown.assert_called_once()
+
+    @patch(
+        "custom_components.meltem_ventilation.resolve_preferred_port_path",
+        side_effect=lambda port: port,
+    )
+    @patch(
+        "custom_components.meltem_ventilation.MeltemModbusClient",
+        autospec=True,
+    )
+    async def test_port_held_with_other_link_settings_fails_setup(
+        self,
+        mock_client_cls,
+        _mock_resolve,
+        hass: HomeAssistant,
+    ) -> None:
+        mock_client_cls.return_value.async_validate_gateway.side_effect = (
+            HomeAssistantError("already in use with different link settings")
+        )
+        entry = _mock_config_entry()
+        entry.add_to_hass(hass)
+
+        with pytest.raises(ConfigEntryError):
+            await async_setup_entry(hass, entry)
+
+        mock_client_cls.return_value.shutdown.assert_called_once()
+
+    @patch(
+        "custom_components.meltem_ventilation.resolve_preferred_port_path",
+        side_effect=lambda port: port,
+    )
+    @patch(
+        "custom_components.meltem_ventilation.MeltemModbusClient",
+        autospec=True,
+    )
+    @patch(
+        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
+        autospec=True,
+    )
+    async def test_client_takes_its_units_from_the_modbus_integration(
+        self,
+        mock_coordinator_cls,
+        mock_client_cls,
+        _mock_resolve,
+        hass: HomeAssistant,
+    ) -> None:
+        mock_coordinator_cls.return_value.async_refresh = AsyncMock()
+        entry = _mock_config_entry()
+        entry.add_to_hass(hass)
+
+        with (
+            patch(
+                "custom_components.meltem_ventilation.async_get_unit"
+            ) as mock_get_unit,
+            patch.object(
+                hass.config_entries,
+                "async_forward_entry_setups",
+                new=AsyncMock(),
+            ),
+        ):
+            await async_setup_entry(hass, entry)
+            unit_factory = mock_client_cls.call_args.args[0]
+            unit_factory(2)
+
+        mock_get_unit.assert_called_once_with(
+            hass,
+            entry,
+            build_serial_params(MINIMAL_ENTRY_DATA[CONF_PORT]),
+            2,
+        )
 
     @patch(
         "custom_components.meltem_ventilation.MeltemModbusClient",
@@ -475,7 +576,7 @@ class TestAsyncSetupEntry:
 
 
 class TestAsyncUnloadEntry:
-    async def test_unload_removes_runtime_data_and_closes_client(
+    async def test_unload_removes_runtime_data_and_shuts_the_client_down(
         self, hass: HomeAssistant,
     ) -> None:
         entry = _mock_config_entry()
@@ -496,7 +597,6 @@ class TestAsyncUnloadEntry:
 
         assert result is True
         mock_client.shutdown.assert_called_once()
-        mock_client.close.assert_not_called()
 
     async def test_unload_returns_false_on_platform_failure(
         self, hass: HomeAssistant,
@@ -604,8 +704,8 @@ class TestDeviceRegistrySync:
 
         await self._setup(hass, entry)
 
-        gateway = dr.async_get(hass).async_get_device(
-            identifiers={(DOMAIN, entry.entry_id)}
+        gateway = dr.async_get(hass).async_get_device_by_identifier(
+            (DOMAIN, entry.entry_id), entry.entry_id
         )
         assert gateway is not None
         assert gateway.model == "M-WRG-GW"

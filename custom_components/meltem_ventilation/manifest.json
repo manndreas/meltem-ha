@@ -5,15 +5,19 @@
     "@manndreas"
   ],
   "config_flow": true,
+  "dependencies": [
+    "modbus"
+  ],
   "documentation": "https://github.com/manndreas/meltem-ha#readme",
   "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/manndreas/meltem-ha/issues",
   "loggers": [
-    "pymodbus"
+    "modbus_connection",
+    "tmodbus"
   ],
   "requirements": [
-    "pymodbus[serial]>=3.13,<4.0.0"
+    "modbus-connection>=4.12.3"
   ],
   "single_config_entry": true,
   "usb": [
@@ -24,5 +28,5 @@
       "vid": "10AC"
     }
   ],
-  "version": "3.1.0"
+  "version": "4.0.0"
 }
