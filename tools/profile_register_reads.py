@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Profile Meltem register reads across all discovered units."""
 
 from __future__ import annotations
@@ -7,11 +6,19 @@ import argparse
 import asyncio
 import statistics
 import time
+from collections import Counter
 from dataclasses import dataclass
 
 from modbus_connection import ModbusError, ModbusExceptionError
 
-from tools._link import DEFAULT_PORT, GATEWAY_DEVICE_ID, discover_units, open_link, run
+from tools._link import (
+    GATEWAY_DEVICE_ID,
+    discover_units,
+    elapsed_ms,
+    open_link,
+    run,
+    tool_parser,
+)
 
 
 @dataclass(frozen=True)
@@ -36,10 +43,7 @@ SPECS: tuple[ReadSpec, ...] = (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Profile register reads across all Meltem units."
-    )
-    parser.add_argument("--port", default=DEFAULT_PORT)
+    parser = tool_parser("Profile register reads across all Meltem units.")
     parser.add_argument("--gap", type=float, default=0.1)
     parser.add_argument("--cycles", type=int, default=2)
     return parser.parse_args()
@@ -47,6 +51,10 @@ def parse_args() -> argparse.Namespace:
 
 async def main() -> int:
     args = parse_args()
+    # Answered requests only, including exception responses.
+    latencies: dict[str, list[float]] = {spec.label: [] for spec in SPECS}
+    failures: Counter[str] = Counter()
+
     # The gap is slept explicitly outside the measured latency, so the link
     # itself adds no extra spacing.
     async with open_link(args.port, message_spacing=None) as link:
@@ -55,9 +63,6 @@ async def main() -> int:
         print(f"gap: {args.gap}s")
         print(f"cycles: {args.cycles}")
         print()
-
-        latencies_by_label: dict[str, list[float]] = {spec.label: [] for spec in SPECS}
-        failures_by_label: dict[str, int] = {spec.label: 0 for spec in SPECS}
 
         for cycle in range(1, args.cycles + 1):
             print(f"cycle {cycle}/{args.cycles}")
@@ -71,35 +76,31 @@ async def main() -> int:
                         )
                     except ModbusExceptionError as err:
                         # The unit answered, just with an exception code.
-                        elapsed_ms = (time.perf_counter() - start) * 1000
-                        latencies_by_label[spec.label].append(elapsed_ms)
-                        failures_by_label[spec.label] += 1
-                        print(
-                            f"  unit {unit:>2} {spec.label:<24} ERR  {elapsed_ms:>6.1f} ms  {type(err).__name__}: {err}"
-                        )
+                        status, answered, detail = "ERR", True, f"{type(err).__name__}: {err}"
                     except ModbusError as err:
-                        elapsed_ms = (time.perf_counter() - start) * 1000
-                        failures_by_label[spec.label] += 1
-                        print(
-                            f"  unit {unit:>2} {spec.label:<24} EXC  {elapsed_ms:>6.1f} ms  {type(err).__name__}: {err}"
-                        )
+                        status, answered, detail = "EXC", False, f"{type(err).__name__}: {err}"
                     else:
-                        elapsed_ms = (time.perf_counter() - start) * 1000
-                        latencies_by_label[spec.label].append(elapsed_ms)
-                        print(
-                            f"  unit {unit:>2} {spec.label:<24} OK   {elapsed_ms:>6.1f} ms  {registers}"
-                        )
+                        status, answered, detail = "OK", True, str(registers)
+                    latency_ms = elapsed_ms(start)
+                    if answered:
+                        latencies[spec.label].append(latency_ms)
+                    if status != "OK":
+                        failures[spec.label] += 1
+                    print(
+                        f"  unit {unit:>2} {spec.label:<24} {status:<4} "
+                        f"{latency_ms:>6.1f} ms  {detail}"
+                    )
                     await asyncio.sleep(args.gap)
             print()
 
+    total = args.cycles * len(units)
     print("summary:")
     for spec in SPECS:
-        latencies = latencies_by_label[spec.label]
-        failures = failures_by_label[spec.label]
-        total = len(latencies) + failures
-        avg = statistics.mean(latencies) if latencies else 0.0
+        answered_latencies = latencies[spec.label]
+        avg = statistics.mean(answered_latencies) if answered_latencies else 0.0
         print(
-            f"  {spec.label:<24} total={total:<3} failures={failures:<3} avg_ms={avg:>6.1f}"
+            f"  {spec.label:<24} total={total:<3} failures={failures[spec.label]:<3} "
+            f"avg_ms={avg:>6.1f}"
         )
     return 0
 
