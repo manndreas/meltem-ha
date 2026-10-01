@@ -39,7 +39,7 @@ def room_supports_entity(
 
     if profiles is not None and room.profile not in profiles:
         return False
-    return room.supported_entity_keys is None or entity_key in room.supported_entity_keys
+    return room.supports(entity_key)
 
 
 class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
@@ -69,15 +69,17 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
+        info = DeviceInfo(
             identifiers={(DOMAIN, self.room.key)},
             manufacturer="Meltem",
             model=profile_label(self.room.profile),
             name=f"{INTEGRATION_NAME} {self.room.name}",
             hw_version=self._hw_version,
             sw_version=self._sw_version,
-            via_device_id=self.coordinator.gateway_device_id,
         )
+        if (gateway_device_id := self.coordinator.gateway_device_id) is not None:
+            info["via_device_id"] = gateway_device_id
+        return info
 
     @property
     def room_state(self) -> RoomState:

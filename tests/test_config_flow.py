@@ -94,7 +94,7 @@ def _patch_scan_error(error: Exception):
 def _patch_detect(profile: str = "plain", preview: str = "ID 2 | basic"):
     return patch(
         f"{_PATCHES_BASE}.detect_slave_details",
-        new=AsyncMock(return_value=(profile, preview, [])),
+        new=AsyncMock(return_value=(profile, preview)),
     )
 
 
@@ -140,14 +140,26 @@ async def _async_open_option(
     )
 
 
-async def _async_submit_connection(
+async def _async_submit_request_rate(
+    hass: HomeAssistant, entry: MockConfigEntry
+) -> ConfigFlowResult:
+    """Open the request-rate options and submit a rate of 5."""
+
+    result = await _async_open_option(hass, entry, "edit_request_rate")
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_MAX_REQUESTS_PER_SECOND: 5.0}
+    )
+
+
+async def _async_reconfigure(
     hass: HomeAssistant, entry: MockConfigEntry, port: str
 ) -> ConfigFlowResult:
-    """Open the connection options and submit ``port`` with a request rate of 5."""
+    """Start the reconfigure flow and submit ``port``."""
 
-    result = await _async_open_option(hass, entry, "edit_connection")
-    return await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_PORT: port, CONF_MAX_REQUESTS_PER_SECOND: 5.0}
+    result = await entry.start_reconfigure_flow(hass)
+    assert result["step_id"] == "reconfigure"
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PORT: port}
     )
 
 
@@ -449,96 +461,47 @@ class TestOptionsFlow:
         assert rescan["step_id"] == "rescan_units"
         assert rescan["errors"] == {"base": "cannot_connect"}
 
-    async def test_options_edit_connection_reloads_without_a_coordinator(
+    async def test_options_request_rate_reloads_without_a_coordinator(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        with (
-            _patch_resolve_unchanged(),
-            patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload,
-        ):
-            result = await _async_submit_connection(hass, entry, _STABLE_PORT)
+        with patch.object(
+            hass.config_entries, "async_reload", new=AsyncMock()
+        ) as mock_reload:
+            result = await _async_submit_request_rate(hass, entry)
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
         mock_reload.assert_awaited_once_with(entry.entry_id)
 
-    async def test_options_init_routes_to_edit_connection(
+    async def test_options_init_routes_to_edit_request_rate(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        result = await _async_open_option(hass, entry, "edit_connection")
+        result = await _async_open_option(hass, entry, "edit_request_rate")
 
         assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "edit_connection"
+        assert result["step_id"] == "edit_request_rate"
+        assert list(result["data_schema"].schema) == [CONF_MAX_REQUESTS_PER_SECOND]
 
-    async def test_options_edit_connection_updates_entry_and_reloads_when_port_changes(
-        self, hass: HomeAssistant, entry: MockConfigEntry
-    ) -> None:
-        _attach_coordinator(entry, update_request_rate=MagicMock())
-
-        with (
-            _patch_validate_ok() as validate_connection,
-            patch(
-                f"{_PATCHES_BASE}.resolve_preferred_port_path",
-                side_effect=lambda port: (
-                    "/dev/serial/by-id/new-port" if port == "/dev/ttyACM1" else port
-                ),
-            ),
-        ):
-            result = await _async_submit_connection(hass, entry, "/dev/ttyACM1")
-
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert entry.data[CONF_PORT] == "/dev/serial/by-id/new-port"
-        assert entry.unique_id == "/dev/serial/by-id/new-port"
-        assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
-        validate_connection.assert_awaited_once()
-
-    async def test_options_edit_connection_reports_a_port_held_with_other_settings(
-        self, hass: HomeAssistant, entry: MockConfigEntry
-    ) -> None:
-        with (
-            patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=_conflicting_unit),
-            _patch_resolve_unchanged(),
-        ):
-            result = await _async_submit_connection(hass, entry, "/dev/ttyACM1")
-
-        assert result["type"] == FlowResultType.FORM
-        assert result["errors"] == {"base": "port_in_use"}
-        assert entry.data[CONF_PORT] == _STABLE_PORT
-
-    async def test_options_edit_connection_ignores_an_equivalent_port_path(
-        self, hass: HomeAssistant, entry: MockConfigEntry
-    ) -> None:
-        """A stored raw path that resolves to the stored by-id path is no change."""
-        _attach_coordinator(entry, update_request_rate=MagicMock())
-
-        with (
-            _patch_validate_ok() as validate_connection,
-            _patch_resolve(),
-            patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload,
-        ):
-            result = await _async_submit_connection(hass, entry, _PORT)
-
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        validate_connection.assert_not_called()
-        mock_reload.assert_not_awaited()
-        assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
-
-    async def test_options_edit_connection_updates_request_rate_without_reload(
+    async def test_options_request_rate_updates_without_reload(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
         coordinator = _attach_coordinator(entry, update_request_rate=MagicMock())
 
-        result = await _async_submit_connection(hass, entry, _STABLE_PORT)
+        with patch.object(
+            hass.config_entries, "async_reload", new=AsyncMock()
+        ) as mock_reload:
+            result = await _async_submit_request_rate(hass, entry)
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["data"][CONF_MAX_REQUESTS_PER_SECOND] == 5.0
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
         coordinator.update_request_rate.assert_called_once_with(5.0)
+        mock_reload.assert_not_awaited()
 
     async def test_options_edit_profiles_updates_existing_rooms(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        probe = AsyncMock(return_value=("fc", "ID 99 | CO2", []))
+        probe = AsyncMock(return_value=("fc", "ID 99 | CO2"))
         _attach_coordinator(entry, async_probe_slave_details=probe)
 
         with patch.object(
@@ -555,15 +518,15 @@ class TestOptionsFlow:
         assert probe.await_count == 1
         assert entry.data[CONF_ROOMS][0]["profile"] == "ii_fc"
         assert entry.data[CONF_ROOMS][0]["preview"] == "ID 99 | CO2"
-        assert "co2_extract_air" in entry.data[CONF_ROOMS][0]["supported_entity_keys"]
-        assert "humidity_extract_air" in entry.data[CONF_ROOMS][0]["supported_entity_keys"]
+        # Entities follow from the profile on load, so stale stored keys are dropped.
+        assert "supported_entity_keys" not in entry.data[CONF_ROOMS][0]
 
     async def test_options_edit_profiles_shows_the_device_name_from_the_registry(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
         _attach_coordinator(
             entry,
-            async_probe_slave_details=AsyncMock(return_value=("fc", "ID 99 | CO2", [])),
+            async_probe_slave_details=AsyncMock(return_value=("fc", "ID 99 | CO2")),
         )
 
         registry = dr.async_get(hass)
@@ -580,3 +543,87 @@ class TestOptionsFlow:
         assert result["description_placeholders"]["unit_details"] == (
             "- **2**: Bad, Hardware ID 99 | CO2"
         )
+
+
+# ---------------------------------------------------------------------------
+#  Reconfigure flow
+# ---------------------------------------------------------------------------
+
+
+class TestReconfigureFlow:
+    async def test_reconfigure_updates_the_port_and_reloads(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        with (
+            _patch_validate_ok() as validate_connection,
+            patch(
+                f"{_PATCHES_BASE}.resolve_preferred_port_path",
+                side_effect=lambda port: (
+                    "/dev/serial/by-id/new-port" if port == "/dev/ttyACM1" else port
+                ),
+            ),
+            patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
+        ):
+            result = await _async_reconfigure(hass, entry, "/dev/ttyACM1")
+
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "reconfigure_successful"
+        assert entry.data[CONF_PORT] == "/dev/serial/by-id/new-port"
+        assert entry.unique_id == "/dev/serial/by-id/new-port"
+        validate_connection.assert_awaited_once()
+        mock_reload.assert_called_once_with(entry.entry_id)
+
+    async def test_reconfigure_reports_a_port_held_with_other_settings(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        with (
+            patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=_conflicting_unit),
+            _patch_resolve_unchanged(),
+        ):
+            result = await _async_reconfigure(hass, entry, "/dev/ttyACM1")
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "port_in_use"}
+        assert entry.data[CONF_PORT] == _STABLE_PORT
+
+    async def test_reconfigure_ignores_an_equivalent_port_path(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        """A raw path that resolves to the stored by-id path is no change."""
+        hass.config_entries.async_update_entry(entry, unique_id=_STABLE_PORT)
+        with (
+            _patch_validate_ok() as validate_connection,
+            _patch_resolve(),
+            patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
+        ):
+            result = await _async_reconfigure(hass, entry, _PORT)
+
+        assert result["type"] == FlowResultType.ABORT
+        validate_connection.assert_not_called()
+        mock_reload.assert_not_called()
+        assert entry.data[CONF_PORT] == _STABLE_PORT
+
+
+class TestUsbPortEdit:
+    async def test_editing_the_discovered_port_updates_the_unique_id(
+        self, hass: HomeAssistant
+    ) -> None:
+        with (
+            _patch_scan([2]),
+            _patch_detect(),
+            patch(
+                f"{_PATCHES_BASE}.resolve_preferred_port_path",
+                side_effect=lambda port: f"/dev/serial/by-id/{port.rsplit('/', 1)[-1]}",
+            ),
+        ):
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": config_entries.SOURCE_USB}, data=_USB_DISCOVERY
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {CONF_PORT: "/dev/ttyACM1"}
+            )
+            result = await _async_submit_profiles(hass, result, {"slave_2": "ii_plain"})
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["result"].unique_id == "/dev/serial/by-id/ttyACM1"
+        assert result["data"][CONF_PORT] == "/dev/serial/by-id/ttyACM1"

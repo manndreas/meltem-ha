@@ -218,20 +218,22 @@ class TestAsyncSetupEntry:
         # The stored entry is not rewritten.
         assert "supported_entity_keys" not in entry.data[CONF_ROOMS][0]
 
-    async def test_setup_completes_stale_entity_keys_with_the_profile(
+    async def test_setup_ignores_entity_keys_stored_by_older_releases(
         self, hass: HomeAssistant, setup_mocks: _SetupMocks,
     ) -> None:
-        """Keys stored by an older release still get entities added later."""
-        stored_keys = ["extract_air_flow", "humidity_extract_air"]
+        """Probe keys beyond the profile would schedule reads the unit cannot answer."""
+        stored_keys = ["extract_air_flow", "humidity_starting_point"]
         entry = _entry(
             hass,
-            rooms=[{**_ROOM, "profile": "ii_fc", "supported_entity_keys": stored_keys}],
+            rooms=[{**_ROOM, "profile": "ii_plain", "supported_entity_keys": stored_keys}],
         )
 
         await async_setup_entry(hass, entry)
 
         room = setup_mocks.coordinator_cls.call_args.kwargs["rooms"][0]
-        assert set(supported_entity_keys_for_profile("ii_fc")) <= room.supported_entity_keys
+        assert room.supported_entity_keys == frozenset(
+            supported_entity_keys_for_profile("ii_plain")
+        )
         assert entry.data[CONF_ROOMS][0]["supported_entity_keys"] == stored_keys
 
     @pytest.mark.parametrize(
