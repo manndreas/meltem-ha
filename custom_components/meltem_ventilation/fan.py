@@ -7,12 +7,12 @@ sends both values and switches the unit to unbalanced mode.
 
 from __future__ import annotations
 
+import logging
 import math
 
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util.percentage import (
     percentage_to_ranged_value,
@@ -32,6 +32,7 @@ DIRECTION_SUPPLY = "supply"
 DIRECTION_EXTRACT = "extract"
 
 DEFAULT_TURN_ON_PERCENTAGE = 50
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -60,6 +61,7 @@ async def async_setup_entry(
 class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
     """Airflow target for one direction of a Meltem unit."""
 
+    _requires_fresh_read_group = False
     _attr_supported_features = (
         FanEntityFeature.SET_SPEED
         | FanEntityFeature.TURN_OFF
@@ -70,11 +72,37 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         entity_key = f"{direction}_level"
         super().__init__(coordinator, room, entity_key, entity_key)
         self._direction = direction
+        self._last_write_fallback: str | None = None
         self._attr_icon = (
             "mdi:home-import-outline" if direction == DIRECTION_SUPPLY else "mdi:home-export-outline"
         )
         # One step per m3/h, so the slider cannot land between device values.
         self._attr_speed_count = int_states_in_range(_level_range(room.profile))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | bool | int | None]:
+        """Expose when a fan write must use a balanced fallback."""
+
+        attributes: dict[str, str | bool | int | None] = {
+            "opposite_airflow": self._other_level,
+            "opposite_airflow_known": self._other_level is not None,
+        }
+        if self._last_write_fallback is not None:
+            attributes["last_write_fallback"] = self._last_write_fallback
+        elif self._other_level is None:
+            attributes["next_write_fallback"] = "both_directions_balanced_manual"
+        if self.room_state.operation_mode is None:
+            attributes["operating_mode_known"] = False
+            attributes["fan_write_may_override_mode"] = True
+        return attributes
+
+    def _handle_coordinator_update(self) -> None:
+        if self._last_write_fallback is not None and self.coordinator.read_group_fresh(
+            self.room.key,
+            "flow_control",
+        ):
+            self._last_write_fallback = None
+        super()._handle_coordinator_update()
 
     @property
     def _levels(self) -> tuple[int | None, int | None]:
@@ -125,14 +153,27 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         own_level = _percentage_to_level(normalized, self.room.profile)
         other_level = self._other_level
         if other_level is None:
-            # Writing always sends both directions, so guessing here would
-            # silently stop the other fan.
-            raise HomeAssistantError(
-                f"Cannot change {self.entity_id}: the current airflow of the "
-                "opposite direction is unknown"
+            self._last_write_fallback = "both_directions_balanced_manual"
+            _LOGGER.warning(
+                "Room %s (slave %s): opposite airflow is unknown; setting both "
+                "directions to %s m3/h in balanced manual mode. This may "
+                "override the current operating mode.",
+                self.room.name,
+                self.room.slave,
+                own_level,
             )
+            await self.coordinator.async_set_level(self.room.key, own_level)
+            return
 
         operation_mode = self.room_state.operation_mode
+        if operation_mode is None:
+            self._last_write_fallback = "unknown_mode_overridden"
+            _LOGGER.warning(
+                "Room %s (slave %s): operating mode is unknown; explicit fan "
+                "command may override the current mode.",
+                self.room.name,
+                self.room.slave,
+            )
         # Starting from a stopped unit, run both directions rather than
         # dropping straight into single-direction operation.
         starting_from_off = operation_mode == OPERATION_MODE_OFF

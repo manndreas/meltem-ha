@@ -354,7 +354,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         The overlay is shared so the fan and the select entity never disagree.
         """
         state = self._safe_data.get(room_key)
-        confirmed = (state.preset_mode or PRESET_MODE_INACTIVE) if state else None
+        confirmed = state.preset_mode if state else None
         return self._optimistic_presets.get(room_key, confirmed)
 
     def _set_optimistic_preset_mode(self, room_key: str, preset_mode: str) -> None:
@@ -388,36 +388,87 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         two directional fans never rebuild each other from a stale cache.
         """
 
-        confirmed = self._confirmed_levels(self._safe_data.get(room_key, EMPTY_ROOM_STATE))
-        return self._optimistic_levels.get(room_key, confirmed) or confirmed
+        state = self._safe_data.get(room_key)
+        if state is None:
+            confirmed = None
+        else:
+            airflow_is_fresh = self.read_group_fresh(room_key, "flow")
+            mode_is_fresh = self.read_group_fresh(room_key, "flow_control")
+            if not mode_is_fresh or state.operation_mode is None:
+                confirmed = (
+                    (state.supply_air_flow, state.extract_air_flow)
+                    if airflow_is_fresh
+                    else None
+                )
+            else:
+                confirmed = self._confirmed_levels(
+                    state,
+                    airflow_is_fresh=airflow_is_fresh,
+                )
+
+        pending = self._optimistic_levels.get(room_key, confirmed)
+        if pending is not None:
+            return pending
+        return confirmed if confirmed is not None else (None, None)
 
     @staticmethod
-    def _confirmed_levels(state: RoomState) -> tuple[int | None, int | None]:
+    def _confirmed_levels(
+        state: RoomState,
+        *,
+        airflow_is_fresh: bool,
+    ) -> tuple[int | None, int | None]:
         """Split the room state into a supply/extract target pair."""
 
         if state.operation_mode == OPERATION_MODE_OFF:
             return 0, 0
 
         if state.operation_mode == OPERATION_MODE_UNBALANCED:
-            supply = state.target_level if state.target_level is not None else state.supply_air_flow
+            supply = state.target_level
+            if supply is None and airflow_is_fresh:
+                supply = state.supply_air_flow
             extract = (
                 state.extract_target_level
                 if state.extract_target_level is not None
-                else state.extract_air_flow
+                else state.extract_air_flow if airflow_is_fresh else None
             )
             return supply, extract
 
         if state.operation_mode in SENSOR_OPERATION_MODES:
             # The unit picks the airflow itself and exposes no target register.
-            return state.supply_air_flow, state.extract_air_flow
+            if airflow_is_fresh:
+                return state.supply_air_flow, state.extract_air_flow
+            return None, None
 
         # Balanced modes drive both fans from a single register.
         common = state.target_level
-        if common is None:
+        if common is None and airflow_is_fresh:
             common = state.supply_air_flow
-        if common is None:
+        if common is None and airflow_is_fresh:
             common = state.extract_air_flow
         return common, common
+
+    def read_group_fresh(self, room_key: str, group_key: str) -> bool:
+        """Return whether the group's most recent attempt succeeded recently."""
+
+        state = self._safe_data.get(room_key)
+        if state is None:
+            return False
+        health = state.read_health_for(group_key)
+        if (
+            health.last_attempt is None
+            or health.last_successful_read != health.last_attempt
+            or health.consecutive_failures != 0
+            or health.last_error is not None
+        ):
+            return False
+
+        stale_after = (
+            AIRFLOW_STALE_AFTER_SECONDS
+            if group_key == "flow"
+            else READ_GROUP_INTERVAL_SECONDS[group_key] * 3
+        )
+        age = (dt_util.utcnow() - health.last_successful_read).total_seconds()
+        return age <= stale_after
 
     def _set_optimistic_levels(self, room_key: str, supply: int, extract: int) -> None:
         self._optimistic_levels.set(room_key, (supply, extract))

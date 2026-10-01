@@ -54,6 +54,7 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
     are therefore not offered here.
     """
 
+    _requires_fresh_read_group = False
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator, room: RoomConfig) -> None:
@@ -92,6 +93,8 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
 class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
     """Select entity for the confirmed app-style keypad quick modes."""
 
+    _requires_fresh_read_group = False
+
     def __init__(self, coordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "preset_mode", "preset_mode")
         self._attr_options = list(PRESET_MODE_OPTIONS)
@@ -103,6 +106,8 @@ class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
         if optimistic is not None:
             return optimistic
         preset_mode = self.room_state.preset_mode
+        if preset_mode is None:
+            return None
         if preset_mode in self._attr_options:
             return preset_mode
         # extract_only/supply_only are still decoded but are expressed by the
