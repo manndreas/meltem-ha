@@ -167,6 +167,7 @@ Additional project docs:
 - [CHANGELOG.md](./CHANGELOG.md)
 - [CONTRIBUTING.md](./CONTRIBUTING.md)
 - [SUPPORT.md](./SUPPORT.md)
+- [docs/reference/](./docs/reference/README.md)
 - [docs/MELTEM.md](./docs/MELTEM.md)
 - [docs/DEVELOPER.md](./docs/DEVELOPER.md)
 - [docs/HARDWARE_BACKLOG.md](./docs/HARDWARE_BACKLOG.md)

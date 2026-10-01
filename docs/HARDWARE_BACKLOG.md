@@ -7,7 +7,8 @@ irresponsible, what to measure, and which candidate solutions exist.
 
 Related documents:
 
-- `docs/MELTEM.md` — manufacturer reference and traced register writes
+- `docs/reference/` — manufacturer reference extracted from the Meltem documents
+- `docs/MELTEM.md` — observed register behaviour and traced register writes
 - `docs/DEVELOPER.md` — implementation notes and hardware findings
 - `docs/SETTING_RE_BACKLOG.md` — app-side settings reverse engineering
 - `docs/TODO.md` — remaining non-hardware work
@@ -40,13 +41,20 @@ set after switching off. `_decode_intensive_active` then reports
 `intensive_active = True` for a unit that is not running, and the intensive
 switch in Home Assistant stays on.
 
+### Manufacturer documentation
+
+Intensive ventilation ends by itself after a configurable duration (device
+parameter 12, 0-240 min, default 15 min) and the previous program resumes.
+How this appears in `41120..41124` is not documented. See
+`docs/reference/functions.md` and `docs/reference/device-parameters.md`.
+
 ### Why this cannot be fixed blind
 
 1. It is unknown whether the firmware clears the registers itself. The override
    also ends on its own after a runtime configured in the Meltem app, so
    self-clearing is plausible. If it self-clears, an extra write is pointless
    bus traffic; if it does not, the current behaviour is a real bug.
-2. `docs/MELTEM.md` states that `41132` must always be written last and that
+2. `docs/reference/modbus.md` states that `41132` must always be written last and that
    the unit accepts `41120..41132` only once `41132` has been written. That
    reads like a commit latch. A combined transaction
    (`41123 = 0`, `41124 = 0`, `41120 = 1`, `41121 = 0`, `41132 = 0`) has never
@@ -119,6 +127,12 @@ gateway can be up to six seconds stale right after a button press.
 
 The obvious improvement is to release the lock during the pure settle sleep.
 
+### Manufacturer documentation
+
+The gateway reaches the units over 868.3 MHz radio. The Modbus manuals give
+no timing guidance beyond the RTU frame rules. See
+`docs/reference/gateway.md` and `docs/reference/modbus.md`.
+
 ### Why this cannot be fixed blind
 
 1. The settle delay is probably not a pure wait. The gateway reaches the units
@@ -181,6 +195,12 @@ The decoder currently rejects any value whose decoded airflow exceeds the
 profile maximum, which separates the two ranges for the tested profiles
 (`227..230` decode to 270..300 m3/h, above both 97 and 100 m3/h).
 
+### Manufacturer documentation
+
+Supply-only and extract-only airflows are stored device parameters
+(IDs 42-47; `M-WRG-II` defaults 50 / 0 m3/h). No raw encoding is documented.
+See `docs/reference/device-parameters.md`.
+
 ### Why this is not fully settled
 
 The separation is a heuristic that happens to work because the rated airflow of
@@ -229,6 +249,11 @@ The `intensive` read group is no longer marked failed when the two-register
 fallback succeeds, so these units do not keep `data_health` permanently on.
 Intensive writes on these units are recorded as `unverifiable` rather than
 `unconfirmed` for the same reason.
+
+### Manufacturer documentation
+
+Reading back `41120..41132` is not documented at all; the manuals only
+describe writing these registers. See `docs/reference/modbus.md`.
 
 ### What to measure
 

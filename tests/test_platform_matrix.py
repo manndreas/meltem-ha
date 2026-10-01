@@ -3,7 +3,7 @@
 The platform setup functions are otherwise untested, so a missing entry in
 BASE_SUPPORTED_ENTITY_KEYS or a wrong supported_profiles filter would go
 unnoticed. The expectations follow the manufacturer sensor matrix documented in
-docs/MELTEM.md.
+docs/reference/models.md.
 """
 
 from __future__ import annotations

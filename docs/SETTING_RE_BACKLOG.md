@@ -170,6 +170,10 @@ Current interpretation after the A-B-A sequence:
 
 ### 1. Intensive ventilation
 
+Manufacturer documentation: device parameters 11 (airflow, default 100 m3/h)
+and 12 (duration, 0-240 min, default 15 min), stored permanently in the unit;
+no Modbus mapping documented. See `docs/reference/device-parameters.md`.
+
 Target settings:
 
 - intensive ventilation airflow
@@ -278,6 +282,9 @@ Updated interpretation after the second keypad run:
 
 ### 2. Keypad and preset defaults
 
+Manufacturer documentation: LOW / MEDIUM / HIGH are device parameters 13 / 14 /
+15, key 4 (`HIGH I`) is 44 / 45. See `docs/reference/device-parameters.md`.
+
 Target settings:
 
 - LOW airflow target
@@ -317,6 +324,10 @@ Important caution:
 - otherwise it becomes hard to separate payload slots inside one family
 
 ### 3. Cross-ventilation and one-sided airflow defaults
+
+Manufacturer documentation: device parameters 42 / 43 (supply-only) and
+46 / 47 (extract-only), plus 196 (cross-ventilation runtime, default 120 min).
+See `docs/reference/device-parameters.md`.
 
 Target settings:
 
