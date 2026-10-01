@@ -1236,7 +1236,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             return None
         if any(
             self.read_group_stale(room_key, group_key) is True
-            for group_key in state.group_read_health
+            for group_key, _health in state.group_read_health
         ):
             return True
         now = dt_util.utcnow()
