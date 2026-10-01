@@ -97,6 +97,7 @@ async def async_get_config_entry_diagnostics(
             "state_room_count": coordinator.state_room_count,
             "gateway_units": gateway_units,
             "gateway_probe_error": gateway_probe_error,
+            "transport": coordinator.client.transport_diagnostics(),
             "last_job_error": (
                 _redact_port(str(coordinator.last_job_error), port)
                 if coordinator.last_job_error is not None

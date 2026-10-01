@@ -157,6 +157,9 @@ async def main() -> int:
         for address, before, after in changed:
             print(f"{address}: {before} -> {after}")
         return 0
+    except ModbusConnectionError as err:
+        print(f"ERROR: lost the serial connection on {args.port}: {err}")
+        return 2
     finally:
         await connection.close()
 

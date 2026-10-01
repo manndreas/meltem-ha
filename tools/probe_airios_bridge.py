@@ -127,6 +127,9 @@ async def main() -> int:
         print()
         print("At least some bridge-style registers responded.")
         return 0
+    except ModbusConnectionError as err:
+        print(f"ERROR: lost the serial connection on {port}: {err}")
+        return 2
     finally:
         await connection.close()
 
