@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.0.0
+
+- Requires Home Assistant `2026.10` or newer. The integration now uses the
+  serial connection of Home Assistant's built-in Modbus integration instead of
+  its own `pymodbus` client. Entities and configuration are unchanged.
+- All gateway communication is asynchronous and no longer occupies Home
+  Assistant's executor threads.
+- A serial port that another integration already uses with different settings
+  is reported as a setup error instead of fighting over the port lock.
+- Every request is retried at most once. The link is only reopened after
+  three timeouts in a row without any answer, so one silent unit no longer
+  resets the connection for all others.
+- A unit that does not answer at all ends its poll job after the first block
+  instead of timing out on every block.
+- Setup now checks the gateway by reading its unit count, and the setup probes
+  follow the same retry rules as normal polling.
+- Debug logging for the serial link moved from `pymodbus` to the
+  `modbus_connection` and `tmodbus` loggers.
+- The developer tools in `tools/` use `modbus-connection` with tmodbus.
+
 ## 3.1.0
 
 - The minimum supported Home Assistant version is now `2026.8`, the release the
