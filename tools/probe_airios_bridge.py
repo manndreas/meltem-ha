@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import struct
 import sys
-import time
 from pathlib import Path
 
-from pymodbus.client import ModbusSerialClient
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusError,
+    ModbusSerialParams,
+    ModbusUnit,
+)
+from modbus_connection.tmodbus import ModbusConnection
 
 
 FIXED_BAUDRATE = 19200
@@ -21,81 +27,31 @@ DEFAULT_DEVICE_ID = 1
 REQUEST_GAP_SECONDS = 0.3
 
 
-def read_holding_registers_compat(
-    client: ModbusSerialClient, *, address: int, count: int, device_id: int
-):
-    """Call pymodbus with the correct unit-id keyword for the local version."""
-
-    try:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            device_id=device_id,
-        )
-    except TypeError:
-        return client.read_holding_registers(
-            address=address,
-            count=count,
-            slave=device_id,
-        )
-
-
-def read_u16(client: ModbusSerialClient, device_id: int, address: int) -> int | None:
-    """Read one uint16 register."""
-
-    response = read_holding_registers_compat(
-        client,
-        address=address,
-        count=1,
-        device_id=device_id,
-    )
-    time.sleep(REQUEST_GAP_SECONDS)
-    if response is None or response.isError():
-        return None
-    registers = getattr(response, "registers", None)
-    if not registers or len(registers) < 1:
-        return None
-    return registers[0]
-
-
-def read_u32_word_swap(
-    client: ModbusSerialClient, device_id: int, address: int
-) -> int | None:
-    """Read one uint32 register pair with word swap."""
-
-    response = read_holding_registers_compat(
-        client,
-        address=address,
-        count=2,
-        device_id=device_id,
-    )
-    time.sleep(REQUEST_GAP_SECONDS)
-    if response is None or response.isError():
-        return None
-    registers = getattr(response, "registers", None)
-    if not registers or len(registers) < 2:
-        return None
-    return struct.unpack(">I", struct.pack(">HH", registers[1], registers[0]))[0]
-
-
-def read_range(
-    client: ModbusSerialClient, device_id: int, address: int, count: int
-) -> list[int] | None:
+async def read_range(unit: ModbusUnit, address: int, count: int) -> list[int] | None:
     """Read a contiguous block of uint16 registers."""
 
-    response = read_holding_registers_compat(
-        client,
-        address=address,
-        count=count,
-        device_id=device_id,
-    )
-    time.sleep(REQUEST_GAP_SECONDS)
-    if response is None or response.isError():
+    try:
+        return await unit.read_holding_registers(address, count)
+    except ModbusConnectionError:
+        raise
+    except ModbusError:
         return None
-    registers = getattr(response, "registers", None)
-    if not registers or len(registers) < count:
+
+
+async def read_u16(unit: ModbusUnit, address: int) -> int | None:
+    """Read one uint16 register."""
+
+    registers = await read_range(unit, address, 1)
+    return None if registers is None else registers[0]
+
+
+async def read_u32_word_swap(unit: ModbusUnit, address: int) -> int | None:
+    """Read one uint32 register pair with word swap."""
+
+    registers = await read_range(unit, address, 2)
+    if registers is None:
         return None
-    return list(registers)
+    return struct.unpack(">I", struct.pack(">HH", registers[1], registers[0]))[0]
 
 
 def parse_args() -> argparse.Namespace:
@@ -116,34 +72,40 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
+async def main() -> int:
     args = parse_args()
     port = str(Path(args.port))
     device_id = int(args.device_id)
 
-    client = ModbusSerialClient(
-        port=port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
+    connection = ModbusConnection(
+        ModbusSerialParams(
+            device=port,
+            baudrate=FIXED_BAUDRATE,
+            bytesize=FIXED_BYTESIZE,
+            parity=FIXED_PARITY,
+            stopbits=FIXED_STOPBITS,
+        ),
         timeout=FIXED_TIMEOUT,
+        message_spacing=REQUEST_GAP_SECONDS,
     )
 
     print(f"Probing Airios-like bridge registers on {port} with device_id={device_id}")
 
     try:
-        if not client.connect():
-            print("ERROR: could not open serial connection")
+        try:
+            await connection.connect()
+        except ModbusConnectionError as err:
+            print(f"ERROR: could not open serial connection: {err}")
             return 2
 
-        serial_parity = read_u16(client, device_id, 41998)
-        serial_stop_bits = read_u16(client, device_id, 41999)
-        serial_baudrate = read_u16(client, device_id, 42000)
-        modbus_device_id = read_u16(client, device_id, 42001)
-        number_of_nodes = read_u16(client, device_id, 43901)
-        node_addresses = read_range(client, device_id, 43902, 16)
-        uptime_seconds = read_u32_word_swap(client, device_id, 41019)
+        unit = connection.for_unit(device_id)
+        serial_parity = await read_u16(unit, 41998)
+        serial_stop_bits = await read_u16(unit, 41999)
+        serial_baudrate = await read_u16(unit, 42000)
+        modbus_device_id = await read_u16(unit, 42001)
+        number_of_nodes = await read_u16(unit, 43901)
+        node_addresses = await read_range(unit, 43902, 16)
+        uptime_seconds = await read_u32_word_swap(unit, 41019)
 
         print()
         print("Bridge register results:")
@@ -166,8 +128,8 @@ def main() -> int:
         print("At least some bridge-style registers responded.")
         return 0
     finally:
-        client.close()
+        await connection.close()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))
