@@ -40,7 +40,11 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to the Meltem gateway.",
-      "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant."
+      "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant.",
+      "unknown": "Unexpected error. Check the Home Assistant log for details."
+    },
+    "abort": {
+      "already_configured": "This Meltem gateway is already configured."
     }
   },
   "options": {
@@ -111,7 +115,8 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to the Meltem gateway.",
-      "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant."
+      "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant.",
+      "unknown": "Unexpected error. Check the Home Assistant log for details."
     }
   },
   "triggers": {
@@ -266,7 +271,7 @@
       "last_update_success": "Last update successful",
       "last_job_error": "Last scheduler error",
       "unavailable_units": "Currently unavailable units",
-      "read_health": "Per-group read health"
+      "stale_read_groups": "Stale read groups"
     }
   },
   "exceptions": {

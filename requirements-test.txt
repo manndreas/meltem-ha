@@ -5,5 +5,7 @@
 # separately - doing so silently breaks the pinned combination.
 # It also dictates the minimum Python version used in CI.
 pytest-homeassistant-custom-component==0.13.354
-pymodbus[serial]>=3.13,<4.0.0
+# Same version that Home Assistant pins in package_constraints.txt, so tests
+# run against the pymodbus that users actually get.
+pymodbus[serial]==3.13.1
 ruff==0.15.20

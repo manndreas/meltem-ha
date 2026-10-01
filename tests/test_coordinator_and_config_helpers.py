@@ -70,6 +70,8 @@ class _FakeClient:
         self.write_control_setting_calls: list[tuple[str, str, int]] = []
         self.silent_seconds_by_slave: dict[int, float] = {}
         self.next_read_state = RoomState(target_level=42)
+        # HW-4 units answer the mode read but not the intensive registers.
+        self.skipped_groups: set[str] = set()
 
     def discover_gateway_units(self, start: int, end: int) -> list[int]:
         self.discover_calls.append((start, end))
@@ -89,21 +91,10 @@ class _FakeClient:
         if room.key == "broken":
             raise MeltemModbusError("boom")
         state = self.next_read_state
-        groups = []
-        if refresh_plan.refresh_airflow:
-            groups.extend(("flow", "flow_control"))
-        if refresh_plan.refresh_status:
-            groups.append("status")
-        if refresh_plan.refresh_temperatures or refresh_plan.refresh_environment:
-            groups.append("temperature")
-        if refresh_plan.refresh_filter_change_due or refresh_plan.refresh_filter_days:
-            groups.append("filter")
-        if refresh_plan.refresh_operating_hours:
-            groups.append("hours")
-        if refresh_plan.refresh_control_settings:
-            groups.append("control_settings")
         read_time = dt_util.utcnow()
-        for group_key in groups:
+        for group_key in refresh_plan.read_groups():
+            if group_key in self.skipped_groups:
+                continue
             state = state.with_read_health(
                 group_key,
                 ReadHealth(
@@ -146,9 +137,6 @@ class _FakeClient:
         self.write_control_setting_calls.append((room.key, setting_key, value))
         return value
 
-    def reset_connection(self) -> None:
-        return None
-
     def seconds_since_successful_read(self, slave: int) -> float | None:
         return self.silent_seconds_by_slave.get(slave)
 
@@ -188,7 +176,6 @@ class TestCoordinatorResilience:
             hass,
             [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
         )
-        normal_interval = coordinator.update_interval
 
         for _ in range(TRANSPORT_BACKOFF_AFTER_FAILURES):
             coordinator._consecutive_transport_failures += 1
@@ -203,7 +190,8 @@ class TestCoordinatorResilience:
         assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_MAX_SECONDS
 
         coordinator._on_transport_success()
-        assert coordinator.update_interval == normal_interval
+        assert coordinator._backoff_seconds is None
+        assert coordinator.update_interval.total_seconds() < TRANSPORT_BACKOFF_START_SECONDS
 
     def test_request_rate_change_does_not_cancel_active_backoff(
         self, hass: HomeAssistant,
@@ -323,6 +311,8 @@ class TestCoordinatorResilience:
         for _ in range(TRANSPORT_BACKOFF_AFTER_FAILURES):
             for job in coordinator._jobs:
                 job.next_due = 0.0
+            # Lift the request-rate cap so every call runs a job.
+            coordinator._last_read_started = None
             await coordinator._async_update_data()
 
         assert coordinator.update_interval != normal_interval
@@ -339,7 +329,6 @@ class TestCoordinatorResilience:
             [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
         )
         coordinator.data = {"unit_1": RoomState(target_level=30)}
-        normal_interval = coordinator.update_interval
         coordinator._consecutive_transport_failures = TRANSPORT_BACKOFF_AFTER_FAILURES
         coordinator._apply_transport_backoff()
 
@@ -347,7 +336,8 @@ class TestCoordinatorResilience:
             job.next_due = 0.0
         await coordinator._async_update_data()
 
-        assert coordinator.update_interval == normal_interval
+        assert coordinator._backoff_seconds is None
+        assert coordinator.update_interval.total_seconds() < TRANSPORT_BACKOFF_START_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -1356,6 +1346,47 @@ class TestCoordinator:
             await coordinator.async_activate_intensive("unit_1")
 
         assert client.write_preset_mode_calls == [("unit_1", "intensive")]
+
+    async def test_intensive_write_on_a_unit_without_intensive_readback_is_not_a_problem(
+        self, hass: HomeAssistant,
+    ) -> None:
+        """HW-4 units can never confirm intensive, so data health stays clear."""
+        coordinator, client = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
+        )
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        client.skipped_groups = {"intensive"}
+        client.next_read_state = RoomState(target_level=30)
+
+        with patch(
+            "custom_components.meltem_ventilation.coordinator.async_sleep",
+            new=AsyncMock(),
+        ):
+            await coordinator.async_activate_intensive("unit_1")
+
+        confirmation = coordinator._write_confirmations["unit_1"]["intensive"]
+        assert confirmation.status == "unverifiable"
+        assert coordinator.data_health_stale("unit_1") is False
+
+    async def test_intensive_write_is_confirmed_when_the_unit_reports_it(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(
+            hass,
+            [RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)],
+        )
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        client.next_read_state = RoomState(target_level=30, intensive_active=True)
+
+        with patch(
+            "custom_components.meltem_ventilation.coordinator.async_sleep",
+            new=AsyncMock(),
+        ):
+            await coordinator.async_activate_intensive("unit_1")
+
+        confirmation = coordinator._write_confirmations["unit_1"]["intensive"]
+        assert confirmation.status == "confirmed"
 
     async def test_control_setting_keeps_confirmed_value_until_readback(
         self, hass: HomeAssistant,

@@ -234,11 +234,11 @@ class TestClose:
 
 
 # ---------------------------------------------------------------------------
-#  close / reset_connection
+#  close / shutdown
 # ---------------------------------------------------------------------------
 
 
-class TestCloseAndReset:
+class TestCloseAndShutdown:
     def test_close_closes_and_clears_client(self) -> None:
         client = MeltemModbusClient(_SETTINGS)
         mock_pymodbus = MagicMock()
@@ -253,14 +253,23 @@ class TestCloseAndReset:
         client._client = None
         client.close()  # Should not raise.
 
-    def test_reset_connection_delegates_to_close(self) -> None:
+    def test_shutdown_prevents_reopening_the_port(self) -> None:
+        """A late post-write readback after unload must not lock the port again."""
         client = MeltemModbusClient(_SETTINGS)
         mock_pymodbus = MagicMock()
         client._client = mock_pymodbus
 
-        client.reset_connection()
+        client.shutdown()
+
         mock_pymodbus.close.assert_called_once()
-        assert client._client is None
+        with (
+            patch(
+                "custom_components.meltem_ventilation.modbus_client.build_client"
+            ) as mock_build,
+            pytest.raises(MeltemConnectionError, match="shut down"),
+        ):
+            client.read_room_state(_ROOM, RoomState(), RefreshPlan())
+        mock_build.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

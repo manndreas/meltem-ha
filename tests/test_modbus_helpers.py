@@ -275,11 +275,10 @@ class TestPlausibilityChecks:
 
 class TestBaseEntityKeys:
     def test_contains_all_required_keys(self) -> None:
-        from custom_components.meltem_ventilation import REQUIRED_ENTITY_KEYS
+        from custom_components.meltem_ventilation.const import BASE_SUPPORTED_ENTITY_KEYS
 
         base = _base_supported_entity_keys()
-        # The base set should include at least all required keys.
-        assert REQUIRED_ENTITY_KEYS.issubset(base)
+        assert BASE_SUPPORTED_ENTITY_KEYS.issubset(base)
 
     def test_returns_set(self) -> None:
         result = _base_supported_entity_keys()

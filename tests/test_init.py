@@ -7,16 +7,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation import (
-    REQUIRED_ENTITY_KEYS,
-    async_remove_config_entry_device,
+    async_migrate_entry,
     async_setup_entry,
     async_unload_entry,
 )
 from custom_components.meltem_ventilation.const import (
+    BASE_SUPPORTED_ENTITY_KEYS,
     CONF_MAX_REQUESTS_PER_SECOND,
     CONF_PORT,
     CONF_ROOMS,
@@ -40,7 +41,7 @@ MINIMAL_ROOM = {
     "slave": 2,
     "profile": "ii_plain",
     "preview": "ID 123 | basic",
-    "supported_entity_keys": sorted(REQUIRED_ENTITY_KEYS),
+    "supported_entity_keys": sorted(BASE_SUPPORTED_ENTITY_KEYS),
 }
 
 MINIMAL_ENTRY_DATA = {
@@ -57,7 +58,8 @@ def _mock_config_entry(**overrides) -> MockConfigEntry:
         data=overrides.get("data", deepcopy(MINIMAL_ENTRY_DATA)),
         options=overrides.get("options", {}),
         entry_id=overrides.get("entry_id", "test-entry-id"),
-        version=1,
+        version=overrides.get("version", 1),
+        minor_version=overrides.get("minor_version", 2),
         source="user",
     )
 
@@ -152,7 +154,7 @@ class TestAsyncSetupEntry:
             await async_setup_entry(hass, entry)
 
         assert not hasattr(entry, "runtime_data")
-        mock_client_cls.return_value.close.assert_called_once()
+        mock_client_cls.return_value.shutdown.assert_called_once()
 
     @patch(
         "custom_components.meltem_ventilation.MeltemModbusClient",
@@ -205,181 +207,19 @@ class TestAsyncSetupEntry:
         "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
         autospec=True,
     )
-    async def test_setup_reprobes_when_metadata_missing(
+    async def test_setup_derives_missing_entity_keys_from_the_profile(
         self,
         mock_coordinator_cls,
         mock_client_cls,
         _mock_resolve,
         hass: HomeAssistant,
     ) -> None:
-        """When a room lacks supported_entity_keys, setup should re-probe."""
-        mock_coordinator = mock_coordinator_cls.return_value
-        mock_coordinator.async_refresh = AsyncMock()
+        """Legacy rooms without stored keys get their profile's entities, no probe."""
+        mock_coordinator_cls.return_value.async_refresh = AsyncMock()
 
         data = deepcopy(MINIMAL_ENTRY_DATA)
         data[CONF_ROOMS] = [
-            {
-                "key": "unit_1",
-                "name": "Unit 1",
-                "slave": 2,
-                "profile": "ii_plain",
-            }
-        ]
-        entry = _mock_config_entry(data=data)
-        entry.add_to_hass(hass)
-
-        with (
-            patch(
-                "custom_components.meltem_ventilation.detect_slave_details",
-                return_value=("plain", "ID 2 | basic", ["level", "extract_air_flow"]),
-            ) as mock_detect,
-            patch.object(
-                hass.config_entries,
-                "async_forward_entry_setups",
-                new=AsyncMock(),
-            ),
-        ):
-            await async_setup_entry(hass, entry)
-
-        mock_detect.assert_called_once()
-        stored_keys = entry.data[CONF_ROOMS][0]["supported_entity_keys"]
-        # The probe result is kept, but the profile decides the rest.
-        assert "extract_air_flow" in stored_keys
-        assert set(supported_entity_keys_for_profile("ii_plain")).issubset(stored_keys)
-
-    async def test_setup_keeps_profile_entities_when_reprobing(
-        self, hass: HomeAssistant
-    ) -> None:
-        """The probe only reports optional sensors, not thresholds or temperatures."""
-        data = deepcopy(MINIMAL_ENTRY_DATA)
-        data[CONF_ROOMS] = [
-            {
-                "key": "unit_1",
-                "name": "Unit 1",
-                "slave": 2,
-                "profile": "ii_fc",
-            }
-        ]
-        entry = _mock_config_entry(data=data)
-        entry.add_to_hass(hass)
-
-        with (
-            patch(
-                "custom_components.meltem_ventilation.resolve_preferred_port_path",
-                side_effect=lambda port: port,
-            ),
-            patch(
-                "custom_components.meltem_ventilation.MeltemModbusClient"
-            ),
-            patch(
-                "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator"
-            ) as mock_coordinator_cls,
-            patch(
-                "custom_components.meltem_ventilation.detect_slave_details",
-                return_value=(
-                    "fc",
-                    "ID 2 | CO2",
-                    ["extract_air_flow", "humidity_extract_air", "co2_extract_air"],
-                ),
-            ),
-            patch.object(
-                hass.config_entries,
-                "async_forward_entry_setups",
-                new=AsyncMock(),
-            ),
-        ):
-            mock_coordinator_cls.return_value.async_refresh = AsyncMock()
-            await async_setup_entry(hass, entry)
-
-        stored_keys = set(entry.data[CONF_ROOMS][0]["supported_entity_keys"])
-        for key in (
-            "humidity_starting_point",
-            "co2_max_level",
-            "outdoor_air_temperature",
-            "supply_air_temperature",
-        ):
-            assert key in stored_keys
-
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda p: p,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
-    async def test_setup_falls_back_to_profile_defaults_when_reprobe_fails(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
-    ) -> None:
-        mock_coordinator = mock_coordinator_cls.return_value
-        mock_coordinator.async_refresh = AsyncMock()
-
-        data = deepcopy(MINIMAL_ENTRY_DATA)
-        data[CONF_ROOMS] = [
-            {
-                "key": "unit_1",
-                "name": "Unit 1",
-                "slave": 2,
-                "profile": "ii_fc",
-            }
-        ]
-        entry = _mock_config_entry(data=data)
-        entry.add_to_hass(hass)
-
-        with (
-            patch(
-                "custom_components.meltem_ventilation.detect_slave_details",
-                side_effect=Exception("boom"),
-            ),
-            patch.object(
-                hass.config_entries,
-                "async_forward_entry_setups",
-                new=AsyncMock(),
-            ),
-        ):
-            await async_setup_entry(hass, entry)
-
-        assert "co2_extract_air" in entry.data[CONF_ROOMS][0]["supported_entity_keys"]
-        assert "humidity_extract_air" in entry.data[CONF_ROOMS][0]["supported_entity_keys"]
-
-    @patch(
-        "custom_components.meltem_ventilation.resolve_preferred_port_path",
-        side_effect=lambda p: p,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemModbusClient",
-        autospec=True,
-    )
-    @patch(
-        "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
-        autospec=True,
-    )
-    async def test_setup_augments_stale_supported_keys(
-        self,
-        mock_coordinator_cls,
-        mock_client_cls,
-        _mock_resolve,
-        hass: HomeAssistant,
-    ) -> None:
-        """When supported_entity_keys is present but incomplete, setup should merge REQUIRED_ENTITY_KEYS."""
-        mock_coordinator = mock_coordinator_cls.return_value
-        mock_coordinator.async_refresh = AsyncMock()
-
-        data = deepcopy(MINIMAL_ENTRY_DATA)
-        # Provide an incomplete set that's missing some required keys.
-        data[CONF_ROOMS] = [
-            {
-                **MINIMAL_ROOM,
-                "supported_entity_keys": ["level", "extract_air_flow"],
-            }
+            {"key": "unit_1", "name": "Unit 1", "slave": 2, "profile": "ii_fc"}
         ]
         entry = _mock_config_entry(data=data)
         entry.add_to_hass(hass)
@@ -391,8 +231,12 @@ class TestAsyncSetupEntry:
         ):
             await async_setup_entry(hass, entry)
 
-        updated_keys = set(entry.data[CONF_ROOMS][0]["supported_entity_keys"])
-        assert REQUIRED_ENTITY_KEYS.issubset(updated_keys)
+        room = mock_coordinator_cls.call_args.kwargs["rooms"][0]
+        assert room.supported_entity_keys == frozenset(
+            supported_entity_keys_for_profile("ii_fc")
+        )
+        # The stored entry is not rewritten.
+        assert "supported_entity_keys" not in entry.data[CONF_ROOMS][0]
 
     @patch(
         "custom_components.meltem_ventilation.resolve_preferred_port_path",
@@ -406,24 +250,21 @@ class TestAsyncSetupEntry:
         "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator",
         autospec=True,
     )
-    async def test_setup_repairs_probe_only_keys_for_existing_profile(
+    async def test_setup_completes_stale_entity_keys_with_the_profile(
         self,
         mock_coordinator_cls,
         mock_client_cls,
         _mock_resolve,
         hass: HomeAssistant,
     ) -> None:
-        """Old probe-only metadata includes base keys but omits profile controls."""
+        """Keys stored by an older release still get entities added later."""
         mock_coordinator_cls.return_value.async_refresh = AsyncMock()
         data = deepcopy(MINIMAL_ENTRY_DATA)
         data[CONF_ROOMS] = [
             {
                 **MINIMAL_ROOM,
                 "profile": "ii_fc",
-                "supported_entity_keys": sorted(
-                    REQUIRED_ENTITY_KEYS
-                    | {"humidity_extract_air", "co2_extract_air"}
-                ),
+                "supported_entity_keys": ["extract_air_flow", "humidity_extract_air"],
             }
         ]
         entry = _mock_config_entry(data=data)
@@ -436,8 +277,14 @@ class TestAsyncSetupEntry:
         ):
             await async_setup_entry(hass, entry)
 
-        updated_keys = set(entry.data[CONF_ROOMS][0]["supported_entity_keys"])
-        assert set(supported_entity_keys_for_profile("ii_fc")).issubset(updated_keys)
+        room = mock_coordinator_cls.call_args.kwargs["rooms"][0]
+        assert set(supported_entity_keys_for_profile("ii_fc")).issubset(
+            room.supported_entity_keys
+        )
+        assert entry.data[CONF_ROOMS][0]["supported_entity_keys"] == [
+            "extract_air_flow",
+            "humidity_extract_air",
+        ]
 
     @patch(
         "custom_components.meltem_ventilation.resolve_preferred_port_path",
@@ -480,13 +327,6 @@ class TestAsyncSetupEntry:
         kept = registry.async_get_or_create(
             "sensor", DOMAIN, f"{DOMAIN}_unit_1_operating_hours", config_entry=entry
         )
-        legacy_health = registry.async_get_or_create(
-            "binary_sensor",
-            DOMAIN,
-            f"{DOMAIN}_unit_1_airflow_data_stale",
-            config_entry=entry,
-        )
-        legacy_health_entity_id = legacy_health.entity_id
 
         with patch.object(
             hass.config_entries,
@@ -500,9 +340,6 @@ class TestAsyncSetupEntry:
         assert registry.async_get(obsolete_button.entity_id) is None
         assert registry.async_get(obsolete_binary_sensor.entity_id) is None
         assert registry.async_get(kept.entity_id) is not None
-        migrated_health = registry.async_get(legacy_health_entity_id)
-        assert migrated_health is not None
-        assert migrated_health.unique_id == f"{DOMAIN}_unit_1_data_health"
 
     @patch(
         "custom_components.meltem_ventilation.resolve_preferred_port_path",
@@ -658,7 +495,8 @@ class TestAsyncUnloadEntry:
             result = await async_unload_entry(hass, entry)
 
         assert result is True
-        mock_client.close.assert_called_once()
+        mock_client.shutdown.assert_called_once()
+        mock_client.close.assert_not_called()
 
     async def test_unload_returns_false_on_platform_failure(
         self, hass: HomeAssistant,
@@ -681,35 +519,112 @@ class TestAsyncUnloadEntry:
         assert result is False
 
 
-class TestAsyncRemoveConfigEntryDevice:
+class TestAsyncMigrateEntry:
+    async def test_migration_renames_the_airflow_health_entity(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = _mock_config_entry(minor_version=1)
+        entry.add_to_hass(hass)
+        registry = er.async_get(hass)
+        legacy = registry.async_get_or_create(
+            "binary_sensor",
+            DOMAIN,
+            f"{DOMAIN}_unit_1_airflow_data_stale",
+            config_entry=entry,
+        )
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        migrated = registry.async_get(legacy.entity_id)
+        assert migrated is not None
+        assert migrated.unique_id == f"{DOMAIN}_unit_1_data_health"
+        assert entry.minor_version == 2
+
+    async def test_migration_keeps_an_existing_data_health_entity(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = _mock_config_entry(minor_version=1)
+        entry.add_to_hass(hass)
+        registry = er.async_get(hass)
+        legacy = registry.async_get_or_create(
+            "binary_sensor",
+            DOMAIN,
+            f"{DOMAIN}_unit_1_airflow_data_stale",
+            config_entry=entry,
+        )
+        current = registry.async_get_or_create(
+            "binary_sensor",
+            DOMAIN,
+            f"{DOMAIN}_unit_1_data_health",
+            config_entry=entry,
+        )
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        assert registry.async_get(legacy.entity_id).unique_id == (
+            f"{DOMAIN}_unit_1_airflow_data_stale"
+        )
+        assert registry.async_get(current.entity_id).unique_id == (
+            f"{DOMAIN}_unit_1_data_health"
+        )
+
+    async def test_migration_rejects_a_newer_major_version(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = _mock_config_entry(version=2, minor_version=1)
+        entry.add_to_hass(hass)
+
+        assert await async_migrate_entry(hass, entry) is False
+
+
+@patch(
+    "custom_components.meltem_ventilation.resolve_preferred_port_path",
+    side_effect=lambda port: port,
+)
+@patch("custom_components.meltem_ventilation.MeltemModbusClient", autospec=True)
+@patch(
+    "custom_components.meltem_ventilation.MeltemDataUpdateCoordinator", autospec=True
+)
+class TestDeviceRegistrySync:
     @staticmethod
-    def _device(*room_keys: str) -> MagicMock:
-        device = MagicMock()
-        device.identifiers = {(DOMAIN, room_key) for room_key in room_keys}
-        return device
+    async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+        with patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            new=AsyncMock(),
+        ):
+            await async_setup_entry(hass, entry)
 
-    async def test_configured_unit_cannot_be_removed(self, hass: HomeAssistant) -> None:
+    async def test_setup_registers_the_gateway_device(
+        self, mock_coordinator_cls, _mock_client_cls, _mock_resolve, hass: HomeAssistant
+    ) -> None:
+        mock_coordinator_cls.return_value.async_refresh = AsyncMock()
         entry = _mock_config_entry()
+        entry.add_to_hass(hass)
 
-        assert (
-            await async_remove_config_entry_device(hass, entry, self._device("unit_1"))
-            is False
+        await self._setup(hass, entry)
+
+        gateway = dr.async_get(hass).async_get_device(
+            identifiers={(DOMAIN, entry.entry_id)}
+        )
+        assert gateway is not None
+        assert gateway.model == "M-WRG-GW"
+
+    async def test_setup_removes_devices_of_unconfigured_units(
+        self, mock_coordinator_cls, _mock_client_cls, _mock_resolve, hass: HomeAssistant
+    ) -> None:
+        mock_coordinator_cls.return_value.async_refresh = AsyncMock()
+        entry = _mock_config_entry()
+        entry.add_to_hass(hass)
+        registry = dr.async_get(hass)
+        configured = registry.async_get_or_create(
+            config_entry_id=entry.entry_id, identifiers={(DOMAIN, "unit_1")}
+        )
+        dropped = registry.async_get_or_create(
+            config_entry_id=entry.entry_id, identifiers={(DOMAIN, "unit_9")}
         )
 
-    async def test_orphaned_unit_can_be_removed(self, hass: HomeAssistant) -> None:
-        entry = _mock_config_entry()
+        await self._setup(hass, entry)
 
-        assert (
-            await async_remove_config_entry_device(hass, entry, self._device("unit_9"))
-            is True
-        )
-
-    async def test_gateway_device_cannot_be_removed(self, hass: HomeAssistant) -> None:
-        entry = _mock_config_entry()
-
-        assert (
-            await async_remove_config_entry_device(
-                hass, entry, self._device(entry.entry_id)
-            )
-            is False
-        )
+        assert registry.async_get(configured.id) is not None
+        assert registry.async_get(dropped.id) is None

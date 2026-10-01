@@ -1,8 +1,8 @@
 """Fan entities for Meltem ventilation units.
 
-Each unit exposes one fan per air direction. The Meltem hardware drives both
-fans from a single register in balanced mode, so writing one direction always
-sends both values and switches the unit to unbalanced mode.
+Each unit exposes one fan per air direction. Equal levels run the unit
+balanced from a single register; different levels switch it to unbalanced
+mode with separate supply and extract targets.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import math
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util.percentage import (
     percentage_to_ranged_value,
     ranged_value_to_percentage,
@@ -34,7 +34,7 @@ DEFAULT_TURN_ON_PERCENTAGE = 50
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Meltem fan entities."""
 

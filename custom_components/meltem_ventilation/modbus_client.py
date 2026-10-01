@@ -42,6 +42,7 @@ from .const import (
     RAW_CODE_TO_PRESET_MODE,
     RAW_VALUE_TO_SENSOR_MODE,
     READ_FAILURE_THRESHOLD,
+    READ_GROUP_ENTITY_KEYS,
     REGISTER_APPLY,
     REGISTER_CO2_EXTRACT_AIR,
     REGISTER_CURRENT_LEVEL,
@@ -164,9 +165,9 @@ class MeltemModbusClient:
         self._optional_read_failures: dict[tuple[int, int, int], int] = {}
         self._optional_read_errors: dict[tuple[int, int, int], str] = {}
         self._last_successful_read_by_slave: dict[int, float] = {}
-        self._last_airflow_read_error: str | None = None
         self._read_group_errors: dict[str, str] = {}
         self._read_group_skipped: set[str] = set()
+        self._shut_down = False
 
     def seconds_since_successful_read(self, slave: int) -> float | None:
         """Return the age of the last answered register read for one unit.
@@ -194,10 +195,12 @@ class MeltemModbusClient:
         with self._lock:
             self._ensure_client()
 
-    def reset_connection(self) -> None:
-        """Drop the current serial connection so the next read reconnects cleanly."""
+    def shutdown(self) -> None:
+        """Close the connection for good, so late operations cannot reopen the port."""
 
-        self.close()
+        with self._lock:
+            self._shut_down = True
+            self.close()
 
     @contextmanager
     def _gateway_operation(self, description: str):
@@ -266,7 +269,6 @@ class MeltemModbusClient:
             if refresh_plan.refresh_airflow:
                 # Airflow drives the UI and post-write confirmation, so it
                 # gets its own fast path.
-                self._last_airflow_read_error = None
                 extract_air_flow, supply_air_flow = self._read_airflow_pair(
                     room,
                     previous_state,
@@ -338,50 +340,14 @@ class MeltemModbusClient:
     ) -> dict[str, ReadHealth]:
         """Update health only for expected groups selected by this read plan."""
 
-        group_entities = {
-            "flow": ("extract_air_flow", "supply_air_flow"),
-            "flow_control": (
-                "operation_mode",
-                "preset_mode",
-                "supply_level",
-                "extract_level",
-            ),
-            "intensive": ("intensive",),
-            "status": ("error_status", "frost_protection_active", "rf_comm_status"),
-            "temperature": (
-                "exhaust_temperature",
-                "outdoor_air_temperature",
-                "extract_air_temperature",
-                "supply_air_temperature",
-                "humidity_extract_air",
-                "humidity_supply_air",
-                "co2_extract_air",
-                "voc_supply_air",
-            ),
-            "filter": ("filter_change_due", "days_until_filter_change"),
-            "hours": ("operating_hours",),
-            "control_settings": tuple(CONTROL_SETTING_REGISTERS),
-        }
-        groups_to_update: list[str] = []
-        if refresh_plan.refresh_airflow:
-            groups_to_update.extend(("flow", "flow_control", "intensive"))
-        if refresh_plan.refresh_status:
-            groups_to_update.append("status")
-        if refresh_plan.refresh_temperatures or refresh_plan.refresh_environment:
-            groups_to_update.append("temperature")
-        if refresh_plan.refresh_filter_change_due or refresh_plan.refresh_filter_days:
-            groups_to_update.append("filter")
-        if refresh_plan.refresh_operating_hours:
-            groups_to_update.append("hours")
-        if refresh_plan.refresh_control_settings:
-            groups_to_update.append("control_settings")
-
         group_health = dict(previous_state.group_read_health)
         now = dt_util.utcnow()
-        for group_key in groups_to_update:
+        for group_key in refresh_plan.read_groups():
             if group_key in self._read_group_skipped:
                 continue
-            if not any(self._supports(room, key) for key in group_entities[group_key]):
+            if not any(
+                self._supports(room, key) for key in READ_GROUP_ENTITY_KEYS[group_key]
+            ):
                 continue
 
             previous_health = previous_state.read_health_for(group_key)
@@ -544,6 +510,10 @@ class MeltemModbusClient:
 
     def _ensure_client(self) -> ModbusSerialClient:
         """Return a connected client, rebuilding it if needed."""
+        if self._shut_down:
+            raise MeltemConnectionError(
+                f"Meltem gateway client on {self._settings.port} was shut down"
+            )
         last_error: Exception | None = None
         if self._client is not None:
             try:
@@ -1001,7 +971,6 @@ class MeltemModbusClient:
             except MeltemConnectionError:
                 raise
             except MeltemModbusError as err:
-                self._last_airflow_read_error = str(err)
                 self._record_group_read_error("flow", err)
 
         if supports_extract and block is not None:
@@ -1604,17 +1573,13 @@ class MeltemModbusClient:
         return RAW_VALUE_TO_SENSOR_MODE.get(current_value)
 
     def _decode_preset_mode(self, mode_block: list[int] | None) -> str | None:
-        """Return one confirmed app-like preset mode from the optional mode block."""
+        """Return the base quick mode from 41120..41122.
 
-        if mode_block is None:
-            return None
-        if len(mode_block) >= 5:
-            if (
-                mode_block[3] == MODE_MANUAL
-                and mode_block[4] == PRESET_MODE_CODE_INTENSIVE
-            ):
-                return PRESET_MODE_INTENSIVE
-        if len(mode_block) < 2:
+        The intensive override lives in the 41123/41124 shadow registers and
+        does not replace the base quick mode, so those are ignored here.
+        """
+
+        if mode_block is None or len(mode_block) < 2:
             return None
         if mode_block[0] == MODE_UNBALANCED and len(mode_block) >= 3:
             if mode_block[1] == 0 and mode_block[2] > APP_UNBALANCED_PRESET_BASE:
