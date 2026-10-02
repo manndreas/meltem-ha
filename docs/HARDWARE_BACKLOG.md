@@ -173,6 +173,53 @@ Tests: [W-1](LIVE_GATEWAY_TESTS.md#w-1--balanced-write-41121-readback-and-airflo
 [W-3](LIVE_GATEWAY_TESTS.md#w-3--settle-delay-with-interleaved-traffic),
 [W-6](LIVE_GATEWAY_TESTS.md#w-6--41132-commit-latch).
 
+### Partial measurement on 2026-10-02
+
+On slave `4`, the measured baseline was `20/20 m3/h`. W-1 was run at target
+airflows `16`, `24`, and `40 m3/h`, observing each for 60 seconds. The written
+raw targets (`41121=32`, `48`, and `80`) appeared in the first post-write
+sample, about one second after each write; each sample read itself took about
+0.48 seconds. At 16 and 24, measured airflow stayed at `20/20` throughout the
+observation and did not reach either target within 60 seconds. At 40, the
+measured-airflow block changed from `20/20` to `40/40` by the first sample and
+stayed there for the 60-second observation. All three runs restored raw
+target `40`; the final readback and integration state were manual balanced
+`20/20`. No request failures occurred.
+
+The measured response thus differs by target delta: the 20 m3/h change took
+effect by the first sample, but changes of only 4 m3/h in either direction
+were not reflected in measured airflow within 60 seconds. This does not
+establish the shortest reliable settle delay for other target values.
+
+W-2 then tested target `30 m3/h` from the same `20/20` baseline at configured
+settle delays of `0`, `0.5`, `1.0`, and `1.5 s`, three repetitions each. All
+12 writes, first post-write target polls, restore writes, and post-restore
+polls succeeded. The first post-write poll reported target `30` even at
+`0 s` settle. The direct measured-airflow block immediately after each write
+was still `20/20`; W-2 therefore confirms immediate target readback, not that
+the physical airflow had already changed. A zero settle supports removing the
+second target refresh attempt in this test path, but the correct physical-flow
+settle delay remains open.
+
+W-3 then ran all 12 target-30/restore-20 trials while a second task read
+`41020..41021` from slave `3` every `0.5 s`. All 12 first target polls and
+restores succeeded, and all 30 concurrent reads succeeded with values
+`[30, 30]`; there were no timeouts or link recycles. In idle, five reads on
+slave `3` took `15.4..16.7 ms` (average `16.2 ms`). During W-3, concurrent
+reads took up to `134.4 ms`, and the primary target poll was about `116 ms`
+slower than the equivalent W-2 run. This is a noticeable latency increase
+without failures; the interleaved-traffic test is not a clean pass for
+releasing the gateway lock during settle.
+
+W-6 staged target `40 m3/h` (`41120=3`, `41121=80`) without writing the apply
+register. Measured airflow stayed at `20/20` for the full 20-second
+pre-commit period. After writing `41132=0`, airflow was still `20/20` at the
+first approximately two-second sample and reached `40/40` by the next sample,
+within about five seconds of the commit. Restoring target `20` with a final
+commit returned measured airflow to `20/20` by the next approximately
+two-second sample after it remained at 40 at one second. Status/error flags
+stayed `0`.
+
 ### Candidate solutions
 
 - **A — shorten `WRITE_SETTLE_SECONDS`.** If the measurement shows the unit
@@ -284,6 +331,37 @@ Tests: [R-9](LIVE_GATEWAY_TESTS.md#r-9--mode-block-before-any-write),
 [W-5](LIVE_GATEWAY_TESTS.md#w-5--mode-block-after-the-first-write),
 [H-2](LIVE_GATEWAY_TESTS.md#h-2--freshly-powered-unit).
 
+### Measurements on 2026-10-02
+
+Before any write in the session, all six discovered units returned
+`AcknowledgeError` (Modbus exception `0x05`) for the five-register and
+two-register reads at `41120`, and for single reads at `41121` / `41122`.
+They were all detected as `ii_plain`; five reported software `2326` and slave
+`5` reported `2584`. Their write and power-cycle history before this session is
+unknown, so this does not establish the freshly-powered behavior or decide
+whether a write unlocks the block.
+
+Slave `4` was then power-cycled for about five minutes. Immediately after
+power-up, the five-register read, two-register read, and single reads at
+`41121` / `41122` still returned exception code `0x05`. The unit therefore
+does not become readable from a power cycle alone. Whether a first write
+unlocks it remained unknown at that point.
+
+After an explicitly authorized write of `41120=3`, `41121=40`, and
+`41132=0`, the two-register read at `41120` became readable as `[3, 40]` and
+the single read at `41121` returned `40`. The five-register read at `41120`
+and single read at `41122` continued to return code `0x05` at 1, 10, and 60
+seconds. The integration decoded manual balanced operation at `20/20 m3/h`.
+This supports the short-read fallback for the basic mode and target, but
+leaves intensive state unavailable on this unit. Whether the five-register
+read is permanently unsupported, or behaves differently after another power
+cycle, remains open. A second five-minute power cycle after W-5 left the
+two-register read `[3, 40]` and single read `41121=40` available; the
+five-register read and `41122` still returned code `0x05`. The integration
+continued to decode manual balanced operation at `20/20 m3/h`. On this unit,
+short-read availability and manual airflow readback therefore persisted
+through one power cycle, while the intensive block stayed unavailable.
+
 ### Candidate solutions
 
 - **A — no change.** Correct if the capability returns after the first write;
@@ -389,7 +467,9 @@ Affected code: `device/transport.py`, `device/components.py`,
 `4.0.0` replaces the own pymodbus client with Home Assistant's shared Modbus
 connection (tmodbus via `modbus-connection`). The request shapes and their
 order are unchanged and covered by tests against an in-memory gateway, but
-every timing and error finding in this backlog was measured with pymodbus.
+the original timing and error findings in this backlog were measured with
+pymodbus. A first live comparison with tmodbus was run on 2026-10-02; results
+and the remaining open release-gate items are below.
 
 Two behaviors found in review depend on how the gateway answers and are left
 as they are until measured:
@@ -438,6 +518,67 @@ from before `4.0.0`
 These seven measurements are the release gate for `4.0.0`; the tests per
 measurement are listed under
 [Release gate](LIVE_GATEWAY_TESTS.md#release-gate-for-400).
+
+### Partial measurement on 2026-10-02
+
+- **Measurement 1:** The six read-only benchmark scenarios completed 1,440
+  requests per transport with no failures. tmodbus was not slower than the
+  pymodbus baseline in those simple request patterns. The gap-0 T-3 run failed
+  during gateway discovery; the tested gaps `0.05..0.3 s` passed once each.
+- **Measurements 2 and 5:** Unconfigured slave `8` timed out after about
+  `0.8 s` in G-5. During the ten-minute T-5 run, each of its 60 airflow jobs
+  used two requests and took about `1.8 s`; `link_recycles` stayed at `0`.
+  No Busy/code-6, protocol, or desynchronization errors appeared in the
+  recorded read-only runs. T-6's active gap-0 stimulus was not run because it
+  conflicts with the hard pacing rule, which permits gap `0` only for T-3.
+- **Measurement 2, real-unit part:** In the final H-1 run, slave `4` was
+  physically off for about five minutes while all six rooms were polled.
+  During that interval, 35 airflow jobs for slave `4` completed successfully
+  with 2-3 requests each; no timeout or gateway-path exception surfaced to the
+  integration client. `link_recycles` and consecutive transport timeouts
+  stayed at `0`. The other five rooms continued to answer, and status and
+  temperature plans succeeded 10/10 per room. After power-up, slave `4`
+  continued to return successful airflow jobs. A separate final read reported
+  measured airflow `80/0 m3/h` while the short mode read remained manual target
+  `20 m3/h`; status flags were `0`, and five repeat reads agreed. The person
+  confirmed that the app and physical unit also showed `80/0`, with no
+  unexpected behavior. The poller did not print state values during the off
+  interval, so cached data during that interval cannot be ruled out.
+- **Measurement 3:** Partial; the pre-write, post-write, and power-cycle
+  readbacks are recorded under
+  [HW-4](#hw-4--units-that-reject-the-five-register-mode-block). The short
+  read and `41121` persisted through a post-write power cycle on slave `4`,
+  but the five-register block and `41122` remained unavailable.
+- **Measurement 4:** Partial; the write, target-confirmation, airflow-lag,
+  interleaved-read, and commit-latch measurements are recorded under
+  [HW-2](#hw-2--writes-block-the-whole-gateway-for-several-seconds). W-5/W-1/
+  W-2/W-3/W-6 used the integration-like tool or a helper script, not the real
+  Home Assistant coordinator, so its lock duration and write path remain
+  unverified on the live installation.
+- **Measurement 6:** On Linux, a second process failed to open the held serial
+  port with exit code `2`; after stopping the watcher, P-3 reopened it 20/20
+  times. The optional T-9 Home Assistant setup/unload test passed, and P-3
+  reopened the port afterwards. USB unplug/replug and a real HA installation
+  remain untested.
+- **Measurement 7:** T-10 started on 2026-10-02 at 19:45 local time after
+  explicit approval to reserve the port for 24 hours. It polls all six
+  discovered units read-only; results are in
+  `tmp/live-tests/2026-10-02/T-10.txt` and `T-10.csv`. The soak is still in
+  progress and must not be marked passed until all 8,640 rounds finish and the
+  recorded failures/recycles are reviewed.
+
+The T-1 integration-like baseline runner counts a refresh as successful when
+`read_room_state` does not raise; the current T-2 runner also counts optional
+read-group health errors. Consequently, the baseline reported 18/18 full
+refreshes and 240/240 scheduler jobs successful, while tmodbus reported
+0/18 and 180/240 respectively, with the difference consisting of the known
+mode-register exception code `5`. These success counts are not directly comparable. The raw register-profile
+tests showed the same mode-register exceptions on both transports. HW-7
+remains open: active Busy behavior, the real Home Assistant write/USB
+lifecycle, and the 24-hour soak are still unmeasured. The powered-off-unit
+test saw successful integration jobs, but did not log their returned state.
+The integration-like success/error comparison also needs a like-for-like
+interpretation.
 
 ### Candidate solutions
 

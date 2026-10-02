@@ -242,3 +242,9 @@ can be changed via Modbus (`42007..42009`).
   means 97 m³/h or 100 m³/h.
 - **`41013` (VOC)**: used by this integration for the `O/VOC-AUL` profile but
   absent from every collected document.
+- **Application timing of the `41132` commit:** the manuals say to write
+  `41132` last but do not describe the live readback timing. On slave `4`,
+  W-6 kept the measured airflow unchanged until the final `41132=0` write;
+  see the [live observation](../MELTEM.md#target-readback-and-measured-airflow).
+  This has been observed on one unit, not established as a guarantee for all
+  variants.

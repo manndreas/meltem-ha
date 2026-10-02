@@ -1,8 +1,11 @@
 # Live gateway test plan
 
-Tests an AI agent can run on its own against a live `M-WRG-GW` gateway that is
-connected over USB to the development machine (Windows, PowerShell). The plan
-checks the hardware assumptions the integration relies on and works through
+Tests an AI agent can run on its own against a live `M-WRG-GW` gateway connected
+over USB to the development machine. Command examples use Windows PowerShell;
+the Python tools also run on Linux/POSIX from the repository root with
+`.venv/bin/python` and a port such as `/dev/ttyACM0` or `/dev/serial/by-id/...`.
+Adapt only the shell-specific loops, paths, and process-control commands. The
+plan checks the hardware assumptions the integration relies on and works through
 the open items in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) (HW-1 to HW-7),
 [SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md), and [TODO.md](TODO.md). HW-7
 is the [release gate for `4.0.0`](#release-gate-for-400).
@@ -59,9 +62,10 @@ asks for the one physical step, and measures.
   it.
 - **Pacing:** request gap at least `0.1 s`, except the sweep in
   [T-3](#t-3--request-gap-sweep). Never use the broadcast address `0`.
-- **Write pacing:** at most one write sequence per unit every 10 s. Airflow
-  targets stay between 10 m³/h and the profile maximum. A unit stays off for at
-  most 5 minutes.
+- **Write pacing:** at most one write sequence per unit every 10 s. Nonzero
+  airflow targets stay between 10 m³/h and the profile maximum. Zero is only
+  used where a documented off or one-sided mode explicitly requires it; do not
+  use zero as a balanced running target. A unit stays off for at most 5 minutes.
 
 ### Before and after every W test
 
@@ -92,16 +96,23 @@ Stop all writes, restore every touched unit, and report when:
 
 ## P — Preparation
 
-### P-1 — Find the COM port
+### P-1 — Find the serial port
 
+On Windows:
 ```powershell
 Get-CimInstance Win32_PnPEntity |
     Where-Object { $_.PNPDeviceID -match 'VID_10AC&PID_010A' } |
     Select-Object Name, Manufacturer, PNPDeviceID
 ```
 
-The `Name` ends in `(COMx)`. If nothing matches, list all ports with
-`& $py -m serial.tools.list_ports -v` and ask the person.
+The `Name` ends in `(COMx)`. On Linux, run:
+
+```bash
+python3.14 -m serial.tools.list_ports -v
+```
+
+The Meltem adapter matches VID `10AC` / PID `010A`; use its `/dev/ttyACM*` or
+`/dev/serial/by-id/...` path. If no matching port appears, ask the person.
 
 ### P-2 — Python environment
 
@@ -121,6 +132,19 @@ Run every command from the repository root. Pipe tool output into the results
 folder, for example `... | Tee-Object "$out\G-2.txt"`. Start runs that take
 longer than a few minutes in the background and redirect their output to a
 file.
+
+Linux setup equivalent:
+
+```bash
+python3.14 -m venv .venv
+.venv/bin/python -m pip install -r requirements-test.txt
+export PYTHONPATH="$PWD"
+port=/dev/ttyACM0
+out="tmp/live-tests/$(date +%F)"
+mkdir -p "$out/captures" "$out/scripts"
+```
+
+Then invoke the same modules as `.venv/bin/python -m tools.<name> --port "$port"`.
 
 ### P-3 — Port is free and the gateway answers
 
@@ -473,16 +497,19 @@ Run R on every unit unless the test says otherwise.
   retries it for up to 60 s while the link is held (HW-7 measurement 5).
 - **Type:** R
 - **Run:**
-  1. search all T outputs for `ServerDeviceBusyError` and for single requests
-     slower than 2 s
-  2. provoke on one unit:
-     `& $py -m tools.benchmark_gateway --port $port --units $s --scenario airflow_block --cycles 50 --gap 0`
+  1. Search all T outputs for `ServerDeviceBusyError` and for single requests
+     slower than 2 s.
+  2. Do not run the old active stimulus with `--gap 0`: it conflicts with the
+     hard pacing rule, which permits zero gap only in T-3. No safe Busy
+     stimulus is currently documented, so active provocation is blocked pending
+     a separately reviewed, paced method.
 - **Pass:** informational. Record any occurrence with its duration. Code 6
-  that blocks for seconds is evidence for HW-7 candidate D.
+  that blocks for seconds is evidence for HW-7 candidate D. A passive run with
+  no occurrence does not establish that the gateway never returns code 6.
 
 ### T-7 — Port release and reopening
 
-- **Checks:** the port is opened exclusively on Windows; a second process
+- **Checks:** the port is opened exclusively on the host OS; a second process
   fails cleanly (tools exit with code `2`); the port is free again right after
   a process dies. Autonomous part of HW-7 measurement 6.
 - **Type:** R
@@ -490,7 +517,8 @@ Run R on every unit unless the test says otherwise.
   1. Start `& $py -m tools.watch_register_changes --port $port --slave $s --range 41020:2`
      in the background.
   2. Run P-3: expect exit code `2` and "could not open serial connection".
-  3. Stop the background process with `Stop-Process`, then run P-3 again.
+  3. Stop the background process by PID (`Stop-Process` on Windows, `kill <PID>`
+     on Linux), then run P-3 again.
   4. Run P-3 twenty times in a row.
 - **Pass:** step 2 exits with `2`, steps 3 and 4 exit with `0`.
 
@@ -514,8 +542,9 @@ Run R on every unit unless the test says otherwise.
   `TestSharedModbusConnection` in [tests/test_init.py](../tests/test_init.py),
   without patching `ModbusConnection`, with the real port and the discovered
   rooms. After the unload, P-3 must succeed.
-- **Limits:** the harness ships HA `2026.9.4` with `modbus-connection 4.12.3`
-  installed on top, not HA `2026.10`. If the harness's checks for lingering
+- **Limits:** the harness ships HA `2026.10.0b0` with
+  `modbus-connection 4.12.3`, not a stable HA `2026.10.x` release. If the
+  harness's checks for lingering
   tasks or threads fail on the serial backend, mark the test as blocked;
   [H-9](#h-9--real-home-assistant-instance) covers it.
 
@@ -571,9 +600,13 @@ Notes on the tools:
   `41020/41021` lag behind ([MELTEM.md](MELTEM.md#target-readback-and-measured-airflow));
   HW-2 measurement 3; HW-7 measurement 4.
 - **Type:** W
-- **Run:** for `--delta` in `-20`, `-4`, `4`, `20`:
+- **Run:** choose from `--delta` values `-20`, `-4`, `4`, `20`, but run only
+  deltas that keep the target within the hard limits of 10 m³/h and the
+  profile maximum. For example, from a 20 m³/h baseline, skip `-20` because
+  it would target 0; `-4`, `4`, and `20` are in range:
   `& $py -m tools.benchmark_integration_like --port $port --gap 0.1 --mode write_observe --room-index $ri --delta <d> --observe-seconds 60 --sample-interval 1`.
-  Repeat `-20` once with the baseline tool (`$bilMain` in the P-5 worktree).
+  Repeat one in-range delta with the baseline tool (`$bilMain` in the P-5
+  worktree).
 - **Pass:** `41121` shows the new raw value in the first sample. Record the
   time until `41020/41021` reach the target (±1) per delta.
 
@@ -595,7 +628,9 @@ Notes on the tools:
 
 - **Pass:** record the smallest settle time at which the first `post_write`
   poll is `OK` in all three repetitions. If that already holds at `0`,
-  candidate C (one refresh) is backed as well.
+  candidate C (one refresh) is backed as well. This poll confirms the
+  integration's target readback; separately record `41020/41021`, because a
+  confirmed target does not prove the fans have already reached that airflow.
 
 ### W-3 — Settle delay with interleaved traffic
 
