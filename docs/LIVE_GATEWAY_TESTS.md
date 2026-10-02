@@ -75,6 +75,11 @@ asks for the one physical step, and measures.
    [R-11](#r-11--shadow-ranges-and-their-noise)) and `41020/41021` while the
    fans still settle. Recheck `41020/41021` after 2 minutes.
 
+The integration-like write benchmarks attempt an airflow restore even after
+an error or cancellation, and print restore errors separately. This cannot
+restore an unreachable unit and does not restore its complete mode or preset
+state. Always carry out the full snapshot restore and verification above.
+
 ### Abort criteria
 
 Stop all writes, restore every touched unit, and report when:

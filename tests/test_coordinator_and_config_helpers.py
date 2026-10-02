@@ -664,6 +664,34 @@ class TestEffectiveLevels:
         assert err.value.translation_key == "airflow_unknown"
         assert client.write_operating_mode_calls == []
 
+    @pytest.mark.parametrize("mode", ["off", "manual", "unbalanced"])
+    async def test_inactive_keeps_a_fresh_direct_mode(
+        self, hass: HomeAssistant, mode: str,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(
+            RoomState(operation_mode=mode, target_level=40, extract_target_level=20)
+        )
+
+        await coordinator.async_set_operation_mode("unit_1", "inactive")
+
+        assert client.write_operating_mode_calls == []
+
+    async def test_inactive_does_not_skip_a_stale_direct_mode(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(
+                RoomState(operation_mode="manual", supply_air_flow=60, extract_air_flow=60),
+                "flow",
+            )
+        }
+
+        await coordinator.async_set_operation_mode("unit_1", "inactive")
+
+        assert client.write_operating_mode_calls == [("unit_1", "manual")]
+
 
 class TestDirectionalWrites:
     """One fan direction changes without disturbing the other one."""
@@ -889,6 +917,68 @@ class TestDirectionalWrites:
 
         assert client.write_level_calls[-1] == ("unit_1", 40)
         assert coordinator.effective_levels("unit_1") == (40, 40)
+
+    @pytest.mark.parametrize(
+        ("change", "readback"),
+        [
+            (
+                "preset",
+                RoomState(
+                    operation_mode="manual",
+                    preset_mode="high",
+                    target_level=80,
+                    supply_air_flow=80,
+                    extract_air_flow=80,
+                ),
+            ),
+            (
+                "co2_control",
+                RoomState(
+                    operation_mode="co2_control", supply_air_flow=80, extract_air_flow=80
+                ),
+            ),
+            ("off", RoomState(operation_mode="off", target_level=0)),
+        ],
+    )
+    async def test_direction_write_waits_for_a_pending_mode_readback(
+        self, hass: HomeAssistant, change: str, readback: RoomState,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=30))
+        client.next_read_state = readback
+        change_started = asyncio.Event()
+        release_change = asyncio.Event()
+        fan_started = asyncio.Event()
+        method_name = "write_preset_mode" if change == "preset" else "write_operating_mode"
+        original_write = getattr(client, method_name)
+
+        async def delayed_write(*args: object) -> None:
+            change_started.set()
+            await release_change.wait()
+            await original_write(*args)
+
+        async def write_direction() -> None:
+            fan_started.set()
+            await coordinator.async_set_direction_level("unit_1", DIRECTION_EXTRACT, 40)
+
+        with patch.object(client, method_name, new=delayed_write):
+            change_task = asyncio.create_task(
+                coordinator.async_set_preset_mode("unit_1", "high")
+                if change == "preset"
+                else coordinator.async_set_operation_mode("unit_1", change)
+            )
+            await change_started.wait()
+            fan_task = asyncio.create_task(write_direction())
+            await fan_started.wait()
+            release_change.set()
+            await asyncio.gather(change_task, fan_task)
+
+        if change == "preset":
+            assert client.write_unbalanced_calls == [("unit_1", 80, 40)]
+            assert client.write_level_calls == []
+        else:
+            assert client.write_level_calls == [("unit_1", 40)]
+            assert client.write_unbalanced_calls == []
 
     @pytest.mark.parametrize("operation_mode", ["off", "humidity_control", "co2_control", "automatic"])
     @pytest.mark.parametrize("concurrent", [False, True], ids=("successive", "concurrent"))
@@ -1231,8 +1321,21 @@ class TestOptimisticPresetOverlay:
         coordinator._optimistic_presets.set("unit_1", "high")
         assert coordinator.optimistic_preset_mode("unit_1") == "high"
 
-        coordinator.data = {"unit_1": RoomState(preset_mode="high")}
+        coordinator.data = _fresh(RoomState(preset_mode="high"))
         assert coordinator.optimistic_preset_mode("unit_1") is None
+
+    def test_stale_matching_readback_does_not_clear_the_pending_selection(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        state = RoomState(preset_mode="high")
+        coordinator.data = {"unit_1": state}
+        coordinator._optimistic_presets.set("unit_1", "high")
+
+        coordinator._confirm_pending_writes(coordinator.safe_data)
+
+        assert coordinator.optimistic_preset_mode("unit_1") == "high"
+        assert "unit_1" in coordinator._optimistic_presets._pending
 
     def test_overlay_expires(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
@@ -1288,8 +1391,23 @@ class TestOptimisticIntensiveOverlay:
         coordinator._optimistic_intensive.set("unit_1", True)
         assert coordinator.optimistic_intensive("unit_1") is True
 
-        coordinator.data = {"unit_1": RoomState(intensive_active=True)}
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(RoomState(intensive_active=True), "intensive")
+        }
         assert coordinator.optimistic_intensive("unit_1") is None
+
+    @pytest.mark.parametrize("pending", [True, False])
+    def test_stale_matching_readback_does_not_clear_the_pending_override(
+        self, hass: HomeAssistant, pending: bool,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {"unit_1": RoomState(intensive_active=pending)}
+        coordinator._optimistic_intensive.set("unit_1", pending)
+
+        coordinator._confirm_pending_writes(coordinator.safe_data)
+
+        assert coordinator.optimistic_intensive("unit_1") is pending
+        assert "unit_1" in coordinator._optimistic_intensive._pending
 
     def test_overlay_expires(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
