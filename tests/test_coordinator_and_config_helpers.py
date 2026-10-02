@@ -230,7 +230,7 @@ class TestCoordinatorResilience:
 
         assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_START_SECONDS
 
-        for _ in range(20):
+        for _ in range(1100):
             coordinator._on_transport_failure()
 
         assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_MAX_SECONDS
@@ -890,8 +890,166 @@ class TestDirectionalWrites:
         assert client.write_level_calls[-1] == ("unit_1", 40)
         assert coordinator.effective_levels("unit_1") == (40, 40)
 
+    @pytest.mark.parametrize("operation_mode", ["off", "humidity_control", "co2_control", "automatic"])
+    @pytest.mark.parametrize("concurrent", [False, True], ids=("successive", "concurrent"))
+    @pytest.mark.parametrize("first_level", [40, 60], ids=("matches-measurement", "new-airflow"))
+    async def test_followup_direction_write_uses_the_pending_mode(
+        self, hass: HomeAssistant, operation_mode: str, concurrent: bool, first_level: int,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(
+            RoomState(operation_mode=operation_mode, supply_air_flow=40, extract_air_flow=40)
+        )
+        write_level = client.write_level
+
+        async def _yielding_write_level(room: RoomConfig, level: int) -> None:
+            await asyncio.sleep(0)
+            await write_level(room, level)
+
+        client.write_level = _yielding_write_level
+        if concurrent:
+            await asyncio.gather(
+                coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, first_level),
+                coordinator.async_set_direction_level("unit_1", DIRECTION_EXTRACT, 30),
+            )
+        else:
+            await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, first_level)
+            await coordinator.async_set_direction_level("unit_1", DIRECTION_EXTRACT, 30)
+
+        assert client.write_level_calls == [("unit_1", first_level)]
+        assert client.write_unbalanced_calls == [("unit_1", first_level, 30)]
+        assert coordinator.effective_levels("unit_1") == (first_level, 30)
+
+    async def test_switching_off_one_direction_after_start_keeps_the_other_running(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="off"))
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_EXTRACT, 0)
+
+        assert client.write_level_calls == [("unit_1", 60)]
+        assert client.write_unbalanced_calls == [("unit_1", 60, 0)]
+        assert coordinator.effective_levels("unit_1") == (60, 0)
+
+    @pytest.mark.parametrize("initial_level", [0, 40])
+    async def test_restart_after_a_pending_off_write_starts_both_directions(
+        self, hass: HomeAssistant, initial_level: int,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=initial_level))
+
+        await coordinator.async_set_level("unit_1", 0)
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
+
+        assert client.write_level_calls == [("unit_1", 0), ("unit_1", 60)]
+        assert client.write_unbalanced_calls == []
+        assert coordinator.effective_levels("unit_1") == (60, 60)
+
 
 class TestAirflowWriteConfirmation:
+    @pytest.mark.parametrize(
+        ("initial_key", "replacement_key"),
+        [
+            ("airflow_levels", "operation_mode"),
+            ("airflow_levels", "preset_mode"),
+            ("operation_mode", "airflow_levels"),
+            ("operation_mode", "preset_mode"),
+            ("preset_mode", "airflow_levels"),
+            ("preset_mode", "operation_mode"),
+        ],
+    )
+    async def test_replaced_base_write_does_not_flag_data_health(
+        self, hass: HomeAssistant, initial_key: str, replacement_key: str,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=40))
+        client.next_read_state = coordinator.safe_data["unit_1"]
+        if initial_key == "airflow_levels":
+            await coordinator.async_set_level("unit_1", 70)
+        elif initial_key == "operation_mode":
+            await coordinator.async_set_operation_mode("unit_1", "co2_control")
+        else:
+            await coordinator.async_set_preset_mode("unit_1", "low")
+
+        if replacement_key == "airflow_levels":
+            await coordinator.async_set_level("unit_1", 80)
+        elif replacement_key == "operation_mode":
+            client.next_read_state = RoomState(operation_mode="automatic")
+            await coordinator.async_set_operation_mode("unit_1", "automatic")
+        else:
+            client.next_read_state = RoomState(operation_mode="manual", preset_mode="medium")
+            await coordinator.async_set_preset_mode("unit_1", "medium")
+
+        confirmation = coordinator._writes.by_room["unit_1"][initial_key]
+        coordinator._writes.by_room["unit_1"][initial_key] = replace(
+            confirmation,
+            started_at=dt_util.utcnow() - timedelta(seconds=WRITE_CONFIRMATION_TIMEOUT_SECONDS + 1),
+        )
+        readback_level = 80 if replacement_key == "airflow_levels" else 70
+        coordinator._confirm_pending_writes(_fresh(
+            RoomState(
+                operation_mode="manual",
+                target_level=readback_level,
+                balanced_target_readback=readback_level,
+            )
+        ))
+
+        assert coordinator.data_health_attributes("unit_1")["writes"][initial_key]["status"] == (
+            "superseded"
+        )
+        assert coordinator.data_health_stale("unit_1") is False
+        if initial_key == "preset_mode":
+            assert coordinator.optimistic_preset_mode("unit_1") is None
+
+    async def test_failed_replacement_does_not_supersede_the_previous_command(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=40))
+        await coordinator.async_set_level("unit_1", 70)
+        client.write_operating_mode = _failing("write failed")
+        client.read_room_state = _failing("readback failed")
+
+        with pytest.raises(HomeAssistantError):
+            await coordinator.async_set_operation_mode("unit_1", "automatic")
+
+        confirmations = coordinator._writes.by_room["unit_1"]
+        assert confirmations["airflow_levels"].status == "unconfirmed"
+        assert confirmations["operation_mode"].status == "failed"
+        assert coordinator.data_health_stale("unit_1") is True
+
+    async def test_base_write_keeps_independent_write_confirmations(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=40))
+        coordinator._writes.record_pending("unit_1", "intensive", True)
+        coordinator._writes.record_pending("unit_1", _HUMIDITY_START_WRITE, 70)
+
+        await coordinator.async_set_level("unit_1", 60)
+
+        confirmations = coordinator._writes.by_room["unit_1"]
+        assert confirmations["intensive"].status == "pending"
+        assert confirmations[_HUMIDITY_START_WRITE].status == "pending"
+
+    async def test_intensive_write_does_not_supersede_a_base_command(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=40))
+        await coordinator.async_set_level("unit_1", 70)
+        client.next_read_state = RoomState(
+            operation_mode="manual", target_level=40, intensive_active=True
+        )
+
+        await coordinator.async_activate_intensive("unit_1")
+
+        confirmations = coordinator._writes.by_room["unit_1"]
+        assert confirmations["airflow_levels"].status == "pending"
+        assert confirmations["intensive"].status == "confirmed"
+
     async def test_poll_after_a_fan_write_confirms_it_without_failing_the_update(
         self, hass: HomeAssistant,
     ) -> None:
@@ -1563,6 +1721,74 @@ class TestCoordinator:
         await coordinator.async_set_control_setting("unit_1", "humidity_min_level", 54)
 
         assert client.write_control_setting_calls == [("unit_1", "humidity_min_level", 54)]
+
+    @pytest.mark.parametrize("family", ["humidity", "co2"])
+    @pytest.mark.parametrize("minimum_first", [False, True], ids=("maximum-first", "minimum-first"))
+    async def test_concurrent_setting_writes_cannot_invert_the_range(
+        self, hass: HomeAssistant, family: str, minimum_first: bool,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_F])
+        min_key, max_key = f"{family}_min_level", f"{family}_max_level"
+        client.next_read_state = RoomState(**{min_key: 10, max_key: 100})
+        coordinator.data = {"unit_1": client.next_read_state}
+
+        async def _yielding_write(room: RoomConfig, setting_key: str, value: int) -> int:
+            await asyncio.sleep(0)
+            client.write_control_setting_calls.append((room.key, setting_key, value))
+            client.next_read_state = replace(client.next_read_state, **{setting_key: value})
+            return value
+
+        client.write_control_setting = _yielding_write
+        writes = [(min_key, 80), (max_key, 20)]
+        if not minimum_first:
+            writes.reverse()
+        results = await asyncio.gather(
+            *(coordinator.async_set_control_setting("unit_1", key, value) for key, value in writes),
+            return_exceptions=True,
+        )
+
+        assert results[0] is None
+        assert isinstance(results[1], HomeAssistantError)
+        assert results[1].translation_key == "control_level_range"
+        assert client.write_control_setting_calls == [("unit_1", *writes[0])]
+        state = coordinator.safe_data["unit_1"]
+        assert getattr(state, min_key) <= getattr(state, max_key)
+
+    @pytest.mark.parametrize("family", ["humidity", "co2"])
+    @pytest.mark.parametrize("minimum_first", [False, True], ids=("maximum-first", "minimum-first"))
+    async def test_unconfirmed_setting_is_used_when_the_readback_fails(
+        self, hass: HomeAssistant, family: str, minimum_first: bool,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_F])
+        min_key, max_key = f"{family}_min_level", f"{family}_max_level"
+        coordinator.data = {"unit_1": RoomState(**{min_key: 10, max_key: 100})}
+        client.read_room_state = _failing("readback failed")
+        writes = [(min_key, 80), (max_key, 20)]
+        if not minimum_first:
+            writes.reverse()
+
+        await coordinator.async_set_control_setting("unit_1", *writes[0])
+        with pytest.raises(HomeAssistantError) as err:
+            await coordinator.async_set_control_setting("unit_1", *writes[1])
+
+        assert err.value.translation_key == "control_level_range"
+        assert client.write_control_setting_calls == [("unit_1", *writes[0])]
+
+    async def test_mismatched_setting_readback_is_used_instead_of_the_requested_value(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_F])
+        coordinator.data = {"unit_1": RoomState(humidity_min_level=10, humidity_max_level=100)}
+        client.next_read_state = RoomState(humidity_min_level=30, humidity_max_level=100)
+
+        await coordinator.async_set_control_setting("unit_1", "humidity_min_level", 80)
+        client.next_read_state = RoomState(humidity_min_level=30, humidity_max_level=40)
+        await coordinator.async_set_control_setting("unit_1", "humidity_max_level", 40)
+
+        assert client.write_control_setting_calls == [
+            ("unit_1", "humidity_min_level", 80),
+            ("unit_1", "humidity_max_level", 40),
+        ]
 
     def test_build_jobs_only_includes_relevant_groups(
         self, hass: HomeAssistant,
