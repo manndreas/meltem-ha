@@ -23,6 +23,7 @@ def _switch(
     coordinator = MagicMock()
     coordinator.last_update_success = True
     coordinator.room_available.return_value = True
+    coordinator.read_group_fresh.return_value = True
     coordinator.optimistic_intensive.return_value = optimistic
     coordinator.async_activate_intensive = AsyncMock()
     coordinator.async_deactivate_intensive = AsyncMock()
@@ -50,9 +51,19 @@ def test_is_on_reports_the_override(
 def test_available_when_intensive_status_is_stale() -> None:
     switch = _switch(RoomState(intensive_active=True))
     switch.coordinator.read_group_available.return_value = False
+    switch.coordinator.read_group_fresh.return_value = False
 
     assert switch.available is True
+    assert switch.is_on is None
     switch.coordinator.read_group_available.assert_not_called()
+
+
+@pytest.mark.parametrize("pending", [True, False])
+def test_pending_override_is_visible_with_stale_readback(pending: bool) -> None:
+    switch = _switch(RoomState(intensive_active=pending), optimistic=pending)
+    switch.coordinator.read_group_fresh.return_value = False
+
+    assert switch.is_on is pending
 
 
 def test_intensive_status_has_its_own_read_health_group() -> None:

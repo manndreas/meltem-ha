@@ -315,7 +315,14 @@ setting writes remain independent.
 Pending values are dropped when a readback confirms them
 (`_confirm_pending_writes`), never as a side effect of reading an entity
 state. A pending value that is not confirmed expires through a timer, which
-also updates the entities.
+also updates the entities. Preset and intensive overlays only settle against
+a fresh read of their own group; a matching stale cache value leaves them
+pending.
+
+Selecting inactive sensor control is decided under the gateway lock. It is a
+no-op only when a fresh mode read already reports off, manual, or unbalanced
+operation. Otherwise it writes manual mode using the known airflow, so a stale
+manual-mode cache cannot silently discard the command.
 
 The minimum level of a sensor control must not exceed its maximum level;
 `async_set_control_setting` refuses such a write with `control_level_range`
@@ -340,9 +347,13 @@ Write errors reach the UI as translated `HomeAssistantError`s (`exceptions` in
 ## Directional fan writes
 
 Both fans write through `coordinator.async_set_direction_level`, which resolves
-the opposite direction and writes under one per-unit lock. Two quick or
-concurrent commands (for example a scene setting both fans) therefore build on
-each other's pending value instead of on the stale cache.
+the opposite direction and writes under the gateway lock shared by polls and
+all mode writes. Two quick or concurrent commands (for example a scene setting
+both fans) therefore build on each other's pending value instead of on the
+stale cache. A fan command queued behind a preset or operating-mode change
+resolves the opposite airflow after that change and its readback finish, not
+before it waits for the bus. Internal `_locked` helpers require the caller to
+hold this lock; the write sequences and settle windows remain unchanged.
 
 While an airflow pair is pending, it also determines whether the unit is off,
 balanced, or unbalanced. Starting from off or leaving sensor control therefore
@@ -364,6 +375,23 @@ Decision rules, in order:
 
 `fan.turn_on` without a percentage does nothing on a running fan, because
 re-sending the measured level would end a running sensor mode.
+
+## Integration-like gateway benchmarks
+
+`tools/benchmark_integration_like.py` and `tools/count_requests.py` share the
+setup probe's two-value result. Supported entity keys follow the selected
+profile, including a `--profile` override, just as they do in the integration.
+
+An integration-like polling sample fails when a due group reports an error
+from that read, even when the runtime client swallowed the Modbus exception.
+Errors left over from an earlier, skipped group do not count toward the sample.
+
+Every write experiment attempts its airflow restore on normal completion,
+exceptions, or cancellation, including a failed initial write that may have
+partially reached the unit. A restore error is reported separately and does
+not replace an earlier experiment error. The link stays open until restoration
+finishes. This is best-effort airflow restoration, not a replacement for the
+full before/after snapshot procedure in `LIVE_GATEWAY_TESTS.md`.
 
 ## Register and state caveats
 

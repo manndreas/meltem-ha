@@ -47,7 +47,11 @@ class MeltemIntensiveSwitch(MeltemEntity, SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         optimistic = self.coordinator.optimistic_intensive(self.room.key)
-        return self.room_state.intensive_active if optimistic is None else optimistic
+        if optimistic is not None:
+            return optimistic
+        if not self.coordinator.read_group_fresh(self.room.key, "intensive"):
+            return None
+        return self.room_state.intensive_active
 
     async def async_turn_on(self, **kwargs) -> None:
         await self.coordinator.async_activate_intensive(self.room.key)
