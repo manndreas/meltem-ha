@@ -21,6 +21,7 @@ def _coordinator(state: RoomState) -> MagicMock:
     coordinator = MagicMock()
     coordinator.last_update_success = True
     coordinator.room_available.return_value = True
+    coordinator.read_group_fresh.return_value = True
     coordinator.optimistic_preset_mode.return_value = None
     coordinator.async_set_operation_mode = AsyncMock()
     coordinator.async_set_preset_mode = AsyncMock()
@@ -47,8 +48,10 @@ def _preset_select(
 def test_available_while_flow_control_is_stale(build) -> None:
     select = build()
     select.coordinator.read_group_available.return_value = False
+    select.coordinator.read_group_fresh.return_value = False
 
     assert select.available is True
+    assert select.current_option is None
     select.coordinator.read_group_available.assert_not_called()
 
 
@@ -97,21 +100,40 @@ class TestMeltemOperationModeSelect:
         await select.async_select_option("inactive")
 
         select.coordinator.async_set_operation_mode.assert_awaited_once_with(
-            "unit_1", "manual"
+            "unit_1", "inactive"
         )
 
-    async def test_selecting_inactive_keeps_an_unbalanced_setup(self) -> None:
-        """Writing manual again would collapse both fans onto one airflow."""
+    async def test_selecting_inactive_delegates_the_noop_decision(self) -> None:
         select = _operation_mode_select(RoomState(operation_mode="unbalanced"))
 
         await select.async_select_option("inactive")
 
-        select.coordinator.async_set_operation_mode.assert_not_awaited()
+        select.coordinator.async_set_operation_mode.assert_awaited_once_with(
+            "unit_1", "inactive"
+        )
+
+    async def test_selecting_inactive_with_stale_state_still_sends_the_command(self) -> None:
+        select = _operation_mode_select(RoomState(operation_mode="manual"))
+        select.coordinator.read_group_fresh.return_value = False
+
+        await select.async_select_option("inactive")
+
+        select.coordinator.async_set_operation_mode.assert_awaited_once_with(
+            "unit_1", "inactive"
+        )
 
 
 class TestMeltemPresetModeSelect:
     def test_only_app_quick_modes_are_selectable(self) -> None:
         assert _preset_select().options == ["inactive", "low", "medium", "high"]
+
+    @pytest.mark.parametrize("pending", ["low", "medium", PRESET_MODE_INACTIVE])
+    def test_pending_selection_is_visible_with_stale_readback(self, pending: str) -> None:
+        select = _preset_select()
+        select.coordinator.read_group_fresh.return_value = False
+        select.coordinator.optimistic_preset_mode.return_value = pending
+
+        assert select.current_option == pending
 
     @pytest.mark.parametrize(
         ("state", "optimistic", "current_option"),

@@ -10,10 +10,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import (
     CO2_PROFILES,
-    DIRECT_OPERATION_MODES,
     HUMIDITY_PROFILES,
     OPERATION_MODE_INACTIVE,
-    OPERATION_MODE_MANUAL,
     PRESET_MODE_INACTIVE,
     PRESET_MODE_OPTIONS,
     SENSOR_CONTROL_PROFILES,
@@ -66,6 +64,8 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
 
     @property
     def current_option(self) -> str | None:
+        if not self.coordinator.read_group_fresh(self.room.key, "flow_control"):
+            return None
         operation_mode = self.room_state.operation_mode
         if operation_mode is None or operation_mode in self._attr_options:
             return operation_mode
@@ -73,14 +73,7 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
         return OPERATION_MODE_INACTIVE
 
     async def async_select_option(self, option: str) -> None:
-        if option != OPERATION_MODE_INACTIVE:
-            await self.coordinator.async_set_operation_mode(self.room.key, option)
-        elif self.room_state.operation_mode not in DIRECT_OPERATION_MODES:
-            # Off, manual and unbalanced are inactive already; writing manual
-            # again would collapse an unbalanced setup onto a single airflow.
-            await self.coordinator.async_set_operation_mode(
-                self.room.key, OPERATION_MODE_MANUAL
-            )
+        await self.coordinator.async_set_operation_mode(self.room.key, option)
 
 
 class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
@@ -98,6 +91,8 @@ class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
         optimistic = self.coordinator.optimistic_preset_mode(self.room.key)
         if optimistic is not None:
             return optimistic
+        if not self.coordinator.read_group_fresh(self.room.key, "flow_control"):
+            return None
         state = self.room_state
         if state.preset_mode in self._attr_options:
             return state.preset_mode

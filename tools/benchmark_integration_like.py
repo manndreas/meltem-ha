@@ -7,7 +7,8 @@ import asyncio
 import importlib
 import sys
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -138,18 +139,22 @@ async def discover_rooms(
         gateway = prepare_unit(connection.for_unit(GATEWAY_DEVICE_ID), GATEWAY_DEVICE_ID, policy)
         slaves = await discover_gateway_nodes(gateway, port, start=2, end=16)
         for index, slave in enumerate(slaves, start=1):
-            detected_suffix, preview, supported_entity_keys = await detect_slave_details(
+            detected_suffix, preview = await detect_slave_details(
                 prepare_unit(connection.for_unit(slave), slave, policy)
+            )
+            profile = profiles.get(slave) or PROFILE_BY_DETECTED_SUFFIX.get(
+                detected_suffix, "ii_plain"
             )
             rooms.append(
                 RoomConfig(
                     key=f"unit_{index}",
                     name=f"Unit {index}",
                     slave=slave,
-                    profile=profiles.get(slave)
-                    or PROFILE_BY_DETECTED_SUFFIX.get(detected_suffix, "ii_plain"),
+                    profile=profile,
                     preview=preview,
-                    supported_entity_keys=frozenset(supported_entity_keys),
+                    supported_entity_keys=frozenset(
+                        modbus_helpers.supported_entity_keys_for_profile(profile)
+                    ),
                 )
             )
     except MeltemConnectionError as err:
@@ -215,6 +220,7 @@ async def run_cycles(
         for label, plan in plans.items():
             for room in rooms:
                 start = time.perf_counter()
+                read_started_at = datetime.now(UTC)
                 try:
                     states[room.key] = await client.read_room_state(
                         room, states.get(room.key, RoomState()), plan
@@ -224,7 +230,17 @@ async def run_cycles(
                         samples, room.slave, label, start, f"{type(err).__name__}: {err}", ok=False
                     )
                 else:
-                    record(samples, room.slave, label, start)
+                    state = states[room.key]
+                    failures = [
+                        f"{group}: {health.last_error}"
+                        for group in plan.read_groups()
+                        if (health := state.read_health_for(group)).last_attempt is not None
+                        and health.last_attempt >= read_started_at
+                        and health.last_error is not None
+                    ]
+                    record(
+                        samples, room.slave, label, start, "; ".join(failures), ok=not failures
+                    )
     return samples
 
 
@@ -266,6 +282,27 @@ async def _observe(
         start = time.perf_counter()
         value = await read()
         record(samples, slave, f"observe_{index}", start, str(value))
+
+
+@asynccontextmanager
+async def _restore_after_write(
+    slave: int, restore: Callable[[], Awaitable[None]]
+) -> AsyncIterator[None]:
+    """Attempt restoration on every exit without masking an experiment failure."""
+
+    phase_failed = False
+    try:
+        yield
+    except BaseException:
+        phase_failed = True
+        raise
+    finally:
+        try:
+            await restore()
+        except Exception as err:
+            print(f"ERROR: restoring airflow of slave {slave} failed: {type(err).__name__}: {err}")
+            if not phase_failed:
+                raise
 
 
 async def run_write_refresh(
@@ -317,8 +354,8 @@ async def run_write_refresh(
 
     print(f"write_refresh slave={room.slave} baseline={baseline_flow} target={target_flow}")
     print(f"  raw before: {await read_raw_snapshot()}")
-    await write_and_poll(target_flow, "write")
-    await write_and_poll(baseline_flow, "restore")
+    async with _restore_after_write(room.slave, partial(write_and_poll, baseline_flow, "restore")):
+        await write_and_poll(target_flow, "write")
     return samples
 
 
@@ -350,15 +387,18 @@ async def run_write_idle_check(
         f"write_idle_check slave={room.slave} baseline={baseline_flow} "
         f"target={target_flow} idle={idle_seconds}s"
     )
-    await _timed_write(client, room, target_flow, "write", samples)
-    print(f"  idling for {idle_seconds:.1f}s without reads")
-    await asyncio.sleep(idle_seconds)
-    await read_back("read_after_idle", target_flow)
 
-    await _timed_write(client, room, baseline_flow, "restore", samples)
-    print("  idling for 5.0s before final readback")
-    await asyncio.sleep(5.0)
-    await read_back("read_after_restore", baseline_flow)
+    async def restore() -> None:
+        await _timed_write(client, room, baseline_flow, "restore", samples)
+        print("  idling for 5.0s before final readback")
+        await asyncio.sleep(5.0)
+        await read_back("read_after_restore", baseline_flow)
+
+    async with _restore_after_write(room.slave, restore):
+        await _timed_write(client, room, target_flow, "write", samples)
+        print(f"  idling for {idle_seconds:.1f}s without reads")
+        await asyncio.sleep(idle_seconds)
+        await read_back("read_after_idle", target_flow)
     return samples
 
 
@@ -400,11 +440,15 @@ async def run_write_observe(
         f"observe={observe_seconds}s interval={sample_interval}s"
     )
     print(f"  snapshot before: {before}")
-    await _timed_write(client, room, target_flow, "write", samples)
-    await _observe(samples, room.slave, snapshot, observe_seconds, sample_interval)
-    await _timed_write(client, room, baseline_flow, "restore", samples)
-    await asyncio.sleep(5.0)
-    print(f"  snapshot after restore: {await snapshot()}")
+
+    async def restore() -> None:
+        await _timed_write(client, room, baseline_flow, "restore", samples)
+        await asyncio.sleep(5.0)
+        print(f"  snapshot after restore: {await snapshot()}")
+
+    async with _restore_after_write(room.slave, restore):
+        await _timed_write(client, room, target_flow, "write", samples)
+        await _observe(samples, room.slave, snapshot, observe_seconds, sample_interval)
     return samples
 
 
@@ -429,11 +473,15 @@ async def run_airflow_long_observe(
         f"observe={observe_seconds}s interval={sample_interval}s restore={restore_target}"
     )
     print(f"  flow before: {await read_flow_block()}")
-    await _timed_write(client, room, target, "write", samples)
-    await _observe(samples, room.slave, read_flow_block, observe_seconds, sample_interval)
-    await _timed_write(client, room, restore_target, "restore", samples)
-    await asyncio.sleep(10.0)
-    print(f"  flow after restore: {await read_flow_block()}")
+
+    async def restore() -> None:
+        await _timed_write(client, room, restore_target, "restore", samples)
+        await asyncio.sleep(10.0)
+        print(f"  flow after restore: {await read_flow_block()}")
+
+    async with _restore_after_write(room.slave, restore):
+        await _timed_write(client, room, target, "write", samples)
+        await _observe(samples, room.slave, read_flow_block, observe_seconds, sample_interval)
     return samples
 
 

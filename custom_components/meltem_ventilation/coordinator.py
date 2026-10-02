@@ -32,12 +32,14 @@ from .const import (
     CONTROL_LEVEL_RANGES,
     DEFAULT_SCAN_SLAVE_END,
     DEFAULT_SCAN_SLAVE_START,
+    DIRECT_OPERATION_MODES,
     DIRECTION_SUPPLY,
     DOMAIN,
     LEVEL_SOURCE_MEASURED,
     LEVEL_SOURCE_PENDING,
     LEVEL_WRITE_FALLBACK_BALANCED,
     LEVEL_WRITE_FALLBACK_UNKNOWN_MODE,
+    OPERATION_MODE_INACTIVE,
     OPERATION_MODE_MANUAL,
     OPERATION_MODE_OFF,
     OPERATION_MODE_UNBALANCED,
@@ -147,7 +149,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             "preset_mode": self._optimistic_presets,
             "intensive": self._optimistic_intensive,
         }
-        self._level_locks = {room.key: asyncio.Lock() for room in rooms}
         self._level_fallbacks: dict[str, tuple[str, datetime]] = {}
         self._started_at = time.monotonic()
         self._last_read_started: float | None = None
@@ -217,16 +218,23 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         The overlay is shared so the fan and the select entity never disagree.
         """
         state = self.safe_data.get(room_key)
-        confirmed = state.preset_mode if state else None
+        confirmed = (
+            state.preset_mode
+            if state is not None and read_health.group_fresh(state, "flow_control")
+            else None
+        )
         return self._optimistic_presets.get(room_key, confirmed)
 
     def optimistic_intensive(self, room_key: str) -> bool | None:
         """Return the pending intensive override while the gateway confirms it."""
 
         state = self.safe_data.get(room_key)
-        return self._optimistic_intensive.get(
-            room_key, state.intensive_active if state else None
+        confirmed = (
+            state.intensive_active
+            if state is not None and read_health.group_fresh(state, "intensive")
+            else None
         )
+        return self._optimistic_intensive.get(room_key, confirmed)
 
     def effective_levels(self, room_key: str) -> LevelPair:
         """Return the supply/extract targets a fan entity should act on.
@@ -413,9 +421,15 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         readback within a few seconds and an extra read only adds bus load.
         """
 
+        async with self._gateway_lock:
+            await self._async_set_level_locked(room_key, level)
+
+    async def _async_set_level_locked(self, room_key: str, level: int) -> None:
+        """Write a balanced level while holding the gateway lock."""
+
         room = self._rooms_by_key[room_key]
         self._optimistic_presets.clear(room_key)
-        await self._async_write_with_confirmation(
+        await self._async_write_with_confirmation_locked(
             room,
             "airflow_levels",
             (level, level),
@@ -433,9 +447,17 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         readback within a few seconds and an extra read only adds bus load.
         """
 
+        async with self._gateway_lock:
+            await self._async_set_unbalanced_levels_locked(room_key, supply_level, extract_level)
+
+    async def _async_set_unbalanced_levels_locked(
+        self, room_key: str, supply_level: int, extract_level: int
+    ) -> None:
+        """Write separate levels while holding the gateway lock."""
+
         room = self._rooms_by_key[room_key]
         self._optimistic_presets.clear(room_key)
-        await self._async_write_with_confirmation(
+        await self._async_write_with_confirmation_locked(
             room,
             "airflow_levels",
             (supply_level, extract_level),
@@ -450,12 +472,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     ) -> None:
         """Set one airflow direction and keep the other one where it is.
 
-        Resolving the opposite direction and writing share one per-unit lock,
-        so quick successive or concurrent fan commands build on each other.
+        Resolve the opposite direction under the same gateway lock as reads
+        and mode writes, so every command builds on the latest accepted state.
         """
 
         room = self._rooms_by_key[room_key]
-        async with self._level_locks[room_key]:
+        async with self._gateway_lock:
             (supply, extract), source = self._resolve_levels(room_key)
             pending = self._optimistic_levels.get(room_key, None)
             if pending is not None:
@@ -476,7 +498,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     room.slave,
                     level,
                 )
-                await self.async_set_level(room_key, level)
+                await self._async_set_level_locked(room_key, level)
                 self._record_level_fallback(room_key, LEVEL_WRITE_FALLBACK_BALANCED)
                 return
 
@@ -515,12 +537,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 or starting_from_off
                 or leaving_sensor_control
             ):
-                await self.async_set_level(room_key, level)
+                await self._async_set_level_locked(room_key, level)
             else:
                 supply_level, extract_level = (
                     (level, other) if direction == DIRECTION_SUPPLY else (other, level)
                 )
-                await self.async_set_unbalanced_levels(
+                await self._async_set_unbalanced_levels_locked(
                     room_key, supply_level, extract_level
                 )
 
@@ -538,8 +560,22 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     async def async_set_operation_mode(self, room_key: str, operation_mode: str) -> None:
         """Write a new operating mode for one room and refresh afterwards."""
 
+        async with self._gateway_lock:
+            await self._async_set_operation_mode_locked(room_key, operation_mode)
+
+    async def _async_set_operation_mode_locked(
+        self, room_key: str, operation_mode: str
+    ) -> None:
+        """Resolve the airflow and write a mode while holding the gateway lock."""
+
         room = self._rooms_by_key[room_key]
         state = self.safe_data.get(room.key, EMPTY_ROOM_STATE)
+        if operation_mode == OPERATION_MODE_INACTIVE:
+            if state.operation_mode in DIRECT_OPERATION_MODES and read_health.group_fresh(
+                state, "flow_control"
+            ):
+                return
+            operation_mode = OPERATION_MODE_MANUAL
         supply, extract = self.effective_levels(room_key)
         balanced_level = first_known(
             supply,
@@ -565,7 +601,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             )
 
         self._optimistic_levels.clear(room_key)
-        await self._async_write_with_confirmation(
+        await self._async_write_with_confirmation_locked(
             room,
             "operation_mode",
             operation_mode,
@@ -580,34 +616,36 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     async def async_set_preset_mode(self, room_key: str, preset_mode: str) -> None:
         """Write one app-style preset mode and refresh afterwards."""
 
-        room = self._rooms_by_key[room_key]
-        self._optimistic_levels.clear(room_key)
-        await self._async_write_with_confirmation(
-            room,
-            "preset_mode",
-            preset_mode,
-            self.client.write_preset_mode,
-            room,
-            preset_mode,
-            refresh_attempts=2,
-        )
+        async with self._gateway_lock:
+            room = self._rooms_by_key[room_key]
+            self._optimistic_levels.clear(room_key)
+            await self._async_write_with_confirmation_locked(
+                room,
+                "preset_mode",
+                preset_mode,
+                self.client.write_preset_mode,
+                room,
+                preset_mode,
+                refresh_attempts=2,
+            )
 
     async def async_clear_preset_mode(self, room_key: str) -> None:
         """Leave the quick-mode shortcut and keep the current airflow behavior."""
 
-        state = self.safe_data.get(room_key, EMPTY_ROOM_STATE)
-        effective_preset_mode = self.optimistic_preset_mode(room_key) or state.preset_mode
-        if effective_preset_mode in (None, PRESET_MODE_INACTIVE):
-            self._optimistic_presets.clear(room_key)
-            return
+        async with self._gateway_lock:
+            state = self.safe_data.get(room_key, EMPTY_ROOM_STATE)
+            effective_preset_mode = self.optimistic_preset_mode(room_key) or state.preset_mode
+            if effective_preset_mode in (None, PRESET_MODE_INACTIVE):
+                self._optimistic_presets.clear(room_key)
+                return
 
-        operation_mode = (
-            OPERATION_MODE_UNBALANCED
-            if effective_preset_mode in (PRESET_MODE_EXTRACT_ONLY, PRESET_MODE_SUPPLY_ONLY)
-            else OPERATION_MODE_MANUAL
-        )
-        await self.async_set_operation_mode(room_key, operation_mode)
-        self._optimistic_presets.clear(room_key)
+            operation_mode = (
+                OPERATION_MODE_UNBALANCED
+                if effective_preset_mode in (PRESET_MODE_EXTRACT_ONLY, PRESET_MODE_SUPPLY_ONLY)
+                else OPERATION_MODE_MANUAL
+            )
+            await self._async_set_operation_mode_locked(room_key, operation_mode)
+            self._optimistic_presets.clear(room_key)
 
     async def async_activate_intensive(self, room_key: str) -> None:
         """Start temporary intensive ventilation without changing the base preset."""
@@ -695,67 +733,89 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         refresh_attempts: int = 0,
         use_write_result: bool = False,
     ) -> None:
-        """Write one setting, preserve confirmed state, and verify by readback.
+        """Serialize one setting write and its readback."""
+
+        async with self._gateway_lock:
+            await self._async_write_with_confirmation_locked(
+                room,
+                write_key,
+                expected_value,
+                write_method,
+                *write_args,
+                refresh_attempts=refresh_attempts,
+                use_write_result=use_write_result,
+            )
+
+    async def _async_write_with_confirmation_locked(
+        self,
+        room: RoomConfig,
+        write_key: str,
+        expected_value: WriteValue,
+        write_method: Callable[..., Awaitable[object]],
+        *write_args: object,
+        refresh_attempts: int = 0,
+        use_write_result: bool = False,
+    ) -> None:
+        """Write and verify one setting while holding the gateway lock.
 
         Without ``refresh_attempts`` the regular poll jobs confirm the write.
         """
 
         readback_plan = _READBACK_PLANS[write_group(write_key)]
         overlay = self._overlays.get(write_key)
-        async with self._gateway_lock:
-            if write_key.startswith(CONTROL_SETTING_WRITE_PREFIX) and isinstance(
-                expected_value, int
-            ):
-                self._check_control_level_range(
-                    room, write_key.removeprefix(CONTROL_SETTING_WRITE_PREFIX), expected_value
-                )
-            try:
-                write_result = await write_method(*write_args)
-            except Exception as err:
-                # A failed write makes any earlier pending value doubtful.
-                if overlay is not None:
-                    overlay.clear(room.key)
-                self._writes.record_pending(room.key, write_key, expected_value)
-                self._writes.set_status(room.key, write_key, "failed", error=str(err))
-                self.async_update_listeners()
-                await self._async_refresh_room_after_write(
-                    room,
-                    refresh_plan=readback_plan,
-                )
-                raise HomeAssistantError(
-                    translation_domain=DOMAIN,
-                    translation_key="write_failed",
-                    translation_placeholders={"unit": room.name, "error": str(err)},
-                ) from err
-
-            confirmed_expected = (
-                write_result
-                if use_write_result and isinstance(write_result, (str, int, bool))
-                else expected_value
+        if write_key.startswith(CONTROL_SETTING_WRITE_PREFIX) and isinstance(
+            expected_value, int
+        ):
+            self._check_control_level_range(
+                room, write_key.removeprefix(CONTROL_SETTING_WRITE_PREFIX), expected_value
             )
-            superseded = self._writes.supersede(room.key, write_key)
-            self._writes.record_pending(room.key, write_key, confirmed_expected)
-            for previous_key in superseded:
-                if previous_overlay := self._overlays.get(previous_key):
-                    previous_overlay.clear(room.key)
+        try:
+            write_result = await write_method(*write_args)
+        except Exception as err:
+            # A failed write makes any earlier pending value doubtful.
             if overlay is not None:
-                overlay.set(room.key, expected_value)
-            else:
-                self.async_update_listeners()
-
-            if not refresh_attempts:
-                return
-
-            await async_sleep(WRITE_SETTLE_SECONDS)
+                overlay.clear(room.key)
+            self._writes.record_pending(room.key, write_key, expected_value)
+            self._writes.set_status(room.key, write_key, "failed", error=str(err))
+            self.async_update_listeners()
             await self._async_refresh_room_after_write(
                 room,
                 refresh_plan=readback_plan,
-                min_refresh_attempts=refresh_attempts,
             )
-            if self._writes.mark_unconfirmed(
-                room.key, write_key, "No matching device readback was received"
-            ):
-                self.async_update_listeners()
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="write_failed",
+                translation_placeholders={"unit": room.name, "error": str(err)},
+            ) from err
+
+        confirmed_expected = (
+            write_result
+            if use_write_result and isinstance(write_result, (str, int, bool))
+            else expected_value
+        )
+        superseded = self._writes.supersede(room.key, write_key)
+        self._writes.record_pending(room.key, write_key, confirmed_expected)
+        for previous_key in superseded:
+            if previous_overlay := self._overlays.get(previous_key):
+                previous_overlay.clear(room.key)
+        if overlay is not None:
+            overlay.set(room.key, expected_value)
+        else:
+            self.async_update_listeners()
+
+        if not refresh_attempts:
+            return
+
+        await async_sleep(WRITE_SETTLE_SECONDS)
+        await self._async_refresh_room_after_write(
+            room,
+            refresh_plan=readback_plan,
+            min_refresh_attempts=refresh_attempts,
+        )
+        if self._writes.mark_unconfirmed(
+            room.key, write_key, "No matching device readback was received"
+        ):
+            self.async_update_listeners()
 
     def update_request_rate(self, max_requests_per_second: float) -> None:
         """Apply a new scheduler request rate without reloading the integration."""
@@ -952,8 +1012,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         for room_key, state in states.items():
             reported, _source = reported_levels(state)
             changed |= self._optimistic_levels.settle(room_key, reported)
-            changed |= self._optimistic_presets.settle(room_key, state.preset_mode)
-            changed |= self._optimistic_intensive.settle(room_key, state.intensive_active)
+            if read_health.group_fresh(state, "flow_control"):
+                changed |= self._optimistic_presets.settle(room_key, state.preset_mode)
+            if read_health.group_fresh(state, "intensive"):
+                changed |= self._optimistic_intensive.settle(room_key, state.intensive_active)
             fallback = self._level_fallbacks.get(room_key)
             if fallback is not None and _mode_read_since(state, fallback[1]):
                 del self._level_fallbacks[room_key]
