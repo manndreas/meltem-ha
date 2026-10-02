@@ -387,7 +387,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         if self._consecutive_transport_failures < TRANSPORT_BACKOFF_AFTER_FAILURES:
             return
 
-        exponent = self._consecutive_transport_failures - TRANSPORT_BACKOFF_AFTER_FAILURES
+        exponent = min(
+            self._consecutive_transport_failures - TRANSPORT_BACKOFF_AFTER_FAILURES,
+            math.ceil(math.log2(TRANSPORT_BACKOFF_MAX_SECONDS / TRANSPORT_BACKOFF_START_SECONDS)),
+        )
         seconds = min(
             TRANSPORT_BACKOFF_MAX_SECONDS,
             TRANSPORT_BACKOFF_START_SECONDS * (2**exponent),
@@ -454,6 +457,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         room = self._rooms_by_key[room_key]
         async with self._level_locks[room_key]:
             (supply, extract), source = self._resolve_levels(room_key)
+            pending = self._optimistic_levels.get(room_key, None)
+            if pending is not None:
+                (supply, extract), source = pending, LEVEL_SOURCE_PENDING
             other = extract if direction == DIRECTION_SUPPLY else supply
             if other is None:
                 if level == 0:
@@ -477,6 +483,14 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             operation_mode = self.safe_data.get(
                 room_key, EMPTY_ROOM_STATE
             ).operation_mode
+            if source == LEVEL_SOURCE_PENDING and supply is not None and extract is not None:
+                operation_mode = (
+                    OPERATION_MODE_OFF
+                    if supply == extract == 0
+                    else OPERATION_MODE_MANUAL
+                    if levels_balanced(supply, extract)
+                    else OPERATION_MODE_UNBALANCED
+                )
             if (
                 source == LEVEL_SOURCE_MEASURED
                 and supply is not None
@@ -631,7 +645,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         """Write one humidity/CO2 control setting and refresh it afterwards."""
 
         room = self._rooms_by_key[room_key]
-        self._check_control_level_range(room, setting_key, value)
         await self._async_write_with_confirmation(
             room,
             f"{CONTROL_SETTING_WRITE_PREFIX}{setting_key}",
@@ -649,14 +662,18 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         state = self.safe_data.get(room.key, EMPTY_ROOM_STATE)
         for min_key, max_key in CONTROL_LEVEL_RANGES:
+            if setting_key not in (min_key, max_key):
+                continue
+            minimum = self._writes.unconfirmed_control_setting(room.key, min_key)
+            if minimum is None:
+                minimum = getattr(state, min_key)
+            maximum = self._writes.unconfirmed_control_setting(room.key, max_key)
+            if maximum is None:
+                maximum = getattr(state, max_key)
             if setting_key == min_key:
                 minimum = normalize_control_setting(min_key, value)
-                maximum = getattr(state, max_key)
-            elif setting_key == max_key:
-                minimum = getattr(state, min_key)
-                maximum = normalize_control_setting(max_key, value)
             else:
-                continue
+                maximum = normalize_control_setting(max_key, value)
             if minimum is not None and maximum is not None and minimum > maximum:
                 raise HomeAssistantError(
                     translation_domain=DOMAIN,
@@ -686,6 +703,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         readback_plan = _READBACK_PLANS[write_group(write_key)]
         overlay = self._overlays.get(write_key)
         async with self._gateway_lock:
+            if write_key.startswith(CONTROL_SETTING_WRITE_PREFIX) and isinstance(
+                expected_value, int
+            ):
+                self._check_control_level_range(
+                    room, write_key.removeprefix(CONTROL_SETTING_WRITE_PREFIX), expected_value
+                )
             try:
                 write_result = await write_method(*write_args)
             except Exception as err:
@@ -710,7 +733,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 if use_write_result and isinstance(write_result, (str, int, bool))
                 else expected_value
             )
+            superseded = self._writes.supersede(room.key, write_key)
             self._writes.record_pending(room.key, write_key, confirmed_expected)
+            for previous_key in superseded:
+                if previous_overlay := self._overlays.get(previous_key):
+                    previous_overlay.clear(room.key)
             if overlay is not None:
                 overlay.set(room.key, expected_value)
             else:
