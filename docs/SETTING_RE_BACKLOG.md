@@ -245,6 +245,18 @@ Updated interpretation after the second keypad run:
   side changes only produced broad `511xx` / `520xx` meta-word jumps without a
   directly readable value slot
 
+### 2026-10-02 — shadow-range idle comparison
+
+Two `all_known` captures about 13 minutes apart were taken on all six
+configured units with no app or keypad action; read-only gateway and
+integration benchmarks continued between captures. Across every unit,
+`51120..51133`, `51150..51151`, and `52010` moved from `48` to `61`.
+`51100..51112` also changed, and `52008/52009` changed from values around
+`5376..5379` to `5387`. The documented configuration values stayed unchanged.
+This confirms that the shadow/meta ranges have substantial background or
+poll-related drift and are not a reliable direct setting readback without
+subtracting a measured noise floor.
+
 ## Confirmed local evidence
 
 - documented configuration writes exist for `42000..42009`

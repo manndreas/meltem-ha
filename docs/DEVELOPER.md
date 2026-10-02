@@ -30,12 +30,15 @@ These are the most important practical findings from the latest hardware tests:
 - gateway-backed discovery via `43901` / `43902..` is stable
 - a small positive request gap works better than no gap at all
 - `REQUEST_GAP_SECONDS = 0.1` was stable on the tested setup
-- removing the gap entirely (`0.0`) caused huge latency inflation without
-  improving reliability
+- a zero request gap was unstable in the pymodbus measurements and timed out
+  during the 2026 tmodbus gap sweep; see HW-7 in
+  [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md)
 - `41121` behaves like a fast balanced target readback after writes
 - `41020/41021` behave like the effective/current airflow and may lag behind
-- many devices return Modbus exceptions for `41120/41121/41122` until a write
-  has occurred
+- many devices return Modbus exceptions for the mode registers before a write;
+  on slave `4`, the two-register fallback and `41121` became readable after
+  W-5 and remained readable through a power cycle, while the five-register
+  block and `41122` stayed unavailable (see HW-4)
 - immediate write confirmation polling created unnecessary bus load and was
   removed for airflow writes
 - short read failures preserve the previous state, but a unit that keeps
@@ -47,8 +50,8 @@ These are the most important practical findings from the latest hardware tests:
   cannot reach the link; Home Assistant's `modbus` integration closes the
   serial port once the entry has released its units
 - since `4.0.0` all of this runs over Home Assistant's shared Modbus
-  connection (tmodbus) instead of an own pymodbus client; the hardware
-  findings above were measured with pymodbus and are re-checked in HW-7
+  connection (tmodbus) instead of an own pymodbus client; partial live
+  tmodbus-vs-pymodbus results and remaining release gates are tracked in HW-7
 
 ## Scope
 
@@ -172,8 +175,15 @@ exception response starts the mode backoff, because only that is the HW-4
 refusal; a timeout is retried on the next flow job. The setup probe also stops
 at the first timeout of a unit.
 
-Code 10/11 for a powered-off unit and busy answers (code 6) are left as they
-are until measured; see HW-7 in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md).
+An unconfigured address timed out. In the H-1 follow-up, airflow jobs for
+physically powered-off slave `4` completed successfully in 2-3 requests with
+no timeout or link recycle; the returned state was not logged, so
+gateway-cached data cannot be ruled out. After power-up, measured airflow read
+`80/0` while the mode fallback still decoded manual target `20`; the person
+confirmed the app and physical unit matched. No Busy/code-6 response was
+observed; the active stress test was not run because its gap-0 command
+conflicts with the hardware-test pacing rule. See HW-7 in
+[HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md).
 
 The `homeassistant.components.modbus` API is new and still changing
 (`get_hub` is already deprecated). Keep the lower bound in the manifest tight
