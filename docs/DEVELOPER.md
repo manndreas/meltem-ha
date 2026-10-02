@@ -306,6 +306,12 @@ Cached values from before the write cannot confirm it. A failed write drops any
 pending value. Failed, mismatched, or unconfirmed writes flag `data_health` for
 `WRITE_HEALTH_RETENTION_SECONDS` and then only remain visible as attributes.
 
+An accepted airflow, operating-mode, or quick-mode command marks earlier
+unsettled commands of the other two kinds as `superseded` and clears their
+pending displays. This outcome is final and does not flag `data_health`.
+Failed replacements do not supersede earlier commands. Intensive and control
+setting writes remain independent.
+
 Pending values are dropped when a readback confirms them
 (`_confirm_pending_writes`), never as a side effect of reading an entity
 state. A pending value that is not confirmed expires through a timer, which
@@ -313,8 +319,11 @@ also updates the entities.
 
 The minimum level of a sensor control must not exceed its maximum level;
 `async_set_control_setting` refuses such a write with `control_level_range`
-before it reaches the unit. Both values are compared after rounding to the
-register step.
+before it reaches the unit. Validation runs under the same gateway lock as
+the write, so concurrent changes cannot both pass against an old range.
+Accepted settings without a successful readback are used instead of cached
+values for the opposite bound. Both values are compared after rounding to
+the register step.
 
 Units that answer the two-register mode read but reject the five-register one
 (HW-4) do not record an `intensive` read failure; the intensive state is simply
@@ -334,6 +343,12 @@ Both fans write through `coordinator.async_set_direction_level`, which resolves
 the opposite direction and writes under one per-unit lock. Two quick or
 concurrent commands (for example a scene setting both fans) therefore build on
 each other's pending value instead of on the stale cache.
+
+While an airflow pair is pending, it also determines whether the unit is off,
+balanced, or unbalanced. Starting from off or leaving sensor control therefore
+only forces the first command to be balanced; subsequent commands keep the
+other pending direction. Restarting after a pending off command still starts
+both directions.
 
 Decision rules, in order:
 

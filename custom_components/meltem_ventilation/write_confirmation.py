@@ -20,9 +20,10 @@ from .models import RoomState, WriteConfirmation, WriteValue
 
 CONTROL_SETTING_WRITE_PREFIX = "control_setting:"
 
-_FLOW_CONTROL_WRITES = frozenset({"airflow_levels", "operation_mode", "preset_mode", "intensive"})
+_BASE_MODE_WRITES = frozenset({"airflow_levels", "operation_mode", "preset_mode"})
+_FLOW_CONTROL_WRITES = _BASE_MODE_WRITES | {"intensive"}
 # Outcomes a later readback can no longer change.
-_FINAL_STATUSES = frozenset({"failed", "confirmed", "unverifiable"})
+_FINAL_STATUSES = frozenset({"failed", "confirmed", "unverifiable", "superseded"})
 # Outcomes that flag data health while they are recent.
 _UNHEALTHY_STATUSES = frozenset({"unconfirmed", "mismatch", "failed"})
 
@@ -62,6 +63,37 @@ class WriteConfirmations:
             expected_value=expected_value,
             started_at=dt_util.utcnow(),
         )
+
+    def supersede(self, room_key: str, write_key: str) -> tuple[str, ...]:
+        """Finish earlier base-mode writes replaced by an accepted command."""
+
+        if write_key not in _BASE_MODE_WRITES:
+            return ()
+        superseded: list[str] = []
+        confirmations = self.by_room.get(room_key, {})
+        for previous_key, confirmation in confirmations.items():
+            if (
+                previous_key != write_key
+                and previous_key in _BASE_MODE_WRITES
+                and confirmation.status not in _FINAL_STATUSES
+            ):
+                confirmations[previous_key] = replace(confirmation, status="superseded")
+                superseded.append(previous_key)
+        return tuple(superseded)
+
+    def unconfirmed_control_setting(self, room_key: str, setting_key: str) -> int | None:
+        """Return an accepted setting whose value has not been read back yet."""
+
+        confirmation = self.by_room.get(room_key, {}).get(
+            f"{CONTROL_SETTING_WRITE_PREFIX}{setting_key}"
+        )
+        if (
+            confirmation is not None
+            and confirmation.status in ("pending", "unconfirmed")
+            and isinstance(confirmation.expected_value, int)
+        ):
+            return confirmation.expected_value
+        return None
 
     def set_status(
         self,
