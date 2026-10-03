@@ -83,6 +83,18 @@ The person confirmed the Meltem app and physical airflow also showed `80/0`,
 with no unexpected behavior. This differs from the `20/20` measured airflow
 after earlier W-6 restores; no writes were made after this final power cycle.
 
+## Mode-read change during T-10
+
+During the 2026-10-02/03 T-10 soak, slave `5`'s airflow jobs first reported
+mode-group exception `0x05` and later began succeeding. After the soak, five
+full reads of `41120..41124` returned `[0, 0, 0, 3, 227]`; `41020..41021`
+returned `75/75 m3/h`, and the integration decoded `intensive_active=True`.
+The user reported several wall-button operations on slave `5` during the run.
+No Modbus writes were sent to it, but the button actions were not timestamped,
+so their relation to the read change and intensive state is unknown. The
+24-hour job counts and transport outcome are summarized under
+[HW-7](HARDWARE_BACKLOG.md#hw-7--validate-the-tmodbus-transport-on-the-real-gateway).
+
 ## Product registers and readable islands
 
 All six tested `M-WRG-II` units returned the same product registers:
@@ -186,6 +198,18 @@ primary target confirmation and restores succeeded in all 12 trials, and all
 30 reads on slave `3` returned `[30, 30]`. The idle baseline was
 `15.4..16.7 ms`; during interleaved traffic reads took up to `134.4 ms`.
 There were no read failures or link recycles.
+
+The T-10 soak ran read-only for 8,640 rounds over 24 h 1 min with six units.
+All 288 transport diagnostics showed zero consecutive timeouts and link
+recycles; no timeout, protocol/desynchronization, or Busy errors were logged.
+Temperature, status, and slow plans succeeded on every unit. Airflow jobs
+reported the known mode-group exception `0x05` on slaves `2`, `3`, `6`, and
+`7` for the full run and on slave `5` for 6,228 jobs; on slave `5`, 2,412
+airflow jobs later succeeded. The user reported operating slave `5`'s wall
+button several times during the soak, so that transition cannot be attributed
+to polling alone. Slave `4` airflow jobs succeeded throughout. The T-10
+transport findings are strong, but the proposed 99.5% total-job threshold was
+not met because the mode-group failures remain in the job results.
 
 The simple request-scenario and request-gap baselines above were measured with
 pymodbus. HW-7 in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) repeats those

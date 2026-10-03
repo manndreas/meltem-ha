@@ -362,6 +362,26 @@ continued to decode manual balanced operation at `20/20 m3/h`. On this unit,
 short-read availability and manual airflow readback therefore persisted
 through one power cycle, while the intensive block stayed unavailable.
 
+T-10 provided a separate uncontrolled clue on slave `5`: the mode-group
+readings became successful during the soak, and the post-soak probe decoded an
+intensive state. The user reported several wall-button operations on slave `5`
+during T-10, but the times and actions were not recorded. The observed
+register values and limitation are recorded in
+[MELTEM.md](MELTEM.md#mode-read-change-during-t-10). No Modbus writes were sent
+to slave `5`; this is not a controlled measurement of what made the block
+readable.
+
+During T-10, no Modbus writes were made, but the user reported operating
+slave `5`'s wall button several times. Its airflow jobs reported the same
+mode-register code `0x05` for 6,228 rounds, then reported success for 2,412
+rounds. A post-soak R-9 read returned the full block
+`41120..41124 = [0, 0, 0, 3, 227]`; the integration decoded
+`intensive_active=True`, and `41020..41021` read `75/75 m3/h`. Because the
+button actions were not timestamped or controlled, this is a correlation, not
+evidence that a wall-button action unlocked the block or caused the intensive
+state. Slave `5` uses firmware `2584`; repeat this observation under
+controlled conditions before changing HW-4 behavior.
+
 ### Candidate solutions
 
 - **A — no change.** Correct if the capability returns after the first write;
@@ -560,25 +580,33 @@ measurement are listed under
   times. The optional T-9 Home Assistant setup/unload test passed, and P-3
   reopened the port afterwards. USB unplug/replug and a real HA installation
   remain untested.
-- **Measurement 7:** T-10 started on 2026-10-02 at 19:45 local time after
-  explicit approval to reserve the port for 24 hours. It polls all six
-  discovered units read-only; results are in
-  `tmp/live-tests/2026-10-02/T-10.txt` and `T-10.csv`. The soak is still in
-  progress and must not be marked passed until all 8,640 rounds finish and the
-  recorded failures/recycles are reviewed.
+- **Measurement 7:** T-10 completed 8,640 rounds over 24 h 1 min with six
+  units. There were no transport timeouts, protocol/desynchronization errors,
+  Busy responses, or link recycles; all 288 diagnostics showed
+  `consecutive_timeouts=0` and `link_recycles=0`. Temperature, status, and
+  slow plans succeeded for every unit. The proposed 99.5% total-job threshold
+  was not met because mode-group exception `0x05` made airflow jobs fail on
+  slaves `2`, `3`, `6`, and `7` throughout, and on slave `5` for 6,228 jobs;
+  slave `5` airflow jobs then succeeded for 2,412 jobs. Slave `4` airflow jobs
+  succeeded throughout. The mode-read transition on slave `5` is detailed
+  under [HW-4](#hw-4--units-that-reject-the-five-register-mode-block). Thus
+  T-10 supports transport stability, but does not pass the proposed whole-job
+  criterion. Detailed counts are in
+  `tmp/live-tests/2026-10-02/T-10.csv` and `.txt`.
 
 The T-1 integration-like baseline runner counts a refresh as successful when
 `read_room_state` does not raise; the current T-2 runner also counts optional
 read-group health errors. Consequently, the baseline reported 18/18 full
 refreshes and 240/240 scheduler jobs successful, while tmodbus reported
 0/18 and 180/240 respectively, with the difference consisting of the known
-mode-register exception code `5`. These success counts are not directly comparable. The raw register-profile
-tests showed the same mode-register exceptions on both transports. HW-7
-remains open: active Busy behavior, the real Home Assistant write/USB
-lifecycle, and the 24-hour soak are still unmeasured. The powered-off-unit
-test saw successful integration jobs, but did not log their returned state.
-The integration-like success/error comparison also needs a like-for-like
-interpretation.
+mode-register exception code `5`. These success counts are not directly
+comparable. The raw register-profile tests showed the same mode-register
+exceptions on both transports. HW-7 remains open: active Busy behavior and
+the real Home Assistant write/USB lifecycle are still unmeasured. T-10 was
+transport-stable but did not meet the proposed whole-job success threshold.
+The powered-off-unit test saw successful integration jobs, but did not log
+their returned state. The integration-like success/error comparison still
+needs a like-for-like interpretation.
 
 ### Candidate solutions
 
