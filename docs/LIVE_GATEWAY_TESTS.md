@@ -564,9 +564,19 @@ Run R on every unit unless the test says otherwise.
 
   The CSV has one line per job (time, slave, plan, result, requests,
   latency); the log has `client.transport_diagnostics()` every 5 minutes.
+  This is a long-running read-only client test, not a real Home Assistant
+  coordinator soak; [H-9](#h-9--real-home-assistant-instance) covers the
+  installed integration. Record any app/keypad/manual operation with its time
+  and slave, because it can change mode-register readability or the mode being
+  observed without a Modbus write.
 - **Pass (proposed):** at least 99.5 % successful jobs per unit;
   `link_recycles = 0`, or every recycle explained; no busy wait above 2 s;
   longest pause between two answers below 5 s; no latency trend over the day.
+  Also report the job-level result separately from transport diagnostics:
+  known mode-register exceptions such as HW-4 code `0x05` remain failed
+  groups/jobs and must not be silently removed from the total-job rate, but
+  they are not timeouts or link failures. If they prevent the proposed
+  threshold, report the soak as transport-stable but not a full pass.
 
 ## W — Writes on a released test unit
 
