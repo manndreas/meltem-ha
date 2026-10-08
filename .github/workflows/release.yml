@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 # A tag push and a published release can both fire for one tag.
 concurrency:
@@ -29,9 +30,11 @@ env:
   RELEASE_REF: ${{ github.event.inputs.tag_name || github.ref }}
 
 jobs:
-  hassfest:
-    name: Hassfest
+  verify_ci:
+    name: Verify CI for release commit
     runs-on: ubuntu-26.04
+    outputs:
+      release_sha: ${{ steps.release_commit.outputs.sha }}
 
     steps:
       - name: Check out repository
@@ -39,80 +42,64 @@ jobs:
         with:
           ref: ${{ env.RELEASE_REF }}
 
-      - name: Run hassfest
-        uses: home-assistant/actions/hassfest@06749dd8c0b54f350bc69c8752456cee498808a3 # master
+      - name: Resolve release commit
+        id: release_commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
-  ruff:
-    name: Ruff
-    runs-on: ubuntu-26.04
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ env.RELEASE_REF }}
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install ruff
-        run: python -m pip install --upgrade pip ruff==0.16.9
-
-      - name: Run ruff
-        run: ruff check custom_components tests tools
-
-  pytest:
-    name: Pytest
-    runs-on: ubuntu-26.04
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ env.RELEASE_REF }}
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install test dependencies
+      - name: Require successful CI run for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.release_commit.outputs.sha }}
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-test.txt
+          MAX_WAIT_SECONDS=1800
+          POLL_INTERVAL_SECONDS=30
+          WAITED_SECONDS=0
 
-      - name: Run mypy
-        run: mypy
+          while true; do
+            CI_STATE=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${RELEASE_SHA}&branch=main&event=push&per_page=100" \
+              --jq '
+                if any(.workflow_runs[]; .conclusion == "success") then "success"
+                elif any(.workflow_runs[]; .status != "completed") then "pending"
+                elif (.workflow_runs | length) == 0 then "missing"
+                else "failed"
+                end')
 
-      - name: Run test suite
-        run: pytest
-
-  hacs:
-    name: HACS Validation
-    runs-on: ubuntu-26.04
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ env.RELEASE_REF }}
-
-      - name: Run HACS validation
-        uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main
-        with:
-          category: integration
-          ignore: topics
+            case "${CI_STATE}" in
+              success)
+                echo "Found a successful CI run for ${RELEASE_SHA} on main."
+                break
+                ;;
+              pending)
+                if [ "${WAITED_SECONDS}" -ge "${MAX_WAIT_SECONDS}" ]; then
+                  echo "::error::CI for ${RELEASE_SHA} on main is still running after 30 minutes."
+                  exit 1
+                fi
+                echo "CI for ${RELEASE_SHA} is queued or running; waiting ${POLL_INTERVAL_SECONDS}s."
+                sleep "${POLL_INTERVAL_SECONDS}"
+                WAITED_SECONDS=$((WAITED_SECONDS + POLL_INTERVAL_SECONDS))
+                ;;
+              missing)
+                echo "::error::No CI run for ${RELEASE_SHA} on main was found."
+                exit 1
+                ;;
+              failed)
+                echo "::error::CI for ${RELEASE_SHA} on main completed without a successful run."
+                exit 1
+                ;;
+              *)
+                echo "::error::Unexpected CI state '${CI_STATE}' for ${RELEASE_SHA}."
+                exit 1
+                ;;
+            esac
+          done
 
   build:
     name: Build Release Artifact
     runs-on: ubuntu-26.04
-    needs:
-      - hassfest
-      - ruff
-      - pytest
-      - hacs
+    needs: verify_ci
     permissions:
       contents: write
 
@@ -120,7 +107,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.verify_ci.outputs.release_sha }}
           fetch-depth: 0
 
       - name: Set up Python
