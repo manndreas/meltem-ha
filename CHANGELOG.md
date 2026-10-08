@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.0.1
+
+- Enforce the configured maximum request rate across individual Modbus read
+  requests, retries, and all units sharing the gateway connection. Rate changes
+  apply immediately; write-sequence timing is unchanged.
+- Publish startup data progressively, reading airflow before slower groups and
+  continuing normal polling while the remaining groups are initialized.
+- Keep unread groups unknown during startup and preserve failed-read health
+  until that group succeeds or reaches the existing failure threshold.
+- Clear outdated health for the intensive group when the short mode-register
+  fallback makes that read unavailable, so recovered data no longer leaves the
+  data-read status in the problem state.
+
 ## 4.0.0
 
 - Requires Home Assistant `2026.10` or newer. The integration now uses the

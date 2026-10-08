@@ -152,6 +152,9 @@ class _FakeClient:
     def seconds_since_successful_read(self, slave: int) -> float | None:
         return self.silent_seconds_by_slave.get(slave)
 
+    def update_request_rate(self, max_requests_per_second: float) -> None:
+        self.max_requests_per_second = max_requests_per_second
+
 
 _SLEEP = "custom_components.meltem_ventilation.coordinator.async_sleep"
 _UNIT_1 = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
@@ -242,12 +245,13 @@ class TestCoordinatorResilience:
     def test_request_rate_change_does_not_cancel_active_backoff(
         self, hass: HomeAssistant,
     ) -> None:
-        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
         _start_backoff(coordinator)
 
         coordinator.update_request_rate(1.0)
 
         assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_START_SECONDS
+        assert client.max_requests_per_second == 1.0
 
     def test_room_becomes_unavailable_after_repeated_read_failures(
         self, hass: HomeAssistant,

@@ -13,6 +13,7 @@ from dataclasses import replace
 from unittest.mock import AsyncMock
 
 import pytest
+from homeassistant.util import dt as dt_util
 from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
@@ -41,6 +42,7 @@ from custom_components.meltem_ventilation.modbus_client import MeltemModbusClien
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
 from custom_components.meltem_ventilation.models import (
     EMPTY_ROOM_STATE,
+    ReadHealth,
     RefreshPlan,
     RoomConfig,
     RoomState,
@@ -713,6 +715,27 @@ class TestShortModeFallback:
         assert state.intensive_active is True
         assert state.read_health_for("flow_control").last_error is None
         assert state.read_health_for("intensive").last_attempt is None
+
+    async def test_short_read_clears_stale_intensive_failure(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 229, 0, 0, 0])
+        _reject_long_mode_read(unit)
+        previous = RoomState().with_read_health(
+            "intensive",
+            ReadHealth(
+                last_attempt=dt_util.utcnow(),
+                consecutive_failures=3,
+                last_error="long mode read failed",
+            ),
+        )
+
+        state = await client.read_room_state(_PLAIN, previous, _FLOW)
+
+        health = state.read_health_for("intensive")
+        assert health.last_attempt is None
+        assert health.consecutive_failures == 0
+        assert health.last_error is None
 
     @pytest.mark.parametrize(
         ("room", "block", "operation_mode"),
