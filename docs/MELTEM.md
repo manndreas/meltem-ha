@@ -95,6 +95,36 @@ so their relation to the read change and intensive state is unknown. The
 24-hour job counts and transport outcome are summarized under
 [HW-7](HARDWARE_BACKLOG.md#hw-7--validate-the-tmodbus-transport-on-the-real-gateway).
 
+## Home Assistant restart on 2026-10-08
+
+The Core debug export `home-assistant_2026-10-08T18-44-34.916Z.log`
+captured a restart of HA `2026.10.0` with integration `4.0.0`, six units, and
+the configured rate `3 req/s`. Log timestamps below are local CEST (UTC+2).
+
+- At `20:38:11.133`, opening the serial connection timed out while `serialx`
+  was waiting for the executor to reconfigure the port. The connection was
+  established at `20:38:12.048`, before the first RTU request. The log does
+  not establish whether executor contention, USB readiness, or another cause
+  delayed the open; this is not an unanswered register read.
+- Gateway validation and the initial full room scan sent 58 RTU requests
+  between `20:38:12.079` and `20:38:25.360`, including up to eight sends in a
+  calendar second. The first coordinator refresh completed at `20:38:25.477`
+  in `12.788 s`, with `success: True`. The old rate cap limited room/job
+  starts rather than individual read telegrams.
+- Every room's first airflow read succeeded. All 288 recorded coordinator
+  refreshes through `20:44:34.517` reported success, but mode-register reads
+  still returned exception `0x05`: full/short/single fallbacks on slaves
+  `2`, `3`, `6`, and `7`; the full block on slave `5`, whose short read worked.
+  This is consistent with the separate [mode-read findings](#mode-reads-after-a-power-cycle),
+  not evidence of a transport timeout or recovery of every read group.
+
+The person reported a transient "Datenlesestatus" problem on each restart.
+The export does not contain the entity's exact on/off transition, so neither
+the opening timeout nor the startup traffic is proven to cause that indication.
+The progressive startup and shared read pacing described in
+[DEVELOPER.md](DEVELOPER.md#polling-strategy) address the observed burst; their
+effect on the real restart still needs the H-9 check.
+
 ## Product registers and readable islands
 
 All six tested `M-WRG-II` units returned the same product registers:

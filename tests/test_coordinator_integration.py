@@ -6,21 +6,33 @@ import time
 from collections.abc import Iterable, Iterator
 from dataclasses import replace
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
+from modbus_connection import IllegalDataAddressError
+from modbus_connection.mock import MockModbusConnection, MockModbusUnit, WriteEvent
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.meltem_ventilation.binary_sensor import (
+    BINARY_SENSOR_DESCRIPTIONS,
+    MeltemBinarySensorEntity,
+    MeltemDataHealthBinarySensor,
+)
 from custom_components.meltem_ventilation.const import DOMAIN
 from custom_components.meltem_ventilation.coordinator import (
     TRANSPORT_BACKOFF_MAX_SECONDS,
     TRANSPORT_BACKOFF_START_SECONDS,
     MeltemDataUpdateCoordinator,
 )
-from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
+from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
+from custom_components.meltem_ventilation.modbus_helpers import (
+    MeltemModbusError,
+    supported_entity_keys_for_profile,
+)
 from custom_components.meltem_ventilation.models import (
     ReadHealth,
     RefreshPlan,
@@ -28,6 +40,7 @@ from custom_components.meltem_ventilation.models import (
     RoomState,
 )
 from custom_components.meltem_ventilation.polling import (
+    AIRFLOW_REFRESH_PLAN,
     FULL_REFRESH_PLAN,
     JOB_GROUPS,
     JobGroup,
@@ -111,58 +124,95 @@ def _with_health(state: RoomState, group_keys: Iterable[str], health: ReadHealth
 
 
 # ---------------------------------------------------------------------------
-#  First refresh — _read_all_rooms_full
+#  Progressive startup
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(name="clock")
+def clock_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    clock = SimpleNamespace(now=time.monotonic())
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.coordinator.time",
+        SimpleNamespace(monotonic=lambda: clock.now),
+    )
+    return clock
+
+
 class TestFirstRefresh:
-    async def test_first_refresh_reads_every_room_in_full(
-        self, hass: HomeAssistant,
+    async def test_first_refresh_publishes_one_room_before_reading_the_next(
+        self, hass: HomeAssistant, clock: SimpleNamespace,
     ) -> None:
         coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
 
-        data = await coordinator._read_all_rooms_full()
+        await coordinator.async_refresh()
 
-        assert data == {"unit_1": client.next_read_state, "unit_2": client.next_read_state}
+        assert coordinator.data == {"unit_1": client.next_read_state}
+        assert client.read_calls == [("unit_1", AIRFLOW_REFRESH_PLAN)]
+        assert coordinator.data_health_stale("unit_2") is None
+        assert not coordinator.room_available("unit_2")
+        clock.now += coordinator.update_interval.total_seconds()
+
+        await coordinator.async_refresh()
+
+        assert coordinator.data == {
+            "unit_1": client.next_read_state, "unit_2": client.next_read_state
+        }
         assert client.read_calls == [
-            ("unit_1", FULL_REFRESH_PLAN),
-            ("unit_2", FULL_REFRESH_PLAN),
+            ("unit_1", AIRFLOW_REFRESH_PLAN),
+            ("unit_2", AIRFLOW_REFRESH_PLAN),
         ]
 
-    async def test_first_refresh_partial_failure_still_returns_states(
-        self, hass: HomeAssistant,
+    async def test_startup_reads_every_supported_job_without_hour_long_delays(
+        self, hass: HomeAssistant, clock: SimpleNamespace,
     ) -> None:
-        """A room that fails at startup gets an empty state and is polled first."""
+        coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
+        expected = {(job.room_key, job.refresh_plan) for job in coordinator._jobs}
+        await coordinator.async_refresh()
+        attempts = 1
+        while coordinator._startup_jobs:
+            clock.now += coordinator.update_interval.total_seconds()
+            await coordinator.async_refresh()
+            attempts += 1
+            assert attempts <= len(expected) * 2
+
+        assert set(client.read_calls) == expected
+        assert all(plan != FULL_REFRESH_PLAN for _, plan in client.read_calls)
+        assert len(coordinator.data) == 2
+
+    async def test_startup_failure_does_not_prevent_the_next_room_from_recovering(
+        self, hass: HomeAssistant, clock: SimpleNamespace,
+    ) -> None:
         coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
         client.fail_rooms = {"unit_1"}
 
-        data = await coordinator._read_all_rooms_full()
-        now = time.monotonic()
+        await coordinator.async_refresh()
 
-        failed_state = data["unit_1"]
+        assert not coordinator.last_update_success
+        assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_START_SECONDS
+        clock.now += coordinator.update_interval.total_seconds()
+
+        await coordinator.async_refresh()
+
+        failed_state = coordinator.data["unit_1"]
         assert not failed_state.has_data
         assert failed_state.read_health_for("flow").last_error == "boom: unit_1"
-        assert failed_state.read_health_for("status").consecutive_failures == 1
-        assert data["unit_2"] == client.next_read_state
-        assert all(job.next_due <= now for job in coordinator._jobs if job.room_key == "unit_1")
-        assert all(
-            job.next_due > now
-            for job in coordinator._jobs
-            if job.room_key == "unit_2" and job.key != "flow"
-        )
+        assert failed_state.read_health_for("status").last_attempt is None
+        assert coordinator.data["unit_2"] == client.next_read_state
+        assert coordinator.last_update_success
+        assert coordinator._backoff_seconds is None
 
-    async def test_first_refresh_keeps_the_request_rate_between_rooms(
-        self, hass: HomeAssistant,
+    async def test_startup_keeps_the_job_rate_between_rooms(
+        self, hass: HomeAssistant, clock: SimpleNamespace,
     ) -> None:
-        coordinator, _ = _build(hass, _ROOM_1, _ROOM_2, max_requests_per_second=2.0)
+        coordinator, client = _build(hass, _ROOM_1, _ROOM_2, max_requests_per_second=2.0)
 
-        with patch(
-            "custom_components.meltem_ventilation.coordinator.async_sleep", new=AsyncMock()
-        ) as sleep:
-            await coordinator._read_all_rooms_full()
+        await coordinator.async_refresh()
+        await coordinator.async_refresh()
 
-        sleep.assert_awaited_once()
-        assert 0 < sleep.await_args.args[0] <= 0.5
+        assert len(client.read_calls) == 1
+        clock.now += 0.5
+        await coordinator.async_refresh()
+        assert len(client.read_calls) == 2
 
     async def test_a_failed_first_refresh_is_retried_after_the_backoff_start(
         self, hass: HomeAssistant,
@@ -193,7 +243,7 @@ class TestFirstRefresh:
         assert coordinator.update_interval == timedelta(seconds=TRANSPORT_BACKOFF_START_SECONDS)
 
     async def test_first_refresh_keeps_working_room_when_another_has_no_values(
-        self, hass: HomeAssistant,
+        self, hass: HomeAssistant, clock: SimpleNamespace,
     ) -> None:
         coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
         unanswered = RoomState().with_read_health(
@@ -202,11 +252,222 @@ class TestFirstRefresh:
         )
         working = RoomState(target_level=42)
         with patch.object(client, "read_room_state", side_effect=[unanswered, working]):
-            states = await coordinator._read_all_rooms_full()
+            await coordinator.async_refresh()
+            clock.now += coordinator.update_interval.total_seconds()
+            await coordinator.async_refresh()
 
-        assert states == {"unit_1": unanswered, "unit_2": working}
-        assert coordinator._room_failures["unit_1"] == 1
-        assert all(job.next_due < time.monotonic() for job in coordinator._jobs if job.room_key == "unit_1")
+        assert coordinator.data == {"unit_1": unanswered, "unit_2": working}
+        assert coordinator.last_update_success
+
+    async def test_periodic_flow_jobs_continue_during_slow_startup(
+        self, hass: HomeAssistant, clock: SimpleNamespace,
+    ) -> None:
+        coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
+        await coordinator.async_refresh()
+        pending_count = len(coordinator._startup_jobs)
+        clock.now += 11.0
+
+        await coordinator.async_refresh()
+        clock.now += coordinator.update_interval.total_seconds()
+        await coordinator.async_refresh()
+
+        assert client.read_calls == [
+            ("unit_1", AIRFLOW_REFRESH_PLAN),
+            ("unit_1", AIRFLOW_REFRESH_PLAN),
+            ("unit_2", AIRFLOW_REFRESH_PLAN),
+        ]
+        assert len(coordinator._startup_jobs) == pending_count - 1
+
+    async def test_startup_job_is_rescheduled_from_completion(
+        self, hass: HomeAssistant, clock: SimpleNamespace,
+    ) -> None:
+        coordinator, client = _build(hass)
+
+        async def _slow_read(*args: object) -> RoomState:
+            clock.now += 15.0
+            return client.next_read_state
+
+        with patch.object(client, "read_room_state", side_effect=_slow_read):
+            await coordinator.async_refresh()
+
+        flow = next(job for job in coordinator._jobs if job.key == "flow")
+        assert flow.next_due == clock.now + flow.interval_seconds
+
+    async def test_persistent_outage_keeps_backoff_and_failed_health(
+        self, hass: HomeAssistant, clock: SimpleNamespace,
+    ) -> None:
+        coordinator, client = _build(hass)
+        client.fail_rooms = {"unit_1"}
+        for _ in range(20):
+            await coordinator.async_refresh()
+            assert not coordinator.last_update_success
+            assert coordinator.update_interval.total_seconds() >= TRANSPORT_BACKOFF_START_SECONDS
+            clock.now += coordinator.update_interval.total_seconds()
+        assert not coordinator._startup_jobs
+        assert coordinator._startup_states["unit_1"].read_health_for("flow").consecutive_failures >= 3
+
+    async def test_status_only_room_starts_without_an_airflow_read(
+        self, hass: HomeAssistant, clock: SimpleNamespace,
+    ) -> None:
+        room = replace(_ROOM_1, supported_entity_keys=frozenset({"error_status"}))
+        coordinator, client = _build(hass, room)
+
+        await coordinator.async_refresh()
+
+        assert client.read_calls == [("unit_1", RefreshPlan.only(refresh_status=True))]
+        assert not coordinator._startup_jobs
+
+
+class TestStartupWithRealClient:
+    @pytest.mark.parametrize("rate", [0.5, 3.0, 10.0])
+    async def test_six_rooms_publish_incrementally_with_a_shared_telegram_limit(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch,
+        clock: SimpleNamespace, rate: float,
+    ) -> None:
+        link = MockModbusConnection()
+        rooms = [
+            RoomConfig(
+                key=f"unit_{slave}", name=f"Unit {slave}", profile="ii_plain", slave=slave,
+                supported_entity_keys=supported_entity_keys_for_profile("ii_plain"),
+            )
+            for slave in range(2, 8)
+        ]
+        writes: list[WriteEvent] = []
+        for room in rooms:
+            link.for_unit(room.slave).holding.update({
+                41020: [30, 30], 41120: [3, 60, 0, 0, 0],
+            })
+            link.for_unit(room.slave).on_write(writes.append)
+        slaves = {link.for_unit(slave): slave for slave in range(1, 8)}
+        link.for_unit(1).holding[43901] = len(rooms)
+        client = MeltemModbusClient(
+            link.for_unit, port="/dev/test", max_requests_per_second=rate
+        )
+        entry = MockConfigEntry(domain=DOMAIN, title="Meltem", source="user")
+        entry.add_to_hass(hass)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass, config_entry=entry, client=client, rooms=rooms,
+            max_requests_per_second=rate,
+        )
+        baseline = clock.now
+        utc = dt_util.utcnow()
+        logical_time = SimpleNamespace(monotonic=lambda: clock.now)
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.device.transport.time", logical_time
+        )
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.modbus_client.time", logical_time
+        )
+        utc_time = SimpleNamespace(utcnow=lambda: utc + timedelta(seconds=clock.now - baseline))
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.modbus_client.dt_util", utc_time
+        )
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.read_health.dt_util", utc_time
+        )
+
+        async def _sleep(seconds: float) -> None:
+            clock.now += seconds
+
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
+        )
+        reads: list[tuple[float, int, int]] = []
+        original_read = MockModbusUnit.read_holding_registers
+
+        async def _read(unit: MockModbusUnit, address: int, count: int) -> list[int]:
+            reads.append((clock.now, slaves[unit], address))
+            return await original_read(unit, address, count)
+
+        monkeypatch.setattr(MockModbusUnit, "read_holding_registers", _read)
+        monkeypatch.setattr(coordinator, "_schedule_refresh", lambda: None)
+        snapshots: list[dict[str, RoomState]] = []
+        remove_listener = coordinator.async_add_listener(
+            lambda: snapshots.append(coordinator.safe_data)
+        )
+        try:
+            await client.async_validate_gateway()
+            await coordinator.async_refresh()
+
+            assert len(snapshots) == 1
+            assert set(snapshots[0]) == {"unit_2"}
+            assert snapshots[0]["unit_2"].supply_air_flow == 30
+            assert snapshots[0]["unit_2"].error_status is None
+            assert coordinator.read_group_stale("unit_2", "status") is None
+            status_description = next(
+                description for description in BINARY_SENSOR_DESCRIPTIONS
+                if description.key == "error_status"
+            )
+            status_sensor = MeltemBinarySensorEntity(
+                coordinator, rooms[0], status_description
+            )
+            assert not status_sensor.available
+            health_sensor = MeltemDataHealthBinarySensor(coordinator, rooms[0])
+            assert health_sensor.is_on is False
+            assert health_sensor.extra_state_attributes["status"]["stale"] is None
+
+            steps = 0
+            while coordinator._startup_jobs:
+                clock.now += coordinator.update_interval.total_seconds()
+                await coordinator.async_refresh()
+                steps += 1
+                assert steps < 100
+
+            assert coordinator.state_room_count == 6
+            assert status_sensor.available
+            assert all(
+                state.error_status is False and state.operating_hours == 0
+                for state in coordinator.safe_data.values()
+            )
+            assert all(
+                later[0] - earlier[0] >= 1 / rate - 1e-8
+                for earlier, later in zip(reads, reads[1:])
+            )
+            assert all(
+                len(set(later) - set(earlier)) <= 1
+                for earlier, later in zip(snapshots, snapshots[1:])
+            )
+            assert not writes
+        finally:
+            remove_listener()
+            await coordinator.async_shutdown()
+            client.shutdown()
+
+    async def test_mode_refusal_is_not_hidden_by_successful_startup_flow(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, clock: SimpleNamespace
+    ) -> None:
+        link = MockModbusConnection()
+        unit = link.for_unit(_ROOM_1.slave)
+        unit.holding[41020] = [30, 30]
+        original_read = unit.read_holding_registers
+
+        async def _read(address: int, count: int) -> list[int]:
+            if address in (41120, 41121):
+                raise IllegalDataAddressError()
+            return await original_read(address, count)
+
+        monkeypatch.setattr(unit, "read_holding_registers", _read)
+        client = MeltemModbusClient(link.for_unit, port="/dev/test")
+        entry = MockConfigEntry(domain=DOMAIN, title="Meltem", source="user")
+        entry.add_to_hass(hass)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass, config_entry=entry, client=client, rooms=[_ROOM_1],
+            max_requests_per_second=2.0,
+        )
+
+        for _ in range(3):
+            await coordinator.async_refresh()
+            clock.now += 11.0
+
+        # The second refresh is periodic flow; the third makes startup progress.
+        await coordinator.async_refresh()
+
+        assert coordinator.last_update_success
+        assert coordinator.safe_data["unit_1"].supply_air_flow == 30
+        assert coordinator.read_group_available("unit_1", "flow")
+        assert coordinator.read_group_stale("unit_1", "flow_control") is True
+        assert MeltemDataHealthBinarySensor(coordinator, _ROOM_1).is_on is True
+        client.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +476,7 @@ class TestFirstRefresh:
 
 
 class TestAsyncUpdateData:
-    async def test_empty_data_triggers_full_read(
+    async def test_empty_data_triggers_one_startup_job(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build(hass)
@@ -224,7 +485,7 @@ class TestAsyncUpdateData:
         data = await coordinator._async_update_data()
 
         assert data == {"unit_1": client.next_read_state}
-        assert client.read_calls == [("unit_1", FULL_REFRESH_PLAN)]
+        assert client.read_calls == [("unit_1", AIRFLOW_REFRESH_PLAN)]
 
     async def test_existing_data_runs_one_incremental_job(
         self, hass: HomeAssistant,
@@ -596,6 +857,27 @@ class TestReadOneJob:
         )
 
         assert not RoomState().with_read_health("flow", failed_read).has_data
+
+    def test_failed_but_never_read_group_is_not_reported_as_healthy(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build(hass)
+        health = ReadHealth(
+            last_attempt=dt_util.utcnow(), consecutive_failures=1, last_error="read failed"
+        )
+        coordinator.data = {"unit_1": RoomState().with_read_health("flow", health)}
+        coordinator.last_update_success = True
+        sensor = MeltemDataHealthBinarySensor(coordinator, _ROOM_1)
+
+        assert sensor.is_on is None
+        assert sensor.extra_state_attributes["flow"]["stale"] is None
+
+        coordinator.data = {
+            "unit_1": RoomState().with_read_health(
+                "flow", replace(health, consecutive_failures=3)
+            )
+        }
+        assert sensor.is_on is True
 
 
 # ---------------------------------------------------------------------------

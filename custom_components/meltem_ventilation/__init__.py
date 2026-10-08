@@ -194,6 +194,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     client = MeltemModbusClient(
         partial(async_get_unit, hass, entry, build_serial_params(port)),
         port=port,
+        max_requests_per_second=max_requests_per_second,
     )
     try:
         await client.async_validate_gateway()

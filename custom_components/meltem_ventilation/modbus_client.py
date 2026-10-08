@@ -174,10 +174,18 @@ class MeltemModbusClient:
     coordinator, and the link serializes the requests themselves.
     """
 
-    def __init__(self, unit_factory: Callable[[int], ModbusUnit], *, port: str) -> None:
+    def __init__(
+        self,
+        unit_factory: Callable[[int], ModbusUnit],
+        *,
+        port: str,
+        max_requests_per_second: float | None = None,
+    ) -> None:
         self._unit_factory = unit_factory
         self._port = port
         self._policy = new_transport_policy()
+        if max_requests_per_second is not None:
+            self.update_request_rate(max_requests_per_second)
         self._units: dict[int, PolicyUnit] = {}
         self._devices: dict[int, MeltemRoomDevice] = {}
         # Many units reject the mode reads until a first write (HW-4).
@@ -198,10 +206,16 @@ class MeltemModbusClient:
 
         return self._policy.diagnostics()
 
+    def update_request_rate(self, max_requests_per_second: float) -> None:
+        """Apply the shared read-telegram limit, including retries."""
+
+        self._policy.update_request_rate(max_requests_per_second)
+
     def shutdown(self) -> None:
         """Reject every later operation, so a late readback cannot reach the link."""
 
         self._shut_down = True
+        self._policy.shutdown()
 
     def _unit(self, slave: int) -> PolicyUnit:
         unit = self._units.get(slave)
@@ -727,6 +741,7 @@ def _updated_read_health(
     now = dt_util.utcnow()
     for group_key in refresh_plan.read_groups():
         if group_key in job.skipped:
+            group_health.pop(group_key, None)
             continue
         if not room.supports_any(READ_GROUP_ENTITY_KEYS[group_key]):
             continue

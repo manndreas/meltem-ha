@@ -122,9 +122,11 @@ During setup, choose the exact profile manually.
 Open the integration options via `Settings` -> `Devices & Services` -> `Meltem Modbus`
 -> `Configure`.
 
-- **Change request rate** — the maximum poll-job start rate used by the
-  scheduler. One job can contain several serialized Modbus requests; the option
-  is not a wire-level request limit.
+- **Change request rate** — the maximum read-request rate shared by all units,
+  including retries and post-write readbacks. The scheduler also limits job
+  starts to this rate. Write sequences retain their separate hardware timing.
+  Startup values appear progressively, with airflow read before slower groups;
+  a lower rate makes the initial scan take longer.
 - **Change profiles for existing units** — reassign profiles without rescanning
   the gateway
 - **Scan for new units** — discover units that were added to the gateway after

@@ -608,6 +608,14 @@ The powered-off-unit test saw successful integration jobs, but did not log
 their returned state. The integration-like success/error comparison still
 needs a like-for-like interpretation.
 
+The HA `2026.10.0` restart export from 2026-10-08 provides partial real-host
+evidence, summarized in
+[MELTEM.md](MELTEM.md#home-assistant-restart-on-2026-10-08). It motivated shared
+read-telegram pacing and progressive startup, but does not close measurements
+6/7 or prove the reported transient data-health indication was caused by the
+startup traffic. Validate the revised startup under H-9 before marking that
+behavior resolved.
+
 ### Candidate solutions
 
 - **A — release** if all measurements match the baseline.

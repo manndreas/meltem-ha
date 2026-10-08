@@ -69,7 +69,6 @@ from .overlay import OptimisticOverlay
 from .polling import (
     AIRFLOW_REFRESH_PLAN,
     CONTROL_SETTINGS_REFRESH_PLAN,
-    FULL_REFRESH_PLAN,
     PollJob,
     build_jobs,
     select_due_job,
@@ -154,6 +153,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._last_read_started: float | None = None
         # Jobs are precomputed once and then executed in a due-time round robin.
         self._jobs = build_jobs(rooms, time.monotonic())
+        self._startup_jobs: list[PollJob] | None = None
+        self._startup_states: dict[str, RoomState] = {}
+        self._startup_turn = True
 
         super().__init__(
             hass,
@@ -285,28 +287,29 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     async def _async_update_data(self) -> dict[str, RoomState]:
         try:
             async with self._gateway_lock:
-                if not self.safe_data:
-                    states = await self._read_all_rooms_full()
-                    self._on_transport_success()
-                    self._schedule_next_tick()
-                    return states
-
                 now = time.monotonic()
-                job = (
-                    None
-                    if self._read_spacing_remaining(now) > 0
-                    else select_due_job(self._jobs, now)
-                )
+                job, startup = self._select_poll_job(now)
                 if job is None:
                     self._schedule_next_tick()
-                    return self.data
+                    return self.safe_data
 
                 # Move the job forward before running it so a failing read
                 # cannot get stuck at the front of the queue forever.
                 job.next_due = now + self._job_interval(job)
                 self._last_read_started = now
                 self._last_job_error = None
-                updated_data = await self._read_one_job(self.data, job)
+                updated_data = await self._read_one_job(
+                    self.safe_data or self._startup_states, job
+                )
+                if startup:
+                    job.next_due = time.monotonic() + self._job_interval(job)
+                if not any(state.has_data for state in updated_data.values()):
+                    self._startup_states = updated_data
+                    raise self._last_job_error or MeltemModbusError(
+                        f"No state values received from room {job.room_key} "
+                        f"for job {job.key} during startup"
+                    )
+                self._startup_states = {}
                 # _read_one_job swallows transport errors to keep cached state,
                 # so success has to be derived from the recorded job error.
                 if self._last_job_error is None:
@@ -318,12 +321,30 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 self._schedule_next_tick()
                 return updated_data
         except MeltemModbusError as err:
-            # Only the initial full read gets here; jobs record errors per room.
+            # Before any state arrives, an unsuccessful job is a startup failure.
             self._on_transport_failure()
             if self._backoff_seconds is None:
                 # Retrying at the request rate would hammer a gateway that is down.
                 self.update_interval = timedelta(seconds=TRANSPORT_BACKOFF_START_SECONDS)
             raise UpdateFailed(str(err)) from err
+
+    def _select_poll_job(self, now: float) -> tuple[PollJob | None, bool]:
+        """Warm up all groups while allowing already-read groups to refresh."""
+
+        if self._startup_jobs is None and not self.safe_data:
+            self._startup_jobs = list(self._jobs)
+        if self._read_spacing_remaining(now) > 0:
+            return None, False
+        if self._startup_jobs:
+            due = select_due_job(
+                (job for job in self._jobs if job not in self._startup_jobs), now
+            )
+            if due is None or self._startup_turn:
+                self._startup_turn = False
+                return self._startup_jobs.pop(0), True
+            self._startup_turn = True
+            return due, False
+        return select_due_job(self._jobs, now), False
 
     def _read_spacing_remaining(self, now: float) -> float:
         """Return how long the request-rate cap still blocks the next read."""
@@ -363,8 +384,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self.update_interval = timedelta(seconds=IDLE_TICK_SECONDS)
             return
 
-        earliest_due = min(job.next_due for job in self._jobs)
-        seconds = max(self._tick_seconds, earliest_due - time.monotonic())
+        now = time.monotonic()
+        earliest_due = (
+            now if self._startup_jobs else min(job.next_due for job in self._jobs)
+        )
+        seconds = max(self._tick_seconds, earliest_due - now)
         # HA schedules from int(loop.time()), which would fire up to a second early.
         loop_time = self.hass.loop.time()
         self.update_interval = timedelta(
@@ -818,8 +842,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self.async_update_listeners()
 
     def update_request_rate(self, max_requests_per_second: float) -> None:
-        """Apply a new scheduler request rate without reloading the integration."""
+        """Retune the scheduler and shared read limit without reloading."""
 
+        self.client.update_request_rate(max_requests_per_second)
         self._tick_seconds = 1.0 / max(0.1, max_requests_per_second)
         if self._backoff_seconds is None:
             self._schedule_next_tick()
@@ -886,63 +911,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             if attempt < POST_WRITE_REFRESH_RETRIES:
                 await async_sleep(POST_WRITE_REFRESH_INTERVAL_SECONDS)
 
-    async def _read_all_rooms_full(self) -> dict[str, RoomState]:
-        """Read a full initial state for all configured rooms."""
-
-        states: dict[str, RoomState] = {}
-        successful_reads = 0
-        last_error: MeltemModbusError | None = None
-        for room in self.rooms:
-            await self._async_wait_for_read_slot()
-            try:
-                states[room.key] = await self.client.read_room_state(
-                    room,
-                    EMPTY_ROOM_STATE,
-                    FULL_REFRESH_PLAN,
-                )
-                if states[room.key].has_data:
-                    successful_reads += 1
-                    self._room_failures.pop(room.key, None)
-                else:
-                    last_error = MeltemModbusError(
-                        f"No state values received from room {room.key} during startup"
-                    )
-                    self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
-            except MeltemModbusError as err:
-                _LOGGER.warning("Failed to read room %s during startup: %s", room.key, err)
-                states[room.key] = read_health.record_read_failures(
-                    EMPTY_ROOM_STATE,
-                    room,
-                    FULL_REFRESH_PLAN,
-                    err,
-                )
-                last_error = err
-                self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
-                # Give the serial port time to settle before the next room.
-                await async_sleep(0.5)
-
-        if successful_reads == 0 and last_error is not None:
-            raise last_error
-
-        self._prioritize_empty_rooms(states)
-        return states
-
     async def _async_wait_for_read_slot(self) -> None:
         """Wait until the request-rate cap allows the next read, then claim it."""
 
         if (remaining := self._read_spacing_remaining(time.monotonic())) > 0:
             await async_sleep(remaining)
         self._last_read_started = time.monotonic()
-
-    def _prioritize_empty_rooms(self, states: dict[str, RoomState]) -> None:
-        """Pull all jobs for rooms with no startup data to the front of the queue."""
-
-        now = time.monotonic()
-        for room_key, state in states.items():
-            if not state.has_data:
-                for job in self._jobs:
-                    if job.room_key == room_key:
-                        job.next_due = now - 1.0
 
     @staticmethod
     def read_group_for_entity(entity_key: str) -> str | None:
@@ -975,7 +949,13 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             return True
         if self._writes.unhealthy(room_key):
             return True
-        if state.group_read_health or self._writes.has_any(room_key):
+        if (
+            any(
+                read_health.group_stale(state, group_key) is False
+                for group_key, _health in state.group_read_health
+            )
+            or self._writes.has_any(room_key)
+        ):
             return False
         return None
 

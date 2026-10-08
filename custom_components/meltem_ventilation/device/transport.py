@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -52,6 +53,29 @@ class TransportPolicy:
         self._last_answer_at: float | None = None
         self._last_read_answer: dict[int, float] = {}
         self._link_recycles = 0
+        self._request_lock = asyncio.Lock()
+        self._read_interval = 0.0
+        self._last_read_finished: float | None = None
+        self._closed = False
+
+    def update_request_rate(self, max_requests_per_second: float) -> None:
+        """Limit read attempts across every unit sharing this policy."""
+
+        if not math.isfinite(max_requests_per_second) or max_requests_per_second <= 0:
+            raise ValueError("The maximum read request rate must be positive and finite")
+        self._read_interval = 1.0 / max_requests_per_second
+
+    def shutdown(self) -> None:
+        """Reject requests still waiting for a read slot."""
+
+        self._closed = True
+
+    async def _wait_for_read_slot(self) -> None:
+        while self._last_read_finished is not None and not self._closed:
+            remaining = self._last_read_finished + self._read_interval - time.monotonic()
+            if remaining <= 0:
+                return
+            await async_sleep(remaining)
 
     def seconds_since_read_answer(self, unit_id: int) -> float | None:
         """Return the age of the last successful register read for one unit."""
@@ -86,7 +110,18 @@ class TransportPolicy:
 
         for last_attempt in (False, True):
             try:
-                result = await operation(*args)
+                async with self._request_lock:
+                    if is_read:
+                        await self._wait_for_read_slot()
+                    if self._closed:
+                        raise ClientClosedError("The Meltem gateway client was shut down")
+                    try:
+                        result = await operation(*args)
+                    finally:
+                        if is_read:
+                            # Completion-based spacing also covers a slow connect
+                            # or time spent waiting inside the underlying link.
+                            self._last_read_finished = time.monotonic()
             except ClientClosedError:
                 raise
             except ModbusConnectionError:

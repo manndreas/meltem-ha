@@ -223,9 +223,10 @@ The values seen on the tested gateway are in
 ## Polling strategy
 
 The integration uses a serialized scheduler with an adjustable maximum
-poll-job start rate. The coordinator owns the gateway lock, the request-rate
-cap, the backoff, and the write sequences; the parts without Home Assistant
-state live in their own modules:
+read-request rate. The shared `TransportPolicy` enforces the limit across
+all units; the coordinator owns the gateway lock, job-start pacing, backoff,
+and write sequences. The parts without Home Assistant state live in their
+own modules:
 
 | Module | Content |
 |---|---|
@@ -240,18 +241,34 @@ Current design:
 - each read operation is scheduled as one room-scoped job
 - jobs use block reads where possible
 - only one job runs at a time
-- scheduler cadence is derived from `max_requests_per_second`; despite the
-  legacy option name, this limits job starts, not individual wire requests
-- post-write readbacks count as job starts for that cap, and a job that would
-  start too early is skipped and rescheduled; readbacks wait for the next slot
-- the first full read after setup reads the rooms one after another and
-  keeps the same cap between them; when no room returns state values, the next
-  attempt waits `TRANSPORT_BACKOFF_START_SECONDS` instead of the request interval
+- `max_requests_per_second` limits both job starts and individual read
+  attempts, including optional mode fallbacks and retries; the policy waits
+  at least `1 / rate` after the previous read attempt finishes, not merely
+  after it was submitted, so a slow connect or link queue cannot cause a burst
+- this read limit is configured before gateway validation and is shared by
+  discovery, probes, polling, and post-write readbacks on the runtime client;
+  option changes update the policy as well as the scheduler without a reload
+- post-write readbacks still wait for a job-start slot; writes do not consume
+  read slots or receive extra pacing, and `REQUEST_GAP_SECONDS`, register
+  ranges, retry counts, write order, and settle delays are unchanged
+- setup starts a background refresh as before; startup uses the existing
+  compact jobs instead of a full scan of all rooms in one coordinator refresh
+- the first pass reads airflow for each supported room first, followed by
+  status, temperature, filter, hours, and control settings; each job publishes
+  its state immediately, and unattempted groups remain unknown
+- pending first-pass jobs alternate with overdue jobs of already-read groups
+  when both are available, so slower startup groups progress without blocking
+  all periodic airflow reads; first-pass jobs are rescheduled from completion
+- before any room has state values, an unsuccessful job reports `UpdateFailed`
+  and retries after `TRANSPORT_BACKOFF_START_SECONDS`; failed group health is
+  retained internally and published alongside subsequent successful reads
+- shutdown rejects reads still waiting for a rate slot; cancellation releases
+  the policy lock without sending the waiting request
 - Home Assistant's `DataUpdateCoordinator` schedules the next refresh from
   `int(loop.time())`, so sub-second intervals would fire up to a second early;
   the coordinator adds the current fractional loop second to compensate
-- one job can perform several grouped or optional Modbus reads, each still
-  separated by `REQUEST_GAP_SECONDS`
+- one job can perform several grouped or optional Modbus reads, each subject
+  to the shared read limit and the link's minimum `REQUEST_GAP_SECONDS`
 - airflow-level writes rely on the normal scheduler for later readback instead
   of forcing an immediate confirmation poll
 - the flow job takes `41121`/`41122` from the `41120` mode block and only
@@ -280,6 +297,13 @@ Current target intervals:
 - `temperature` and `status`: `60s`
 - `filter`, `hours`, and `control_settings`: `1h`
 
+These are target intervals, not throughput guarantees: at a low request rate
+or with many fallback reads, the serialized link can take longer. Freshness
+limits are not relaxed to hide that overload. The startup log motivating this
+change is summarized once in
+[MELTEM.md](MELTEM.md#home-assistant-restart-on-2026-10-08); the live check for
+the revised behavior is part of H-9 in [LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md).
+
 ## Read health and write confirmation
 
 Each supported read group tracks its own last attempt, last successful read,
@@ -292,6 +316,11 @@ Expected groups are derived from each room's supported entities, so a register
 that a device profile does not expose is not reported as a failed read. The
 group-to-entity mapping lives in `const.READ_GROUP_ENTITY_KEYS` and
 `RefreshPlan.read_groups()`; the client and the coordinator both use it.
+Groups with no successful read remain unknown until the existing failure
+threshold is reached. The aggregate `data_health` status is also unknown when
+there is only inconclusive read health and no write outcome; a failed attempt
+alone is not a healthy reading. Existing confirmed failures and stale values
+continue to flag a problem during startup.
 
 Read-only entities are available only while their own group's last successful
 read is fresh. Airflow uses a 30-second freshness limit; other groups use three
@@ -344,7 +373,8 @@ the register step.
 
 Units that answer the two-register mode read but reject the five-register one
 (HW-4) do not record an `intensive` read failure; the intensive state is simply
-unknown there. An intensive write on such a unit is recorded as `unverifiable`
+unknown there, and any previous health record for that unreadable group is
+cleared. An intensive write on such a unit is recorded as `unverifiable`
 instead of `unconfirmed`, so it does not flag `data_health`.
 
 The base quick mode is decoded from `41120..41122` only. The intensive override
