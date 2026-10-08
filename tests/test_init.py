@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
@@ -285,6 +286,7 @@ class TestAsyncSetupEntry:
         await async_setup_entry(hass, entry)
 
         assert setup_mocks.coordinator_cls.call_args.kwargs["max_requests_per_second"] == 5.0
+        assert setup_mocks.client_cls.call_args.kwargs["max_requests_per_second"] == 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +421,7 @@ class TestSharedModbusConnection:
 
         with self._patch_link(links):
             assert await hass.config_entries.async_setup(entry.entry_id)
-            await hass.async_block_till_done()
+            await hass.async_block_till_done(wait_background_tasks=True)
             (link,) = links
             assert link.for_unit(2).read_events
             assert link.for_unit(2).required_timeout == FIXED_TIMEOUT
@@ -429,6 +431,36 @@ class TestSharedModbusConnection:
 
         with pytest.raises(ClientClosedError):
             await link.for_unit(1).read_holding_registers(43901, 1)
+
+    async def test_unload_stops_a_startup_read_waiting_for_a_rate_slot(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        waiting = asyncio.Event()
+        resume = asyncio.Event()
+
+        async def _sleep(seconds: float) -> None:
+            waiting.set()
+            await resume.wait()
+
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
+        )
+        links: list[MockModbusConnection] = []
+        entry = _entry(hass)
+
+        with self._patch_link(links):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await asyncio.wait_for(waiting.wait(), timeout=5)
+            (link,) = links
+            assert not link.for_unit(2).read_events
+
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            resume.set()
+            await hass.async_block_till_done(wait_background_tasks=True)
+
+            assert not link.for_unit(2).read_events
+            with pytest.raises(ClientClosedError):
+                await link.for_unit(1).read_holding_registers(43901, 1)
 
     async def test_a_silent_gateway_retries_setup_and_releases_the_link(
         self, hass: HomeAssistant

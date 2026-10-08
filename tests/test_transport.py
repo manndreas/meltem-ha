@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -130,6 +132,174 @@ class TestRetry:
         await _run_failing(policy, unit, operation, expected=type(error))
 
         assert operation.await_count == 1
+
+
+@pytest.fixture(name="clock")
+def clock_fixture(
+    monkeypatch: pytest.MonkeyPatch, sleeps: list[float]
+) -> SimpleNamespace:
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.device.transport.time",
+        SimpleNamespace(monotonic=lambda: clock.now),
+    )
+
+    async def _sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock.now += seconds
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
+    )
+    return clock
+
+
+class TestReadRequestRate:
+    @pytest.mark.parametrize("rate", [0.5, 3.0, 10.0])
+    async def test_reads_share_one_limit_across_slaves(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace, rate: float
+    ) -> None:
+        policy.update_request_rate(rate)
+        starts: list[float] = []
+
+        async def _read(*args: object) -> list[int]:
+            starts.append(clock.now)
+            return [30, 30]
+
+        for slave in (2, 3, 2):
+            await policy.run(unit, slave, _read, 41020, 2, is_read=True)
+
+        assert starts == pytest.approx([100.0, 100.0 + 1 / rate, 100.0 + 2 / rate])
+
+    @pytest.mark.parametrize(
+        "error",
+        [_SILENT, ModbusProtocolError("garbled"), GatewayTargetError(),
+         ModbusConnectionError("gone")],
+    )
+    async def test_retries_also_take_a_read_slot(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace,
+        error: Exception,
+    ) -> None:
+        policy.update_request_rate(0.5)
+        starts: list[float] = []
+
+        async def _read(*args: object) -> list[int]:
+            starts.append(clock.now)
+            if len(starts) == 1:
+                raise error
+            return [1]
+
+        assert await policy.run(unit, 2, _read, 41020, 1, is_read=True) == [1]
+        assert starts == pytest.approx([100.0, 102.0])
+
+    async def test_slow_connect_does_not_allow_a_wire_burst(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
+    ) -> None:
+        policy.update_request_rate(2.0)
+        completions: list[float] = []
+
+        async def _read(*args: object) -> list[int]:
+            clock.now += 1.0
+            completions.append(clock.now)
+            return [1]
+
+        await policy.run(unit, 2, _read, 41020, 1, is_read=True)
+        await policy.run(unit, 3, _read, 41020, 1, is_read=True)
+
+        assert completions == pytest.approx([101.0, 102.5])
+
+    async def test_concurrent_reads_do_not_claim_the_same_slot(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
+    ) -> None:
+        policy.update_request_rate(2.0)
+        starts: list[float] = []
+
+        async def _read(*args: object) -> list[int]:
+            starts.append(clock.now)
+            await asyncio.sleep(0)
+            return [1]
+
+        await asyncio.gather(
+            *(policy.run(unit, slave, _read, 41020, 1, is_read=True) for slave in (2, 3, 4))
+        )
+
+        assert starts == pytest.approx([100.0, 100.5, 101.0])
+
+    async def test_writes_do_not_wait_for_read_slots(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace,
+        sleeps: list[float],
+    ) -> None:
+        policy.update_request_rate(0.5)
+        await _run(policy, unit, AsyncMock(return_value=[1]))
+        for register in (41120, 41121, 41132):
+            await policy.run(unit, 2, AsyncMock(), register, 0, is_read=False)
+        assert sleeps == []
+
+        await _run(policy, unit, AsyncMock(return_value=[1]))
+
+        assert sleeps == [2.0]
+
+    async def test_rate_change_is_applied_to_an_already_waiting_read(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        policy.update_request_rate(2.0)
+        await _run(policy, unit, AsyncMock(return_value=[1]))
+        waits: list[float] = []
+
+        async def _sleep(seconds: float) -> None:
+            waits.append(seconds)
+            clock.now += seconds
+            policy.update_request_rate(0.5)
+
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
+        )
+
+        await _run(policy, unit, AsyncMock(return_value=[1]))
+
+        assert waits == [0.5, 1.5]
+        assert clock.now == 102.0
+
+    @pytest.mark.parametrize("shutdown", [False, True], ids=["cancel", "shutdown"])
+    async def test_waiting_read_does_not_run_after_cancellation_or_shutdown(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch, shutdown: bool,
+    ) -> None:
+        policy.update_request_rate(2.0)
+        await _run(policy, unit, AsyncMock(return_value=[1]))
+        waiting = asyncio.Event()
+        resume = asyncio.Event()
+
+        async def _sleep(seconds: float) -> None:
+            waiting.set()
+            await resume.wait()
+            clock.now += seconds
+
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
+        )
+        operation = AsyncMock(return_value=[1])
+        task = asyncio.create_task(_run(policy, unit, operation))
+        await waiting.wait()
+        if shutdown:
+            policy.shutdown()
+            resume.set()
+            with pytest.raises(ClientClosedError):
+                await task
+        else:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            clock.now += 1.0
+            assert await _run(policy, unit, AsyncMock(return_value=[1])) == [1]
+        operation.assert_not_awaited()
+
+    @pytest.mark.parametrize("rate", [0.0, -1.0, float("nan"), float("inf")])
+    def test_invalid_rate_is_rejected(self, policy: TransportPolicy, rate: float) -> None:
+        with pytest.raises(ValueError, match="positive and finite"):
+            policy.update_request_rate(rate)
 
 
 class TestLinkRecycling:

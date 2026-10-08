@@ -934,6 +934,24 @@ repeats if needed.
   `coordinator.transport` in the diagnostics; 24 hours of logs without
   "Recycling the Meltem gateway link", compared with logs of the previous
   release.
+- **Startup follow-up:** for the progressive startup and telegram-level read
+  limit, keep a fixed request rate (for example `3 req/s`) and capture three
+  Core restarts with startup debug logging, including `tmodbus.raw_traffic`.
+  Use only one process on the port and do not send test writes. For each run:
+  1. Check successive function-`0x03` send timestamps, across all slaves and
+     retry/fallback reads, against a minimum `1 / rate` interval (allow 1 ms
+     for log timestamp precision). Write timing is intentionally not retuned.
+  2. Record when each room's first airflow and subsequent groups appear,
+     rather than waiting for a single full scan to publish all rooms.
+  3. Export diagnostics and capture the data-health entity's history: groups
+     not yet read must remain unknown; actual failures must remain visible.
+     Compare code-5 register refusals separately from transport errors.
+  4. Check that ongoing airflow polls and all slow first-pass jobs progress,
+     with no new transport errors. Lower rates may lengthen the scan; record
+     actual freshness rather than assuming the target intervals are met.
+  The motivating observation is recorded once in
+  [MELTEM.md](MELTEM.md#home-assistant-restart-on-2026-10-08). The revised
+  behavior is covered by in-memory tests, not yet verified on the live host.
 - **Pass:** no new transient read failures compared with the previous release;
   every recycle explained.
 
