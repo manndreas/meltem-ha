@@ -144,6 +144,13 @@ expose the configured intensive airflow/duration. The separate T-10
 observation on slave `5` used the set-side `41120..41124` block and was
 uncontrolled; it is not needed as evidence for this status-map result.
 
+A user-authorized app test on slave `2` changed only the intensive run-on time
+from 15 to 20 minutes and back to 15. The read-only capture found no readable
+value in `41120..41124` or `41132`; only shadow/meta counters changed, and the
+restore capture had no further raw differences. This did not identify a
+duration register; the detailed captures and noise caveat are in
+[SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md).
+
 ### Why earlier hardware scans did not identify it
 
 The register range was not missing from the scans. The 2026-03-31 holding
@@ -282,7 +289,8 @@ succeeded. The first post-reconnect probe reported gateway uptime of 7 seconds,
 and immediate airflow reads returned exception `0x05` for all six slaves.
 
 A later H-3 follow-up used the running Home Assistant integration; its logs
-are in `tmp/tests/abziehtest/`. The USB loss was reported at `11:25:08.732`.
+were provided locally and are not archived in this repository. The USB loss
+was reported at `11:25:08.732`.
 After six consecutive port-open failures and backoffs up to 40 seconds, the
 same serial path reopened automatically at `11:26:28.475`, and the coordinator
 logged the gateway reachable again. This confirms transport-level
@@ -397,6 +405,16 @@ Holding-register sweep on `2026-03-31` on unit `slave 2`:
 - a block read fails as a whole as soon as one register in it is unreadable,
   which is why coarse windows hide islands
 
+An expanded R-2 single-register scan on 2026-10-02 covered slaves `3` and `5`
+(the latter is the bathroom). Both reported the same readable islands:
+`40000..40022`, `40024..40033`, `40041`, `40050..40051`, `40071`,
+`40100..40104`, `40109..40110`, `40120`, `40200..40209`, `41000..41034`,
+`41100..41112`, and `42000..42009`. This adds readable addresses omitted from
+the 2026-03-31 summary, notably `40026..40033`, `40041`, `40050..40051`,
+`40071`, `40100`, `40102`, `40109..40110`, `40120`, and `41034`. Register
+`41113` was not readable in that scan. The detailed output is preserved in
+[`readable-register-scan-R-2.txt`](measurements/2026-10-02/readable-register-scan-R-2.txt).
+
 Registers that did not answer on the tested setup:
 
 - `41041 FILTER_DURATION`
@@ -412,10 +430,13 @@ The 2026-03-31 single-register scan was on slave `2`; it establishes
 readability on that unit, not identical behavior across every profile.
 Potentially useful but still unclassified areas are:
 
-- `40024..40025` and `40200..40209`: readable islands with no assigned
-  meaning in the collected manufacturer references
-- `41103..41113`: readable tail after the now-identified current-mode status
-  registers `41100..41102`; its fields have not been interpreted
+- `40024..40033`, `40041`, `40050..40051`, `40071`, `40100..40104`,
+  `40109..40110`, `40120`, and `40200..40209`: readable islands, mostly with
+  no assigned meaning in the collected manufacturer references
+- `41103..41112`: readable tail after the now-identified current-mode status
+  registers `41100..41102`; its fields have not been interpreted. `41113`
+  has returned both `0x05` exceptions and successful values in different
+  probes.
 - within the reported `41000..41029` island: `41008`, `41012..41015`,
   `41022..41026`, and `41028..41029` have no confirmed semantics. `41013` is
   used as VOC for one selected profile, but that mapping remains unverified.
@@ -449,21 +470,43 @@ was the one difference in software version (`2584`; the other five were
 heat exchanger. Its operating-hour counters were lower than the other rooms;
 that is usage information, not a variant code.
 
-The all-known baseline/idle captures do show differences in shadow/meta
-registers, including `52010`: slave `5` returned `4353` then `4366` in the two
-idle captures, while the other slaves returned `48` then `61`. Both groups
-advanced by `13`; this stable offset is worth testing against another
-confirmed unit, but the range also drifts and has no known feature semantics.
-It is not enough to label the bathroom's exchanger type.
+The paired R-2 scans on slaves `3` and `5` found identical readable address
+islands, but some raw values differed. A current read-only comparison with
+slave `4` and one read of the same identity fields across all six showed:
 
-The saved single-register R-2 sweep across `40000..40300` was on slave `3`,
-not the bathroom; the bathroom therefore has no comparable raw scan saved
-for `40024..40025`, `40200..40209`, or other unmapped fields. The observed
-Modbus product ID/name did not distinguish the P/E exchanger type. The
-manufacturer type plate or article number is the reliable discriminator:
-`M-WRG-II P` has no moisture recovery, while `M-WRG-II E` has an enthalpy
-exchanger. The integration's `ii_*` profile only records sensor capabilities,
-not P/E; see [models.md](reference/models.md).
+- `40009` matches the manufacturing year: the user confirmed slave `5` (the
+  bathroom) was built in 2022, while the other units were built in 2021.
+  `40010` is `1804` on slave `5` and `3847` on the other five in the current
+  sweep; its meaning remains unknown and could be build or board metadata.
+  Neither field currently proves the P/E exchanger type. `40000/40001`,
+  `40100`, and `40109` also differ, with no confirmed semantics.
+- `41106` is `3` on slaves `5`, `6`, and `7`, and `0` on `2`, `3`, and `4`.
+  The same `0`/`3` split appeared for slaves `3`/`5` in R-2. The value is
+  repeatable per-unit across the captures, but is not unique to the bathroom,
+  so it does not by itself identify moisture recovery.
+- `41113` returned `425` on slave `5` and `1449` on slave `4` in five repeat
+  reads each (difference `1024`); the other four slaves returned exception
+  `0x05` in the same sweep. It was also unavailable on slaves `3` and `5` in
+  the 2026-10-02 scan, so its availability is inconsistent and its meaning
+  remains unknown despite the repeatable pair values.
+- `52010` was `118` on both `4` and `5` in this latest comparison. Its earlier
+  per-unit offset in the idle captures was not reproduced, so it is not a
+  reliable model marker.
+- The current status values also differed (`41100..41102`: slave `5`
+  `[3,228,0]`, slave `4` `[4,0,228]`); these are operating-state differences,
+  not evidence of different exchanger hardware.
+
+The manufacturer type plate or article number remains the reliable
+discriminator: `M-WRG-II P` has no moisture recovery, while `M-WRG-II E` has
+an enthalpy exchanger. The known Modbus product ID/name did not distinguish
+them, and the integration's `ii_*` profile records sensor capabilities, not
+P/E; see [models.md](reference/models.md). Raw comparison outputs are preserved
+in [the slave 5 read](measurements/2026-10-09/pe-compare-slave5.txt),
+[the slave 4 read](measurements/2026-10-09/pe-compare-slave4.txt), and the
+[six-slave identity read](measurements/2026-10-09/pe-product-40009-40010-slaves2-3-6-7.txt).
+The wider identity reads are preserved for
+[slave 5](measurements/2026-10-09/pe-identity-slave5.txt) and
+[slave 4](measurements/2026-10-09/pe-identity-slave4.txt).
 
 ## Request pacing and block reads
 
