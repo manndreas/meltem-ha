@@ -174,8 +174,7 @@ MODE_HUMIDITY_CONTROL_VALUE = 112
 MODE_CO2_CONTROL_VALUE = 144
 MODE_AUTOMATIC_VALUE = 16
 
-# In sensor control the selector lives in REGISTER_CURRENT_LEVEL, not the mode
-# register, so read and write share this mapping.
+# Sensor-control selectors written to REGISTER_CURRENT_LEVEL.
 SENSOR_MODE_TO_RAW_VALUE: dict[str, int] = {
     "humidity_control": MODE_HUMIDITY_CONTROL_VALUE,
     "co2_control": MODE_CO2_CONTROL_VALUE,
@@ -185,6 +184,15 @@ RAW_VALUE_TO_SENSOR_MODE: dict[int, str] = {
     value: mode for mode, value in SENSOR_MODE_TO_RAW_VALUE.items()
 }
 SENSOR_OPERATION_MODES: tuple[str, ...] = tuple(SENSOR_MODE_TO_RAW_VALUE)
+
+# Apply the observed read-only status map to every supported M-WRG-S and
+# M-WRG-II profile. Live validation is currently from M-WRG-II units.
+MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE: dict[int, int] = {
+    48: MODE_AUTOMATIC_VALUE,
+    MODE_HUMIDITY_CONTROL_VALUE: MODE_HUMIDITY_CONTROL_VALUE,
+    MODE_CO2_CONTROL_VALUE: MODE_CO2_CONTROL_VALUE,
+    176: MODE_CO2_CONTROL_VALUE,
+}
 
 DIRECTION_SUPPLY = "supply"
 DIRECTION_EXTRACT = "extract"
@@ -220,6 +228,12 @@ REGISTER_SUPPLY_AIR_FLOW = 41021
 REGISTER_DAYS_UNTIL_FILTER_CHANGE = 41027
 REGISTER_OPERATING_HOURS = 41030
 
+# Current-state registers, distinct from the set registers below.
+REGISTER_MODE_STATUS = 41100
+REGISTER_SUPPLY_MODE_STATUS = 41101
+REGISTER_EXTRACT_MODE_STATUS = 41102
+
+# Registers written to change the operating mode and target.
 REGISTER_MODE = 41120
 REGISTER_CURRENT_LEVEL = 41121
 REGISTER_EXTRACT_AIR_TARGET_LEVEL = 41122

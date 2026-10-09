@@ -15,7 +15,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from typing import Any, cast
+from typing import Any
 
 from homeassistant.util import dt as dt_util
 from modbus_connection import (
@@ -36,6 +36,7 @@ from .const import (
     MODE_MANUAL,
     MODE_OFF,
     MODE_SENSOR_CONTROL,
+    MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE,
     MODE_UNBALANCED,
     OPERATION_MODE_MANUAL,
     OPERATION_MODE_OFF,
@@ -50,12 +51,11 @@ from .const import (
     RAW_VALUE_TO_SENSOR_MODE,
     READ_GROUP_ENTITY_KEYS,
     SENSOR_MODE_TO_RAW_VALUE,
-    SENSOR_OPERATION_MODES,
     VOC_PROFILES,
     profile_max_airflow,
 )
 from .device import MeltemRoomDevice, PolicyUnit
-from .device.components import ModeBlock
+from .device.components import ModeStatus
 from .modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
@@ -151,19 +151,11 @@ class _ReadBackoff:
 
 @dataclass(slots=True, frozen=True)
 class _ModeRead:
-    """Mode registers from 41120 on; the short read (HW-4) ends after 41121."""
+    """Decoded values from the read-only current-mode status map."""
 
     mode: int
     current_level: int
-    extract_target_level: int | None = None
-    preset_mode: int | None = None
-    preset_value: int | None = None
-
-    @property
-    def full(self) -> bool:
-        """Whether the read reached the 41123/41124 intensive shadow registers."""
-
-        return self.preset_value is not None
+    extract_target_level: int
 
 
 class MeltemModbusClient:
@@ -188,7 +180,7 @@ class MeltemModbusClient:
             self.update_request_rate(max_requests_per_second)
         self._units: dict[int, PolicyUnit] = {}
         self._devices: dict[int, MeltemRoomDevice] = {}
-        # Many units reject the mode reads until a first write (HW-4).
+        # Avoid repeatedly polling a status block that a unit refuses.
         self._mode_backoff = _ReadBackoff()
         self._shut_down = False
 
@@ -464,97 +456,83 @@ class MeltemModbusClient:
     #  Mode family (optional reads with backoff)
     # ------------------------------------------------------------------
 
-    async def _read_mode_component(
+    async def _read_mode_status(
         self,
         room: RoomConfig,
         device: MeltemRoomDevice,
         job: _ReadJob,
-        name: str,
-        groups: tuple[str, ...],
-    ) -> ModeBlock | None:
-        """Read one mode-family component.
+    ) -> ModeStatus | None:
+        """Read the current-state map, backing off only on exception responses.
 
-        Only exception responses start the temporary backoff: they mean the
-        unit refuses the registers (HW-4). A timeout means the unit went
-        silent, so the rest of the job is skipped instead.
+        A timeout means the unit went silent, so the rest of the job is skipped.
         """
 
         if job.silent_error is not None:
-            job.record_error(groups, job.silent_error)
+            job.record_error(("flow_control", "intensive"), job.silent_error)
             return None
 
-        key = (room.slave, name)
+        key = (room.slave, "mode_status")
         if self._mode_backoff.is_active(key):
             job.record_error(
-                groups,
+                ("flow_control", "intensive"),
                 self._mode_backoff.errors.get(key, "Read is temporarily backed off"),
             )
             return None
 
-        component: ModeBlock = getattr(device, name)
+        component = device.mode_status
         try:
             await component.async_update()
         except ModbusConnectionError:
             raise
         except ModbusTimeoutError as err:
             job.silent_error = err
-            job.record_error(groups, err)
+            job.record_error(("flow_control", "intensive"), err)
             return None
         except ModbusExceptionError as err:
             self._mode_backoff.mark_failure(key, err)
-            job.record_error(groups, err)
+            job.record_error(("flow_control", "intensive"), err)
             return None
         except ModbusError as err:
-            job.record_error(groups, err)
+            job.record_error(("flow_control", "intensive"), err)
             return None
 
         self._mode_backoff.clear(key)
         return component
 
-    async def _read_mode_value(
-        self, room: RoomConfig, device: MeltemRoomDevice, job: _ReadJob, name: str
-    ) -> int | None:
-        """Read one register of the mode block on its own."""
-
-        component = await self._read_mode_component(room, device, job, name, ("flow_control",))
-        return None if component is None else getattr(component, name)
-
     async def _read_mode_block(
         self, room: RoomConfig, device: MeltemRoomDevice, job: _ReadJob
     ) -> _ModeRead | None:
-        """Read the mode register block, falling back to a shorter read.
+        """Read the read-only current-state map shared by supported profiles.
 
-        Many units reject the full 5-register read until a write has occurred.
+        The set registers at 41120..41124 remain the write interface.
         """
 
         reports_mode = room.supports("operation_mode") or room.supports("preset_mode")
         if not reports_mode and not room.supports("intensive"):
             return None
 
-        full = await self._read_mode_component(
-            room, device, job, "mode", ("flow_control", "intensive")
-        )
-        # A component that just answered holds a value in every field it read.
-        if full is not None:
-            return _ModeRead(
-                mode=cast(int, full.mode),
-                current_level=cast(int, full.current_level),
-                extract_target_level=full.extract_target_level,
-                preset_mode=full.preset_mode,
-                preset_value=full.preset_value,
-            )
-        if not reports_mode:
+        status = await self._read_mode_status(room, device, job)
+        if status is None:
             return None
 
-        short = await self._read_mode_component(room, device, job, "mode_short", ("flow_control",))
-        if short is None:
+        mode = status.mode
+        current_level = status.current_level
+        extract_target_level = status.extract_target_level
+        if mode is None or current_level is None or extract_target_level is None:
+            job.record_error(
+                ("flow_control", "intensive"),
+                MeltemModbusError("Incomplete current-mode status read at 41100..41102"),
+            )
             return None
-        job.errors.pop("flow_control", None)
-        # The unit answers, it just lacks the long read (HW-4), so the
-        # intensive state is unknown rather than a read failure.
-        job.errors.pop("intensive", None)
-        job.skipped.add("intensive")
-        return _ModeRead(mode=cast(int, short.mode), current_level=cast(int, short.current_level))
+        if mode == MODE_SENSOR_CONTROL:
+            current_level = MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE.get(
+                current_level, current_level
+            )
+        return _ModeRead(
+            mode=int(mode),
+            current_level=int(current_level),
+            extract_target_level=int(extract_target_level),
+        )
 
     async def _read_mode_group(
         self,
@@ -570,14 +548,15 @@ class MeltemModbusClient:
 
         block = await self._read_mode_block(room, device, job)
         raw_current_level: int | None
+        if block is not None and block.mode == 0 and block.current_level == 0:
+            return replace(state, intensive_active=True)
+
         if block is not None:
             operation_mode = _decode_operation_mode(block.mode, block.current_level)
             raw_current_level = block.current_level
         else:
             operation_mode = state.operation_mode
-            # 41121/41122 are part of the mode block, so only read them on their
-            # own when the block did not deliver them.
-            raw_current_level = await self._read_mode_value(room, device, job, "current_level")
+            raw_current_level = None
 
         raw_extract_target: int | None = None
         extract_target_level: int | None = None
@@ -587,27 +566,18 @@ class MeltemModbusClient:
                 if raw_current_level is not None
                 else state.target_level
             )
-            raw_extract_target = (
-                block.extract_target_level
-                if block is not None and block.full
-                else await self._read_mode_value(room, device, job, "extract_target_level")
-            )
+            raw_extract_target = block.extract_target_level if block is not None else None
             extract_target_level = (
                 _decode_unbalanced_target_readback(room, raw_extract_target)
                 if raw_extract_target is not None
                 else state.extract_target_level
             )
-        elif operation_mode in SENSOR_OPERATION_MODES:
-            # Here 41121 holds the mode selector (112/144/16), not an airflow.
-            # Decoding it as a level would yield plausible-looking nonsense.
+        elif block is not None and block.mode == MODE_SENSOR_CONTROL:
+            # Here the current-level field carries a selector, not an airflow.
             target_level = derive_balanced_airflow(state.extract_air_flow, state.supply_air_flow)
         else:
-            # On the tested gateway, REGISTER_CURRENT_LEVEL behaves as a fast
-            # target readback after balanced writes even though the vendor docs
-            # describe it primarily as a write path. The airflow registers can
-            # lag noticeably behind after a write, so use 41121 for target
-            # confirmation when it looks like a valid balanced raw level and
-            # fall back to derived airflow otherwise.
+            # Measured airflow can lag after writes, so prefer the current
+            # target in the status map when it is plausible.
             target_level = _decode_balanced_target_readback(
                 room,
                 raw_current_level,
@@ -827,14 +797,11 @@ def _decode_preset_mode(
     raw_extract_target: int | None,
     previous_preset_mode: str | None,
 ) -> str | None:
-    """Return the base quick mode from 41120..41122, including short reads.
-
-    The intensive override lives in the 41123/41124 shadow registers and does
-    not replace the base quick mode, so a full read keeps the previous preset
-    instead of reporting the intensive code.
-    """
+    """Return the base quick mode from current state, preserving it during intensive mode."""
 
     if block is None:
+        return previous_preset_mode
+    if _mode_status_reports_intensive(block):
         return previous_preset_mode
     if block.mode == MODE_UNBALANCED and raw_extract_target is not None:
         if block.current_level == 0 and raw_extract_target > APP_UNBALANCED_PRESET_BASE:
@@ -844,9 +811,17 @@ def _decode_preset_mode(
     if block.mode != MODE_MANUAL:
         return None
     preset_mode = RAW_CODE_TO_PRESET_MODE.get(block.current_level)
-    if preset_mode == PRESET_MODE_INTENSIVE and block.full:
+    if preset_mode == PRESET_MODE_INTENSIVE:
         return previous_preset_mode
     return preset_mode
+
+
+def _mode_status_reports_intensive(block: _ModeRead) -> bool:
+    """Return whether the read-only mode map reports an intensive state."""
+
+    return (block.mode == MODE_MANUAL and block.current_level == PRESET_MODE_CODE_INTENSIVE) or (
+        block.mode == 0 and block.current_level == 0
+    )
 
 
 def _decode_intensive_active(
@@ -854,6 +829,6 @@ def _decode_intensive_active(
 ) -> bool | None:
     """Return whether the temporary intensive override is currently active."""
 
-    if block is None or not block.full:
+    if block is None:
         return previous_intensive_active
-    return block.preset_mode == MODE_MANUAL and block.preset_value == PRESET_MODE_CODE_INTENSIVE
+    return _mode_status_reports_intensive(block)

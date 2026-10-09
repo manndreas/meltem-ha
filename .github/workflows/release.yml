@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Version tag to create or release, for example v4.0.1"
+        description: "Version tag to create or release, for example v4.1.0"
         required: true
         type: string
 
