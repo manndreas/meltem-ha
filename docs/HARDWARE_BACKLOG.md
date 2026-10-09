@@ -673,8 +673,8 @@ tmodbus transport introduced in `4.0.0`. They are no longer a release gate for
   succeeded throughout. The mode-read transition on slave `5` is detailed
   under [HW-4](#hw-4--units-that-reject-the-five-register-mode-block). Thus
   T-10 supports transport stability, but does not pass the proposed whole-job
-  criterion. Detailed counts are in
-  `tmp/live-tests/2026-10-02/T-10.csv` and `.txt`.
+  criterion. Per-round CSV and text logs were local-only; the aggregate counts
+  above are the retained record.
 
 The T-1 integration-like baseline runner counts a refresh as successful when
 `read_room_state` does not raise; the current T-2 runner also counts optional
@@ -701,8 +701,9 @@ behavior resolved.
 ### Follow-up measurements on 2026-10-09
 
 The live gateway was discovered on `/dev/ttyACM0` with six nodes
-`[3, 2, 4, 5, 7, 6]`. Raw logs and snapshots are retained locally in
-`tmp/live-tests/2026-10-09/`; that ignored directory also contains a summary.
+`[3, 2, 4, 5, 7, 6]`. Selected raw evidence is preserved under
+[`docs/measurements/2026-10-09/`](measurements/2026-10-09/); other working
+logs and snapshots were local-only and are not part of the repository.
 
 - **1 — Benchmarks:** The first tmodbus run completed six direct request
   scenarios (720 requests) without errors, with mean latency about

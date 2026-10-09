@@ -23,8 +23,8 @@ asks for the one physical step, and measures.
    [H](#h--tests-that-need-a-person). Do not start W before G and R have passed.
 2. Every test names the assumption it checks and its source, its type, the
    commands, a pass criterion, and where the result goes.
-3. Save raw output under `tmp/live-tests/<date>/` (ignored by git) and keep the
-   summary described in [Recording results](#recording-results).
+3. Save raw output to a local results directory outside the repository and
+   keep the summary described in [Recording results](#recording-results).
 4. Do not change code or constants during a run, and do not commit or push.
    Report the findings and the candidate solution they support; the decision
    is made afterwards.
@@ -141,7 +141,7 @@ python3.14 -m venv .venv
 .venv/bin/python -m pip install -r requirements-test.txt
 export PYTHONPATH="$PWD"
 port=/dev/ttyACM0
-out="tmp/live-tests/$(date +%F)"
+out="$HOME/.local/share/meltem-ha/live-tests/$(date +%F)"
 mkdir -p "$out/captures" "$out/scripts"
 ```
 
@@ -295,20 +295,26 @@ Run R on every unit unless the test says otherwise.
 
 ### R-2 — Readable register islands
 
-- **Checks:** readable islands `40000..40022`, `40024..40025`, `40200..40209`,
-  `41000..41029`, `41100..41113`, `42000..42009`; `41041..41051` unavailable
-  ([MELTEM.md](MELTEM.md#product-registers-and-readable-islands)). Three
-  places where the documentation contradicts itself or the integration:
-  - `40101` / `40103` / `40104` are listed as stable, but lie outside the islands;
-    the integration reads `40101` (`rf_comm_status`)
-  - the integration reads operating hours at `41030/41031`, outside `41000..41029`
-  - `41120..41124` are missing from the islands (HW-4)
+- **Checks:** the 2026-10-02 single-register scans on slaves `3` and `5`
+  reported islands `40000..40022`, `40024..40033`, `40041`, `40050..40051`,
+  `40071`, `40100..40104`, `40109..40110`, `40120`, `40200..40209`,
+  `41000..41034`, `41100..41112`, and `42000..42009`
+  ([MELTEM.md](MELTEM.md#product-registers-and-readable-islands)).
+- **Interpretation gaps:** `40009/40010` differ on slave `5`; `41106` differs
+  between unit groups; `41113` was not readable in that scan and has since
+  answered inconsistently. Their meanings are unknown. `41120..41124` remain
+  set registers, not the current-mode status path (HW-4).
+- **Earlier scan differences:** the 2026-03-31 sweep ended its `41000` island
+  at `41029` and did not list `40100..40104`; the expanded R-2 scan later
+  confirmed `41030..41034` and `40100..40104` readable on slaves `3` and `5`.
+  `41041..41051` still did not answer on the tested setup.
 - **Evaluate:** keep raw readings separate from semantic interpretations.
-  Prioritize `41103..41113`, then `40024..40025`, `40200..40209`, and the
-  undocumented addresses in `41000..41029` listed in
-  [MELTEM.md](MELTEM.md#readable-areas-with-incomplete-meanings). R-6 covers
-  the documented fan-motor hours at `41032..41033`. Do not extend this into a
-  blind `50000+` sweep; only targeted shadow ranges have been captured.
+  Compare P/E labels against `40009/40010` and repeat `41106/41113` in known
+  operating states. Keep the undocumented addresses listed in
+  [MELTEM.md](MELTEM.md#readable-areas-with-incomplete-meanings) unmapped until
+  their values correlate reproducibly. R-6 covers the documented fan-motor
+  hours at `41032..41033`. Do not extend this into a blind `50000+` sweep;
+  only targeted shadow ranges have been captured.
 - **Type:** R
 - **Run:** single-register scans on two units, if possible with different
   software versions (R-1):
@@ -1043,8 +1049,11 @@ incomparable.
 
 ## Recording results
 
-Raw output stays in `tmp/live-tests/<date>/` and is never committed. Keep the
-summary in `$out\SUMMARY.md`:
+Keep raw output in the local results directory outside the repository; do not
+link to files that are not checked in. Keep the summary in `$out\SUMMARY.md`.
+If raw evidence is essential to a durable hardware finding, copy only the
+relevant, reviewed capture into `docs/measurements/<date>/` and link that
+tracked copy:
 
 | ID | Time | Units | Result | Key numbers | Raw file |
 | --- | --- | --- | --- | --- | --- |
