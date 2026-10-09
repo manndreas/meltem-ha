@@ -1,6 +1,8 @@
 """Meltem register blocks modelled as ``modbus-connection`` components.
 
-The read-only mode status block is separate from the write-side mode registers.
+Every component pins its ``register_ranges`` to a block measured on the
+gateway; change them only with a benchmark. The read-only mode status block is
+separate from the write-side mode registers.
 """
 
 from __future__ import annotations

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime
 
 from homeassistant.util import dt as dt_util
 
@@ -22,8 +21,10 @@ CONTROL_SETTING_WRITE_PREFIX = "control_setting:"
 
 _BASE_MODE_WRITES = frozenset({"airflow_levels", "operation_mode", "preset_mode"})
 _FLOW_CONTROL_WRITES = _BASE_MODE_WRITES | {"intensive"}
+# Base writes that leave a running intensive override in place (HW-1).
+_WRITES_HIDDEN_BY_INTENSIVE = frozenset({"airflow_levels", "operation_mode"})
 # Outcomes a later readback can no longer change.
-_FINAL_STATUSES = frozenset({"failed", "confirmed", "unverifiable", "superseded"})
+_FINAL_STATUSES = frozenset({"failed", "confirmed", "superseded"})
 # Outcomes that flag data health while they are recent.
 _UNHEALTHY_STATUSES = frozenset({"unconfirmed", "mismatch", "failed"})
 
@@ -180,8 +181,10 @@ def _checked_confirmation(
             return None
         return replace(confirmation, status="unconfirmed", last_error=read_health.last_error)
 
-    if write_key == "intensive" and not _read_since(state, "intensive", confirmation.started_at):
-        # The unit answered the mode read but cannot report intensive (HW-4).
+    if write_key in _WRITES_HIDDEN_BY_INTENSIVE and state.intensive_active:
+        # The intensive status hides the base mode; a readback after it ends judges the write.
+        if confirmation.status == "unverifiable":
+            return None
         return replace(confirmation, status="unverifiable", last_error=None)
 
     actual = _readback_value(state, write_key)
@@ -192,13 +195,6 @@ def _checked_confirmation(
     if confirmation.status == status and confirmation.actual_value == actual:
         return None
     return replace(confirmation, status=status, actual_value=actual, last_error=None)
-
-
-def _read_since(state: RoomState, group_key: str, started_at: datetime) -> bool:
-    """Return whether a group was read at or after one point in time."""
-
-    last_attempt = state.read_health_for(group_key).last_attempt
-    return last_attempt is not None and last_attempt >= started_at
 
 
 def _readback_value(state: RoomState, write_key: str) -> WriteValue | None:

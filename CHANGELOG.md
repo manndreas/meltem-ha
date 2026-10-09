@@ -7,6 +7,18 @@
   the write-side mode registers. The M-WRG-S path follows the same map by
   assumption and still needs live hardware validation.
 - Remove the legacy multi-register and single-register mode-read fallbacks.
+- The data-read status no longer stays in the problem state on units that
+  refuse the write-side mode registers until a first write.
+- While intensive ventilation runs, the status block does not report the base
+  mode. The operating mode, airflow targets, and quick mode keep their last
+  known values; after a restart during intensive ventilation they stay unknown
+  until it ends.
+- An airflow or operating-mode change during intensive ventilation is recorded
+  as `unverifiable` instead of a mismatch and no longer flags the data-read
+  status; the first readback after intensive ventilation ends judges it.
+- Read groups that failed at startup are retried after a minute, then at
+  growing intervals, instead of only after their regular interval of up to an
+  hour.
 - Include the status block and its single registers in the gateway profiling
   tools, and document why earlier broad scans did not identify its meaning.
 

@@ -26,6 +26,7 @@ from custom_components.meltem_ventilation.const import DOMAIN
 from custom_components.meltem_ventilation.coordinator import (
     TRANSPORT_BACKOFF_MAX_SECONDS,
     TRANSPORT_BACKOFF_START_SECONDS,
+    UNREAD_GROUP_RETRY_SECONDS,
     MeltemDataUpdateCoordinator,
 )
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
@@ -305,6 +306,43 @@ class TestFirstRefresh:
             clock.now += coordinator.update_interval.total_seconds()
         assert not coordinator._startup_jobs
         assert coordinator._startup_states["unit_1"].read_health_for("flow").consecutive_failures >= 3
+
+    async def test_group_unread_at_startup_is_retried_before_its_interval(
+        self, hass: HomeAssistant, clock: SimpleNamespace,
+    ) -> None:
+        """Units can refuse every read for minutes after a gateway restart (H-3)."""
+        coordinator, client = _build(hass)
+        client.fail_rooms = {"unit_1"}
+        started = clock.now
+        hours = next(job for job in coordinator._jobs if job.key == "hours")
+        for _ in range(50):
+            await coordinator.async_refresh()
+            if ("unit_1", hours.refresh_plan) in client.read_calls:
+                break
+            clock.now += coordinator.update_interval.total_seconds()
+
+        retry = max(UNREAD_GROUP_RETRY_SECONDS, clock.now - started)
+        assert retry < hours.interval_seconds
+        assert hours.next_due == pytest.approx(clock.now + retry)
+
+        async def _answer(
+            room: RoomConfig, previous: RoomState, plan: RefreshPlan
+        ) -> RoomState:
+            client.read_calls.append((room.key, plan))
+            at = dt_util.utcnow()
+            for group_key in plan.read_groups():
+                previous = previous.with_read_health(group_key, _read_ok(at))
+            return replace(previous, target_level=42)
+
+        with patch.object(client, "read_room_state", side_effect=_answer):
+            for _ in range(200):
+                if client.read_calls.count(("unit_1", hours.refresh_plan)) >= 2:
+                    break
+                clock.now += coordinator.update_interval.total_seconds()
+                await coordinator.async_refresh()
+
+        assert client.read_calls.count(("unit_1", hours.refresh_plan)) == 2
+        assert hours.next_due == pytest.approx(clock.now + hours.interval_seconds)
 
     async def test_status_only_room_starts_without_an_airflow_read(
         self, hass: HomeAssistant, clock: SimpleNamespace,

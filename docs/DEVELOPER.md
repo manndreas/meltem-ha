@@ -201,7 +201,7 @@ How the hardware findings are implemented now:
 | 0.8 s is enough for the gateway to answer | `FIXED_TIMEOUT` via `require_timeout` in `prepare_unit` |
 | pymodbus' default resend turned one unanswered register into about eight timeouts | `TransportPolicy` retries once, without disconnecting |
 | M-WRG-S and M-WRG-II status is read separately from the set registers (HW-4) | Every supported profile reads `41100..41102`; writes remain on `41120..41122` plus `41132`. M-WRG-S uses the same map by explicit assumption; live data is from M-WRG-II. |
-| Read-side sensor subcodes differ from write values | `_read_mode_block` normalizes `41101` status codes before decoding sensor modes |
+| Read-side sensor subcodes differ from write values | `_read_mode_block` normalizes `41101` status codes before decoding sensor modes; the codes come from the ioBroker decode and are not yet observed on hardware (HW-4) |
 | `41000` and `41004` are swapped on the gateway | field mapping of `Temperatures` in `device/components.py` |
 | 32-bit values are word-swapped | `word_order="little"` on `float32` and `uint32` fields |
 | Mode writes only take effect after `41132` | `Command` component, written last in every mode and preset sequence |
@@ -265,6 +265,11 @@ Current design:
 - before any room has state values, an unsuccessful job reports `UpdateFailed`
   and retries after `TRANSPORT_BACKOFF_START_SECONDS`; failed group health is
   retained internally and published alongside subsequent successful reads
+- a job whose group has never been read successfully is retried after
+  `UNREAD_GROUP_RETRY_SECONDS` or the current uptime, whichever is longer,
+  capped at its normal interval; units can refuse every read for minutes after
+  a gateway restart (H-3), and the hourly groups would otherwise stay unknown
+  for an hour. The growing delay bounds the extra reads per group to a few.
 - shutdown rejects reads still waiting for a rate slot; cancellation releases
   the policy lock without sending the waiting request
 - Home Assistant's `DataUpdateCoordinator` schedules the next refresh from
@@ -378,9 +383,18 @@ M-WRG-S and M-WRG-II mode state is decoded from `41100..41102`. The M-WRG-S
 path follows the same map by explicit assumption; live validation is currently
 from M-WRG-II. The status block reports intensive mode through its read-side
 mode/submode values, so routine polling does not read the write-side
-`41120..41124` block. An intensive write without readable intensive status
-remains `unverifiable` rather than `unconfirmed`, so it does not flag
-`data_health`.
+`41120..41124` block.
+
+An intensive status (`0/0`, observed, or `3/227`, community decode) hides the
+base mode. The client then keeps the last known operating mode, targets, and
+quick mode and only sets `intensive_active`. After a restart during intensive
+ventilation these values stay unknown until the override ends. An airflow or
+operating-mode write does not clear the intensive registers, so a readback
+that still reports intensive cannot show it: the write is recorded as
+`unverifiable`, which does not flag `data_health`. Unlike `confirmed` or
+`superseded` it is not final; the first readback after the override ends
+confirms or mismatches it. A quick-mode write clears the intensive registers,
+so a remaining intensive status is judged as a normal mismatch.
 
 The set-register block `41120..41124` is used for writes only; `41132` is
 still written last as the apply latch.
@@ -479,6 +493,15 @@ The current-state map at `41100..41102` reports the operating mode and targets;
   measured airflow
 - in unbalanced mode the status values `41101/41102` provide supply/extract
   targets; the previous target is kept if the status read fails
+
+Open assumption (HW-4, W-1): balanced write confirmation relies on `41101`
+echoing the raw `0..200` target that was written to `41121`, soon after the
+apply latch. The observed status values fit that (slave `6` showed a raw
+supply `68` next to an app-encoded extract `203`), but no balanced write has
+yet been followed by a status read. If the status reported another encoding
+or lagged behind, every balanced fan write would become `unconfirmed` and
+flag `data_health`; unbalanced readbacks decode both raw and `200 + n`
+values and are less exposed.
 
 ### Per-unit availability on read failures
 

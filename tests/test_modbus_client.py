@@ -109,7 +109,8 @@ def _seed(
         and mode[3] == MODE_MANUAL
         and mode[4] == PRESET_MODE_CODE_INTENSIVE
     ):
-        status_current = PRESET_MODE_CODE_INTENSIVE
+        # Observed on slave 4 while an app-started override was running.
+        status_mode, status_current, status_extract = 0, 0, 0
     unit.holding[REGISTER_MODE_STATUS] = [
         status_mode,
         status_current,
@@ -464,20 +465,6 @@ class TestAirflowTargets:
             assert health.last_successful_read == health.last_attempt
             assert health.last_error is None
 
-    async def test_status_map_can_report_intensive_without_a_base_readback(
-        self, client: MeltemModbusClient, unit: MockModbusUnit
-    ) -> None:
-        unit.holding[REGISTER_EXTRACT_AIR_FLOW] = [30, 30]
-        unit.holding[REGISTER_MODE_STATUS] = [0, 0, 0]
-        previous = RoomState(operation_mode="manual", target_level=30, preset_mode="medium")
-
-        state = await _read_flow(client, previous)
-
-        assert state.operation_mode == "manual"
-        assert state.target_level == 30
-        assert state.preset_mode == "medium"
-        assert state.intensive_active is True
-
     async def test_unbalanced_app_preset_targets_decode_to_airflow(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
@@ -734,27 +721,49 @@ class TestModeDecoding:
         assert state.preset_mode is None
 
     @pytest.mark.parametrize(
-        ("current_level", "previous_preset", "expected_preset"),
+        "block",
         [
-            (229, "medium", "medium"),
-            (228, None, None),
-            (230, "medium", "medium"),
+            pytest.param([MODE_MANUAL, 229, 0, MODE_MANUAL, 227], id="observed-0-0-0"),
+            pytest.param([MODE_MANUAL, 227, 0, 0, 0], id="community-3-227"),
         ],
-        ids=["keeps-known-base", "unknown-base-stays-unknown", "status-has-no-base"],
     )
-    async def test_active_intensive_reports_the_base_preset(
+    @pytest.mark.parametrize(
+        "previous",
+        [
+            pytest.param(
+                RoomState(
+                    operation_mode="manual",
+                    target_level=30,
+                    balanced_target_readback=30,
+                    preset_mode="medium",
+                ),
+                id="known-base",
+            ),
+            pytest.param(RoomState(), id="unknown-base"),
+        ],
+    )
+    async def test_intensive_status_keeps_the_last_known_base(
         self,
         client: MeltemModbusClient,
         unit: MockModbusUnit,
-        current_level: int,
-        previous_preset: str | None,
-        expected_preset: str,
+        block: list[int],
+        previous: RoomState,
     ) -> None:
-        _seed(unit, mode=[MODE_MANUAL, current_level, 0, MODE_MANUAL, 227])
+        _seed(unit, flow=(100, 100), mode=block)
 
-        state = await _read_flow(client, RoomState(preset_mode=previous_preset))
+        state = await _read_flow(client, previous)
 
-        assert state.preset_mode == expected_preset
+        base = {
+            name: getattr(previous, name)
+            for name in (
+                "operation_mode",
+                "target_level",
+                "balanced_target_readback",
+                "extract_target_level",
+                "preset_mode",
+            )
+        }
+        assert _values(state, base) == base
         assert state.intensive_active is True
 
     async def test_inactive_intensive_is_reported_as_false(

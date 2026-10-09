@@ -97,8 +97,6 @@ class _ReadJob:
     """Read errors of one room read, per read-health group."""
 
     errors: dict[str, str] = field(default_factory=dict)
-    # Groups whose health this read cannot judge.
-    skipped: set[str] = field(default_factory=set)
     # Set once the unit timed out; the rest of the job is skipped then.
     silent_error: ModbusError | None = None
 
@@ -449,7 +447,7 @@ class MeltemModbusClient:
             for name, value in writes:
                 await device.mode.write(name, value)
             await device.command.write("apply", 0)
-            # A write unlocks the mode reads on units that refused them (HW-4).
+            # Let the post-write readback try a refused status map again.
             self._mode_backoff.clear_slave(room.slave)
 
     # ------------------------------------------------------------------
@@ -548,7 +546,8 @@ class MeltemModbusClient:
 
         block = await self._read_mode_block(room, device, job)
         raw_current_level: int | None
-        if block is not None and block.mode == 0 and block.current_level == 0:
+        if block is not None and _mode_status_reports_intensive(block):
+            # The intensive status hides the base mode, so the last known one stays.
             return replace(state, intensive_active=True)
 
         if block is not None:
@@ -598,7 +597,7 @@ class MeltemModbusClient:
             ),
             extract_target_level=extract_target_level,
             preset_mode=_decode_preset_mode(block, raw_extract_target, state.preset_mode),
-            intensive_active=_decode_intensive_active(block, state.intensive_active),
+            intensive_active=state.intensive_active if block is None else False,
         )
 
 
@@ -710,9 +709,6 @@ def _updated_read_health(
     group_health = dict(previous_state.group_read_health)
     now = dt_util.utcnow()
     for group_key in refresh_plan.read_groups():
-        if group_key in job.skipped:
-            group_health.pop(group_key, None)
-            continue
         if not room.supports_any(READ_GROUP_ENTITY_KEYS[group_key]):
             continue
 
@@ -797,11 +793,9 @@ def _decode_preset_mode(
     raw_extract_target: int | None,
     previous_preset_mode: str | None,
 ) -> str | None:
-    """Return the base quick mode from current state, preserving it during intensive mode."""
+    """Return the base quick mode from a status read that does not report intensive."""
 
     if block is None:
-        return previous_preset_mode
-    if _mode_status_reports_intensive(block):
         return previous_preset_mode
     if block.mode == MODE_UNBALANCED and raw_extract_target is not None:
         if block.current_level == 0 and raw_extract_target > APP_UNBALANCED_PRESET_BASE:
@@ -810,25 +804,16 @@ def _decode_preset_mode(
             return PRESET_MODE_SUPPLY_ONLY
     if block.mode != MODE_MANUAL:
         return None
-    preset_mode = RAW_CODE_TO_PRESET_MODE.get(block.current_level)
-    if preset_mode == PRESET_MODE_INTENSIVE:
-        return previous_preset_mode
-    return preset_mode
+    return RAW_CODE_TO_PRESET_MODE.get(block.current_level)
 
 
 def _mode_status_reports_intensive(block: _ModeRead) -> bool:
-    """Return whether the read-only mode map reports an intensive state."""
+    """Return whether the read-only mode map reports an intensive state.
+
+    ``0/0`` was observed for an override started from the app; ``3/227`` is the
+    community decode for intensive written to the base registers.
+    """
 
     return (block.mode == MODE_MANUAL and block.current_level == PRESET_MODE_CODE_INTENSIVE) or (
         block.mode == 0 and block.current_level == 0
     )
-
-
-def _decode_intensive_active(
-    block: _ModeRead | None, previous_intensive_active: bool | None
-) -> bool | None:
-    """Return whether the temporary intensive override is currently active."""
-
-    if block is None:
-        return previous_intensive_active
-    return _mode_status_reports_intensive(block)
