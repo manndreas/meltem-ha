@@ -1,7 +1,6 @@
 """Meltem register blocks modelled as ``modbus-connection`` components.
 
-Every component pins its ``register_ranges`` to exactly the block the
-integration has always read, so the gateway sees the same requests as before.
+The read-only mode status block is separate from the write-side mode registers.
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ from ..const import (
     REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
     REGISTER_EXTRACT_AIR_TEMPERATURE,
+    REGISTER_EXTRACT_MODE_STATUS,
     REGISTER_FILTER_CHANGE_DUE,
     REGISTER_FROST_PROTECTION_ACTIVE,
     REGISTER_HUMIDITY_EXTRACT_AIR,
@@ -30,6 +30,7 @@ from ..const import (
     REGISTER_HUMIDITY_STARTING_POINT,
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_MODE,
+    REGISTER_MODE_STATUS,
     REGISTER_OPERATING_HOURS,
     REGISTER_OUTDOOR_AIR_TEMPERATURE,
     REGISTER_PRESET_MODE,
@@ -37,6 +38,7 @@ from ..const import (
     REGISTER_PRODUCT_ID,
     REGISTER_SUPPLY_AIR_FLOW,
     REGISTER_SUPPLY_AIR_TEMPERATURE,
+    REGISTER_SUPPLY_MODE_STATUS,
     REGISTER_VOC_SUPPLY_AIR,
 )
 
@@ -63,7 +65,7 @@ class Airflow(Component):
 
 
 class ModeBlock(Component):
-    """Mode, airflow targets, and the intensive shadow registers."""
+    """Write-side mode, airflow targets, and intensive shadow registers."""
 
     register_ranges = ((REGISTER_MODE, REGISTER_PRESET_VALUE),)
 
@@ -72,6 +74,16 @@ class ModeBlock(Component):
     extract_target_level = raw_register(REGISTER_EXTRACT_AIR_TARGET_LEVEL, writable=True)
     preset_mode = raw_register(REGISTER_PRESET_MODE, writable=True)
     preset_value = raw_register(REGISTER_PRESET_VALUE, writable=True)
+
+
+class ModeStatus(Component):
+    """Read-only current mode and supply/extract targets."""
+
+    register_ranges = ((REGISTER_MODE_STATUS, REGISTER_EXTRACT_MODE_STATUS),)
+
+    mode = raw_register(REGISTER_MODE_STATUS)
+    current_level = raw_register(REGISTER_SUPPLY_MODE_STATUS)
+    extract_target_level = raw_register(REGISTER_EXTRACT_MODE_STATUS)
 
 
 class Command(Component):

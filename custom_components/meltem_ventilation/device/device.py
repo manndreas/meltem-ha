@@ -22,6 +22,7 @@ from .components import (
     ControlSettings,
     ExtractAirQuality,
     ModeBlock,
+    ModeStatus,
     OperatingHours,
     ProductId,
     Register,
@@ -59,10 +60,7 @@ class MeltemRoomDevice(Device):
         self.control_settings = ControlSettings(unit)
         self.rf_comm_status = Register(unit, base_offset=REGISTER_RF_COMM_STATUS)
         self.mode = ModeBlock(unit)
-        # Many units reject the long mode read until a first write (HW-4).
-        self.mode_short = _only(ModeBlock(unit), "mode", "current_level")
-        self.current_level = _only(ModeBlock(unit), "current_level")
-        self.extract_target_level = _only(ModeBlock(unit), "extract_target_level")
+        self.mode_status = ModeStatus(unit)
         self.command = Command(unit)
 
 

@@ -1,7 +1,7 @@
 """Send single requests to one unit and print the answer or exception class with latency.
 
-Without request options it reads the mode block the way the integration does:
-41120 x5, 41120 x2, 41121 x1, 41122 x1.
+Without request options it reads current mode status at 41100 x3, followed by
+the write-side mode registers for comparison.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from modbus_connection import ModbusError, ModbusUnit
 
 from tools._link import elapsed_ms, open_link, parse_register_range, run, tool_parser
 
-DEFAULT_READS = ("41120:5", "41120:2", "41121:1", "41122:1")
+DEFAULT_READS = ("41100:3", "41120:5", "41120:2", "41121:1", "41122:1")
 INPUT_PREFIX = "input:"
 
 

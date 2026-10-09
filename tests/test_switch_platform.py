@@ -36,7 +36,7 @@ def _switch(
     [
         pytest.param(True, None, True, id="running"),
         pytest.param(False, None, False, id="not-running"),
-        pytest.param(None, None, None, id="mode-block-unreadable"),
+        pytest.param(None, None, None, id="mode-status-unreadable"),
         pytest.param(False, True, True, id="pending-write-before-confirmation"),
     ],
 )

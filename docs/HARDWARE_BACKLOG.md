@@ -1,11 +1,11 @@
 # Hardware Verification Backlog
 
-Findings from code review that are **not** fixed in the repository because they
-cannot be decided without a live `M-WRG-GW` gateway and at least one `M-WRG`
-unit. Each entry states what was observed in the code, why a blind fix would be
-irresponsible, what to measure, and which candidate solutions exist. How to
-measure is in [LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md); every entry
-names its tests there.
+Findings from code review that remain unresolved or need live validation on an
+`M-WRG-GW` gateway and at least one `M-WRG` unit. Each entry states what was
+observed in the code, why a blind fix would be irresponsible, what to measure,
+and which candidate solutions exist. How to measure is in
+[LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md); every entry names its tests
+there.
 
 Related documents:
 
@@ -17,9 +17,10 @@ Related documents:
 - `docs/LIVE_GATEWAY_TESTS.md` — test plan for an AI agent on the live gateway,
   covering every item below
 
-Status legend: `open` (needs measurement), `parked` (measured, decision
-deferred), `resolved` (move the decision into `docs/DEVELOPER.md` and the
-measured behaviour into `docs/MELTEM.md`).
+Status legend: `open` (needs measurement), `in progress` (code changed, live
+validation pending), `parked` (measured, decision deferred), `resolved` (move
+the decision into `docs/DEVELOPER.md` and the measured behaviour into
+`docs/MELTEM.md`).
 
 ---
 
@@ -66,10 +67,10 @@ How this appears in `41120..41124` is not documented. See
    been traced, so it is unknown whether the unit applies all of it, whether
    the last written mode wins, or whether clearing the shadow registers in the
    same commit cancels the off command.
-3. Verification depends on a unit that answers the five-register read at
-   `41120`. `_read_mode_block` falls back to a two-register read on units that
-   reject it, and `_decode_intensive_active` then returns `None`. On such a
-   unit a working fix and a broken fix look identical.
+3. The old reader depended on `41120..41124` to observe the intensive state,
+   and could not distinguish a correct off transition when that set-register
+   block returned an exception. The read-only status map at `41100..41102`
+   now provides that observation without changing the write sequence.
 4. The failure mode is silent: no exception, no log entry. In the worst case a
    ventilation unit keeps running after the user pressed off.
 
@@ -77,7 +78,8 @@ How this appears in `41120..41124` is not documented. See
 
 1. Start intensive ventilation from Home Assistant.
 2. Switch the unit off from Home Assistant.
-3. Read `41120..41124` back and record the values.
+3. Read `41100..41102` for current mode state; capture `41123/41124` only as
+   separate diagnostics, not as the source for the client decode.
 4. Compare against the keypad LEDs and whether the fans actually stop.
 5. Repeat with the Meltem app instead of Home Assistant in step 1, to separate
    integration behaviour from device behaviour.
@@ -165,10 +167,11 @@ no timing guidance beyond the RTU frame rules. See
    to find the shortest settle delay that still yields a correct readback.
 2. Run the same measurement while a second unit is polled concurrently, to see
    whether interleaved traffic changes the required delay.
-3. Record how long `41121` and `41020/41021` actually need to reflect a write.
-   `docs/MELTEM.md` already notes that `41020/41021` lag behind.
+3. Record how long current status `41101` and measured airflow `41020/41021`
+   need to reflect a write. `docs/MELTEM.md` already notes that the measured
+   airflow can lag behind.
 
-Tests: [W-1](LIVE_GATEWAY_TESTS.md#w-1--balanced-write-41121-readback-and-airflow-lag),
+Tests: [W-1](LIVE_GATEWAY_TESTS.md#w-1--balanced-write-status-readback-and-airflow-lag),
 [W-2](LIVE_GATEWAY_TESTS.md#w-2--settle-delay-sweep),
 [W-3](LIVE_GATEWAY_TESTS.md#w-3--settle-delay-with-interleaved-traffic),
 [W-6](LIVE_GATEWAY_TESTS.md#w-6--41132-commit-latch).
@@ -184,7 +187,9 @@ observation and did not reach either target within 60 seconds. At 40, the
 measured-airflow block changed from `20/20` to `40/40` by the first sample and
 stayed there for the 60-second observation. All three runs restored raw
 target `40`; the final readback and integration state were manual balanced
-`20/20`. No request failures occurred.
+`20/20`. No request failures occurred. This tested the set-side `41121`
+readback; it did not record status register `41101`, so it does not validate
+the current read path.
 
 The measured response thus differs by target delta: the 20 m3/h change took
 effect by the first sample, but changes of only 4 m3/h in either direction
@@ -293,31 +298,32 @@ Tests: [W-11](LIVE_GATEWAY_TESTS.md#w-11--shortcut-encoding-200--n-on-the-unit),
 ## HW-4 — Units that reject the five-register mode block
 
 Priority: low
-Status: open
-Affected code: `modbus_client._read_mode_block`,
-`modbus_client._decode_intensive_active`
+Status: in progress
+Affected code: `const.MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE`,
+`device/components.ModeStatus`, `modbus_client._read_mode_block`
 
-### Observation
+### Prior behavior
 
-`_read_mode_block` first tries to read five registers at `41120`. If that
-fails, it falls back to two registers, and `_decode_intensive_active` then
-returns `None`. On such units the intensive switch in Home Assistant shows
-`unknown` permanently.
+The old `_read_mode_block` read five set registers at `41120`; on failure it
+fell back to two, then sometimes to single set-register reads. If those reads
+were refused, the intensive state stayed unknown and the mode health group
+could remain stale.
 
-`docs/MELTEM.md` notes that many devices return Modbus exceptions for
-`41120/41121/41122` until a write has occurred, so the fallback exists for a
-reason. What is not known is whether the five-register read stays unavailable
-forever on some units or only until the first write.
+### Current implementation
 
-The `intensive` read group is no longer marked failed when the two-register
-fallback succeeds, so these units do not keep `data_health` permanently on.
-Intensive writes on these units are recorded as `unverifiable` rather than
-`unconfirmed` for the same reason.
+All supported M-WRG-S and M-WRG-II profiles now read current state from
+`41100..41102`; `41120..41124` are retained for writes only. This removes the
+runtime set-register fallback. Applying the same map to M-WRG-S follows the
+user's explicit assumption; direct live evidence is currently from M-WRG-II
+only. Home Assistant deployment and M-WRG-S hardware validation remain
+pending.
 
 ### Manufacturer documentation
 
-Reading back `41120..41132` is not documented at all; the manuals only
-describe writing these registers. See `docs/reference/modbus.md`.
+Reading back `41120..41132` is not documented; the manuals only describe
+writing these registers. The `41100..41102` status map is community/live
+evidence, not a manufacturer guarantee. See `docs/reference/modbus.md` and
+the observations below.
 
 ### What to measure
 
@@ -329,7 +335,8 @@ describe writing these registers. See `docs/reference/modbus.md`.
 
 Tests: [R-9](LIVE_GATEWAY_TESTS.md#r-9--mode-block-before-any-write),
 [W-5](LIVE_GATEWAY_TESTS.md#w-5--mode-block-after-the-first-write),
-[H-2](LIVE_GATEWAY_TESTS.md#h-2--freshly-powered-unit).
+[H-2](LIVE_GATEWAY_TESTS.md#h-2--freshly-powered-unit),
+[R-12](LIVE_GATEWAY_TESTS.md#r-12--read-only-mode-status-map).
 
 ### Measurements on 2026-10-02
 
@@ -395,6 +402,18 @@ input-register map was found on this unit. Single-register FC03 reads of
 `41120×1` returned `0x05` on all six units, so reducing the read length did
 not find a read-only unlock path.
 
+The ioBroker community template identifies `41100..41102` as polled
+read-only mode/supply/extract status and keeps `41120..41122` plus `41132`
+as set registers. A direct FC03 read of `41100×3` succeeded on all six
+slaves without writes:
+`2=[3,229,0]`, `3=[3,229,0]`, `4=[4,0,208]`, `5=[3,228,0]`,
+`6=[4,68,203]`, `7=[3,229,0]`. These values match the observed preset and
+unbalanced states. The integration now uses this status map for all
+supported M-WRG-S and M-WRG-II profiles on the user's explicit assumption
+that both series behave alike. Only M-WRG-II has been directly measured so
+far. The map remains community/live-observation evidence, not a
+manufacturer-documented register map.
+
 A cross-check against [pyairios](https://github.com/scabrero/pyairios) found
 no generic login or read-unlock sequence. Its
 [BRDG-02EM23 class](https://github.com/scabrero/pyairios/blob/main/src/pyairios/models/brdg_02em23.py)
@@ -405,6 +424,26 @@ and marks that register READ/WRITE. The
 [client](https://github.com/scabrero/pyairios/blob/main/src/pyairios/client.py)
 treats Modbus exception `0x05` as Acknowledge; it has no unlock exchange.
 This is not evidence that the Meltem node should behave the same way.
+
+The BRDG-02EM23 product information and `pyairios` describe Ethernet
+Modbus-TCP, while the observed HA path is USB serial Modbus-RTU. A
+[community setup guide](https://github.com/baked95/siber-vmc-ha/blob/main/docs/BRIDGE_SETUP.md)
+reports that local TCP port `502` is closed in cloud mode and local TCP
+requires resetting/rebinding without cloud configuration, which disables
+the mobile-app connection. This is not an official vendor procedure; do not
+reset or change cloud mode as an unlock experiment.
+
+The person confirmed the same BRDG-02EM23 is connected to Ethernet and USB.
+HA's `tmodbus` log and the host USB descriptor show an RTU serial interface,
+although the collected bridge manual documents micro-USB only for power.
+`pyairios` describes BRDG-02EM23 as Modbus-TCP and BRDG-02R13 as serial
+Modbus-RTU, so its TCP bridge path is not the same transport as the observed
+USB serial path. A [community setup guide](https://github.com/baked95/siber-vmc-ha/blob/main/docs/BRIDGE_SETUP.md)
+reports that local TCP port 502 is closed in cloud mode and enabling local
+Modbus-TCP requires factory reset/rebinding without cloud configuration,
+which disables the mobile-app connection. This is community evidence, not an
+official vendor procedure; do not switch modes or reset the bridge as an
+unlock experiment.
 
 T-10 provided a separate uncontrolled clue on slave `5`: the mode-group
 readings became successful during the soak, and the post-soak probe decoded an
@@ -426,16 +465,12 @@ evidence that a wall-button action unlocked the block or caused the intensive
 state. Slave `5` uses firmware `2584`; repeat this observation under
 controlled conditions before changing HW-4 behavior.
 
-### Candidate solutions
+### Remaining validation
 
-- **A — no change.** Correct if the capability returns after the first write;
-  the switch is only `unknown` until the user does something.
-- **B — probe once during setup.** Store the capability with the room and
-  simply do not create the intensive switch on
-  units that never answer.
-- **C — derive intensive from `41121`.** If `41121` reads back `227` the
-  override is active. Would work on units without the five-register read, but
-  it conflicts with the quick mode codes in the same range (see HW-3).
+- Deploy the status-read implementation to Home Assistant and verify the
+  `flow_control` and `intensive` health groups recover without a mode change.
+- Confirm status-block/single-register parity on an M-WRG-II unit in R-12.
+- Validate the assumed same register map on an M-WRG-S unit when available.
 
 ---
 
@@ -484,9 +519,9 @@ Affected code: `modbus_client._read_mode_group`, `device/transport.py`,
 
 Three changes reduce bus time but were made without a live gateway:
 
-1. The flow job takes `41121` / `41122` from the `41120` mode block instead of
-   reading them again on their own, saving up to two requests per unit every
-   10 s. The decoder already trusted the block values for quick-mode detection.
+1. The original flow job polled the `41120` set-register block. It has been
+   replaced by one `41100..41102` current-state read per due flow job; the
+   separate status-map scan and single-register comparisons are in R-12.
 2. Every request is retried at most once (`TransportPolicy`). pymodbus'
    default `retries=3` had turned one silent register into about eight
    timeouts. This is measured as part of HW-7.
@@ -495,14 +530,15 @@ Three changes reduce bus time but were made without a live gateway:
 
 ### What to measure
 
-1. Compare `41121` / `41122` from the five-register block with single-register
-   reads after balanced, unbalanced, preset, and app-shortcut writes.
+1. Validate that the status block and its single-register reads agree after
+   balanced, unbalanced, and preset changes; do not treat set-register
+   readbacks as the integration's state source.
 2. Run the integration for a day with all units online and check the logs for
    new transient read failures compared to the previous release.
 3. Power off one unit and confirm that the others still react to fan changes
    within a few seconds.
 
-Tests: measurement 1 in [R-10](LIVE_GATEWAY_TESTS.md#r-10--mode-block-equals-single-reads)
+Tests: measurement 1 in [R-12](LIVE_GATEWAY_TESTS.md#r-12--read-only-mode-status-map)
 and [W-10](LIVE_GATEWAY_TESTS.md#w-10--unbalanced-write-and-readback),
 measurement 2 in [T-10](LIVE_GATEWAY_TESTS.md#t-10--24-hour-soak) and
 [H-9](LIVE_GATEWAY_TESTS.md#h-9--real-home-assistant-instance),
@@ -514,7 +550,7 @@ and [H-1](LIVE_GATEWAY_TESTS.md#h-1--powered-off-unit).
 - **A — keep the changes** if all three measurements are clean.
 - **B — a second retry** in `TransportPolicy` if step 2 shows more transient
   failures.
-- **C — restore the single reads** if step 1 shows differing values.
+- **C — investigate the status map** if step 1 shows differing values.
 
 ---
 
@@ -524,7 +560,7 @@ Priority: high (post-release validation)
 Status: open
 Affected code: `device/transport.py`, `device/components.py`,
 `modbus_helpers.prepare_unit`, `modbus_client._poll`,
-`modbus_client._read_mode_component`
+`modbus_client._read_mode_status`
 
 ### Observation
 
@@ -571,8 +607,9 @@ from before `4.0.0`
 1. Latency and timeout rate per scenario, compared with the baseline.
 2. Power off one unit: timeout or code 10/11, requests per job, and whether
    `link_recycles` in the diagnostics stays at 0 while other units answer.
-3. A freshly powered unit: the fallback from five to two mode registers (HW-4).
-4. Write confirmation via `41121` and the settle time after writes (HW-2).
+3. A freshly powered unit: read-only mode-status reads for the supported
+   M-WRG-S and M-WRG-II profiles (HW-4 / R-12).
+4. Write confirmation via status `41101` and the settle time after writes (HW-2).
 5. Whether the gateway ever answers with code 6, and for how long.
 6. Unplug and replug the USB cable; reload and unload the entry: the port is
    released and the link comes back.
@@ -717,9 +754,9 @@ The live gateway was discovered on `/dev/ttyACM0` with six nodes
   `11:31:07.709`, slave `5` at `11:32:39.926`, slave `4` at `11:32:47.958`,
   and slave `7` at `11:34:38.787`. The capture continued to `11:35:36.041`;
   at that point the latest airflow read for every unit had succeeded.
-  No successful mode-block responses were observed after reconnect: recorded
-  reads at `41120` / `41121` returned `0x05` across all six units; latest
-  attempts vary by unit because of mode-read backoff. A per-group
+  The old poller used set-register reads at `41120` / `41121`, which returned
+  `0x05` across all six units; latest attempts vary by unit because of its
+  mode-read backoff. A per-group
   `Datenlesestatus` snapshot at `11:56:06 CEST` confirmed for one room that
   `flow_control` and `intensive` each had three consecutive failures,
   `stale=true`, and a last error identifying the five-register read at `41120`
@@ -729,8 +766,9 @@ The live gateway was discovered on `/dev/ttyACM0` with six nodes
   current coordinator state, while one room's last success was at
   `11:25:04 CEST`, just before the USB loss. The previously shared room's
   `Datenlesestatus` had changed to `Problem` at `11:17:39 CEST`, before USB
-  loss. Thus the status is explained by the mode-block read failures and did
-  not originate with the disconnect. The exact replug time and a full
+  loss. This explains the old poller's stale status and shows that the problem
+  predated the disconnect; it does not test the new `41100..41102` read path.
+  The exact replug time and a full
   diagnostics export were not captured. Recovery took up to about eight
   minutes after the transport reopened, so the H-3 one-airflow-round criterion
   was not demonstrated; the `link_recycles` counter remains unknown.
@@ -794,8 +832,9 @@ The live gateway was discovered on `/dev/ttyACM0` with six nodes
   zero-request failure prevent a comparable full result.
 - **2 — Powered-off unit:** partial. The 2026-10-09 H-1 run exceeded its
   five-minute limit and did not record values; it is inconclusive, not a pass.
-- **3 — Mode fallback:** partial. Some pre-write, post-write, and power-cycle
-  behavior is recorded under HW-4; the freshly powered-unit case remains open.
+- **3 — Mode status map:** partial. The read-only block succeeded on all six
+  M-WRG-II units; single-register parity, Home Assistant deployment, and
+  M-WRG-S validation remain open (HW-4 / R-12).
 - **4 — Writes:** partial. W-1 confirmed target readback and a measured-airflow
   change on slave `4`, but a helper rather than the real Home Assistant
   coordinator performed the write.
@@ -807,8 +846,9 @@ The live gateway was discovered on `/dev/ttyACM0` with six nodes
   re-enable. The HA H-3 follow-up reopened the serial link automatically after
   USB loss, and all six units eventually returned successful airflow reads.
   The later HA-host return again showed airflow reads succeeding on all six by
-  log end, but mode-block reads remained `0x05` on all six and short fallback
-  reads remained `0x05` on five. An acknowledged LOW-preset write sequence
+  log end, but the old set-register mode reads remained `0x05` on all six and
+  short fallback reads remained `0x05` on five. Those runs predate the
+  `41100..41102` status-path change. An acknowledged LOW-preset write sequence
   from the bathroom humidity-control automation appeared on slave `5`;
   there was no manual action. Recovery took up to about eight minutes after the transport
   reopened, while the mode failures kept several `Datenlesestatus` entities in
@@ -836,7 +876,7 @@ success criteria.
   `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS`, or `TRANSPORT_LINK_QUIET_SECONDS`
   from the measurements.
 - **C — skip the rest of a job on code 10/11** like on a timeout, in
-  `MeltemModbusClient._poll` and `_read_mode_component`, and keep code 10/11
+  `MeltemModbusClient._poll` and `_read_mode_status`, and keep code 10/11
   out of the mode backoff, if a powered-off unit answers that way.
 - **D — cap jobs and writes** with `asyncio.timeout` in the coordinator if the
   gateway sends code 6 and the 60 s retry blocks the UI.

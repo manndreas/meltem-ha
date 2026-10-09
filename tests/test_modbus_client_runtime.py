@@ -37,6 +37,7 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_HUMIDITY_MIN_LEVEL,
     REGISTER_HUMIDITY_STARTING_POINT,
     REGISTER_MODE,
+    REGISTER_MODE_STATUS,
     REGISTER_PRESET_MODE,
     REGISTER_PRESET_VALUE,
     REGISTER_PRODUCT_ID,
@@ -235,7 +236,7 @@ class TestReadFailures:
         state = await client.read_room_state(_ROOM, RoomState(), RefreshPlan())
 
         assert state.supply_air_flow == 40
-        assert all(address != REGISTER_MODE for address, _count in _reads(unit))
+        assert all(address != REGISTER_MODE_STATUS for address, _count in _reads(unit))
         assert state.read_health_for("flow_control").consecutive_failures == 1
 
     async def test_silent_units_do_not_recycle_the_link(

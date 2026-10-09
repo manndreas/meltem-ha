@@ -101,6 +101,63 @@ values through a separate input-register map. A single-register FC03 read of
 `41120×1` returned exception `0x05` on all six slaves; reducing the read
 length does not provide a read-only unlock path.
 
+## Read-only mode status at `41100..41102`
+
+The ioBroker community template in
+[ioBroker/modbus-templates#57](https://github.com/ioBroker/modbus-templates/pull/57)
+separates pollable status registers `41100..41102` from set registers
+`41120..41122` and commit `41132`. A direct FC03 read of `41100×3` succeeded
+on all six M-WRG-II slaves without any writes:
+
+| Slave | `41100` mode | `41101` supply/status subtype | `41102` extract |
+| --- | ---: | ---: | ---: |
+| 2 | 3 | 229 | 0 |
+| 3 | 3 | 229 | 0 |
+| 4 | 4 | 0 | 208 |
+| 5 | 3 | 228 | 0 |
+| 6 | 4 | 68 | 203 |
+| 7 | 3 | 229 | 0 |
+
+The values match the current preset/unbalanced states seen during testing.
+The ioBroker template decodes mode `3` subcodes `228/229/230` as LOW/MED/HIGH,
+mode `4` as unbalanced, and sensor-mode status subcodes separately from the
+write values. This gives the integration a read-only source for current mode
+and targets; `41120..41122` remain the write interface. The implementation
+now uses this map for every supported M-WRG-S and M-WRG-II profile, based on
+the user's explicit assumption that the two series behave alike. Direct
+hardware validation is currently only from M-WRG-II units; the M-WRG-S path
+still needs confirmation when such a unit is available. The manufacturer
+manual does not document this status map, so treat it as observed/community
+evidence rather than a manufacturer guarantee.
+
+A later read-only FC03 check on 2026-10-09 returned the same three-register
+values from all six slaves in about 15-17 ms each. No slave had the intensive
+status pattern used by the client decoder (`mode=3, submode=227` or
+`mode=0, submode=0`) during that scan. This used the locally exposed serial
+interface and does not establish that USB access is manufacturer supported.
+
+In a separate check while the user had intensive ventilation active on slave
+`4`, FC03 `41100×3` returned `[0, 0, 0]` in 16.6 ms. This matches the active
+pattern decoded by the integration and confirms intensive-state detection on
+this M-WRG-II unit for that operating state. It does not validate M-WRG-S or
+expose the configured intensive airflow/duration. The separate T-10
+observation on slave `5` used the set-side `41120..41124` block and was
+uncontrolled; it is not needed as evidence for this status-map result.
+
+### Why earlier hardware scans did not identify it
+
+The register range was not missing from the scans. The 2026-03-31 holding
+register sweep already found readable windows at `41100..41109`, then
+single-register reads narrowed this to `41100..41113`. The capture tool
+classified this only as `mode_and_runtime_state`; the raw values had no
+documented meanings in the manufacturer material gathered for the project.
+Meanwhile, the runtime profiler and `raw_requests` defaults focused on the
+known set-register block at `41120+`, and the profiler did not request
+`41100`. The ioBroker template supplied the missing semantic clue that
+`41100..41102` are the current-state map and `41120+` are set registers.
+This was a classification/tool-coverage gap, not a failure of the broad scan
+to see the range.
+
 ## Reads while a unit is powered off
 
 In the H-1 follow-up, the integration client completed 35 airflow jobs for
@@ -348,6 +405,65 @@ Registers that did not answer on the tested setup:
 - `41044 FAN_RPM_SUPPLY`
 - `41050 BYPASS_MODE`
 - `41051 BYPASS_STATUS`
+
+## Readable areas with incomplete meanings
+
+The 2026-03-31 single-register scan was on slave `2`; it establishes
+readability on that unit, not identical behavior across every profile.
+Potentially useful but still unclassified areas are:
+
+- `40024..40025` and `40200..40209`: readable islands with no assigned
+  meaning in the collected manufacturer references
+- `41103..41113`: readable tail after the now-identified current-mode status
+  registers `41100..41102`; its fields have not been interpreted
+- within the reported `41000..41029` island: `41008`, `41012..41015`,
+  `41022..41026`, and `41028..41029` have no confirmed semantics. `41013` is
+  used as VOC for one selected profile, but that mapping remains unverified.
+- `41019` behaved as gateway uptime on address `1`; that meaning should not be
+  assumed for room-unit addresses.
+- `40103` and `40104` returned stable values in separate probes, but are not
+  decoded or exposed by the integration
+- `41032..41033` are documented fan-motor operating hours and were readable
+  in the captured `41030×4` response on slave `3` (`[38083, 0, 38014, 0]`).
+  They are not yet exposed by the integration; R-6 checks them against unit
+  operating hours before any entity is added.
+
+The broad scan covered `40000..49999`; it did not exhaustively scan
+`50000..65535`. Later reads of `51100..51113`, `51120..51133`,
+`51150..51151`, and `52000..52010` were targeted setting captures, and those
+words showed substantial drift. They should not be treated as direct settings
+or expanded into a blind full-range scan without a specific hypothesis.
+Registers `30000` and `30002` appear in the manufacturer documentation, but
+their bus readability and function code have not been verified. The planned
+read-only probe is [R-8](LIVE_GATEWAY_TESTS.md); that plan explicitly forbids
+writing either register.
+
+## Slave 5 (bathroom) compared with the other units
+
+The user identified slave `5` as the bathroom unit and said it is the only
+unit without moisture recovery. In the saved R-1 capture from 2026-10-02, the
+six units shared `PRODUCT_ID=116852`, `PRODUCT_NAME=VMD-22RPS44`,
+`RECEIVED_PRODUCT_ID=116852`, and identical `42000..42009` values. Slave `5`
+was the one difference in software version (`2584`; the other five were
+`2326`), which could reflect a replacement board but does not identify the
+heat exchanger. Its operating-hour counters were lower than the other rooms;
+that is usage information, not a variant code.
+
+The all-known baseline/idle captures do show differences in shadow/meta
+registers, including `52010`: slave `5` returned `4353` then `4366` in the two
+idle captures, while the other slaves returned `48` then `61`. Both groups
+advanced by `13`; this stable offset is worth testing against another
+confirmed unit, but the range also drifts and has no known feature semantics.
+It is not enough to label the bathroom's exchanger type.
+
+The saved single-register R-2 sweep across `40000..40300` was on slave `3`,
+not the bathroom; the bathroom therefore has no comparable raw scan saved
+for `40024..40025`, `40200..40209`, or other unmapped fields. The observed
+Modbus product ID/name did not distinguish the P/E exchanger type. The
+manufacturer type plate or article number is the reliable discriminator:
+`M-WRG-II P` has no moisture recovery, while `M-WRG-II E` has an enthalpy
+exchanger. The integration's `ii_*` profile only records sensor capabilities,
+not P/E; see [models.md](reference/models.md).
 
 ## Request pacing and block reads
 

@@ -407,7 +407,7 @@ class TestSharedModbusConnection:
             gateway.holding.update({43901: 1, 43902: [2]})
             if gateway_silent:
                 gateway.fail_requests(ModbusTimeoutError("silent"))
-            link.for_unit(2).holding.update({41020: [30, 30], 41120: [3, 60, 0, 0, 0]})
+            link.for_unit(2).holding.update({41020: [30, 30], 41100: [3, 60, 0]})
             links.append(link)
             return link
 

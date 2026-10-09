@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.1.0
+
+- Read current mode and airflow targets from the read-only status block
+  `41100..41102` for all supported M-WRG-S and M-WRG-II profiles; stop polling
+  the write-side mode registers. The M-WRG-S path follows the same map by
+  assumption and still needs live hardware validation.
+- Remove the legacy multi-register and single-register mode-read fallbacks.
+- Include the status block and its single registers in the gateway profiling
+  tools, and document why earlier broad scans did not identify its meaning.
+
 ## 4.0.1
 
 - Enforce the configured maximum request rate across individual Modbus read

@@ -303,6 +303,12 @@ Run R on every unit unless the test says otherwise.
     the integration reads `40101` (`rf_comm_status`)
   - the integration reads operating hours at `41030/41031`, outside `41000..41029`
   - `41120..41124` are missing from the islands (HW-4)
+- **Evaluate:** keep raw readings separate from semantic interpretations.
+  Prioritize `41103..41113`, then `40024..40025`, `40200..40209`, and the
+  undocumented addresses in `41000..41029` listed in
+  [MELTEM.md](MELTEM.md#readable-areas-with-incomplete-meanings). R-6 covers
+  the documented fan-motor hours at `41032..41033`. Do not extend this into a
+  blind `50000+` sweep; only targeted shadow ranges have been captured.
 - **Type:** R
 - **Run:** single-register scans on two units, if possible with different
   software versions (R-1):
@@ -365,8 +371,8 @@ Run R on every unit unless the test says otherwise.
   `41030` unit hours include standby, `41032` counts only fan motor time
   ([reference/modbus.md](reference/modbus.md#status-and-measurement-registers-read-only)).
 - **Type:** R
-- **Run:** evaluate the R-1 captures; read `41030..41033` directly if R-2 found
-  them unreadable in the scan.
+- **Run:** evaluate the R-1 captures; read `41030..41033` on each selected
+  unit if its capture does not contain the raw four-register response.
 - **Pass:** flags are `0` or `1`; `41017 = 1` only if `41027 = 0`;
   `41030 ≥ 41032`.
 
@@ -397,21 +403,22 @@ Run R on every unit unless the test says otherwise.
 - **Run:** before any W test touches the unit, run
   `& $py -m tools.raw_requests --port $port --slave $s` without request
   options ([B.1](#b1--raw-requests-with-exception-class-and-latency)): it
-  reads `41120` ×5, `41120` ×2, `41121` ×1, `41122` ×1.
+  reads current status `41100` ×3, then the write-side `41120` block and
+  individual target registers for comparison.
 - **Pass:** informational. Record per unit: answer or exception class. Note
   whether Home Assistant or the app wrote to the unit since its last power-up;
   only [H-2](#h-2--freshly-powered-unit) gives a clean "never written" state.
 
-### R-10 — Mode block equals single reads
+### R-10 — Set-register read comparison
 
-- **Checks:** the flow job takes `41121/41122` from the five-register block
-  instead of single reads (HW-6 measurement 1, read-only part).
+- **Checks:** diagnostic comparison of `41120..41122` block and single reads.
+  These are set registers and are no longer the runtime status-read path.
 - **Type:** R
 - **Run:** on every unit where R-9 read the block: 20 rounds of `41120` ×5,
   then `41121` ×1 and `41122` ×1:
   `& $py -m tools.raw_requests --port $port --slave $s --read 41120:5 --read 41121:1 --read 41122:1 --rounds 20`.
-- **Pass:** block and single values are identical in every round. The write
-  variants follow in [W-10](#w-10--unbalanced-write-and-readback).
+- **Pass:** record whether block and single responses agree. This result does
+  not gate the current-state reads; the status-map comparison is [R-12](#r-12--read-only-mode-status-map).
 
 ### R-11 — Shadow ranges and their noise
 
@@ -424,6 +431,24 @@ Run R on every unit unless the test says otherwise.
   `capture_setting_family --family all_known --label idle-1`, then
   `--label idle-2 --compare-latest`.
 - **Pass:** all ranges readable. List the registers that changed.
+
+### R-12 — Read-only mode status map
+
+- **Checks:** whether the status map `41100..41102` provides current mode and
+  supply/extract state independently of the set registers `41120..41122`
+  (HW-4; community template
+  [ioBroker/modbus-templates#57](https://github.com/ioBroker/modbus-templates/pull/57)).
+- **Type:** R
+- **Run:** when units of both supported series are available, read `41100` ×3
+  and then `41100`, `41101`, and `41102` singly on each, with function `0x03`;
+  compare block and single responses with decoded state and airflow. Current
+  six-unit evidence is M-WRG-II only. If intensive is already active during
+  normal operation, capture the status then too; do not start it or write any
+  mode register just for this test.
+- **Pass:** the block and singles agree and the values decode consistently.
+  Record firmware/profile, intensive status if observed, and any read
+  exception; this is observed status-map behavior, not manufacturer-guaranteed
+  readback.
 
 ## T — Transport and timing
 
@@ -623,11 +648,12 @@ Notes on the tools:
   unit runs within 20 m³/h of its maximum, so the target stays in range.
 - Wait at least 10 s between runs on the same unit.
 
-### W-1 — Balanced write: `41121` readback and airflow lag
+### W-1 — Balanced write: status readback and airflow lag
 
-- **Checks:** `41121` reflects a balanced write at once (60 m³/h ↔ `120`);
-  `41020/41021` lag behind ([MELTEM.md](MELTEM.md#target-readback-and-measured-airflow));
-  HW-2 measurement 3; HW-7 measurement 4.
+- **Checks:** status register `41101` reflects a balanced write at once
+  (60 m³/h ↔ raw `120`); `41020/41021` lag behind
+  ([MELTEM.md](MELTEM.md#target-readback-and-measured-airflow)); HW-2
+  measurement 3; HW-7 measurement 4.
 - **Type:** W
 - **Run:** choose from `--delta` values `-20`, `-4`, `4`, `20`, but run only
   deltas that keep the target within the hard limits of 10 m³/h and the
@@ -636,8 +662,8 @@ Notes on the tools:
   `& $py -m tools.benchmark_integration_like --port $port --gap 0.1 --mode write_observe --room-index $ri --delta <d> --observe-seconds 60 --sample-interval 1`.
   Repeat one in-range delta with the baseline tool:
   `Push-Location ..\meltem-ha-baseline; & $py ..\meltem-ha\tools\run_pymodbus_baseline.py --port $port --gap 0.1 --mode write_observe --room-index $ri --delta <d> --observe-seconds 60 --sample-interval 1; Pop-Location`.
-- **Pass:** `41121` shows the new raw value in the first sample. Record the
-  time until `41020/41021` reach the target (±1) per delta.
+- **Pass:** the client decodes the new target from `41100..41102` in the first
+  sample. Record the time until `41020/41021` reach the target (±1) per delta.
 
 ### W-2 — Settle delay sweep
 
@@ -703,41 +729,42 @@ Notes on the tools:
 ### W-6 — `41132` commit latch
 
 - **Checks:** the unit takes over `41120..41132` only when `41132` is written
-  ([reference/modbus.md](reference/modbus.md#write-order)); whether `41121`
-  already reads back a value that is not applied yet. That matters because
-  the integration confirms writes via `41121`.
+  ([reference/modbus.md](reference/modbus.md#write-order)); whether current
+  status `41100..41102` changes before or only after the apply latch.
 - **Type:** W
 - **Run:**
-  1. Record `41020/41021` and `41121`.
+  1. Record `41020/41021`, `41100..41102`, and the set-side `41121`.
   2. `write_registers --write 41120=3 --write 41121=<raw of current + 20 m³/h>`, without `41132`.
-  3. Read `41020/41021` and `41120..41122` every 2 s for 20 s.
+  3. Read `41020/41021` and `41100..41102` every 2 s for 20 s; record
+     set-register values separately if readable.
   4. `write_registers --write 41132=0`.
-  5. Read every 2 s for 60 s.
+  5. Read `41020/41021` and `41100..41102` every 2 s for 60 s.
   6. Restore.
-- **Pass:** airflow changes only after step 4. Record whether `41121` showed
-  the new value in step 3.
+- **Pass:** status and airflow change only after step 4. Record any difference
+  between the read-only target in `41101` and the written value in `41121`.
 
 ### W-7 — Quick presets `228` / `229` / `230`
 
 - **Checks:** LOW / MED / HIGH as `41120=3`, `41121=228/229/230`, `41132=0`
   ([MELTEM.md](MELTEM.md#reverse-engineered-app-preset-behavior)); the
-  integration decodes `preset_mode` from them.
+  integration decodes `preset_mode` from current status at `41100..41102`.
 - **Type:** W
-- **Run:** per code: write the sequence; after 60 s read `41020/41021`,
-  `41120..41124`, and the client decode (see the notes above).
-- **Pass:** `41121` reads back the code; airflow settles at the LOW / MED /
-  HIGH airflows stored on the unit; `preset_mode` is `low` / `medium` /
-  `high`. LEDs: [H-6](#h-6--keypad-leds-and-physical-state).
+- **Run:** per code: write the sequence; after 60 s read `41100..41102`,
+  `41020/41021`, and the client decode. Set-register reads are optional
+  diagnostics only.
+- **Pass:** status decodes LOW / MED / HIGH; airflow settles at the matching
+  airflows stored on the unit. LEDs: [H-6](#h-6--keypad-leds-and-physical-state).
 
 ### W-8 — Intensive and power-off
 
 - **Checks:** HW-1: whether `41123/41124` survive a power-off write, and which
   candidate (A, C, D) fits.
-- **Type:** W, needs the five-register read (R-9 or W-5)
+- **Type:** W, requires current-state reads from R-12
 - **Run:**
   - **Run A, current behavior:** write `41123=3`, `41124=227`, `41132=0`; after
-    30 s read `41120..41124` and `41020/41021`. Then write `41120=1`,
-    `41121=0`, `41132=0` (what `write_level(0)` does); read after 5, 30 and 60 s.
+    30 s read `41100..41102`, `41123/41124`, and `41020/41021`. Then write
+    `41120=1`, `41121=0`, `41132=0` (what `write_level(0)` does); read the
+    same values after 5, 30 and 60 s.
   - **Run B, candidate A:** intensive on again, then
     `41123=0`, `41124=0`, `41120=1`, `41121=0`, `41132=0` as one sequence;
     read the same way.
@@ -766,14 +793,14 @@ Notes on the tools:
 
 ### W-10 — Unbalanced write and readback
 
-- **Checks:** `41121` = supply, `41122` = extract; `41020` = extract and
-  `41021` = supply airflow; block reads equal single reads after unbalanced
-  writes (HW-6 measurement 1).
+- **Checks:** `41101` reports the supply target and `41102` the extract target;
+  `41020` is extract and `41021` supply airflow. The current-state block and
+  single reads are compared in R-12.
 - **Type:** W
 - **Run:** write `41120=4`, `41121=<raw 40 m³/h>`, `41122=<raw 60 m³/h>`,
-  `41132=0`. After 60 s read five times: `41120` ×5, `41121` ×1, `41122` ×1,
-  `41020` ×2. Run the client decode.
-- **Pass:** `41021 ≈ 40` and `41020 ≈ 60`; block and single values equal;
+  `41132=0`. After 60 s read `41100..41102` and `41020/41021`; run the
+  client decode. Set-register reads may be recorded separately.
+- **Pass:** `41021 ≈ 40` and `41020 ≈ 60`; status values decode correctly;
   `operation_mode = unbalanced`, `target_level = 40`,
   `extract_target_level = 60`. Repeat the block/single comparison in W-1, W-7,
   and W-11.
@@ -786,8 +813,8 @@ Notes on the tools:
   and `205` change the airflow.)
 - **Type:** W
 - **Run:** for `n` in `3`, `5`, `7`: write `41120=4`, `41121=0`, `41122=200+n`,
-  `41132=0`; read `41020/41021` after 60 s; run the client decode. Then once
-  on the supply side (`41121=205`, `41122=0`).
+  `41132=0`; read `41100..41102` and `41020/41021` after 60 s; run the client
+  decode. Then once on the supply side (`41121=205`, `41122=0`).
 - **Pass:**
   - `41020 ≈ n × 10` for each `n`: the linear decode is right, HW-3 candidate
     A or C
@@ -813,8 +840,8 @@ Notes on the tools:
   (`_decode_operation_mode`).
 - **Type:** W, only on units with the matching sensors
 - **Run:** per supported selector: write `41120=2`, `41121=<selector>`,
-  `41132=0`; after 10 s read `41120/41121` and run the client decode.
-- **Pass:** readback equals the written selector; `operation_mode` is
+  `41132=0`; after 10 s read `41100..41102` and run the client decode.
+- **Pass:** status decodes the selected mode; `operation_mode` is
   `humidity_control`, `co2_control`, or `automatic`.
 
 ### W-14 — Airflow scaling
@@ -907,20 +934,22 @@ repeats if needed.
 
 - **Checks:** HW-3, app side: `Abluft` / `Zuluft` shortcut airflow encoded as
   `200 + airflow / 10` over the whole range.
-- **Run:** run `watch_register_changes --range 41120:5 --interval 2` in the
+- **Run:** run
+  `watch_register_changes --range 41100:3 --range 41120:5 --interval 2` in the
   background. Ask the person to set the `Abluft` shortcut in the app to 10, 20,
   40, 60, 80, 90, and 100 m³/h and to activate it each time; then two values
   for `Zuluft`. The app reaches the unit over radio, so the USB port stays
   free for the agent.
-- **Pass:** `41122` (or `41121`) equals `200 + airflow / 10` for all seven
-  values: HW-3 candidate A or C. Otherwise candidate B (code table).
+- **Pass:** compare current target status in `41101/41102` with
+  `200 + airflow / 10` for all seven values: HW-3 candidate A or C. Otherwise
+  candidate B (code table). Record set-side readbacks separately.
 
 ### H-5 — Intensive from the app
 
 - **Checks:** HW-1 measurement 5: the app writes the same `41123 = 3`,
   `41124 = 227`; then the Home Assistant power-off path.
-- **Run:** ask the person to start intensive in the app; read `41120..41124`;
-  then run W-8 run A from the power-off step.
+- **Run:** ask the person to start intensive in the app; read `41100..41102`
+  and `41120..41124`; then run W-8 run A from the power-off step.
 - **Pass:** informational; compare with W-8.
 
 ### H-6 — Keypad LEDs and physical state
@@ -1006,8 +1035,8 @@ incomparable.
 | --- | --- | --- |
 | 1. Benchmarks | latency and timeout rate against the pymodbus baseline | T-1, T-2, T-3, T-4 |
 | 2. Powered-off unit | timeout or code 10/11, requests per job, unwanted `disconnect()` | G-5, T-5, H-1 |
-| 3. Mode block fallback | five to two registers on a freshly powered unit (HW-4) | R-9, W-5, H-2 |
-| 4. Writes | `41121` confirmation, settle time, lock duration (HW-2) | W-1, W-2, W-3, W-6 |
+| 3. Mode status map | block/single parity and M-WRG-S validation (HW-4) | R-12, H-2 |
+| 4. Writes | `41101` status confirmation, settle time, lock duration (HW-2) | W-1, W-2, W-3, W-6 |
 | 5. Busy | does the gateway answer code 6, and for how long | T-6 |
 | 6. Link lifecycle | USB replug, reload, unload release and reopen the port | T-7, T-9, H-3, H-9 |
 | 7. Soak | 24 hours of operation with all units | T-10, H-9 |
@@ -1078,7 +1107,8 @@ example `& $py "$out\scripts\w16.py" $port 3`. `PYTHONPATH` from P-2 makes
 answer or the exception class with the latency. The summary counts answers,
 error classes, and the total time per request.
 
-- no request options: `41120` ×5, `41120` ×2, `41121` ×1, `41122` ×1 (R-9)
+- no request options: `41100` ×3, then `41120` ×5, `41120` ×2, `41121` ×1,
+  `41122` ×1 (R-9)
 - `--read 41020:2` or `--read 41000-41013`: holding registers, repeatable,
   sent in this order; `--read input:41020:2` uses function `0x04`
 - `--diagnostics`, `--server-id`, `--device-id`: `0x08` sub-function `0` with
