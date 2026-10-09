@@ -454,7 +454,10 @@ Run R on every unit unless the test says otherwise.
 - **Pass:** the block and singles agree and the values decode consistently.
   Record firmware/profile, intensive status if observed, and any read
   exception; this is observed status-map behavior, not manufacturer-guaranteed
-  readback.
+  readback. Report any unbalanced slot above `210` (for example `[4, 0, 228]`
+  on slave `4`) and any sensor-mode subcode other than `48`, `112`, or `176`
+  together with the app state and `41020/41021`; the client cannot decode them
+  (HW-3, HW-4).
 
 ## T — Transport and timing
 
@@ -670,6 +673,10 @@ Notes on the tools:
   `Push-Location ..\meltem-ha-baseline; & $py ..\meltem-ha\tools\run_pymodbus_baseline.py --port $port --gap 0.1 --mode write_observe --room-index $ri --delta <d> --observe-seconds 60 --sample-interval 1; Pop-Location`.
 - **Pass:** the client decodes the new target from `41100..41102` in the first
   sample. Record the time until `41020/41021` reach the target (±1) per delta.
+  Record raw `41101` in every sample: since `4.1.0` balanced write
+  confirmation relies on it echoing the raw `0..200` value written to `41121`
+  (HW-4). Another encoding or a later change means every balanced fan write
+  ends `unconfirmed`; report it before the release.
 
 ### W-2 — Settle delay sweep
 
@@ -778,6 +785,8 @@ Notes on the tools:
     `41121=<raw>`, `41132=0`; read the same way (relevant for candidate B).
   - After each run, run the client decode (`intensive_active`,
     `operation_mode`).
+  - Record the `41100..41102` status for the integration's own intensive
+    write: only `0/0/0` from an app-started override has been observed.
 - **Pass:** informational, decides HW-1:
   - fans stop and `41123/41124` are `0` in run A: candidate D
   - fans stop but `41124` stays `227` in run A: candidate C, or A if run B
@@ -848,7 +857,9 @@ Notes on the tools:
 - **Run:** per supported selector: write `41120=2`, `41121=<selector>`,
   `41132=0`; after 10 s read `41100..41102` and run the client decode.
 - **Pass:** status decodes the selected mode; `operation_mode` is
-  `humidity_control`, `co2_control`, or `automatic`.
+  `humidity_control`, `co2_control`, or `automatic`. Record raw `41101`: the
+  client expects the read-side codes `112`, `176`, and `48` from the ioBroker
+  decode (HW-4), which have not been observed on hardware yet.
 
 ### W-14 — Airflow scaling
 

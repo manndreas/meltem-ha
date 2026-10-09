@@ -88,6 +88,9 @@ ROOM_SILENT_AFTER_SECONDS = 120.0
 # Every unanswered read costs several timeouts, so silent units are polled
 # rarely to keep the shared bus free for the units that still respond.
 SILENT_ROOM_POLL_SECONDS = 60
+# First retry of a group that never answered; later retries wait as long as
+# the integration has been running, so the extra reads stay few.
+UNREAD_GROUP_RETRY_SECONDS = 60.0
 PRESET_OPTIMISTIC_SECONDS = 15.0
 # Fallback wake-up for the degenerate case of a gateway without any poll job.
 IDLE_TICK_SECONDS = 60.0
@@ -301,8 +304,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 updated_data = await self._read_one_job(
                     self.safe_data or self._startup_states, job
                 )
-                if startup:
-                    job.next_due = time.monotonic() + self._job_interval(job)
+                never_read = self._job_never_read(job, updated_data)
+                if startup or never_read:
+                    job.next_due = time.monotonic() + self._job_interval(
+                        job, never_read=never_read
+                    )
                 if not any(state.has_data for state in updated_data.values()):
                     self._startup_states = updated_data
                     raise self._last_job_error or MeltemModbusError(
@@ -353,12 +359,29 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             return 0.0
         return self._last_read_started + self._tick_seconds - now
 
-    def _job_interval(self, job: PollJob) -> float:
+    def _job_interval(self, job: PollJob, *, never_read: bool = False) -> float:
         """Return the job interval, stretched while its unit stays silent."""
 
+        interval = float(job.interval_seconds)
+        if never_read:
+            interval = min(
+                interval,
+                max(UNREAD_GROUP_RETRY_SECONDS, time.monotonic() - self._started_at),
+            )
         if self._room_silent(job.room_key):
-            return max(job.interval_seconds, SILENT_ROOM_POLL_SECONDS)
-        return job.interval_seconds
+            return max(interval, SILENT_ROOM_POLL_SECONDS)
+        return interval
+
+    def _job_never_read(self, job: PollJob, states: Mapping[str, RoomState]) -> bool:
+        """Return whether a group of this job has no successful read yet."""
+
+        room = self._rooms_by_key[job.room_key]
+        state = states.get(job.room_key, EMPTY_ROOM_STATE)
+        return any(
+            room.supports_any(READ_GROUP_ENTITY_KEYS[group_key])
+            and state.read_health_for(group_key).last_successful_read is None
+            for group_key in job.refresh_plan.read_groups()
+        )
 
     def _room_silent(self, room_key: str) -> bool:
         """Return whether a unit has not answered any read for a long time."""

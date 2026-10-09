@@ -185,8 +185,8 @@ RAW_VALUE_TO_SENSOR_MODE: dict[int, str] = {
 }
 SENSOR_OPERATION_MODES: tuple[str, ...] = tuple(SENSOR_MODE_TO_RAW_VALUE)
 
-# Apply the observed read-only status map to every supported M-WRG-S and
-# M-WRG-II profile. Live validation is currently from M-WRG-II units.
+# Read-side sensor subcodes in 41101, from the ioBroker decode and not yet seen
+# on hardware; 144 is an unverified extra (HW-4). Used for every profile.
 MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE: dict[int, int] = {
     48: MODE_AUTOMATIC_VALUE,
     MODE_HUMIDITY_CONTROL_VALUE: MODE_HUMIDITY_CONTROL_VALUE,
