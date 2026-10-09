@@ -17,9 +17,9 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    CONCENTRATION_PARTS_PER_MILLION,
     PERCENTAGE,
     EntityCategory,
+    UnitOfRatio,
     UnitOfTemperature,
     UnitOfTime,
     UnitOfVolumeFlowRate,
@@ -118,7 +118,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         key="co2_extract_air",
         device_class=SensorDeviceClass.CO2,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
         supported_profiles=CO2_PROFILES,
         value_fn=lambda state: state.co2_extract_air,
     ),
@@ -126,7 +126,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         key="voc_supply_air",
         device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
         supported_profiles=VOC_PROFILES,
         value_fn=lambda state: state.voc_supply_air,
     ),
