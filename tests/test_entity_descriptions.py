@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_OFF, STATE_ON, UnitOfRatio
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.condition import ConditionConfig
@@ -218,6 +218,10 @@ class TestDescriptionMetadata:
 
     def test_days_until_filter_change_counts_days(self) -> None:
         assert _DESCRIPTIONS["days_until_filter_change"].native_unit_of_measurement == "d"
+
+    def test_concentration_entities_use_ratio_unit(self) -> None:
+        for key in ("co2_extract_air", "voc_supply_air", "co2_starting_point"):
+            assert _DESCRIPTIONS[key].native_unit_of_measurement == UnitOfRatio.PARTS_PER_MILLION
 
     @pytest.mark.parametrize(
         ("key", "entity_category"),

@@ -51,7 +51,8 @@ These are the most important practical findings from the latest hardware tests:
   serial port once the entry has released its units
 - since `4.0.0` all of this runs over Home Assistant's shared Modbus
   connection (tmodbus) instead of an own pymodbus client; partial live
-  tmodbus-vs-pymodbus results and remaining release gates are tracked in HW-7
+  tmodbus-vs-pymodbus results and remaining post-release validation are tracked
+  in HW-7
 
 ## Scope
 

@@ -8,7 +8,8 @@ Adapt only the shell-specific loops, paths, and process-control commands. The
 plan checks the hardware assumptions the integration relies on and works through
 the open items in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) (HW-1 to HW-7),
 [SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md), and [TODO.md](TODO.md). HW-7
-is the [release gate for `4.0.0`](#release-gate-for-400).
+is the [post-release validation checklist](#hw-7--post-release-tmodbus-validation)
+for the tmodbus transport introduced in `4.0.0`.
 
 Tests that need a person (app, power switch, USB cable, keypad) are listed
 separately in [H](#h--tests-that-need-a-person). The agent prepares them,
@@ -169,21 +170,33 @@ Ask in one round, then work without further questions until the H tests:
 ### P-5 — Baseline worktree
 
 The baseline measurement ([T-1](#t-1--baseline-with-the-pymodbus-tools)) must
-use the pymodbus tools from before `4.0.0`. `main` (`4009a32`) is the last commit with them.
+use the pymodbus tools from before `4.0.0`. Commit `4009a32` is the last
+commit with them; use the commit hash rather than the moving `main` branch.
 
 ```powershell
-git worktree add --detach ..\meltem-ha-baseline main
+git worktree add --detach ..\meltem-ha-baseline 4009a32
 ```
 
-On that commit `tools/benchmark_integration_like.py` fails with its own Home
-Assistant stub. Load the real Home Assistant modules first:
+Use the launcher from the current repository to load Home Assistant modules
+when available (otherwise it installs a minimal benchmark-only stub) and adapt
+the baseline runner to the installed pymodbus unit-keyword API:
 
 ```powershell
-$bilMain = "import homeassistant.const, homeassistant.util.dt, runpy; runpy.run_module('tools.benchmark_integration_like', run_name='__main__', alter_sys=True)"
 Push-Location ..\meltem-ha-baseline
-& $py -c $bilMain --help
+& $py ..\meltem-ha\tools\run_pymodbus_baseline.py --help
 Pop-Location
 ```
+
+The launcher reports the pymodbus version and normalizes `slave` / `device_id`
+for the pinned runner without editing the baseline worktree. Offline tests
+cover both API signatures and fail explicitly on an unsupported signature.
+The Home Assistant stub only supplies `Platform` and `utcnow` for the
+integration modules loaded by this benchmark; it does not run or emulate
+Home Assistant.
+The 2026-10-09 attempt invoked the old runner directly with pymodbus `3.13.1`;
+its compatibility shim passed an unsupported `slave` keyword during
+discovery, so it sent no poll requests. That attempt is invalid; rerun it via
+the launcher before recording a baseline result.
 
 Remove the worktree when the run is finished: `git worktree remove ..\meltem-ha-baseline`.
 
@@ -427,22 +440,27 @@ Run R on every unit unless the test says otherwise.
           Tee-Object "$out\T-1-$scenario.txt"
   }
   & $py -m tools.profile_register_reads --port $port --gap 0.1 --cycles 5 | Tee-Object "$out\T-1-profile.txt"
-  & $py -c $bilMain --port $port --gap 0.1 --mode full --cycles 3 | Tee-Object "$out\T-1-full.txt"
-  & $py -c $bilMain --port $port --gap 0.1 --mode scheduler --cycles 10 | Tee-Object "$out\T-1-scheduler.txt"
+  & $py ..\meltem-ha\tools\run_pymodbus_baseline.py --port $port --gap 0.1 --mode full --cycles 3 | Tee-Object "$out\T-1-full.txt"
+  & $py ..\meltem-ha\tools\run_pymodbus_baseline.py --port $port --gap 0.1 --mode scheduler --cycles 10 | Tee-Object "$out\T-1-scheduler.txt"
   Pop-Location
   ```
 
 - **Record:** per scenario the success rate, average and p95 latency, and the
   error classes.
 
-### T-2 — Same measurement with the `4.0.0` tools
+### T-2 — Same measurement with the current tools
 
 - **Checks:** HW-7 measurement 1.
 - **Type:** R
-- **Run:** the T-1 commands in this repository, with
-  `& $py -m tools.benchmark_integration_like` instead of `& $py -c $bilMain`.
-  Alternate baseline and `4.0.0` runs (A-B-A-B) so that radio conditions
-  affect both equally.
+- **Run:** repeat the direct scenarios and profile command from T-1 in this
+  repository. For the integration-like measurements, use
+  `& $py -m tools.benchmark_integration_like --port $port --gap 0.1 --mode full --cycles 3`
+  and
+  `& $py -m tools.benchmark_integration_like --port $port --gap 0.1 --mode scheduler --cycles 10`
+  instead of the baseline launcher.
+  Record the integration version from `pyproject.toml`. Alternate baseline
+  and current-version runs (A-B-A-B) so that radio conditions affect both
+  equally.
 - **Pass (proposed):** no scenario with a lower success rate, no new error
   classes, average latency at most 20 % and p95 at most 30 % above the
   baseline. Any miss points to HW-7 candidate B.
@@ -525,7 +543,8 @@ Run R on every unit unless the test says otherwise.
 ### T-8 — Wider block reads (optional)
 
 - **Checks:** groundwork for wider block reads ([TODO.md](TODO.md) item 4).
-  Not a release gate. The `register_ranges` stay unchanged until a benchmark backs a change.
+  Not part of HW-7 post-release validation. The `register_ranges` stay
+  unchanged until a benchmark backs a change.
 - **Type:** R
 - **Run:** [`raw_requests`](#b1--raw-requests-with-exception-class-and-latency)
   with `--rounds 30`, once per variant: `--read 41016:6` against
@@ -615,8 +634,8 @@ Notes on the tools:
   profile maximum. For example, from a 20 m³/h baseline, skip `-20` because
   it would target 0; `-4`, `4`, and `20` are in range:
   `& $py -m tools.benchmark_integration_like --port $port --gap 0.1 --mode write_observe --room-index $ri --delta <d> --observe-seconds 60 --sample-interval 1`.
-  Repeat one in-range delta with the baseline tool (`$bilMain` in the P-5
-  worktree).
+  Repeat one in-range delta with the baseline tool:
+  `Push-Location ..\meltem-ha-baseline; & $py ..\meltem-ha\tools\run_pymodbus_baseline.py --port $port --gap 0.1 --mode write_observe --room-index $ri --delta <d> --observe-seconds 60 --sample-interval 1; Pop-Location`.
 - **Pass:** `41121` shows the new raw value in the first sample. Record the
   time until `41020/41021` reach the target (±1) per delta.
 
@@ -667,9 +686,16 @@ Notes on the tools:
 - **Checks:** whether a write unlocks the five-register read (HW-4
   measurements 2 and 3).
 - **Type:** W
-- **Run:** on every released unit where R-9 found the block unreadable: write
-  the current balanced level back (`41120=3`, `41121=<raw from 41021>`,
-  `41132=0`), then run R-9 again after 1 s, 10 s, and 60 s.
+- **Run:** on a released unit where R-9 found the block unreadable, first take
+  the required all-known snapshot and read `41020/41021`. These are extract
+  and supply airflow, respectively; do not assume `41021` is a valid balanced
+  target. If the baseline is one-sided or the chosen target would be zero,
+  stop and obtain approval for an explicit nonzero balanced test target and
+  restore sequence. Encode the approved target as
+  `round(target × 200 / max airflow)`. Otherwise write
+  `41120=3`, `41121=<approved raw target>`, `41132=0`, then run R-9 again
+  after 1 s, 10 s, and 60 s. Restore and verify the full pre-test state using
+  the safety rules above.
 - **Pass:** informational. Readable afterwards points to HW-4 candidate A,
   still refused to candidate B. Stickiness after a power cycle is checked in
   [H-2](#h-2--freshly-powered-unit).
@@ -872,6 +898,10 @@ repeats if needed.
 - **Pass:** `ModbusConnectionError` while unplugged; the client reconnects on
   its own within one airflow round after the replug; the COM port number stays
   the same (P-1). Record the recovery time and `link_recycles`.
+- **Note:** a standalone `count_requests` run exits when its serial connection
+  is lost. It can confirm link-loss reporting, but cannot pass the automatic
+  recovery criterion; use a client that remains alive and schedules another
+  job after replug, ideally the Home Assistant coordinator in H-9.
 
 ### H-4 — App shortcut encoding
 
@@ -964,10 +994,13 @@ repeats if needed.
 - [TODO.md](TODO.md) item 3 (test harness for HA `2026.10`): no hardware
   needed.
 
-## Release gate for `4.0.0`
+## HW-7 — Post-release tmodbus validation
 
-`4.0.0` is released only once every measurement of HW-7 in
-[HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) has a result.
+`4.0.0` has been released. The measurements below remain open post-release
+validation for the tmodbus transport; they are not a release gate for that
+version. Record each result as `pass`, `fail`, `inconclusive`, `blocked`, or
+`skipped`, and keep HW-7 open while required observations remain incomplete or
+incomparable.
 
 | HW-7 measurement | Question | Tests |
 | --- | --- | --- |
@@ -1004,8 +1037,8 @@ Afterwards, move the findings into the documentation:
 - **Answers to manufacturer open questions:** do not edit the manufacturer
   tables in `docs/reference/`. Record the observation in MELTEM.md and link it
   from the open question.
-- **Release gate:** note under HW-7 which of its seven measurements passed,
-  see [Release gate](#release-gate-for-400).
+- **HW-7 validation:** note under HW-7 which of its seven measurements passed,
+  see [HW-7 post-release validation](#hw-7--post-release-tmodbus-validation).
 
 Report to the person: failed and inconclusive tests, the candidate solutions
 the data supports, and the H tests still open.
@@ -1021,12 +1054,17 @@ Restore from the `before-<ID>` snapshot. Write in the order shown, with
 | `2` (sensor control) | `41120=2`, `41121=<112, 144 or 16>`, `41132=0` |
 | `3` (manual or preset) | `41120=3`, `41121=<raw or 228..230>`, `41132=0` |
 | `4` (unbalanced or shortcut) | `41120=4`, `41121=<value>`, `41122=<value>`, `41132=0` |
-| unreadable (HW-4) | `41120=3`, `41121=<round(41021 × 200 / max airflow)>`, `41132=0` |
+| unreadable (HW-4) | Do not infer a restoration target from `41021`; stop unless an explicit nonzero balanced restore target and sequence were approved. |
 
 - If the snapshot shows intensive (`41123=3`, `41124=227`), restore the base
   mode only; restarting intensive would restart its timer. Record it.
+- If the mode is unreadable and either airflow direction is zero, do not use
+  the unreadable-mode balanced fallback without an explicit restore target.
+  A zero target is not a valid balanced running target; stop and clarify the
+  restore sequence before any W test.
 - Control settings: write back every changed `42000..42005` register.
-- `max airflow` is 100 for `M-WRG-II` and 97 for `M-WRG-S`.
+- For nonzero balanced targets, raw is `round(target × 200 / max airflow)`;
+  `max airflow` is 100 for `M-WRG-II` and 97 for `M-WRG-S`.
 
 ## Appendix B — Request tools and custom scripts
 

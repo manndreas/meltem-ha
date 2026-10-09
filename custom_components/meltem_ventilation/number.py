@@ -17,9 +17,9 @@ from homeassistant.components.number import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    CONCENTRATION_PARTS_PER_MILLION,
     PERCENTAGE,
     EntityCategory,
+    UnitOfRatio,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -64,7 +64,7 @@ CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] 
     _control_setting("humidity_min_level", "mdi:fan-minus", HUMIDITY_PROFILES),
     _control_setting("humidity_max_level", "mdi:fan-plus", HUMIDITY_PROFILES),
     _control_setting(
-        "co2_starting_point", "mdi:molecule-co2", CO2_PROFILES, CONCENTRATION_PARTS_PER_MILLION
+        "co2_starting_point", "mdi:molecule-co2", CO2_PROFILES, UnitOfRatio.PARTS_PER_MILLION
     ),
     _control_setting("co2_min_level", "mdi:fan-minus", CO2_PROFILES),
     _control_setting("co2_max_level", "mdi:fan-plus", CO2_PROFILES),

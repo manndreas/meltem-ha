@@ -33,6 +33,7 @@ from custom_components.meltem_ventilation.modbus_helpers import (
 from custom_components.meltem_ventilation.models import ReadHealth, RoomConfig, RoomState
 from tools import _link, write_registers
 from tools import benchmark_integration_like as bil
+from tools._pymodbus_compat import install_pymodbus_unit_keyword_compat
 
 _MANUAL_80_SEQUENCE = ((REGISTER_MODE, 3), (REGISTER_CURRENT_LEVEL, 80), (REGISTER_APPLY, 0))
 
@@ -47,6 +48,88 @@ def test_link_settings_match_the_integration() -> None:
     assert _link.GATEWAY_DEVICE_ID == DEFAULT_GATEWAY_DEVICE_ID
     assert _link.REGISTER_GATEWAY_NUMBER_OF_NODES == REGISTER_GATEWAY_NUMBER_OF_NODES
     assert _link.REGISTER_GATEWAY_NODE_ADDRESS_1 == REGISTER_GATEWAY_NODE_ADDRESS_1
+
+
+class _DeviceIdPymodbusClient:
+    def read_holding_registers(
+        self, address: int, *, count: int = 1, device_id: int = 1
+    ) -> tuple[int, int, int]:
+        return address, count, device_id
+
+    def write_register(
+        self, address: int, value: int, *, device_id: int = 1
+    ) -> tuple[int, int, int]:
+        return address, value, device_id
+
+
+class _SlavePymodbusClient:
+    def read_holding_registers(
+        self, address: int, *, count: int = 1, slave: int = 1
+    ) -> tuple[int, int, int]:
+        return address, count, slave
+
+    def write_register(
+        self, address: int, value: int, *, slave: int = 1
+    ) -> tuple[int, int, int]:
+        return address, value, slave
+
+
+def _install_legacy_baseline_keyword_shim(client_class: type[object]) -> None:
+    """Mirror the alias conversion used by the pinned benchmark script."""
+
+    original_read = client_class.read_holding_registers
+    original_write = client_class.write_register
+
+    def compat_read(self: object, *args: object, **kwargs: object) -> object:
+        if "device_id" in kwargs and "slave" not in kwargs:
+            kwargs["slave"] = kwargs.pop("device_id")
+        return original_read(self, *args, **kwargs)
+
+    def compat_write(self: object, *args: object, **kwargs: object) -> object:
+        if "device_id" in kwargs and "slave" not in kwargs:
+            kwargs["slave"] = kwargs.pop("device_id")
+        return original_write(self, *args, **kwargs)
+
+    client_class.read_holding_registers = compat_read
+    client_class.write_register = compat_write
+
+
+@pytest.mark.parametrize(
+    "client_class", [_DeviceIdPymodbusClient, _SlavePymodbusClient]
+)
+def test_pymodbus_compat_supports_the_pinned_benchmark_shim(
+    client_class: type[object],
+) -> None:
+    isolated_client_class = type(f"Compat{client_class.__name__}", (client_class,), {})
+    install_pymodbus_unit_keyword_compat(isolated_client_class)
+    _install_legacy_baseline_keyword_shim(isolated_client_class)
+
+    client = isolated_client_class()
+    assert client.read_holding_registers(41020, count=2, device_id=7) == (41020, 2, 7)
+    assert client.write_register(41121, value=40, device_id=7) == (41121, 40, 7)
+
+
+def test_pymodbus_compat_rejects_conflicting_unit_keywords() -> None:
+    client_class = type("ConflictingClient", (_DeviceIdPymodbusClient,), {})
+    install_pymodbus_unit_keyword_compat(client_class)
+
+    with pytest.raises(TypeError, match="Pass only one unit address"):
+        client_class().read_holding_registers(41020, count=2, slave=6, device_id=7)
+
+
+def test_pymodbus_compat_fails_clearly_on_unknown_api() -> None:
+    class UnsupportedClient:
+        def read_holding_registers(self, address: int, *, unit: int = 1) -> int:
+            return address + unit
+
+        def write_register(self, address: int, value: int, *, unit: int = 1) -> int:
+            return address + value + unit
+
+    with pytest.raises(
+        RuntimeError,
+        match="Unsupported pymodbus read_holding_registers signature",
+    ):
+        install_pymodbus_unit_keyword_compat(UnsupportedClient)
 
 
 class TestIntegrationLikeBenchmark:

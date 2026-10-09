@@ -117,6 +117,10 @@ The integration can detect optional sensors such as humidity, CO2 and VOC, but
 it cannot yet reliably distinguish `M-WRG-S` from `M-WRG-II` automatically.
 During setup, choose the exact profile manually.
 
+The integration has only been tested and validated with `M-WRG-II` devices.
+Other hardware should work, but has not been verified. Feedback from users with
+different hardware is very welcome.
+
 ## Options
 
 Open the integration options via `Settings` -> `Devices & Services` -> `Meltem Modbus`
