@@ -16,6 +16,11 @@ not the cloud API.
 
 For cloud-side app traffic mapping, see `meltem-cloud-ha/docs/SETTING_MAPPING.md`.
 
+The original raw captures for the March/April 2026 experiments were local
+working files and are not archived in this repository. Their recorded
+measurements and interpretations are retained below. Selected October 2026
+evidence is preserved under [`measurements/`](measurements/).
+
 ## Current local conclusion
 
 What is already clear:
@@ -75,9 +80,7 @@ version words, or status bitfields, not like the configured values.
 
 First targeted `intensive` family capture on `2026-03-31`:
 
-- baseline: `tmp/setting-captures/intensive-slave2-20260331-225558-baseline.json`
 - changed in app: one intensive ventilation setting
-- follow-up: `tmp/setting-captures/intensive-slave2-20260331-225742-after-app-change.json`
 
 Observed diff shape:
 
@@ -97,9 +100,7 @@ Current interpretation:
 
 Second targeted `intensive` family capture on `2026-03-31`:
 
-- pre-change: `tmp/setting-captures/intensive-slave2-20260331-230009-pre-airflow-40.json`
 - changed in app: intensive ventilation airflow to `40`
-- follow-up: `tmp/setting-captures/intensive-slave2-20260331-230043-after-airflow-40.json`
 
 Observed diff shape:
 
@@ -121,9 +122,7 @@ Updated interpretation:
 
 Third targeted `all_known` family capture on `2026-03-31`:
 
-- baseline: `tmp/setting-captures/all_known-slave2-20260331-230620-state-40-baseline.json`
 - changed in app: intensive ventilation airflow to `60`
-- follow-up: `tmp/setting-captures/all_known-slave2-20260331-230702-after-airflow-60.json`
 
 Observed diff shape:
 
@@ -145,9 +144,7 @@ Current interpretation after the broader capture:
 
 Fourth targeted `all_known` family capture on `2026-03-31`:
 
-- baseline: `tmp/setting-captures/all_known-slave2-20260331-230702-after-airflow-60.json`
 - changed in app: intensive ventilation airflow back to `40`
-- follow-up: `tmp/setting-captures/all_known-slave2-20260331-230851-back-airflow-40.json`
 
 Observed diff shape:
 
@@ -173,11 +170,7 @@ Current interpretation after the A-B-A sequence:
 
 First keypad/LOW airflow measurement on `2026-04-01`:
 
-- baseline: `tmp/setting-captures/keypad-slave2-20260401-000404-baseline-presets-v2.json`
 - changed in app: LOW airflow target
-- follow-up: `tmp/setting-captures/keypad-slave2-20260401-000540-after-low-change.json`
-- immediate stability check without another app change:
-  `tmp/setting-captures/keypad-slave2-20260401-000623-stability-check.json`
 
 Observed diff shape:
 
@@ -203,11 +196,7 @@ Current interpretation after the first keypad run:
 
 Second keypad/LOW airflow measurement on `2026-04-01`:
 
-- baseline: `tmp/setting-captures/keypad-slave2-20260401-000623-stability-check.json`
 - changed in app: LOW airflow target to a second distinct value
-- follow-up: `tmp/setting-captures/keypad-slave2-20260401-000822-after-low-55.json`
-- immediate stability check without another app change:
-  `tmp/setting-captures/keypad-slave2-20260401-000833-stability-check-2.json`
 
 Observed diff shape:
 
@@ -256,6 +245,25 @@ integration benchmarks continued between captures. Across every unit,
 This confirms that the shadow/meta ranges have substantial background or
 poll-related drift and are not a reliable direct setting readback without
 subtracting a measured noise floor.
+
+### 2026-10-09 — intensive run-on time on slave 2
+
+The app showed a 15-minute intensive run-on time. The user changed only that
+setting to 20 minutes, then restored it to 15 minutes. Three read-only
+`intensive` family captures were taken:
+
+- baseline: [15-minute capture](measurements/2026-10-09/intensive-duration-slave2-before-15m.json)
+- after 20 minutes: [20-minute capture](measurements/2026-10-09/intensive-duration-slave2-after-20m.json)
+- after restore: [restored 15-minute capture](measurements/2026-10-09/intensive-duration-slave2-restored-15m.json)
+
+`41120..41124` and `41132` remained unreadable in all three captures. The
+20-minute capture differed only in shadow/meta counters: `51100..51112`
+advanced `4354 -> 4356`; most of `511xx` and `52006..52010` advanced
+`112 -> 114`; `52000..52005` advanced `4352 -> 4353`. The restore capture had
+no further raw differences from the 20-minute capture. Given the idle drift
+already measured above, these changes do not establish a duration-related
+field or a reversible A-B-A signature. The app setting was restored, but its
+stored value remains unreadable through the captured ranges.
 
 ## Confirmed local evidence
 
@@ -447,12 +455,14 @@ Use the family capture tool in `tools/capture_setting_family.py`.
 Example:
 
 ```bash
+capture_dir="$HOME/.local/share/meltem-ha/setting-captures"
+
 python -m tools.capture_setting_family \
   --port /dev/ttyACM0 \
   --slave 2 \
   --family intensive \
   --label baseline \
-  --output-dir tmp/setting-captures
+  --output-dir "$capture_dir"
 
 python -m tools.capture_setting_family \
   --port /dev/ttyACM0 \
@@ -460,7 +470,7 @@ python -m tools.capture_setting_family \
   --family intensive \
   --label airflow-90 \
   --compare-latest \
-  --output-dir tmp/setting-captures
+  --output-dir "$capture_dir"
 ```
 
 Suggested workflow rules:
@@ -504,5 +514,7 @@ Current status after the latest keypad and intensive runs:
 - the stop criteria have effectively been met for now
 - local persistence is well supported, but a directly usable local register
   model for app-side defaults is still missing
+- the 2026-10-09 run-on-time A-B-A test still found no direct setting field;
+  only shadow/meta drift was observed
 - further effort should return to normal integration work unless materially new
   evidence appears

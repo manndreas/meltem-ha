@@ -1,0 +1,16 @@
+  40009 x2          15.7 ms  [2021, 3847]
+
+summary:
+  40009 x2       ok=1/1  total=15.7 ms
+  40009 x2          16.5 ms  [2021, 3847]
+
+summary:
+  40009 x2       ok=1/1  total=16.5 ms
+  40009 x2          15.5 ms  [2021, 3847]
+
+summary:
+  40009 x2       ok=1/1  total=15.5 ms
+  40009 x2          16.3 ms  [2021, 3847]
+
+summary:
+  40009 x2       ok=1/1  total=16.3 ms

@@ -1,0 +1,384 @@
+=== R-2 slave 3 range 40000-40300 window 1 ===
+scanning slave 3 on /dev/ttyACM0 from 40000 to 40300 window=1 step=1 function=both
+
+holding 40000..40000 ok      values=1   sample=[7162]
+holding 40001..40001 ok      values=1   sample=[151]
+holding 40002..40002 ok      values=1   sample=[51316]
+holding 40003..40003 ok      values=1   sample=[1]
+holding 40004..40004 ok      values=1   sample=[2326]
+holding 40005..40005 ok      values=1   sample=[107]
+holding 40006..40006 ok      values=1   sample=[65279]
+holding 40007..40007 ok      values=1   sample=[65535]
+holding 40008..40008 ok      values=1   sample=[65535]
+holding 40009..40009 ok      values=1   sample=[2021]
+holding 40010..40010 ok      values=1   sample=[3847]
+holding 40011..40011 ok      values=1   sample=[22093]
+holding 40012..40012 ok      values=1   sample=[17453]
+holding 40013..40013 ok      values=1   sample=[12850]
+holding 40014..40014 ok      values=1   sample=[21072]
+holding 40015..40015 ok      values=1   sample=[21300]
+holding 40016..40016 ok      values=1   sample=[13312]
+holding 40017..40017 ok      values=1   sample=[0]
+holding 40018..40018 ok      values=1   sample=[0]
+holding 40019..40019 ok      values=1   sample=[0]
+holding 40020..40020 ok      values=1   sample=[0]
+holding 40021..40021 ok      values=1   sample=[51316]
+holding 40022..40022 ok      values=1   sample=[1]
+holding 40024..40024 ok      values=1   sample=[0]
+holding 40025..40025 ok      values=1   sample=[0]
+holding 40026..40026 ok      values=1   sample=[0]
+holding 40027..40027 ok      values=1   sample=[0]
+holding 40028..40028 ok      values=1   sample=[0]
+holding 40029..40029 ok      values=1   sample=[0]
+holding 40030..40030 ok      values=1   sample=[0]
+holding 40031..40031 ok      values=1   sample=[0]
+holding 40032..40032 ok      values=1   sample=[0]
+holding 40033..40033 ok      values=1   sample=[0]
+holding 40041..40041 ok      values=1   sample=[8]
+holding 40050..40050 ok      values=1   sample=[0]
+holding 40051..40051 ok      values=1   sample=[0]
+holding 40071..40071 ok      values=1   sample=[0]
+holding 40100..40100 ok      values=1   sample=[22]
+holding 40101..40101 ok      values=1   sample=[0]
+holding 40102..40102 ok      values=1   sample=[65535]
+holding 40103..40103 ok      values=1   sample=[0]
+holding 40104..40104 ok      values=1   sample=[0]
+holding 40109..40109 ok      values=1   sample=[65483]
+holding 40110..40110 ok      values=1   sample=[0]
+holding 40120..40120 ok      values=1   sample=[255]
+holding 40200..40200 ok      values=1   sample=[0]
+holding 40201..40201 ok      values=1   sample=[0]
+holding 40202..40202 ok      values=1   sample=[0]
+holding 40203..40203 ok      values=1   sample=[0]
+holding 40204..40204 ok      values=1   sample=[0]
+holding 40205..40205 ok      values=1   sample=[0]
+holding 40206..40206 ok      values=1   sample=[0]
+holding 40207..40207 ok      values=1   sample=[0]
+holding 40208..40208 ok      values=1   sample=[0]
+holding 40209..40209 ok      values=1   sample=[0]
+
+summary:
+  holding ok=55  partial=0   error=246 none=0   empty=0  
+  input   ok=0   partial=0   error=301 none=0   empty=0  
+=== R-2 slave 3 range 41000-41140 window 1 ===
+scanning slave 3 on /dev/ttyACM0 from 41000 to 41140 window=1 step=1 function=both
+
+holding 41000..41000 ok      values=1   sample=[0]
+holding 41001..41001 ok      values=1   sample=[32704]
+holding 41002..41002 ok      values=1   sample=[0]
+holding 41003..41003 ok      values=1   sample=[32704]
+holding 41004..41004 ok      values=1   sample=[2622]
+holding 41005..41005 ok      values=1   sample=[16785]
+holding 41006..41006 ok      values=1   sample=[239]
+holding 41007..41007 ok      values=1   sample=[32767]
+holding 41008..41008 ok      values=1   sample=[32767]
+holding 41009..41009 ok      values=1   sample=[0]
+holding 41010..41010 ok      values=1   sample=[32704]
+holding 41011..41011 ok      values=1   sample=[239]
+holding 41012..41012 ok      values=1   sample=[32767]
+holding 41013..41013 ok      values=1   sample=[32767]
+holding 41014..41014 ok      values=1   sample=[0]
+holding 41015..41015 ok      values=1   sample=[49144]
+holding 41016..41016 ok      values=1   sample=[0]
+holding 41017..41017 ok      values=1   sample=[0]
+holding 41018..41018 ok      values=1   sample=[0]
+holding 41019..41019 ok      values=1   sample=[31]
+holding 41020..41020 ok      values=1   sample=[30]
+holding 41021..41021 ok      values=1   sample=[30]
+holding 41022..41022 ok      values=1   sample=[0]
+holding 41023..41023 ok      values=1   sample=[0]
+holding 41024..41024 ok      values=1   sample=[32704]
+holding 41025..41025 ok      values=1   sample=[0]
+holding 41026..41026 ok      values=1   sample=[32704]
+holding 41027..41027 ok      values=1   sample=[263]
+holding 41028..41028 ok      values=1   sample=[365]
+holding 41029..41029 ok      values=1   sample=[72]
+holding 41030..41030 ok      values=1   sample=[38083]
+holding 41031..41031 ok      values=1   sample=[0]
+holding 41032..41032 ok      values=1   sample=[38014]
+holding 41033..41033 ok      values=1   sample=[0]
+holding 41034..41034 ok      values=1   sample=[0]
+holding 41100..41100 ok      values=1   sample=[3]
+holding 41101..41101 ok      values=1   sample=[229]
+holding 41102..41102 ok      values=1   sample=[0]
+holding 41103..41103 ok      values=1   sample=[0]
+holding 41104..41104 ok      values=1   sample=[0]
+holding 41105..41105 ok      values=1   sample=[0]
+holding 41106..41106 ok      values=1   sample=[0]
+holding 41107..41107 ok      values=1   sample=[0]
+holding 41108..41108 ok      values=1   sample=[1]
+holding 41109..41109 ok      values=1   sample=[0]
+holding 41110..41110 ok      values=1   sample=[0]
+holding 41111..41111 ok      values=1   sample=[0]
+holding 41112..41112 ok      values=1   sample=[0]
+
+summary:
+  holding ok=48  partial=0   error=93  none=0   empty=0  
+  input   ok=0   partial=0   error=141 none=0   empty=0  
+=== R-2 slave 3 range 42000-42020 window 1 ===
+scanning slave 3 on /dev/ttyACM0 from 42000 to 42020 window=1 step=1 function=both
+
+holding 42000..42000 ok      values=1   sample=[60]
+holding 42001..42001 ok      values=1   sample=[10]
+holding 42002..42002 ok      values=1   sample=[60]
+holding 42003..42003 ok      values=1   sample=[600]
+holding 42004..42004 ok      values=1   sample=[10]
+holding 42005..42005 ok      values=1   sample=[60]
+holding 42006..42006 ok      values=1   sample=[12]
+holding 42007..42007 ok      values=1   sample=[60]
+holding 42008..42008 ok      values=1   sample=[1]
+holding 42009..42009 ok      values=1   sample=[15]
+
+summary:
+  holding ok=10  partial=0   error=11  none=0   empty=0  
+  input   ok=0   partial=0   error=21  none=0   empty=0  
+=== R-2 slave 5 range 40000-40300 window 1 ===
+scanning slave 5 on /dev/ttyACM0 from 40000 to 40300 window=1 step=1 function=both
+
+holding 40000..40000 ok      values=1   sample=[3693]
+holding 40001..40001 ok      values=1   sample=[149]
+holding 40002..40002 ok      values=1   sample=[51316]
+holding 40003..40003 ok      values=1   sample=[1]
+holding 40004..40004 ok      values=1   sample=[2584]
+holding 40005..40005 ok      values=1   sample=[107]
+holding 40006..40006 ok      values=1   sample=[65279]
+holding 40007..40007 ok      values=1   sample=[65535]
+holding 40008..40008 ok      values=1   sample=[65535]
+holding 40009..40009 ok      values=1   sample=[2022]
+holding 40010..40010 ok      values=1   sample=[1804]
+holding 40011..40011 ok      values=1   sample=[22093]
+holding 40012..40012 ok      values=1   sample=[17453]
+holding 40013..40013 ok      values=1   sample=[12850]
+holding 40014..40014 ok      values=1   sample=[21072]
+holding 40015..40015 ok      values=1   sample=[21300]
+holding 40016..40016 ok      values=1   sample=[13312]
+holding 40017..40017 ok      values=1   sample=[0]
+holding 40018..40018 ok      values=1   sample=[0]
+holding 40019..40019 ok      values=1   sample=[0]
+holding 40020..40020 ok      values=1   sample=[0]
+holding 40021..40021 ok      values=1   sample=[51316]
+holding 40022..40022 ok      values=1   sample=[1]
+holding 40024..40024 ok      values=1   sample=[0]
+holding 40025..40025 ok      values=1   sample=[0]
+holding 40026..40026 ok      values=1   sample=[0]
+holding 40027..40027 ok      values=1   sample=[0]
+holding 40028..40028 ok      values=1   sample=[0]
+holding 40029..40029 ok      values=1   sample=[0]
+holding 40030..40030 ok      values=1   sample=[0]
+holding 40031..40031 ok      values=1   sample=[0]
+holding 40032..40032 ok      values=1   sample=[0]
+holding 40033..40033 ok      values=1   sample=[0]
+holding 40041..40041 ok      values=1   sample=[8]
+holding 40050..40050 ok      values=1   sample=[0]
+holding 40051..40051 ok      values=1   sample=[0]
+holding 40071..40071 ok      values=1   sample=[0]
+holding 40100..40100 ok      values=1   sample=[103]
+holding 40101..40101 ok      values=1   sample=[0]
+holding 40102..40102 ok      values=1   sample=[65535]
+holding 40103..40103 ok      values=1   sample=[0]
+holding 40104..40104 ok      values=1   sample=[0]
+holding 40109..40109 ok      values=1   sample=[65492]
+holding 40110..40110 ok      values=1   sample=[0]
+holding 40120..40120 ok      values=1   sample=[255]
+holding 40200..40200 ok      values=1   sample=[0]
+holding 40201..40201 ok      values=1   sample=[0]
+holding 40202..40202 ok      values=1   sample=[0]
+holding 40203..40203 ok      values=1   sample=[0]
+holding 40204..40204 ok      values=1   sample=[0]
+holding 40205..40205 ok      values=1   sample=[0]
+holding 40206..40206 ok      values=1   sample=[0]
+holding 40207..40207 ok      values=1   sample=[0]
+holding 40208..40208 ok      values=1   sample=[0]
+holding 40209..40209 ok      values=1   sample=[0]
+
+summary:
+  holding ok=55  partial=0   error=246 none=0   empty=0  
+  input   ok=0   partial=0   error=301 none=0   empty=0  
+=== R-2 slave 5 range 41000-41140 window 1 ===
+scanning slave 5 on /dev/ttyACM0 from 41000 to 41140 window=1 step=1 function=both
+
+holding 41000..41000 ok      values=1   sample=[0]
+holding 41001..41001 ok      values=1   sample=[32704]
+holding 41002..41002 ok      values=1   sample=[0]
+holding 41003..41003 ok      values=1   sample=[32704]
+holding 41004..41004 ok      values=1   sample=[20971]
+holding 41005..41005 ok      values=1   sample=[16782]
+holding 41006..41006 ok      values=1   sample=[239]
+holding 41007..41007 ok      values=1   sample=[32767]
+holding 41008..41008 ok      values=1   sample=[32767]
+holding 41009..41009 ok      values=1   sample=[0]
+holding 41010..41010 ok      values=1   sample=[32704]
+holding 41011..41011 ok      values=1   sample=[239]
+holding 41012..41012 ok      values=1   sample=[32767]
+holding 41013..41013 ok      values=1   sample=[32767]
+holding 41014..41014 ok      values=1   sample=[0]
+holding 41015..41015 ok      values=1   sample=[49144]
+holding 41016..41016 ok      values=1   sample=[0]
+holding 41017..41017 ok      values=1   sample=[0]
+holding 41018..41018 ok      values=1   sample=[0]
+holding 41019..41019 ok      values=1   sample=[31]
+holding 41020..41020 ok      values=1   sample=[75]
+holding 41021..41021 ok      values=1   sample=[75]
+holding 41022..41022 ok      values=1   sample=[0]
+holding 41023..41023 ok      values=1   sample=[0]
+holding 41024..41024 ok      values=1   sample=[32704]
+holding 41025..41025 ok      values=1   sample=[0]
+holding 41026..41026 ok      values=1   sample=[32704]
+holding 41027..41027 ok      values=1   sample=[261]
+holding 41028..41028 ok      values=1   sample=[365]
+holding 41029..41029 ok      values=1   sample=[71]
+holding 41030..41030 ok      values=1   sample=[31551]
+holding 41031..41031 ok      values=1   sample=[0]
+holding 41032..41032 ok      values=1   sample=[31497]
+holding 41033..41033 ok      values=1   sample=[0]
+holding 41034..41034 ok      values=1   sample=[0]
+holding 41100..41100 ok      values=1   sample=[3]
+holding 41101..41101 ok      values=1   sample=[230]
+holding 41102..41102 ok      values=1   sample=[0]
+holding 41103..41103 ok      values=1   sample=[0]
+holding 41104..41104 ok      values=1   sample=[0]
+holding 41105..41105 ok      values=1   sample=[0]
+holding 41106..41106 ok      values=1   sample=[3]
+holding 41107..41107 ok      values=1   sample=[0]
+holding 41108..41108 ok      values=1   sample=[1]
+holding 41109..41109 ok      values=1   sample=[0]
+holding 41110..41110 ok      values=1   sample=[0]
+holding 41111..41111 ok      values=1   sample=[0]
+holding 41112..41112 ok      values=1   sample=[0]
+
+summary:
+  holding ok=48  partial=0   error=93  none=0   empty=0  
+  input   ok=0   partial=0   error=141 none=0   empty=0  
+=== R-2 slave 5 range 42000-42020 window 1 ===
+scanning slave 5 on /dev/ttyACM0 from 42000 to 42020 window=1 step=1 function=both
+
+holding 42000..42000 ok      values=1   sample=[60]
+holding 42001..42001 ok      values=1   sample=[10]
+holding 42002..42002 ok      values=1   sample=[60]
+holding 42003..42003 ok      values=1   sample=[600]
+holding 42004..42004 ok      values=1   sample=[10]
+holding 42005..42005 ok      values=1   sample=[60]
+holding 42006..42006 ok      values=1   sample=[12]
+holding 42007..42007 ok      values=1   sample=[60]
+holding 42008..42008 ok      values=1   sample=[1]
+holding 42009..42009 ok      values=1   sample=[15]
+
+summary:
+  holding ok=10  partial=0   error=11  none=0   empty=0  
+  input   ok=0   partial=0   error=21  none=0   empty=0  
+=== R-2 slave 2 range 40000-40300 window 10 ===
+scanning slave 2 on /dev/ttyACM0 from 40000 to 40300 window=10 step=10 function=both
+
+holding 40000..40009 ok      values=10  sample=[7175, 151, 51316, 1, 2326, 107]
+holding 40010..40019 ok      values=10  sample=[3847, 22093, 17453, 12850, 21072, 21300]
+holding 40200..40209 ok      values=10  sample=[0, 0, 0, 0, 0, 0]
+
+summary:
+  holding ok=3   partial=0   error=28  none=0   empty=0  
+  input   ok=0   partial=0   error=31  none=0   empty=0  
+=== R-2 slave 2 range 41000-41140 window 10 ===
+scanning slave 2 on /dev/ttyACM0 from 41000 to 41140 window=10 step=10 function=both
+
+holding 41000..41009 ok      values=10  sample=[0, 32704, 0, 32704, 36700, 16790]
+holding 41010..41019 ok      values=10  sample=[32704, 239, 32767, 32767, 0, 49144]
+holding 41020..41029 ok      values=10  sample=[50, 50, 0, 0, 32704, 0]
+holding 41100..41109 ok      values=10  sample=[3, 230, 0, 0, 0, 0]
+
+summary:
+  holding ok=4   partial=0   error=11  none=0   empty=0  
+  input   ok=0   partial=0   error=15  none=0   empty=0  
+=== R-2 slave 2 range 42000-42020 window 10 ===
+scanning slave 2 on /dev/ttyACM0 from 42000 to 42020 window=10 step=10 function=both
+
+holding 42000..42009 ok      values=10  sample=[60, 10, 60, 600, 10, 60]
+
+summary:
+  holding ok=1   partial=0   error=2   none=0   empty=0  
+  input   ok=0   partial=0   error=3   none=0   empty=0  
+=== R-2 slave 4 range 40000-40300 window 10 ===
+scanning slave 4 on /dev/ttyACM0 from 40000 to 40300 window=10 step=10 function=both
+
+holding 40000..40009 ok      values=10  sample=[7217, 151, 51316, 1, 2326, 107]
+holding 40010..40019 ok      values=10  sample=[3847, 22093, 17453, 12850, 21072, 21300]
+holding 40200..40209 ok      values=10  sample=[0, 0, 0, 0, 0, 0]
+
+summary:
+  holding ok=3   partial=0   error=28  none=0   empty=0  
+  input   ok=0   partial=0   error=31  none=0   empty=0  
+=== R-2 slave 4 range 41000-41140 window 10 ===
+scanning slave 4 on /dev/ttyACM0 from 41000 to 41140 window=10 step=10 function=both
+
+holding 41000..41009 ok      values=10  sample=[0, 32704, 0, 32704, 36700, 16812]
+holding 41010..41019 ok      values=10  sample=[32704, 239, 32767, 32767, 0, 49144]
+holding 41020..41029 ok      values=10  sample=[60, 36, 0, 0, 32704, 0]
+holding 41100..41109 ok      values=10  sample=[4, 72, 206, 0, 0, 0]
+
+summary:
+  holding ok=4   partial=0   error=11  none=0   empty=0  
+  input   ok=0   partial=0   error=15  none=0   empty=0  
+=== R-2 slave 4 range 42000-42020 window 10 ===
+scanning slave 4 on /dev/ttyACM0 from 42000 to 42020 window=10 step=10 function=both
+
+holding 42000..42009 ok      values=10  sample=[60, 10, 60, 600, 10, 60]
+
+summary:
+  holding ok=1   partial=0   error=2   none=0   empty=0  
+  input   ok=0   partial=0   error=3   none=0   empty=0  
+=== R-2 slave 7 range 40000-40300 window 10 ===
+scanning slave 7 on /dev/ttyACM0 from 40000 to 40300 window=10 step=10 function=both
+
+holding 40000..40009 ok      values=10  sample=[7165, 151, 51316, 1, 2326, 107]
+holding 40010..40019 ok      values=10  sample=[3847, 22093, 17453, 12850, 21072, 21300]
+holding 40200..40209 ok      values=10  sample=[0, 0, 0, 0, 0, 0]
+
+summary:
+  holding ok=3   partial=0   error=28  none=0   empty=0  
+  input   ok=0   partial=0   error=31  none=0   empty=0  
+=== R-2 slave 7 range 41000-41140 window 10 ===
+scanning slave 7 on /dev/ttyACM0 from 41000 to 41140 window=10 step=10 function=both
+
+holding 41000..41009 ok      values=10  sample=[0, 32704, 0, 32704, 31458, 16790]
+holding 41010..41019 ok      values=10  sample=[32704, 239, 32767, 32767, 0, 49144]
+holding 41020..41029 ok      values=10  sample=[60, 60, 0, 0, 32704, 0]
+holding 41100..41109 ok      values=10  sample=[3, 230, 0, 0, 0, 0]
+
+summary:
+  holding ok=4   partial=0   error=11  none=0   empty=0  
+  input   ok=0   partial=0   error=15  none=0   empty=0  
+=== R-2 slave 7 range 42000-42020 window 10 ===
+scanning slave 7 on /dev/ttyACM0 from 42000 to 42020 window=10 step=10 function=both
+
+holding 42000..42009 ok      values=10  sample=[60, 10, 60, 600, 10, 60]
+
+summary:
+  holding ok=1   partial=0   error=2   none=0   empty=0  
+  input   ok=0   partial=0   error=3   none=0   empty=0  
+=== R-2 slave 6 range 40000-40300 window 10 ===
+scanning slave 6 on /dev/ttyACM0 from 40000 to 40300 window=10 step=10 function=both
+
+holding 40000..40009 ok      values=10  sample=[7166, 151, 51316, 1, 2326, 107]
+holding 40010..40019 ok      values=10  sample=[3847, 22093, 17453, 12850, 21072, 21300]
+holding 40200..40209 ok      values=10  sample=[0, 0, 0, 0, 0, 0]
+
+summary:
+  holding ok=3   partial=0   error=28  none=0   empty=0  
+  input   ok=0   partial=0   error=31  none=0   empty=0  
+=== R-2 slave 6 range 41000-41140 window 10 ===
+scanning slave 6 on /dev/ttyACM0 from 41000 to 41140 window=10 step=10 function=both
+
+holding 41000..41009 ok      values=10  sample=[0, 32704, 0, 32704, 26214, 16790]
+holding 41010..41019 ok      values=10  sample=[32704, 239, 32767, 32767, 0, 49144]
+holding 41020..41029 ok      values=10  sample=[30, 30, 0, 0, 32704, 0]
+holding 41100..41109 ok      values=10  sample=[3, 229, 0, 0, 0, 0]
+
+summary:
+  holding ok=4   partial=0   error=11  none=0   empty=0  
+  input   ok=0   partial=0   error=15  none=0   empty=0  
+=== R-2 slave 6 range 42000-42020 window 10 ===
+scanning slave 6 on /dev/ttyACM0 from 42000 to 42020 window=10 step=10 function=both
+
+holding 42000..42009 ok      values=10  sample=[60, 10, 60, 600, 10, 60]
+
+summary:
+  holding ok=1   partial=0   error=2   none=0   empty=0  
+  input   ok=0   partial=0   error=3   none=0   empty=0  
