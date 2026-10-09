@@ -79,8 +79,6 @@ class _FakeClient:
         self.write_control_setting_calls: list[tuple[str, str, int]] = []
         self.silent_seconds_by_slave: dict[int, float] = {}
         self.next_read_state = RoomState(target_level=42)
-        # HW-4 units answer the mode read but not the intensive registers.
-        self.skipped_groups: set[str] = set()
 
     async def discover_gateway_units(self, start: int, end: int) -> list[int]:
         self.discover_calls.append((start, end))
@@ -102,8 +100,6 @@ class _FakeClient:
         state = self.next_read_state
         read_time = dt_util.utcnow()
         for group_key in refresh_plan.read_groups():
-            if group_key in self.skipped_groups:
-                continue
             state = state.with_read_health(
                 group_key,
                 ReadHealth(
@@ -1141,8 +1137,21 @@ class TestAirflowWriteConfirmation:
         await coordinator.async_activate_intensive("unit_1")
 
         confirmations = coordinator._writes.by_room["unit_1"]
-        assert confirmations["airflow_levels"].status == "pending"
+        assert confirmations["airflow_levels"].status == "unverifiable"
         assert confirmations["intensive"].status == "confirmed"
+
+        coordinator._confirm_pending_writes(
+            _fresh(
+                RoomState(
+                    operation_mode="manual",
+                    target_level=70,
+                    balanced_target_readback=70,
+                    intensive_active=False,
+                )
+            )
+        )
+
+        assert confirmations["airflow_levels"].status == "confirmed"
 
     async def test_poll_after_a_fan_write_confirms_it_without_failing_the_update(
         self, hass: HomeAssistant,
@@ -1225,6 +1234,47 @@ class TestAirflowWriteConfirmation:
         coordinator._confirm_pending_writes(state)
 
         assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
+
+    def test_level_write_hidden_by_intensive_is_not_a_mismatch(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator._writes.by_room["unit_1"] = {
+            "airflow_levels": WriteConfirmation(
+                expected_value=(50, 50),
+                started_at=dt_util.utcnow() - timedelta(seconds=1),
+            )
+        }
+        state = _fresh(
+            RoomState(
+                operation_mode="manual",
+                target_level=30,
+                balanced_target_readback=30,
+                intensive_active=True,
+            )
+        )
+
+        coordinator._confirm_pending_writes(state)
+
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "unverifiable"
+        assert not coordinator._writes.unhealthy("unit_1")
+
+    def test_preset_write_still_mismatches_while_intensive_is_reported(
+        self, hass: HomeAssistant,
+    ) -> None:
+        """A quick-mode write clears intensive, so a remaining override is a real mismatch."""
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator._writes.by_room["unit_1"] = {
+            "preset_mode": WriteConfirmation(
+                expected_value="low",
+                started_at=dt_util.utcnow() - timedelta(seconds=1),
+            )
+        }
+        state = _fresh(RoomState(preset_mode="medium", intensive_active=True))
+
+        coordinator._confirm_pending_writes(state)
+
+        assert coordinator._writes.by_room["unit_1"]["preset_mode"].status == "mismatch"
 
     def test_old_write_failures_stop_flagging_data_health(
         self, hass: HomeAssistant,
@@ -1633,18 +1683,21 @@ class TestCoordinator:
 
         assert client.write_preset_mode_calls == [("unit_1", "intensive")]
 
-    async def test_intensive_write_on_a_unit_without_intensive_readback_is_not_a_problem(
+    async def test_mode_write_during_intensive_is_unverifiable_not_a_problem(
         self, hass: HomeAssistant,
     ) -> None:
-        """HW-4 units can never confirm intensive, so data health stays clear."""
-        coordinator, client = _build_coordinator(hass, [_UNIT_1])
-        coordinator.data = {"unit_1": RoomState(target_level=30)}
-        client.skipped_groups = {"intensive"}
-        client.next_read_state = RoomState(target_level=30)
+        """The intensive status hides the base mode the write changed (HW-1)."""
+        coordinator, client = _build_coordinator(hass, [_UNIT_F])
+        coordinator.data = {
+            "unit_1": RoomState(operation_mode="manual", target_level=30, intensive_active=True)
+        }
+        client.next_read_state = RoomState(
+            operation_mode="manual", target_level=30, intensive_active=True
+        )
 
-        await coordinator.async_activate_intensive("unit_1")
+        await coordinator.async_set_operation_mode("unit_1", "humidity_control")
 
-        confirmation = coordinator._writes.by_room["unit_1"]["intensive"]
+        confirmation = coordinator._writes.by_room["unit_1"]["operation_mode"]
         assert confirmation.status == "unverifiable"
         assert coordinator.data_health_stale("unit_1") is False
 

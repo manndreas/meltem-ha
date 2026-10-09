@@ -144,6 +144,18 @@ expose the configured intensive airflow/duration. The separate T-10
 observation on slave `5` used the set-side `41120..41124` block and was
 uncontrolled; it is not needed as evidence for this status-map result.
 
+### Status values without hardware evidence
+
+The ioBroker script decodes sensor control from `41100=2` with subcodes `112`
+(humidity), `176` (CO2), and `48` (automatic), and intensive from `3/227` as
+well as `0/0`. None of the six units was in sensor control during the captures,
+and only `0/0/0` was seen for intensive. The sensor subcodes fit the write
+values `112`, `144`, and `16` with bit `32` set. The integration additionally
+accepts `144` as CO2 control, which ioBroker does not list. Any other subcode
+decodes to an unknown operating mode; the raw status is neither logged nor
+included in the diagnostics. Open checks are listed under HW-4 in
+[HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md#remaining-validation).
+
 A user-authorized app test on slave `2` changed only the intensive run-on time
 from 15 to 20 minutes and back to 15. The read-only capture found no readable
 value in `41120..41124` or `41132`; only shadow/meta counters changed, and the
@@ -286,7 +298,8 @@ During H-3, the standalone polling helper reported a lost serial connection
 and exited with code `2` after the USB adapter was unplugged. Following
 reconnection, the port name remained `/dev/ttyACM0` and a new P-3 probe
 succeeded. The first post-reconnect probe reported gateway uptime of 7 seconds,
-and immediate airflow reads returned exception `0x05` for all six slaves.
+and immediate airflow reads returned exception `0x05` for all six slaves. The
+person confirmed normal fan operation at that time.
 
 A later H-3 follow-up used the running Home Assistant integration; its logs
 were provided locally and are not archived in this repository. The USB loss
@@ -494,7 +507,10 @@ slave `4` and one read of the same identity fields across all six showed:
   reliable model marker.
 - The current status values also differed (`41100..41102`: slave `5`
   `[3,228,0]`, slave `4` `[4,0,228]`); these are operating-state differences,
-  not evidence of different exchanger hardware.
+  not evidence of different exchanger hardware. The integration cannot decode
+  the extract value `228` on slave `4`: it decodes to 280 m3/h, so the
+  extract target is unknown while the quick mode is reported as
+  `extract_only` (HW-3 in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md)).
 
 The manufacturer type plate or article number remains the reliable
 discriminator: `M-WRG-II P` has no moisture recovery, while `M-WRG-II E` has
