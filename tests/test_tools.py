@@ -24,6 +24,7 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
     REGISTER_MODE,
+    REGISTER_MODE_STATUS,
     REQUEST_GAP_SECONDS,
 )
 from custom_components.meltem_ventilation.modbus_helpers import (
@@ -34,6 +35,7 @@ from custom_components.meltem_ventilation.models import ReadHealth, RoomConfig, 
 from tools import _link, write_registers
 from tools import benchmark_integration_like as bil
 from tools._pymodbus_compat import install_pymodbus_unit_keyword_compat
+from tools.profile_register_reads import SPECS as PROFILE_READ_SPECS
 
 _MANUAL_80_SEQUENCE = ((REGISTER_MODE, 3), (REGISTER_CURRENT_LEVEL, 80), (REGISTER_APPLY, 0))
 
@@ -48,6 +50,12 @@ def test_link_settings_match_the_integration() -> None:
     assert _link.GATEWAY_DEVICE_ID == DEFAULT_GATEWAY_DEVICE_ID
     assert _link.REGISTER_GATEWAY_NUMBER_OF_NODES == REGISTER_GATEWAY_NUMBER_OF_NODES
     assert _link.REGISTER_GATEWAY_NODE_ADDRESS_1 == REGISTER_GATEWAY_NODE_ADDRESS_1
+
+
+def test_register_profile_scan_includes_mode_status_and_single_reads() -> None:
+    assert {
+        (spec.address, spec.count) for spec in PROFILE_READ_SPECS
+    } >= {(41100, 3), (41100, 1), (41101, 1), (41102, 1)}
 
 
 class _DeviceIdPymodbusClient:
@@ -144,7 +152,7 @@ class TestIntegrationLikeBenchmark:
                 41006: 45,
                 41011: 50,
                 41020: [30, 30],
-                41120: [3, 60, 0, 0, 0],
+                41100: [3, 60, 0],
             }
         )
         humidity_unit.fail_read(41007, IllegalDataAddressError())
@@ -208,7 +216,7 @@ class TestIntegrationLikeBenchmark:
     async def test_cycle_counts_partial_mode_failures_as_failures(
         self, link: MockModbusConnection, room: RoomConfig,
     ) -> None:
-        link.for_unit(2).fail_read(REGISTER_MODE, IllegalDataAddressError())
+        link.for_unit(2).fail_read(REGISTER_MODE_STATUS, IllegalDataAddressError())
         client = bil.MeltemModbusClient(link.for_unit, port="mock-port")
 
         samples = await bil.run_cycles(client, [room], 1, {"airflow": bil.AIRFLOW_PLAN})

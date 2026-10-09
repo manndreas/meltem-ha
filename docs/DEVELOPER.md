@@ -33,12 +33,15 @@ These are the most important practical findings from the latest hardware tests:
 - a zero request gap was unstable in the pymodbus measurements and timed out
   during the 2026 tmodbus gap sweep; see HW-7 in
   [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md)
-- `41121` behaves like a fast balanced target readback after writes
+- read-only current mode and target state come from `41100..41102` for all
+  supported M-WRG-S and M-WRG-II profiles; this is directly measured on
+  M-WRG-II, and assumed for M-WRG-S
+- `41120..41124` are set registers and are not used for routine polling
 - `41020/41021` behave like the effective/current airflow and may lag behind
-- many devices return Modbus exceptions for the mode registers before a write;
-  on slave `4`, the two-register fallback and `41121` became readable after
-  W-5 and remained readable through a power cycle, while the five-register
-  block and `41122` stayed unavailable (see HW-4)
+- many devices return Modbus exceptions for the set registers before a write;
+  on slave `4`, the old two-register fallback and `41121` became readable
+  after W-5 and remained readable through a power cycle, while the old
+  five-register block and `41122` stayed unavailable (see HW-4)
 - immediate write confirmation polling created unnecessary bus load and was
   removed for airflow writes
 - short read failures preserve the previous state, but a unit that keeps
@@ -171,7 +174,7 @@ other `ModbusError` to `MeltemModbusError`. When a unit times out before any
 of its blocks answered in a job, the rest of that job is skipped and all of
 its groups are marked failed, so a silent unit costs one timeout plus one
 retry per job instead of one per block. The same holds when a unit falls
-silent during the mode reads: the first timeout there ends the job. Only an
+silent during the current-mode status read: the first timeout there ends the job. Only an
 exception response starts the mode backoff, because only that is the HW-4
 refusal; a timeout is retried on the next flow job. The setup probe also stops
 at the first timeout of a unit.
@@ -180,7 +183,7 @@ An unconfigured address timed out. In the H-1 follow-up, airflow jobs for
 physically powered-off slave `4` completed successfully in 2-3 requests with
 no timeout or link recycle; the returned state was not logged, so
 gateway-cached data cannot be ruled out. After power-up, measured airflow read
-`80/0` while the mode fallback still decoded manual target `20`; the person
+`80/0` while the then-current set-register fallback decoded manual target `20`; the person
 confirmed the app and physical unit matched. No Busy/code-6 response was
 observed; the active stress test was not run because its gap-0 command
 conflicts with the hardware-test pacing rule. See HW-7 in
@@ -197,14 +200,13 @@ How the hardware findings are implemented now:
 | The gateway needs a pause between requests | `REQUEST_GAP_SECONDS` via `set_message_spacing` in `prepare_unit` |
 | 0.8 s is enough for the gateway to answer | `FIXED_TIMEOUT` via `require_timeout` in `prepare_unit` |
 | pymodbus' default resend turned one unanswered register into about eight timeouts | `TransportPolicy` retries once, without disconnecting |
-| Units reject `41120..41124` until a first write (HW-4) | `mode` → `mode_short` → single reads in `MeltemModbusClient._read_mode_block`, backoff per `(slave, component)` on exception responses only |
-| `41121`/`41122` come with the mode block | `_read_mode_group` only reads them on their own without a block |
-| `41121` holds the sensor-mode selector in sensor modes | `_read_mode_group` derives the target from the measured airflow there |
+| M-WRG-S and M-WRG-II status is read separately from the set registers (HW-4) | Every supported profile reads `41100..41102`; writes remain on `41120..41122` plus `41132`. M-WRG-S uses the same map by explicit assumption; live data is from M-WRG-II. |
+| Read-side sensor subcodes differ from write values | `_read_mode_block` normalizes `41101` status codes before decoding sensor modes |
 | `41000` and `41004` are swapped on the gateway | field mapping of `Temperatures` in `device/components.py` |
 | 32-bit values are word-swapped | `word_order="little"` on `float32` and `uint32` fields |
 | Mode writes only take effect after `41132` | `Command` component, written last in every mode and preset sequence |
 | Discovery runs on the gateway's own unit 1 | `MeltemGateway` in `device/device.py` |
-| A silent unit must not drag down the others | per-job skip in `MeltemModbusClient._poll` and `_read_mode_component`, quiet window in `TransportPolicy`, `SILENT_ROOM_POLL_SECONDS` in the coordinator |
+| A silent unit must not drag down the others | per-job skip in `MeltemModbusClient._poll` and `_read_mode_status`, quiet window in `TransportPolicy`, `SILENT_ROOM_POLL_SECONDS` in the coordinator |
 
 ## Discovery model
 
@@ -243,7 +245,7 @@ Current design:
 - jobs use block reads where possible
 - only one job runs at a time
 - `max_requests_per_second` limits both job starts and individual read
-  attempts, including optional mode fallbacks and retries; the policy waits
+  attempts, including optional mode-status reads and retries; the policy waits
   at least `1 / rate` after the previous read attempt finishes, not merely
   after it was submitted, so a slow connect or link queue cannot cause a burst
 - this read limit is configured before gateway validation and is shared by
@@ -272,8 +274,8 @@ Current design:
   to the shared read limit and the link's minimum `REQUEST_GAP_SECONDS`
 - airflow-level writes rely on the normal scheduler for later readback instead
   of forcing an immediate confirmation poll
-- the flow job takes `41121`/`41122` from the `41120` mode block and only
-  reads them on their own when the block is unavailable
+- M-WRG-S and M-WRG-II flow jobs read current mode/targets from `41100..41102`;
+  mode writes use `41120..41122` and commit at `41132`
 - a unit that has not answered for `ROOM_SILENT_AFTER_SECONDS` is polled at
   most every `SILENT_ROOM_POLL_SECONDS`, because every unanswered read costs
   timeouts on the shared bus
@@ -372,15 +374,16 @@ Accepted settings without a successful readback are used instead of cached
 values for the opposite bound. Both values are compared after rounding to
 the register step.
 
-Units that answer the two-register mode read but reject the five-register one
-(HW-4) do not record an `intensive` read failure; the intensive state is simply
-unknown there, and any previous health record for that unreadable group is
-cleared. An intensive write on such a unit is recorded as `unverifiable`
-instead of `unconfirmed`, so it does not flag `data_health`.
+M-WRG-S and M-WRG-II mode state is decoded from `41100..41102`. The M-WRG-S
+path follows the same map by explicit assumption; live validation is currently
+from M-WRG-II. The status block reports intensive mode through its read-side
+mode/submode values, so routine polling does not read the write-side
+`41120..41124` block. An intensive write without readable intensive status
+remains `unverifiable` rather than `unconfirmed`, so it does not flag
+`data_health`.
 
-The base quick mode is decoded from `41120..41122` only. The intensive override
-in `41123`/`41124` no longer masks it, so the quick mode stays correct after a
-restart during intensive ventilation.
+The set-register block `41120..41124` is used for writes only; `41132` is
+still written last as the apply latch.
 
 Write errors reach the UI as translated `HomeAssistantError`s (`exceptions` in
 `strings.json`) instead of an "Unknown error".
@@ -464,18 +467,18 @@ Decisions:
 
 ### Target readback and measured airflow
 
-`41121` reads back the last written balanced target at once, while
-`41020/41021` show the effective airflow and lag behind, see
-[MELTEM.md](MELTEM.md#target-readback-and-measured-airflow). Therefore:
+The current-state map at `41100..41102` reports the operating mode and targets;
+`41020/41021` show the effective airflow and can lag behind, see
+[MELTEM.md](MELTEM.md). Therefore:
 
-- `41121` confirms a newly written balanced target; it is accepted only within
-  the raw range `0..200`, because the quick mode codes share the register
+- `41101` confirms the balanced target from read-only status; values are scaled
+  using the selected profile's airflow range
 - `41020/41021` stay the authoritative current airflow and never confirm a
   write
-- if `41121` is missing or implausible, the state falls back to the measured
-  airflow
-- in unbalanced mode both directions are read back from their own target
-  registers and keep their last value when that read fails
+- if `41101` is missing or implausible, the balanced target falls back to the
+  measured airflow
+- in unbalanced mode the status values `41101/41102` provide supply/extract
+  targets; the previous target is kept if the status read fails
 
 ### Per-unit availability on read failures
 
@@ -715,5 +718,5 @@ activates a half-written sequence.
 - Do not remove request pacing unless you have tested the gateway thoroughly.
 - Do not make polling user-configurable again without a strong reason.
 - Be careful when touching scan timing; it can affect how many devices are found.
-- Avoid relying on `41121` as a trustworthy current-state readback.
+- Use `41100..41102`, not the write-side `41120..41122`, for current mode state.
 - Keep `M-WRG-S` and `M-WRG-II` airflow scaling separate.

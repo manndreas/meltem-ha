@@ -323,6 +323,9 @@ async def run_write_refresh(
 
     async def read_raw_snapshot() -> dict[str, object]:
         return {
+            "mode_status_41100_41102": await read_or_none(
+                unit, const.REGISTER_MODE_STATUS, 3
+            ),
             "mode_block_41120_41122": await read_or_none(unit, const.REGISTER_MODE, 3),
             "flow_block_41020_41021": await read_or_none(unit, const.REGISTER_EXTRACT_AIR_FLOW, 2),
         }
@@ -421,6 +424,9 @@ async def run_write_observe(
     async def snapshot() -> dict[str, object]:
         return {
             "flow_block_41020_41021": await read_or_none(unit, const.REGISTER_EXTRACT_AIR_FLOW, 2),
+            "mode_status_41100_41102": await read_or_none(
+                unit, const.REGISTER_MODE_STATUS, 3
+            ),
             "mode_41120": await single(const.REGISTER_MODE),
             "current_level_41121": await single(const.REGISTER_CURRENT_LEVEL),
             "extract_target_41122": await single(const.REGISTER_EXTRACT_AIR_TARGET_LEVEL),

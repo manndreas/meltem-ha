@@ -30,6 +30,10 @@ class ReadSpec:
 
 SPECS: tuple[ReadSpec, ...] = (
     ReadSpec("flows_41020_41021", 41020, 2),
+    ReadSpec("mode_status_41100_41102", 41100, 3),
+    ReadSpec("mode_status_41100", 41100, 1),
+    ReadSpec("supply_mode_status_41101", 41101, 1),
+    ReadSpec("extract_mode_status_41102", 41102, 1),
     ReadSpec("mode_41120", 41120, 1),
     ReadSpec("current_level_41121", 41121, 1),
     ReadSpec("extract_target_41122", 41122, 1),

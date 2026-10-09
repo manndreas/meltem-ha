@@ -334,9 +334,9 @@ class TestStartupWithRealClient:
         ]
         writes: list[WriteEvent] = []
         for room in rooms:
-            link.for_unit(room.slave).holding.update({
-                41020: [30, 30], 41120: [3, 60, 0, 0, 0],
-            })
+            link.for_unit(room.slave).holding.update(
+                {41020: [30, 30], 41100: [3, 60, 0]}
+            )
             link.for_unit(room.slave).on_write(writes.append)
         slaves = {link.for_unit(slave): slave for slave in range(1, 8)}
         link.for_unit(1).holding[43901] = len(rooms)
@@ -442,7 +442,7 @@ class TestStartupWithRealClient:
         original_read = unit.read_holding_registers
 
         async def _read(address: int, count: int) -> list[int]:
-            if address in (41120, 41121):
+            if address == 41100:
                 raise IllegalDataAddressError()
             return await original_read(address, count)
 
