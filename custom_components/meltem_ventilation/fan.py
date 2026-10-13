@@ -30,12 +30,6 @@ from .models import MeltemRuntimeData, RoomConfig
 
 DEFAULT_TURN_ON_PERCENTAGE = 50
 
-_ICONS = {
-    DIRECTION_SUPPLY: "mdi:home-import-outline",
-    DIRECTION_EXTRACT: "mdi:home-export-outline",
-}
-
-
 # The coordinator serializes all gateway access itself.
 PARALLEL_UPDATES = 0
 
@@ -72,7 +66,6 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         super().__init__(coordinator, room, entity_key, entity_key)
         self._direction = direction
         self._last_on_percentage: int | None = None
-        self._attr_icon = _ICONS[direction]
         self._level_range = (1, profile_max_airflow(room.profile))
         # One step per m3/h, so the slider cannot land between device values.
         self._attr_speed_count = int_states_in_range(self._level_range)

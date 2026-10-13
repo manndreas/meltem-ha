@@ -52,6 +52,7 @@ from custom_components.meltem_ventilation.trigger import (
 
 _COMPONENT_DIR = Path(__file__).parent.parent / "custom_components" / "meltem_ventilation"
 _STRINGS = _COMPONENT_DIR / "strings.json"
+_ICONS = _COMPONENT_DIR / "icons.json"
 
 _ALL_DESCRIPTIONS = (
     *SENSOR_DESCRIPTIONS,
@@ -371,4 +372,40 @@ class TestTranslations:
         assert set(strings["operation_mode"]["state"]) == {
             OPERATION_MODE_INACTIVE,
             *SENSOR_OPERATION_MODES,
+        }
+
+    def test_icon_translations_cover_custom_entity_icons(self) -> None:
+        assert _load_json(_ICONS) == {
+            "entity": {
+                "binary_sensor": {
+                    "data_health": {"default": "mdi:fan-alert"},
+                    "error_status": {"default": "mdi:alert-circle-outline"},
+                    "filter_change_due": {"default": "mdi:air-filter"},
+                    "frost_protection_active": {"default": "mdi:snowflake-thermometer"},
+                    "rf_comm_status": {"default": "mdi:wifi-alert"},
+                },
+                "fan": {
+                    "extract_level": {"default": "mdi:home-export-outline"},
+                    "supply_level": {"default": "mdi:home-import-outline"},
+                },
+                "number": {
+                    "co2_max_level": {"default": "mdi:fan-plus"},
+                    "co2_min_level": {"default": "mdi:fan-minus"},
+                    "co2_starting_point": {"default": "mdi:molecule-co2"},
+                    "humidity_max_level": {"default": "mdi:fan-plus"},
+                    "humidity_min_level": {"default": "mdi:fan-minus"},
+                    "humidity_starting_point": {"default": "mdi:water-percent"},
+                },
+                "select": {
+                    "operation_mode": {"default": "mdi:fan-auto"},
+                    "preset_mode": {"default": "mdi:flash-outline"},
+                },
+                "sensor": {
+                    "days_until_filter_change": {"default": "mdi:calendar-clock"},
+                    "extract_air_flow": {"default": "mdi:home-export-outline"},
+                    "operating_hours": {"default": "mdi:fan-clock"},
+                    "supply_air_flow": {"default": "mdi:home-import-outline"},
+                },
+                "switch": {"intensive": {"default": "mdi:fan-plus"}},
+            }
         }

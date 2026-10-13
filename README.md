@@ -78,6 +78,48 @@ another trigger has fired. See the
 [filter change due condition guide](./docs/CONDITION_FILTER_CHANGE_DUE.md) for
 UI instructions, options, and a YAML example.
 
+### Run intensive ventilation while a room is occupied
+
+Replace both example entity IDs with the IDs from your Home Assistant
+instance. This starts the Meltem **Intensive** switch when occupancy is
+detected and turns it off after the room has been clear for 10 minutes.
+
+```yaml
+alias: Ventilate while the bathroom is occupied
+description: Run Meltem intensive ventilation while occupancy is detected.
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.bathroom_occupancy
+    to: "on"
+    id: occupied
+  - trigger: state
+    entity_id: binary_sensor.bathroom_occupancy
+    to: "off"
+    for: "00:10:00"
+    id: unoccupied
+conditions: []
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: occupied
+        sequence:
+          - action: switch.turn_on
+            target:
+              entity_id: switch.meltem_bathroom_intensive
+      - conditions:
+          - condition: trigger
+            id: unoccupied
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: switch.meltem_bathroom_intensive
+mode: single
+```
+
+The unit's intensive runtime configured in the Meltem app still applies, so it
+may end the override before the occupancy sensor has been clear for 10 minutes.
+
 ## Installation
 
 ### Requirements

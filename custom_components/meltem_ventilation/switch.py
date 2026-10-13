@@ -39,7 +39,6 @@ class MeltemIntensiveSwitch(MeltemEntity, SwitchEntity):
     """
 
     _requires_fresh_read_group = False
-    _attr_icon = "mdi:fan-plus"
 
     def __init__(self, coordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "intensive", "intensive")

@@ -39,7 +39,6 @@ class MeltemControlSettingNumberDescription(NumberEntityDescription):
 
 def _control_setting(
     key: str,
-    icon: str,
     supported_profiles: frozenset[str],
     unit: str = PERCENTAGE,
 ) -> MeltemControlSettingNumberDescription:
@@ -52,7 +51,6 @@ def _control_setting(
         native_max_value=maximum,
         native_step=step,
         native_unit_of_measurement=unit,
-        icon=icon,
         supported_profiles=supported_profiles,
         # Setting keys double as RoomState field names.
         value_fn=attrgetter(key),
@@ -60,14 +58,14 @@ def _control_setting(
 
 
 CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] = (
-    _control_setting("humidity_starting_point", "mdi:water-percent", HUMIDITY_PROFILES),
-    _control_setting("humidity_min_level", "mdi:fan-minus", HUMIDITY_PROFILES),
-    _control_setting("humidity_max_level", "mdi:fan-plus", HUMIDITY_PROFILES),
+    _control_setting("humidity_starting_point", HUMIDITY_PROFILES),
+    _control_setting("humidity_min_level", HUMIDITY_PROFILES),
+    _control_setting("humidity_max_level", HUMIDITY_PROFILES),
     _control_setting(
-        "co2_starting_point", "mdi:molecule-co2", CO2_PROFILES, UnitOfRatio.PARTS_PER_MILLION
+        "co2_starting_point", CO2_PROFILES, UnitOfRatio.PARTS_PER_MILLION
     ),
-    _control_setting("co2_min_level", "mdi:fan-minus", CO2_PROFILES),
-    _control_setting("co2_max_level", "mdi:fan-plus", CO2_PROFILES),
+    _control_setting("co2_min_level", CO2_PROFILES),
+    _control_setting("co2_max_level", CO2_PROFILES),
 )
 
 

@@ -35,24 +35,20 @@ class MeltemBinarySensorDescription(BinarySensorEntityDescription):
 BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
     MeltemBinarySensorDescription(
         key="error_status",
-        icon="mdi:alert-circle-outline",
         device_class=BinarySensorDeviceClass.PROBLEM,
         value_fn=lambda state: state.error_status,
     ),
     MeltemBinarySensorDescription(
         key="frost_protection_active",
-        icon="mdi:snowflake-thermometer",
         value_fn=lambda state: state.frost_protection_active,
     ),
     MeltemBinarySensorDescription(
         key="filter_change_due",
-        icon="mdi:air-filter",
         device_class=BinarySensorDeviceClass.PROBLEM,
         value_fn=lambda state: state.filter_change_due,
     ),
     MeltemBinarySensorDescription(
         key="rf_comm_status",
-        icon="mdi:wifi-alert",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
@@ -110,7 +106,6 @@ class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:fan-alert"
     # The timestamps change on every poll and would bloat the recorder.
     _unrecorded_attributes = frozenset({*READ_GROUP_ENTITY_KEYS, "writes"})
 
