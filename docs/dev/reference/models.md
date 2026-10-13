@@ -296,7 +296,7 @@ Footnotes common to both overviews:
   and sensor variants. `P` and `E` do not need to be distinguished at the
   Modbus level; they differ only in heat-exchanger specifications.
 - A base unit exposes only the exhaust air temperature. The test expectations
-  in `tests/test_platform_matrix.py` follow the sensor table above.
+  in `tests/components/meltem_ventilation/test_platform_matrix.py` follow the sensor table above.
 - `M-WRG-S` has no constant airflow control. Its actual airflow can deviate
   more from the target under pressure load than on `M-WRG-II`.
 - "Display sensor values" and "read operating hours" are listed as Modbus

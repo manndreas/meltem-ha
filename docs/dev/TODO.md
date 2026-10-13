@@ -58,7 +58,7 @@ Finding:
 - `pytest-homeassistant-custom-component==0.13.368` ships Home Assistant
   `2026.10.0b0`, the first harness with the `modbus` integration users run
   against; the whole suite, including
-  `tests/test_init.py::TestSharedModbusConnection`, passes with it.
+  `tests/components/meltem_ventilation/test_init.py::TestSharedModbusConnection`, passes with it.
 - The harness does not install the requirements of the `modbus` integration,
   so `requirements-test.txt` pins them in line with its manifest.
 - `2026.10` moved Home Assistant's own flows from `voluptuous` to `probatio`;
@@ -81,7 +81,7 @@ Finding:
 Next step:
 - Only with a benchmark on the real gateway, see test T-8 in
   `docs/dev/LIVE_GATEWAY_TESTS.md`. Update the parity test in
-  `tests/test_modbus_client.py` together with the ranges.
+  `tests/components/meltem_ventilation/test_modbus_client.py` together with the ranges.
 
 ## 5. Raw register diagnostics
 

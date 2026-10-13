@@ -134,7 +134,7 @@ Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
 
 Register blocks are `Component`s in `device/components.py`. Each one pins
 `register_ranges` to exactly the block the pymodbus client read, so the gateway
-sees the same requests in the same order. `tests/test_modbus_client.py`
+sees the same requests in the same order. `tests/components/meltem_ventilation/test_modbus_client.py`
 checks this with the mock's `read_events`. Do not merge blocks without a
 benchmark on the real gateway.
 
@@ -730,7 +730,7 @@ since `4.0.0`; any earlier commit has the pymodbus versions):
   unit, including retries
 
 The tools run without Home Assistant and keep their own copy of the link
-settings in `tools/_link.py`; `tests/test_tools.py` keeps it in line with
+settings in `tools/_link.py`; `tests/components/meltem_ventilation/test_tools.py` keeps it in line with
 `const.py`. Run them as modules from the repository root, e.g.
 `python -m tools.raw_requests --help`. `tools/write_registers.py` stops at the
 first failed write unless `--keep-going` is given, so a trailing apply never

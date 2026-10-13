@@ -35,9 +35,9 @@
 - Put new manufacturer facts into the matching file under `docs/dev/reference/` with a source ID; put hardware observations into `docs/dev/MELTEM.md`
 - Never commit the original Meltem PDFs; summarize facts in own words instead of copying text or figures
 - Be conservative with Modbus timing and grouped reads; gateway behavior is sensitive
-- Keep the `register_ranges` of the components unchanged unless a gateway benchmark backs the change; the parity test in `tests/test_modbus_client.py` guards them
+- Keep the `register_ranges` of the components unchanged unless a gateway benchmark backs the change; the parity test in `tests/components/meltem_ventilation/test_modbus_client.py` guards them
 - Do not remove or rewrite observed hardware quirks without checking `docs/dev/MELTEM.md` and `docs/dev/DEVELOPER.md`
-- Keep the link settings in `tools/_link.py` in line with `const.py`; `tests/test_tools.py` checks them
+- Keep the link settings in `tools/_link.py` in line with `const.py`; `tests/components/meltem_ventilation/test_tools.py` checks them
 - When changing versioned release metadata, update `manifest.json`, `pyproject.toml`, and `CHANGELOG.md`; the release workflow rejects a tag that differs from the first two
 
 ## Validation
@@ -45,7 +45,7 @@
 - Tests need Python 3.14; see `CONTRIBUTING.md` for the setup and the Windows workarounds
 - Run tests with `pytest`, lint with `ruff check custom_components tests tools`, and type-check with `mypy`; CI runs all three, plus hassfest and the HACS validation
 - Focused runs are usually enough while iterating, for example:
-  - `pytest tests/test_modbus_client.py`
-  - `pytest tests/test_transport.py`
-  - `pytest tests/test_config_flow.py`
-  - `pytest tests/test_entity_descriptions.py`
+  - `pytest tests/components/meltem_ventilation/test_modbus_client.py`
+  - `pytest tests/components/meltem_ventilation/test_transport.py`
+  - `pytest tests/components/meltem_ventilation/test_config_flow.py`
+  - `pytest tests/components/meltem_ventilation/test_entity_descriptions.py`
