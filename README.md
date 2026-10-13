@@ -201,11 +201,12 @@ of the integration entry. The new port is checked before it is saved.
 ## Data updates
 
 The integration polls the gateway; it does not receive pushed updates. The
-request-rate setting is a shared cap across all configured units, not an update
-interval for every entity. It defaults to **4 read requests per second** and
-can be set from **0.5 to 10 requests per second** in steps of 0.5. The cap
-includes retries and readback requests after writes; write sequences retain
-their separate hardware timing.
+request-rate setting is a shared cap on individual Modbus read requests across
+all configured units; retries and post-write readbacks count toward it.
+Poll-job starts are also spaced at the configured rate, so this is not an
+update interval for every entity. It defaults to **4 read requests per second**
+and can be set from **0.5 to 10 requests per second** in steps of 0.5. Write
+sequences retain their separate hardware timing.
 
 Each unit's values are refreshed in groups:
 

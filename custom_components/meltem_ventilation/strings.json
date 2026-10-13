@@ -94,12 +94,12 @@
       },
       "edit_request_rate": {
         "title": "Change request rate",
-        "description": "Set how many poll jobs per second the integration may start on the gateway. One job can contain several Modbus requests. To change the serial port, reconfigure the integration.",
+        "description": "Set the shared cap for Modbus read requests across all configured units. Poll-job starts are also limited to this rate; one job can contain several read requests. Retries and post-write readbacks count toward the request cap. To change the serial port, reconfigure the integration.",
         "data": {
           "max_requests_per_second": "Maximum requests per second"
         },
         "data_description": {
-          "max_requests_per_second": "Maximum rate at which poll jobs start. Each job may contain several Modbus requests; lower rates reduce load on the gateway."
+          "max_requests_per_second": "Maximum rate for individual read requests across all units, including retries and post-write readbacks. Poll-job starts are also limited to this rate; write sequences use separate hardware timing."
         }
       },
       "edit_profiles": {

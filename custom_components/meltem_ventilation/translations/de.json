@@ -94,12 +94,12 @@
       },
       "edit_request_rate": {
         "title": "Abfragerate ändern",
-        "description": "Lege fest, wie viele Abfragejobs pro Sekunde die Integration am Gateway starten darf. Ein Job kann mehrere Modbus-Anfragen enthalten. Den seriellen Port änderst du, indem du die Integration neu konfigurierst.",
+        "description": "Lege die gemeinsame Höchstrate für Modbus-Leseanfragen über alle eingerichteten Geräte fest. Auch Abfragejobs starten höchstens mit dieser Rate; ein Job kann mehrere Leseanfragen enthalten. Wiederholungen und Rücklesungen nach Schreibvorgängen zählen zum Anfrage-Limit. Den seriellen Port änderst du über die Neukonfiguration der Integration.",
         "data": {
           "max_requests_per_second": "Maximale Anfragen pro Sekunde"
         },
         "data_description": {
-          "max_requests_per_second": "Maximale Startfrequenz der Abfragejobs. Ein Job kann mehrere Modbus-Anfragen enthalten; niedrigere Werte entlasten das Gateway."
+          "max_requests_per_second": "Maximale Rate einzelner Modbus-Leseanfragen über alle Geräte hinweg, einschließlich Wiederholungen und Rücklesungen nach Schreibvorgängen. Auch Abfragejobs starten höchstens mit dieser Rate; Schreibsequenzen folgen ihren separaten Hardware-Zeitabständen."
         }
       },
       "edit_profiles": {
