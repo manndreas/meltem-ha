@@ -20,22 +20,23 @@
 - `custom_components/meltem_ventilation/strings.json`: English entity/config strings
 - `custom_components/meltem_ventilation/translations/de.json`: German translations
 - `tools/`: scripts for a live gateway, run as modules from the repository root (`python -m tools.<name>`); their link settings are in `tools/_link.py`
-- `docs/reference/`: manufacturer reference extracted from the original Meltem documents (originals in gitignored `docs/meltem/`)
-- `docs/MELTEM.md`: observed register behavior, gateway quirks, and traced app writes
-- `docs/DEVELOPER.md`: implementation notes and the decisions behind them
-- `docs/HARDWARE_BACKLOG.md`: open findings that require live-gateway testing
-- `docs/LIVE_GATEWAY_TESTS.md`: test plan for running those checks on the live gateway; follow its safety rules
-- `docs/SETTING_RE_BACKLOG.md`: parked reverse engineering of app settings, with its measurement log
+- `docs/`: user-facing integration and automation documentation
+- `docs/dev/reference/`: manufacturer reference extracted from the original Meltem documents (originals in gitignored `docs/meltem/`)
+- `docs/dev/MELTEM.md`: observed register behavior, gateway quirks, and traced app writes
+- `docs/dev/DEVELOPER.md`: implementation notes and the decisions behind them
+- `docs/dev/HARDWARE_BACKLOG.md`: open findings that require live-gateway testing
+- `docs/dev/LIVE_GATEWAY_TESTS.md`: test plan for running those checks on the live gateway; follow its safety rules
+- `docs/dev/SETTING_RE_BACKLOG.md`: parked reverse engineering of app settings, with its measurement log
 - `CHANGELOG.md`: release history
 
 ## Working rules
 
 - Keep user-visible terminology aligned with the Meltem manuals where practical
-- Put new manufacturer facts into the matching file under `docs/reference/` with a source ID; put hardware observations into `docs/MELTEM.md`
+- Put new manufacturer facts into the matching file under `docs/dev/reference/` with a source ID; put hardware observations into `docs/dev/MELTEM.md`
 - Never commit the original Meltem PDFs; summarize facts in own words instead of copying text or figures
 - Be conservative with Modbus timing and grouped reads; gateway behavior is sensitive
 - Keep the `register_ranges` of the components unchanged unless a gateway benchmark backs the change; the parity test in `tests/test_modbus_client.py` guards them
-- Do not remove or rewrite observed hardware quirks without checking `docs/MELTEM.md` and `docs/DEVELOPER.md`
+- Do not remove or rewrite observed hardware quirks without checking `docs/dev/MELTEM.md` and `docs/dev/DEVELOPER.md`
 - Keep the link settings in `tools/_link.py` in line with `const.py`; `tests/test_tools.py` checks them
 - When changing versioned release metadata, update `manifest.json`, `pyproject.toml`, and `CHANGELOG.md`; the release workflow rejects a tag that differs from the first two
 

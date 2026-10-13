@@ -117,7 +117,7 @@ The Meltem adapter matches VID `10AC` / PID `010A`; use its `/dev/ttyACM*` or
 
 ### P-2 — Python environment
 
-The test venv from [requirements-test.txt](../requirements-test.txt) has
+The test venv from [requirements-test.txt](../../requirements-test.txt) has
 everything needed, including `pymodbus` and `pyserial` for the baseline tools.
 
 ```powershell
@@ -209,7 +209,7 @@ Create `$out\SUMMARY.md` with the table from
 
 ### G-1 — USB identity
 
-- **Checks:** USB matcher in [manifest.json](../custom_components/meltem_ventilation/manifest.json):
+- **Checks:** USB matcher in [manifest.json](../../custom_components/meltem_ventilation/manifest.json):
   vid `10AC`, pid `010A`, manufacturer `*honeywell*`, description `*modbus*`
   ([DEVELOPER.md](DEVELOPER.md#usb-discovery)).
 - **Type:** R
@@ -333,7 +333,7 @@ Run R on every unit unless the test says otherwise.
 ### R-3 — Word order of 32-bit values
 
 - **Checks:** Float32 and UINT32 are stored low word first
-  (`word_order="little"` in [components.py](../custom_components/meltem_ventilation/device/components.py));
+  (`word_order="little"` in [components.py](../../custom_components/meltem_ventilation/device/components.py));
   the manuals do not say.
 - **Type:** R
 - **Run:** evaluate the R-1 captures: `41000`, `41002`, `41004`, `41009` as
@@ -592,7 +592,7 @@ Run R on every unit unless the test says otherwise.
   on the real port; the port is free after unload (HW-7 measurement 6).
 - **Type:** R
 - **Run:** a throwaway test in `$out\scripts\` along the lines of
-  `TestSharedModbusConnection` in [tests/test_init.py](../tests/test_init.py),
+  `TestSharedModbusConnection` in [tests/test_init.py](../../tests/test_init.py),
   without patching `ModbusConnection`, with the real port and the discovered
   rooms. After the unload, P-3 must succeed.
 - **Limits:** the harness ships HA `2026.10.0b0` with
@@ -607,7 +607,7 @@ Run R on every unit unless the test says otherwise.
   `TRANSPORT_LINK_QUIET_SECONDS = 10` fits (the longest pause between two
   answers in normal operation).
 - **Type:** S, only if released in P-4
-- **Run:** in the background, with the coordinator intervals from [const.py](../custom_components/meltem_ventilation/const.py):
+- **Run:** in the background, with the coordinator intervals from [const.py](../../custom_components/meltem_ventilation/const.py):
   airflow every 10 s, temperatures and status every 60 s, filter, hours and
   control settings every 3600 s:
 
@@ -1063,7 +1063,7 @@ incomparable.
 Keep raw output in the local results directory outside the repository; do not
 link to files that are not checked in. Keep the summary in `$out\SUMMARY.md`.
 If raw evidence is essential to a durable hardware finding, copy only the
-relevant, reviewed capture into `docs/measurements/<date>/` and link that
+relevant, reviewed capture into `docs/dev/measurements/<date>/` and link that
 tracked copy:
 
 | ID | Time | Units | Result | Key numbers | Raw file |
@@ -1084,7 +1084,7 @@ Afterwards, move the findings into the documentation:
   swap): [MELTEM.md](MELTEM.md), with the date and the software version of the
   unit.
 - **Answers to manufacturer open questions:** do not edit the manufacturer
-  tables in `docs/reference/`. Record the observation in MELTEM.md and link it
+  tables in `docs/dev/reference/`. Record the observation in MELTEM.md and link it
   from the open question.
 - **HW-7 validation:** note under HW-7 which of its seven measurements passed,
   see [HW-7 post-release validation](#hw-7--post-release-tmodbus-validation).

@@ -5,14 +5,14 @@ Home Assistant integration and the decisions behind them.
 
 Related documents:
 
-- `docs/reference/`: manufacturer reference extracted from the original Meltem
+- `docs/dev/reference/`: manufacturer reference extracted from the original Meltem
   documents
-- `docs/MELTEM.md`: observed register behaviour, gateway quirks, and traced
+- `docs/dev/MELTEM.md`: observed register behaviour, gateway quirks, and traced
   app writes
-- `docs/HARDWARE_BACKLOG.md`: review findings that need a live gateway before
+- `docs/dev/HARDWARE_BACKLOG.md`: review findings that need a live gateway before
   they can be decided
-- `docs/LIVE_GATEWAY_TESTS.md`: how to measure them
-- `docs/SETTING_RE_BACKLOG.md`: parked reverse engineering of app settings
+- `docs/dev/LIVE_GATEWAY_TESTS.md`: how to measure them
+- `docs/dev/SETTING_RE_BACKLOG.md`: parked reverse engineering of app settings
 
 ## Safety and liability
 

@@ -6,12 +6,12 @@ Thanks for helping improve the Meltem Home Assistant integration.
 
 - This project talks to real Meltem Modbus hardware via the `M-WRG-GW` gateway.
 - Please be conservative with write behavior, timing, retries, and register handling.
-- Read [docs/DEVELOPER.md](./docs/DEVELOPER.md) for implementation notes.
-- Read [docs/reference/](./docs/reference/README.md) for the manufacturer reference
-  and [docs/MELTEM.md](./docs/MELTEM.md) for observed hardware behavior.
-- Read [docs/HARDWARE_BACKLOG.md](./docs/HARDWARE_BACKLOG.md) before changing
+- Read [docs/dev/DEVELOPER.md](./docs/dev/DEVELOPER.md) for implementation notes.
+- Read [docs/dev/reference/](./docs/dev/reference/README.md) for the manufacturer reference
+  and [docs/dev/MELTEM.md](./docs/dev/MELTEM.md) for observed hardware behavior.
+- Read [docs/dev/HARDWARE_BACKLOG.md](./docs/dev/HARDWARE_BACKLOG.md) before changing
   behavior that still needs verification on a live gateway, and
-  [docs/LIVE_GATEWAY_TESTS.md](./docs/LIVE_GATEWAY_TESTS.md) before running
+  [docs/dev/LIVE_GATEWAY_TESTS.md](./docs/dev/LIVE_GATEWAY_TESTS.md) before running
   anything against one.
 
 ## Development setup
@@ -34,7 +34,7 @@ The harness ships Home Assistant `2026.10` but not the requirements of its
 Modbus integration, from which the integration gets its serial link, so
 `requirements-test.txt` adds the `modbus-connection`, `tmodbus` and `pymodbus`
 versions pinned in `homeassistant/components/modbus/manifest.json` (see
-[docs/TODO.md](./docs/TODO.md) item 3). Tests never open a serial port; they
+[docs/dev/TODO.md](./docs/dev/TODO.md) item 3). Tests never open a serial port; they
 run against `modbus_connection.mock.MockModbusConnection`.
 
 Run tests, lint, and the type check with:
@@ -83,7 +83,7 @@ python -m tools.raw_requests --help
 - Use the port from one process at a time. Stop Home Assistant or anything
   else that uses the gateway first, and run the tools one after another.
 - Some tools write registers. Follow the safety rules in
-  [docs/LIVE_GATEWAY_TESTS.md](./docs/LIVE_GATEWAY_TESTS.md), and never write
+  [docs/dev/LIVE_GATEWAY_TESTS.md](./docs/dev/LIVE_GATEWAY_TESTS.md), and never write
   the baud rate or the Modbus address of a unit.
 - The tools keep their own copy of the link settings in `tools/_link.py`;
   `tests/test_tools.py` keeps it in line with `const.py`.
@@ -94,9 +94,9 @@ python -m tools.raw_requests --help
 - Prefer small, focused changes.
 - Add or update tests for behavior changes.
 - Do not remove documented hardware quirks unless you have confirmed different
-  behavior on real hardware; they are listed in [docs/MELTEM.md](./docs/MELTEM.md).
-- Put manufacturer facts into the matching file under `docs/reference/` with a
-  source ID, and hardware observations into `docs/MELTEM.md`. Never commit the
+  behavior on real hardware; they are listed in [docs/dev/MELTEM.md](./docs/dev/MELTEM.md).
+- Put manufacturer facts into the matching file under `docs/dev/reference/` with a
+  source ID, and hardware observations into `docs/dev/MELTEM.md`. Never commit the
   original Meltem PDFs.
 - If you change release metadata, keep `custom_components/meltem_ventilation/manifest.json`, `pyproject.toml`, and `CHANGELOG.md` in sync.
 

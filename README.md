@@ -66,6 +66,13 @@ override that does not replace the active quick mode. It is exposed as a
 switch, so it can be cancelled before the runtime configured in the Meltem app
 has elapsed.
 
+## Automations
+
+The integration provides a **Filter change due** trigger for automations. It
+fires when a Meltem unit reports that its filter needs replacing. See the
+[filter change due trigger guide](./docs/TRIGGER_FILTER_CHANGE_DUE.md) for the
+UI steps, trigger options, and a YAML example.
+
 ## Installation
 
 ### Requirements
@@ -210,10 +217,10 @@ Additional project docs:
 
 - [CHANGELOG.md](./CHANGELOG.md): release history
 - [CONTRIBUTING.md](./CONTRIBUTING.md): development setup and guidelines
-- [docs/reference/](./docs/reference/README.md): manufacturer reference
-- [docs/MELTEM.md](./docs/MELTEM.md): observed hardware behavior
-- [docs/DEVELOPER.md](./docs/DEVELOPER.md): implementation notes
-- [docs/HARDWARE_BACKLOG.md](./docs/HARDWARE_BACKLOG.md): open hardware questions
-- [docs/LIVE_GATEWAY_TESTS.md](./docs/LIVE_GATEWAY_TESTS.md): test plan for a live gateway
-- [docs/SETTING_RE_BACKLOG.md](./docs/SETTING_RE_BACKLOG.md): parked reverse engineering of app settings
-- [docs/TODO.md](./docs/TODO.md): open non-hardware work
+- [docs/dev/reference/](./docs/dev/reference/README.md): manufacturer reference
+- [docs/dev/MELTEM.md](./docs/dev/MELTEM.md): observed hardware behavior
+- [docs/dev/DEVELOPER.md](./docs/dev/DEVELOPER.md): implementation notes
+- [docs/dev/HARDWARE_BACKLOG.md](./docs/dev/HARDWARE_BACKLOG.md): open hardware questions
+- [docs/dev/LIVE_GATEWAY_TESTS.md](./docs/dev/LIVE_GATEWAY_TESTS.md): test plan for a live gateway
+- [docs/dev/SETTING_RE_BACKLOG.md](./docs/dev/SETTING_RE_BACKLOG.md): parked reverse engineering of app settings
+- [docs/dev/TODO.md](./docs/dev/TODO.md): open non-hardware work
