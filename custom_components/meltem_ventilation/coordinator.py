@@ -214,9 +214,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         failures = self._room_failures.get(room_key, 0)
         if failures >= ROOM_UNAVAILABLE_AFTER_FAILURES:
-            self._log_room_unavailable(
-                room_key, f"after {failures} consecutive read failures"
-            )
+            self._log_room_unavailable(room_key, f"after {failures} consecutive read failures")
             return False
 
         room = self._rooms_by_key.get(room_key)
@@ -331,14 +329,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 job.next_due = now + self._job_interval(job)
                 self._last_read_started = now
                 self._last_job_error = None
-                updated_data = await self._read_one_job(
-                    self.safe_data or self._startup_states, job
-                )
+                updated_data = await self._read_one_job(self.safe_data or self._startup_states, job)
                 never_read = self._job_never_read(job, updated_data)
                 if startup or never_read:
-                    job.next_due = time.monotonic() + self._job_interval(
-                        job, never_read=never_read
-                    )
+                    job.next_due = time.monotonic() + self._job_interval(job, never_read=never_read)
                 if not any(state.has_data for state in updated_data.values()):
                     self._startup_states = updated_data
                     raise self._last_job_error or MeltemModbusError(
@@ -372,9 +366,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         if self._read_spacing_remaining(now) > 0:
             return None, False
         if self._startup_jobs:
-            due = select_due_job(
-                (job for job in self._jobs if job not in self._startup_jobs), now
-            )
+            due = select_due_job((job for job in self._jobs if job not in self._startup_jobs), now)
             if due is None or self._startup_turn:
                 self._startup_turn = False
                 return self._startup_jobs.pop(0), True
@@ -438,15 +430,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             return
 
         now = time.monotonic()
-        earliest_due = (
-            now if self._startup_jobs else min(job.next_due for job in self._jobs)
-        )
+        earliest_due = now if self._startup_jobs else min(job.next_due for job in self._jobs)
         seconds = max(self._tick_seconds, earliest_due - now)
         # HA schedules from int(loop.time()), which would fire up to a second early.
         loop_time = self.hass.loop.time()
-        self.update_interval = timedelta(
-            seconds=seconds + loop_time - math.floor(loop_time)
-        )
+        self.update_interval = timedelta(seconds=seconds + loop_time - math.floor(loop_time))
 
     def _on_transport_success(self) -> None:
         """Reset failure tracking and any active polling backoff."""
@@ -554,9 +542,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             extract_level,
         )
 
-    async def async_set_direction_level(
-        self, room_key: str, direction: str, level: int
-    ) -> None:
+    async def async_set_direction_level(self, room_key: str, direction: str, level: int) -> None:
         """Set one airflow direction and keep the other one where it is.
 
         Resolve the opposite direction under the same gateway lock as reads
@@ -589,9 +575,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 self._record_level_fallback(room_key, LEVEL_WRITE_FALLBACK_BALANCED)
                 return
 
-            operation_mode = self.safe_data.get(
-                room_key, EMPTY_ROOM_STATE
-            ).operation_mode
+            operation_mode = self.safe_data.get(room_key, EMPTY_ROOM_STATE).operation_mode
             if source == LEVEL_SOURCE_PENDING and supply is not None and extract is not None:
                 operation_mode = (
                     OPERATION_MODE_OFF
@@ -614,16 +598,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             # Under sensor control both fans only report fluctuating
             # measurements, so writing one direction would pin the other to a
             # sampled value. Turning a direction off still stays unbalanced.
-            leaving_sensor_control = (
-                level > 0 and operation_mode in SENSOR_OPERATION_MODES
-            )
+            leaving_sensor_control = level > 0 and operation_mode in SENSOR_OPERATION_MODES
             # Equal levels written as unbalanced would leave the unit in a mode
             # it cannot return from on its own.
-            if (
-                levels_balanced(level, other)
-                or starting_from_off
-                or leaving_sensor_control
-            ):
+            if levels_balanced(level, other) or starting_from_off or leaving_sensor_control:
                 await self._async_set_level_locked(room_key, level)
             else:
                 supply_level, extract_level = (
@@ -640,9 +618,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     room.name,
                     room.slave,
                 )
-                self._record_level_fallback(
-                    room_key, LEVEL_WRITE_FALLBACK_UNKNOWN_MODE
-                )
+                self._record_level_fallback(room_key, LEVEL_WRITE_FALLBACK_UNKNOWN_MODE)
 
     async def async_set_operation_mode(self, room_key: str, operation_mode: str) -> None:
         """Write a new operating mode for one room and refresh afterwards."""
@@ -650,9 +626,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         async with self._gateway_lock:
             await self._async_set_operation_mode_locked(room_key, operation_mode)
 
-    async def _async_set_operation_mode_locked(
-        self, room_key: str, operation_mode: str
-    ) -> None:
+    async def _async_set_operation_mode_locked(self, room_key: str, operation_mode: str) -> None:
         """Resolve the airflow and write a mode while holding the gateway lock."""
 
         room = self._rooms_by_key[room_key]
@@ -850,9 +824,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         readback_plan = _READBACK_PLANS[write_group(write_key)]
         overlay = self._overlays.get(write_key)
-        if write_key.startswith(CONTROL_SETTING_WRITE_PREFIX) and isinstance(
-            expected_value, int
-        ):
+        if write_key.startswith(CONTROL_SETTING_WRITE_PREFIX) and isinstance(expected_value, int):
             self._check_control_level_range(
                 room, write_key.removeprefix(CONTROL_SETTING_WRITE_PREFIX), expected_value
             )
@@ -1012,13 +984,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             return True
         if self._writes.unhealthy(room_key):
             return True
-        if (
-            any(
-                read_health.group_stale(state, group_key) is False
-                for group_key, _health in state.group_read_health
-            )
-            or self._writes.has_any(room_key)
-        ):
+        if any(
+            read_health.group_stale(state, group_key) is False
+            for group_key, _health in state.group_read_health
+        ) or self._writes.has_any(room_key):
             return False
         return None
 
@@ -1033,9 +1002,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 continue
             health = state.read_health_for(group_key)
             attributes[group_key] = {
-                "last_attempt": health.last_attempt.isoformat()
-                if health.last_attempt
-                else None,
+                "last_attempt": health.last_attempt.isoformat() if health.last_attempt else None,
                 "last_successful_read": health.last_successful_read.isoformat()
                 if health.last_successful_read
                 else None,

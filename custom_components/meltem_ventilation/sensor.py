@@ -222,9 +222,7 @@ class MeltemModbusSlaveSensor(MeltemEntity, SensorEntity):
 
     entity_description = MODBUS_SLAVE_ID_DESCRIPTION
 
-    def __init__(
-        self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig
-    ) -> None:
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         key = MODBUS_SLAVE_ID_DESCRIPTION.key
         super().__init__(coordinator, room, key, key)
         self._attr_native_value = room.slave

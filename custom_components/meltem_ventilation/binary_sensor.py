@@ -85,9 +85,7 @@ async def async_setup_entry(
     entities.extend(
         MeltemDataHealthBinarySensor(coordinator, room)
         for room in coordinator.rooms
-        if any(
-            room_supports_entity(room, key) for key in ("supply_air_flow", "extract_air_flow")
-        )
+        if any(room_supports_entity(room, key) for key in ("supply_air_flow", "extract_air_flow"))
     )
     async_add_entities(entities)
 
@@ -119,17 +117,12 @@ class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
     # The timestamps change on every poll and would bloat the recorder.
     _unrecorded_attributes = frozenset({*READ_GROUP_ENTITY_KEYS, "writes"})
 
-    def __init__(
-        self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig
-    ) -> None:
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "data_health", "data_health")
 
     @property
     def available(self) -> bool:
-        return (
-            self.coordinator.last_update_success
-            and self.room.key in self.coordinator.safe_data
-        )
+        return self.coordinator.last_update_success and self.room.key in self.coordinator.safe_data
 
     @property
     def is_on(self) -> bool | None:

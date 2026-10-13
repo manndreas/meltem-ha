@@ -221,7 +221,8 @@ def _start_backoff(coordinator: MeltemDataUpdateCoordinator) -> None:
 
 class TestCoordinatorResilience:
     def test_gateway_backoff_messages_are_debug_only(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
 
@@ -251,7 +252,8 @@ class TestCoordinatorResilience:
             assert debug.call_count == 3
 
     async def test_room_unavailability_and_recovery_are_logged_once(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         room = RoomConfig(key="broken", name="Broken", profile="ii_plain", slave=2)
         coordinator, client = _build_coordinator(hass, [room])
@@ -294,7 +296,8 @@ class TestCoordinatorResilience:
             warning.assert_not_called()
 
     def test_silent_room_unavailability_and_recovery_are_logged_once(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(target_level=30)}
@@ -316,7 +319,8 @@ class TestCoordinatorResilience:
             assert info.call_args.args == ("Meltem room %s reachable again", "unit_1")
 
     def test_polling_backs_off_after_repeated_transport_failures(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
 
@@ -334,7 +338,8 @@ class TestCoordinatorResilience:
         assert coordinator.update_interval.total_seconds() < TRANSPORT_BACKOFF_START_SECONDS
 
     def test_request_rate_change_does_not_cancel_active_backoff(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         _start_backoff(coordinator)
@@ -345,7 +350,8 @@ class TestCoordinatorResilience:
         assert client.max_requests_per_second == 1.0
 
     def test_room_becomes_unavailable_after_repeated_read_failures(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(target_level=30)}
@@ -360,17 +366,13 @@ class TestCoordinatorResilience:
 
         assert not coordinator.room_available("unit_1")
 
-    def test_room_is_unavailable_before_the_first_poll(
-        self, hass: HomeAssistant
-    ) -> None:
+    def test_room_is_unavailable_before_the_first_poll(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
 
         assert coordinator.data is None
         assert not coordinator.room_available("unit_1")
 
-    def test_state_room_count_ignores_empty_room_states(
-        self, hass: HomeAssistant
-    ) -> None:
+    def test_state_room_count_ignores_empty_room_states(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(
             hass,
             [
@@ -386,7 +388,8 @@ class TestCoordinatorResilience:
         assert coordinator.state_room_count == 1
 
     def test_silent_unit_becomes_unavailable_despite_cached_values(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """Optional reads swallow errors, so cached values alone prove nothing."""
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
@@ -398,9 +401,7 @@ class TestCoordinatorResilience:
         client.silent_seconds_by_slave[2] = ROOM_SILENT_AFTER_SECONDS + 1
         assert not coordinator.room_available("unit_1")
 
-    async def test_failed_job_marks_only_the_affected_room(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_failed_job_marks_only_the_affected_room(self, hass: HomeAssistant) -> None:
         rooms = [
             RoomConfig(key="broken", name="Broken", profile="ii_plain", slave=2),
             RoomConfig(key="unit_2", name="Unit 2", profile="ii_plain", slave=3),
@@ -425,7 +426,8 @@ class TestCoordinatorResilience:
         assert coordinator.room_available("unit_2")
 
     async def test_failing_jobs_trigger_the_polling_backoff(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """_read_one_job swallows the error, so success must not be assumed."""
         coordinator, _ = _build_coordinator(
@@ -443,13 +445,11 @@ class TestCoordinatorResilience:
             await coordinator._async_update_data()
 
         assert coordinator.update_interval != normal_interval
-        assert (
-            coordinator.update_interval.total_seconds()
-            >= TRANSPORT_BACKOFF_START_SECONDS
-        )
+        assert coordinator.update_interval.total_seconds() >= TRANSPORT_BACKOFF_START_SECONDS
 
     async def test_successful_job_restores_the_normal_rate(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(target_level=30)}
@@ -470,7 +470,8 @@ class TestCoordinatorResilience:
 
 class TestEffectiveLevels:
     def test_balanced_mode_reports_one_value_for_both_directions(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
@@ -523,11 +524,11 @@ class TestEffectiveLevels:
 
         assert coordinator.effective_levels("unit_1") == (55, 25)
 
-    @pytest.mark.parametrize(
-        "sensor_mode", ["humidity_control", "co2_control", "automatic"]
-    )
+    @pytest.mark.parametrize("sensor_mode", ["humidity_control", "co2_control", "automatic"])
     def test_sensor_modes_report_measured_airflow(
-        self, hass: HomeAssistant, sensor_mode: str,
+        self,
+        hass: HomeAssistant,
+        sensor_mode: str,
     ) -> None:
         """41121 holds the mode selector there, so it must not become a level."""
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
@@ -547,7 +548,8 @@ class TestEffectiveLevels:
         assert coordinator.effective_levels("unit_1") == (22, 21)
 
     def test_unknown_mode_uses_independent_fresh_airflow_values(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
@@ -565,7 +567,8 @@ class TestEffectiveLevels:
         assert coordinator.effective_levels("unit_1") == (22, 21)
 
     def test_unknown_mode_does_not_duplicate_one_fresh_airflow_value(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
@@ -577,7 +580,8 @@ class TestEffectiveLevels:
         assert coordinator.effective_levels("unit_1") == (22, None)
 
     def test_unknown_mode_does_not_use_stale_airflow_values(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         failed_at = dt_util.utcnow()
@@ -600,16 +604,15 @@ class TestEffectiveLevels:
 
     def test_pending_write_wins_over_stale_state(self, hass: HomeAssistant) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
-        coordinator.data = {
-            "unit_1": RoomState(operation_mode="manual", target_level=40)
-        }
+        coordinator.data = {"unit_1": RoomState(operation_mode="manual", target_level=40)}
 
         coordinator._optimistic_levels.set("unit_1", (80, 20))
 
         assert coordinator.effective_levels("unit_1") == (80, 20)
 
     def test_overlay_is_dropped_once_the_gateway_confirms(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator._optimistic_levels.set("unit_1", (80, 20))
@@ -630,7 +633,8 @@ class TestEffectiveLevels:
         assert coordinator.level_source("unit_1") == "target"
 
     def test_overlay_tolerates_rounding_between_percent_and_raw(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator._optimistic_levels.set("unit_1", (80, 20))
@@ -649,15 +653,14 @@ class TestEffectiveLevels:
         assert coordinator._optimistic_levels.get("unit_1", None) is None
 
     def test_reading_the_levels_leaves_the_overlay_in_place(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator._optimistic_levels.set("unit_1", (80, 20))
         coordinator.data = {
             "unit_1": _with_fresh_read_groups(
-                RoomState(
-                    operation_mode="unbalanced", target_level=80, extract_target_level=20
-                ),
+                RoomState(operation_mode="unbalanced", target_level=80, extract_target_level=20),
                 "flow_control",
             )
         }
@@ -667,7 +670,8 @@ class TestEffectiveLevels:
         assert "unit_1" in coordinator._optimistic_levels._pending
 
     async def test_an_expired_overlay_updates_the_entities(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         updates: list[None] = []
@@ -684,7 +688,8 @@ class TestEffectiveLevels:
         assert updates
 
     async def test_shutdown_drops_pending_values_and_their_timers(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator._optimistic_presets.set("unit_1", "high")
@@ -706,7 +711,8 @@ class TestEffectiveLevels:
         assert coordinator.effective_levels("unit_1") == (40, 40)
 
     async def test_writes_show_pending_levels_and_reconcile_write_failures(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
@@ -718,10 +724,7 @@ class TestEffectiveLevels:
         await coordinator.async_set_unbalanced_levels("unit_1", 70, 30)
         assert coordinator.effective_levels("unit_1") == (70, 30)
         assert coordinator.level_source("unit_1") == "pending"
-        assert (
-            coordinator._writes.by_room["unit_1"]["airflow_levels"].status
-            == "pending"
-        )
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "pending"
 
         client.write_unbalanced_levels = _failing()
         client.next_read_state = RoomState(operation_mode="manual", target_level=40)
@@ -734,12 +737,11 @@ class TestEffectiveLevels:
         assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "failed"
 
     async def test_mode_change_discards_a_pending_overlay(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
-        coordinator.data = {
-            "unit_1": RoomState(operation_mode="manual", target_level=40)
-        }
+        coordinator.data = {"unit_1": RoomState(operation_mode="manual", target_level=40)}
         coordinator._optimistic_levels.set("unit_1", (80, 20))
 
         await coordinator.async_set_operation_mode("unit_1", "co2_control")
@@ -747,7 +749,8 @@ class TestEffectiveLevels:
         assert coordinator._optimistic_levels.get("unit_1", None) is None
 
     async def test_manual_mode_without_any_known_airflow_is_refused(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """Guessing 0 m3/h would stop the unit instead of changing its mode."""
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
@@ -761,7 +764,9 @@ class TestEffectiveLevels:
 
     @pytest.mark.parametrize("mode", ["off", "manual", "unbalanced"])
     async def test_inactive_keeps_a_fresh_direct_mode(
-        self, hass: HomeAssistant, mode: str,
+        self,
+        hass: HomeAssistant,
+        mode: str,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(
@@ -773,7 +778,8 @@ class TestEffectiveLevels:
         assert client.write_operating_mode_calls == []
 
     async def test_inactive_does_not_skip_a_stale_direct_mode(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
@@ -792,13 +798,12 @@ class TestDirectionalWrites:
     """One fan direction changes without disturbing the other one."""
 
     async def test_supply_write_keeps_the_extract_target(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(
-            RoomState(
-                operation_mode="unbalanced", target_level=40, extract_target_level=30
-            )
+            RoomState(operation_mode="unbalanced", target_level=40, extract_target_level=30)
         )
 
         await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
@@ -806,13 +811,12 @@ class TestDirectionalWrites:
         assert client.write_unbalanced_calls == [("unit_1", 60, 30)]
 
     async def test_extract_write_keeps_the_supply_target(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(
-            RoomState(
-                operation_mode="unbalanced", target_level=40, extract_target_level=30
-            )
+            RoomState(operation_mode="unbalanced", target_level=40, extract_target_level=30)
         )
 
         await coordinator.async_set_direction_level("unit_1", DIRECTION_EXTRACT, 60)
@@ -820,7 +824,8 @@ class TestDirectionalWrites:
         assert client.write_unbalanced_calls == [("unit_1", 40, 60)]
 
     async def test_turning_off_one_direction_keeps_the_unit_running(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=40))
@@ -831,13 +836,12 @@ class TestDirectionalWrites:
         assert client.write_level_calls == []
 
     async def test_turning_off_the_last_direction_switches_the_unit_off(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(
-            RoomState(
-                operation_mode="unbalanced", target_level=40, extract_target_level=0
-            )
+            RoomState(operation_mode="unbalanced", target_level=40, extract_target_level=0)
         )
 
         await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 0)
@@ -847,25 +851,24 @@ class TestDirectionalWrites:
 
     @pytest.mark.parametrize("extract_level", [40, 41])
     async def test_matching_levels_are_written_as_balanced(
-        self, hass: HomeAssistant, extract_level: int,
+        self,
+        hass: HomeAssistant,
+        extract_level: int,
     ) -> None:
         """One m3/h apart is a rounding artifact, not an intended imbalance."""
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(
-            RoomState(
-                operation_mode="unbalanced", target_level=40, extract_target_level=60
-            )
+            RoomState(operation_mode="unbalanced", target_level=40, extract_target_level=60)
         )
 
-        await coordinator.async_set_direction_level(
-            "unit_1", DIRECTION_EXTRACT, extract_level
-        )
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_EXTRACT, extract_level)
 
         assert client.write_level_calls == [("unit_1", extract_level)]
         assert client.write_unbalanced_calls == []
 
     async def test_starting_from_off_runs_both_directions(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="off"))
@@ -875,13 +878,12 @@ class TestDirectionalWrites:
         assert client.write_level_calls == [("unit_1", 50)]
 
     async def test_leaving_sensor_control_writes_a_balanced_level(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(
-            RoomState(
-                operation_mode="co2_control", supply_air_flow=48, extract_air_flow=51
-            )
+            RoomState(operation_mode="co2_control", supply_air_flow=48, extract_air_flow=51)
         )
 
         await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
@@ -889,13 +891,12 @@ class TestDirectionalWrites:
         assert client.write_level_calls == [("unit_1", 60)]
 
     async def test_turning_one_direction_off_under_sensor_control_keeps_the_unit_running(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(
-            RoomState(
-                operation_mode="co2_control", supply_air_flow=48, extract_air_flow=51
-            )
+            RoomState(operation_mode="co2_control", supply_air_flow=48, extract_air_flow=51)
         )
 
         await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 0)
@@ -903,15 +904,14 @@ class TestDirectionalWrites:
         assert client.write_unbalanced_calls == [("unit_1", 0, 51)]
 
     async def test_close_measured_airflows_count_as_balanced(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """Without a target readback, measurement jitter must not force unbalanced."""
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
             "unit_1": _with_fresh_read_groups(
-                RoomState(
-                    operation_mode="manual", supply_air_flow=60, extract_air_flow=58
-                ),
+                RoomState(operation_mode="manual", supply_air_flow=60, extract_air_flow=58),
                 "flow",
             )
         }
@@ -923,7 +923,8 @@ class TestDirectionalWrites:
         assert client.write_unbalanced_calls == []
 
     async def test_unknown_opposite_uses_a_balanced_fallback(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(operation_mode="manual")}
@@ -931,13 +932,11 @@ class TestDirectionalWrites:
         await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
 
         assert client.write_level_calls == [("unit_1", 60)]
-        assert (
-            coordinator.level_write_fallback("unit_1")
-            == "both_directions_balanced_manual"
-        )
+        assert coordinator.level_write_fallback("unit_1") == "both_directions_balanced_manual"
 
     async def test_unknown_opposite_refuses_to_switch_off_one_direction(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(operation_mode="manual")}
@@ -950,7 +949,8 @@ class TestDirectionalWrites:
         assert client.write_unbalanced_calls == []
 
     async def test_unknown_mode_is_reported_after_an_explicit_write(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(supply_air_flow=40, extract_air_flow=30))
@@ -961,7 +961,8 @@ class TestDirectionalWrites:
         assert coordinator.level_write_fallback("unit_1") == "unknown_mode_overridden"
 
     async def test_fallback_is_cleared_by_the_next_successful_readback(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(operation_mode="manual")}
@@ -973,7 +974,8 @@ class TestDirectionalWrites:
         assert coordinator.level_write_fallback("unit_1") is None
 
     async def test_fan_shows_the_pending_level_right_after_a_write(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
@@ -985,7 +987,8 @@ class TestDirectionalWrites:
         assert supply.extra_state_attributes["level_source"] == "pending"
 
     async def test_successive_fan_commands_build_on_each_other(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
@@ -999,16 +1002,15 @@ class TestDirectionalWrites:
         assert client.write_level_calls == [("unit_1", 40)]
 
     async def test_concurrent_fan_commands_from_a_scene_end_balanced(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
         supply = MeltemDirectionalFanEntity(coordinator, _UNIT_1, DIRECTION_SUPPLY)
         extract = MeltemDirectionalFanEntity(coordinator, _UNIT_1, DIRECTION_EXTRACT)
 
-        await asyncio.gather(
-            supply.async_set_percentage(40), extract.async_set_percentage(40)
-        )
+        await asyncio.gather(supply.async_set_percentage(40), extract.async_set_percentage(40))
 
         assert client.write_level_calls[-1] == ("unit_1", 40)
         assert coordinator.effective_levels("unit_1") == (40, 40)
@@ -1028,15 +1030,16 @@ class TestDirectionalWrites:
             ),
             (
                 "co2_control",
-                RoomState(
-                    operation_mode="co2_control", supply_air_flow=80, extract_air_flow=80
-                ),
+                RoomState(operation_mode="co2_control", supply_air_flow=80, extract_air_flow=80),
             ),
             ("off", RoomState(operation_mode="off", target_level=0)),
         ],
     )
     async def test_direction_write_waits_for_a_pending_mode_readback(
-        self, hass: HomeAssistant, change: str, readback: RoomState,
+        self,
+        hass: HomeAssistant,
+        change: str,
+        readback: RoomState,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=30))
@@ -1075,11 +1078,17 @@ class TestDirectionalWrites:
             assert client.write_level_calls == [("unit_1", 40)]
             assert client.write_unbalanced_calls == []
 
-    @pytest.mark.parametrize("operation_mode", ["off", "humidity_control", "co2_control", "automatic"])
+    @pytest.mark.parametrize(
+        "operation_mode", ["off", "humidity_control", "co2_control", "automatic"]
+    )
     @pytest.mark.parametrize("concurrent", [False, True], ids=("successive", "concurrent"))
     @pytest.mark.parametrize("first_level", [40, 60], ids=("matches-measurement", "new-airflow"))
     async def test_followup_direction_write_uses_the_pending_mode(
-        self, hass: HomeAssistant, operation_mode: str, concurrent: bool, first_level: int,
+        self,
+        hass: HomeAssistant,
+        operation_mode: str,
+        concurrent: bool,
+        first_level: int,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(
@@ -1106,7 +1115,8 @@ class TestDirectionalWrites:
         assert coordinator.effective_levels("unit_1") == (first_level, 30)
 
     async def test_switching_off_one_direction_after_start_keeps_the_other_running(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="off"))
@@ -1120,7 +1130,9 @@ class TestDirectionalWrites:
 
     @pytest.mark.parametrize("initial_level", [0, 40])
     async def test_restart_after_a_pending_off_write_starts_both_directions(
-        self, hass: HomeAssistant, initial_level: int,
+        self,
+        hass: HomeAssistant,
+        initial_level: int,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=initial_level))
@@ -1146,7 +1158,10 @@ class TestAirflowWriteConfirmation:
         ],
     )
     async def test_replaced_base_write_does_not_flag_data_health(
-        self, hass: HomeAssistant, initial_key: str, replacement_key: str,
+        self,
+        hass: HomeAssistant,
+        initial_key: str,
+        replacement_key: str,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=40))
@@ -1173,13 +1188,15 @@ class TestAirflowWriteConfirmation:
             started_at=dt_util.utcnow() - timedelta(seconds=WRITE_CONFIRMATION_TIMEOUT_SECONDS + 1),
         )
         readback_level = 80 if replacement_key == "airflow_levels" else 70
-        coordinator._confirm_pending_writes(_fresh(
-            RoomState(
-                operation_mode="manual",
-                target_level=readback_level,
-                balanced_target_readback=readback_level,
+        coordinator._confirm_pending_writes(
+            _fresh(
+                RoomState(
+                    operation_mode="manual",
+                    target_level=readback_level,
+                    balanced_target_readback=readback_level,
+                )
             )
-        ))
+        )
 
         assert coordinator.data_health_attributes("unit_1")["writes"][initial_key]["status"] == (
             "superseded"
@@ -1189,7 +1206,8 @@ class TestAirflowWriteConfirmation:
             assert coordinator.optimistic_preset_mode("unit_1") is None
 
     async def test_failed_replacement_does_not_supersede_the_previous_command(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=40))
@@ -1206,7 +1224,8 @@ class TestAirflowWriteConfirmation:
         assert coordinator.data_health_stale("unit_1") is True
 
     async def test_base_write_keeps_independent_write_confirmations(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=40))
@@ -1220,7 +1239,8 @@ class TestAirflowWriteConfirmation:
         assert confirmations[_HUMIDITY_START_WRITE].status == "pending"
 
     async def test_intensive_write_does_not_supersede_a_base_command(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=40))
@@ -1249,7 +1269,8 @@ class TestAirflowWriteConfirmation:
         assert confirmations["airflow_levels"].status == "confirmed"
 
     async def test_poll_after_a_fan_write_confirms_it_without_failing_the_update(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
@@ -1261,14 +1282,12 @@ class TestAirflowWriteConfirmation:
         await coordinator.async_refresh()
 
         assert coordinator.last_update_success, coordinator.last_exception
-        assert (
-            coordinator._writes.by_room["unit_1"]["airflow_levels"].status
-            == "confirmed"
-        )
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
         assert coordinator.level_source("unit_1") == "target"
 
     def test_measured_airflow_does_not_confirm_a_level_write(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """41020/41021 lag behind the target, so only target registers count."""
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
@@ -1278,19 +1297,15 @@ class TestAirflowWriteConfirmation:
                 started_at=dt_util.utcnow() - timedelta(seconds=1),
             )
         }
-        state = _fresh(
-            RoomState(operation_mode="manual", supply_air_flow=70, extract_air_flow=60)
-        )
+        state = _fresh(RoomState(operation_mode="manual", supply_air_flow=70, extract_air_flow=60))
 
         coordinator._confirm_pending_writes(state)
 
-        assert (
-            coordinator._writes.by_room["unit_1"]["airflow_levels"].status
-            == "pending"
-        )
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "pending"
 
     def test_derived_target_does_not_confirm_a_level_write(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator._writes.by_room["unit_1"] = {
@@ -1313,7 +1328,8 @@ class TestAirflowWriteConfirmation:
         assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "pending"
 
     def test_balanced_target_readback_confirms_a_level_write(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator._writes.by_room["unit_1"] = {
@@ -1331,7 +1347,8 @@ class TestAirflowWriteConfirmation:
         assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
 
     def test_level_write_hidden_by_intensive_is_not_a_mismatch(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator._writes.by_room["unit_1"] = {
@@ -1355,7 +1372,8 @@ class TestAirflowWriteConfirmation:
         assert not coordinator._writes.unhealthy("unit_1")
 
     def test_preset_write_still_mismatches_while_intensive_is_reported(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """A quick-mode write clears intensive, so a remaining override is a real mismatch."""
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
@@ -1372,12 +1390,11 @@ class TestAirflowWriteConfirmation:
         assert coordinator._writes.by_room["unit_1"]["preset_mode"].status == "mismatch"
 
     def test_old_write_failures_stop_flagging_data_health(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
-        coordinator.data = {
-            "unit_1": _with_fresh_read_groups(RoomState(target_level=40), "flow")
-        }
+        coordinator.data = {"unit_1": _with_fresh_read_groups(RoomState(target_level=40), "flow")}
         failed = WriteConfirmation(
             expected_value=(40, 40),
             started_at=dt_util.utcnow(),
@@ -1388,8 +1405,7 @@ class TestAirflowWriteConfirmation:
 
         coordinator._writes.by_room["unit_1"]["airflow_levels"] = replace(
             failed,
-            started_at=dt_util.utcnow()
-            - timedelta(seconds=WRITE_HEALTH_RETENTION_SECONDS + 1),
+            started_at=dt_util.utcnow() - timedelta(seconds=WRITE_HEALTH_RETENTION_SECONDS + 1),
         )
 
         assert coordinator.data_health_stale("unit_1") is False
@@ -1397,7 +1413,8 @@ class TestAirflowWriteConfirmation:
         assert writes["airflow_levels"]["status"] == "failed"
 
     def test_stale_read_group_flags_data_health(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         now = dt_util.utcnow()
@@ -1437,7 +1454,8 @@ class TestSilentUnitScheduling:
         assert coordinator._job_interval(hours_job) == hours_job.interval_seconds
 
     def test_units_that_never_answered_count_as_silent(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         assert not coordinator._room_silent("unit_1")
@@ -1454,7 +1472,8 @@ class TestSilentUnitScheduling:
 
 class TestOptimisticPresetOverlay:
     def test_missing_readback_is_not_reported_as_inactive(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(error_status=False)}
@@ -1462,7 +1481,8 @@ class TestOptimisticPresetOverlay:
         assert coordinator.optimistic_preset_mode("unit_1") is None
 
     def test_overlay_is_returned_until_the_gateway_confirms(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(preset_mode="low")}
@@ -1474,7 +1494,8 @@ class TestOptimisticPresetOverlay:
         assert coordinator.optimistic_preset_mode("unit_1") is None
 
     def test_stale_matching_readback_does_not_clear_the_pending_selection(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         state = RoomState(preset_mode="high")
@@ -1494,7 +1515,8 @@ class TestOptimisticPresetOverlay:
         assert coordinator.optimistic_preset_mode("unit_1") is None
 
     async def test_failed_preset_write_drops_the_overlay(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(preset_mode="low")}
@@ -1506,7 +1528,8 @@ class TestOptimisticPresetOverlay:
         assert coordinator.optimistic_preset_mode("unit_1") is None
 
     async def test_successful_preset_write_shows_the_selection_until_confirmed(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(preset_mode="low")}
@@ -1517,7 +1540,8 @@ class TestOptimisticPresetOverlay:
         assert coordinator.optimistic_preset_mode("unit_1") == "high"
 
     async def test_clear_pending_preset_still_writes_manual_mode(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {
@@ -1532,7 +1556,8 @@ class TestOptimisticPresetOverlay:
 
 class TestOptimisticIntensiveOverlay:
     def test_overlay_is_returned_until_the_gateway_confirms(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(intensive_active=False)}
@@ -1547,7 +1572,9 @@ class TestOptimisticIntensiveOverlay:
 
     @pytest.mark.parametrize("pending", [True, False])
     def test_stale_matching_readback_does_not_clear_the_pending_override(
-        self, hass: HomeAssistant, pending: bool,
+        self,
+        hass: HomeAssistant,
+        pending: bool,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(intensive_active=pending)}
@@ -1566,7 +1593,8 @@ class TestOptimisticIntensiveOverlay:
         assert coordinator.optimistic_intensive("unit_1") is None
 
     async def test_failed_write_drops_the_overlay(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(intensive_active=False)}
@@ -1578,7 +1606,8 @@ class TestOptimisticIntensiveOverlay:
         assert coordinator.optimistic_intensive("unit_1") is None
 
     async def test_successful_write_shows_the_switch_state_until_confirmed(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(intensive_active=False)}
@@ -1608,10 +1637,7 @@ class TestConfigFlowHelpers:
 
     def test_unit_details_lists_preview_and_device_name(self) -> None:
         assert _unit_details([2], {}) == "- **2**"
-        assert (
-            _unit_details([2], {2: "ID 116852 | basic"})
-            == "- **2**: Hardware ID 116852 | basic"
-        )
+        assert _unit_details([2], {2: "ID 116852 | basic"}) == "- **2**: Hardware ID 116852 | basic"
         assert (
             _unit_details([2], {2: "ID 116852 | basic"}, {2: "Wohnzimmer"})
             == "- **2**: Wohnzimmer, Hardware ID 116852 | basic"
@@ -1714,7 +1740,8 @@ class TestConfigFlowHelpers:
 
 class TestCoordinator:
     async def test_async_discover_gateway_units_uses_client(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
 
@@ -1724,7 +1751,8 @@ class TestCoordinator:
         assert client.discover_calls == [(2, 16)]
 
     async def test_async_probe_slave_details_uses_client(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
 
@@ -1734,7 +1762,8 @@ class TestCoordinator:
         assert client.probe_calls == [4]
 
     async def test_async_set_level_writes_without_forced_refresh(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(target_level=30)}
@@ -1746,7 +1775,8 @@ class TestCoordinator:
         assert client.read_calls == []
 
     async def test_async_set_unbalanced_levels_writes_without_forced_refresh(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(target_level=30, extract_target_level=35)}
@@ -1757,7 +1787,8 @@ class TestCoordinator:
         assert client.read_calls == []
 
     async def test_async_set_preset_mode_writes_only_the_preset_and_reads_it_back_twice(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(target_level=50, extract_target_level=70)}
@@ -1769,7 +1800,8 @@ class TestCoordinator:
         assert len(client.read_calls) == 2
 
     async def test_async_activate_intensive_writes_intensive_preset(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(target_level=30)}
@@ -1779,7 +1811,8 @@ class TestCoordinator:
         assert client.write_preset_mode_calls == [("unit_1", "intensive")]
 
     async def test_mode_write_during_intensive_is_unverifiable_not_a_problem(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """The intensive status hides the base mode the write changed (HW-1)."""
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
@@ -1797,7 +1830,8 @@ class TestCoordinator:
         assert coordinator.data_health_stale("unit_1") is False
 
     async def test_intensive_write_is_confirmed_when_the_unit_reports_it(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(target_level=30)}
@@ -1809,7 +1843,8 @@ class TestCoordinator:
         assert confirmation.status == "confirmed"
 
     async def test_async_deactivate_intensive_clears_only_the_override(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
         coordinator.data = {"unit_1": RoomState(target_level=30, intensive_active=True)}
@@ -1824,35 +1859,28 @@ class TestCoordinator:
         assert confirmation.status == "confirmed"
 
     async def test_control_setting_keeps_confirmed_value_until_readback(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
         coordinator.data = {"unit_1": RoomState(humidity_starting_point=50)}
         observed_during_settle: list[int | None] = []
 
         async def _observe_confirmed_state(_seconds: float) -> None:
-            observed_during_settle.append(
-                coordinator.safe_data["unit_1"].humidity_starting_point
-            )
+            observed_during_settle.append(coordinator.safe_data["unit_1"].humidity_starting_point)
 
         client.next_read_state = RoomState(humidity_starting_point=70)
         with patch(_SLEEP, side_effect=_observe_confirmed_state):
-            await coordinator.async_set_control_setting(
-                "unit_1", "humidity_starting_point", 70
-            )
+            await coordinator.async_set_control_setting("unit_1", "humidity_starting_point", 70)
 
         assert observed_during_settle == [50]
         assert coordinator.safe_data["unit_1"].humidity_starting_point == 70
-        assert (
-            coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE].status
-            == "confirmed"
-        )
-        assert client.write_control_setting_calls == [
-            ("unit_1", "humidity_starting_point", 70)
-        ]
+        assert coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE].status == "confirmed"
+        assert client.write_control_setting_calls == [("unit_1", "humidity_starting_point", 70)]
 
     def test_write_confirmation_ignores_values_from_before_the_write(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_F])
         started_at = dt_util.utcnow()
@@ -1876,13 +1904,11 @@ class TestCoordinator:
         )
         coordinator._confirm_pending_writes({"unit_1": state})
 
-        assert (
-            coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE].status
-            == "confirmed"
-        )
+        assert coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE].status == "confirmed"
 
     def test_confirmed_write_is_not_downgraded_after_value_changes(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_F])
         started_at = dt_util.utcnow()
@@ -1906,7 +1932,8 @@ class TestCoordinator:
         assert confirmation.actual_value == 70
 
     def test_pending_write_without_readback_turns_unconfirmed(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_F])
         coordinator.data = {"unit_1": RoomState(humidity_starting_point=50)}
@@ -1927,7 +1954,8 @@ class TestCoordinator:
         assert coordinator.data_health_stale("unit_1") is True
 
     async def test_control_setting_keeps_confirmed_value_when_refresh_fails(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
         coordinator.data = {"unit_1": RoomState(humidity_starting_point=50)}
@@ -1936,22 +1964,18 @@ class TestCoordinator:
         await coordinator.async_set_control_setting("unit_1", "humidity_starting_point", 70)
 
         assert coordinator.safe_data["unit_1"].humidity_starting_point == 50
-        assert (
-            coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE].status
-            == "unconfirmed"
-        )
+        assert coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE].status == "unconfirmed"
 
     async def test_control_setting_publishes_the_actual_written_step(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
         coordinator.data = {"unit_1": RoomState(humidity_min_level=10)}
         observed_during_settle: list[int | None] = []
 
         async def _observe(_seconds: float) -> None:
-            observed_during_settle.append(
-                coordinator.safe_data["unit_1"].humidity_min_level
-            )
+            observed_during_settle.append(coordinator.safe_data["unit_1"].humidity_min_level)
 
         # The client rounds 15 onto the 10-step grid.
         client.write_control_setting = AsyncMock(return_value=20)  # type: ignore[method-assign]
@@ -1983,7 +2007,8 @@ class TestCoordinator:
         assert client.write_control_setting_calls == []
 
     async def test_levels_are_compared_after_rounding_to_the_register_step(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
         coordinator.data = {"unit_1": RoomState(humidity_max_level=50)}
@@ -1995,7 +2020,10 @@ class TestCoordinator:
     @pytest.mark.parametrize("family", ["humidity", "co2"])
     @pytest.mark.parametrize("minimum_first", [False, True], ids=("maximum-first", "minimum-first"))
     async def test_concurrent_setting_writes_cannot_invert_the_range(
-        self, hass: HomeAssistant, family: str, minimum_first: bool,
+        self,
+        hass: HomeAssistant,
+        family: str,
+        minimum_first: bool,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
         min_key, max_key = f"{family}_min_level", f"{family}_max_level"
@@ -2027,7 +2055,10 @@ class TestCoordinator:
     @pytest.mark.parametrize("family", ["humidity", "co2"])
     @pytest.mark.parametrize("minimum_first", [False, True], ids=("maximum-first", "minimum-first"))
     async def test_unconfirmed_setting_is_used_when_the_readback_fails(
-        self, hass: HomeAssistant, family: str, minimum_first: bool,
+        self,
+        hass: HomeAssistant,
+        family: str,
+        minimum_first: bool,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
         min_key, max_key = f"{family}_min_level", f"{family}_max_level"
@@ -2045,7 +2076,8 @@ class TestCoordinator:
         assert client.write_control_setting_calls == [("unit_1", *writes[0])]
 
     async def test_mismatched_setting_readback_is_used_instead_of_the_requested_value(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
         coordinator.data = {"unit_1": RoomState(humidity_min_level=10, humidity_max_level=100)}
@@ -2061,7 +2093,8 @@ class TestCoordinator:
         ]
 
     def test_build_jobs_only_includes_relevant_groups(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(
             hass,
@@ -2078,9 +2111,7 @@ class TestCoordinator:
                     name="Flow Only",
                     profile="ii_plain",
                     slave=3,
-                    supported_entity_keys=frozenset(
-                        {"extract_air_flow", "supply_air_flow"}
-                    ),
+                    supported_entity_keys=frozenset({"extract_air_flow", "supply_air_flow"}),
                 ),
             ],
         )
@@ -2093,7 +2124,8 @@ class TestCoordinator:
         assert ("flow_only", "hours") not in jobs
 
     def test_select_due_job_returns_earliest_due(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
         coordinator._jobs = [
@@ -2107,7 +2139,8 @@ class TestCoordinator:
         assert selected.key == "flow"
 
     async def test_read_one_job_keeps_previous_state_on_failure(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(
             hass,
@@ -2179,7 +2212,8 @@ class TestOptionsFlow:
         }
 
     async def test_options_rescan_keeps_known_profiles_and_suggests_detected_ones(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         flow = self._build_flow(hass)
         flow._coordinator.client.probe_slave_details = AsyncMock(  # type: ignore[union-attr]
@@ -2203,7 +2237,10 @@ class TestOptionsFlow:
         ],
     )
     async def test_options_rescan_reports_why_no_units_were_found(
-        self, hass: HomeAssistant, discover: AsyncMock, error: str,
+        self,
+        hass: HomeAssistant,
+        discover: AsyncMock,
+        error: str,
     ) -> None:
         flow = self._build_flow(hass)
         flow._coordinator.client.discover_gateway_units = discover  # type: ignore[union-attr]
@@ -2215,7 +2252,8 @@ class TestOptionsFlow:
         assert flow._discovered_slaves == []
 
     async def test_options_profiles_without_a_rescan_return_to_the_menu(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         result = await self._build_flow(hass).async_step_profiles(None)
 
@@ -2223,7 +2261,8 @@ class TestOptionsFlow:
         assert result["step_id"] == "init"
 
     async def test_options_profiles_updates_entry_data_and_reloads(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         flow = self._build_flow(hass)
         flow._discovered_slaves = [2]

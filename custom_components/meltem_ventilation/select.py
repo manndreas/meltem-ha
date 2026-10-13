@@ -48,13 +48,12 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
     Off, manual and unbalanced are reachable through the two fan entities and
     are therefore not offered here.
     """
+
     _requires_fresh_read_group = False
     _attr_entity_category = EntityCategory.CONFIG
     _attr_entity_category = EntityCategory.CONFIG
 
-    def __init__(
-        self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig
-    ) -> None:
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "operation_mode", "operation_mode")
         options = [OPERATION_MODE_INACTIVE]
         if room.profile in HUMIDITY_PROFILES:
@@ -83,9 +82,7 @@ class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
     _requires_fresh_read_group = False
     _attr_options = list(PRESET_MODE_OPTIONS)
 
-    def __init__(
-        self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig
-    ) -> None:
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "preset_mode", "preset_mode")
 
     @property

@@ -116,7 +116,10 @@ class TestRoomSupportsEntity:
         ],
     )
     def test_profile_limits_hardware_specific_entities(
-        self, profile: str, key: str, expected: bool,
+        self,
+        profile: str,
+        key: str,
+        expected: bool,
     ) -> None:
         assert _supports(_room(profile), key) is expected
 
@@ -132,7 +135,11 @@ class TestRoomSupportsEntity:
         ],
     )
     def test_probed_keys_override_the_profile_match(
-        self, profile: str, supported: set[str], key: str, expected: bool,
+        self,
+        profile: str,
+        supported: set[str],
+        key: str,
+        expected: bool,
     ) -> None:
         assert _supports(_room(profile, supported), key) is expected
 
@@ -153,7 +160,10 @@ class TestRoomSupportsEntity:
         ],
     )
     def test_supported_entity_keys_filter_by_key(
-        self, supported: set[str] | None, key: str, expected: bool,
+        self,
+        supported: set[str] | None,
+        key: str,
+        expected: bool,
     ) -> None:
         assert room_supports_entity(_room(supported=supported), key) is expected
 
@@ -185,7 +195,11 @@ class TestDescriptionMetadata:
         ],
     )
     def test_control_setting_limits_match_the_manufacturer_table(
-        self, key: str, minimum: int, maximum: int, step: int,
+        self,
+        key: str,
+        minimum: int,
+        maximum: int,
+        step: int,
     ) -> None:
         description = _DESCRIPTIONS[key]
 
@@ -210,7 +224,10 @@ class TestDescriptionMetadata:
         ],
     )
     def test_sensor_device_and_state_class(
-        self, key: str, device_class: str, state_class: str,
+        self,
+        key: str,
+        device_class: str,
+        state_class: str,
     ) -> None:
         description = _DESCRIPTIONS[key]
 
@@ -242,9 +259,7 @@ class TestDescriptionMetadata:
 
 
 class TestPurposeSpecificAutomation:
-    async def test_filter_change_platforms_register_the_expected_key(
-        self, hass
-    ) -> None:
+    async def test_filter_change_platforms_register_the_expected_key(self, hass) -> None:
         assert set(await async_get_triggers(hass)) == {"filter_change_due"}
         assert set(await async_get_conditions(hass)) == {"filter_change_due"}
 

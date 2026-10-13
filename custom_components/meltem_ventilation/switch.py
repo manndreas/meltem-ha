@@ -42,9 +42,7 @@ class MeltemIntensiveSwitch(MeltemEntity, SwitchEntity):
 
     _requires_fresh_read_group = False
 
-    def __init__(
-        self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig
-    ) -> None:
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "intensive", "intensive")
 
     @property

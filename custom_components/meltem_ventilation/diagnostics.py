@@ -92,14 +92,10 @@ async def async_get_config_entry_diagnostics(
             "gateway_probe_error": gateway_probe_error,
             "transport": coordinator.client.transport_diagnostics(),
             "last_job_error": (
-                redact_port(str(last_job_error), port)
-                if last_job_error is not None
-                else None
+                redact_port(str(last_job_error), port) if last_job_error is not None else None
             ),
             "unavailable_rooms": [
-                room.key
-                for room in coordinator.rooms
-                if not coordinator.room_available(room.key)
+                room.key for room in coordinator.rooms if not coordinator.room_available(room.key)
             ],
             "rooms": [_serialize_room(room) for room in coordinator.rooms],
             "room_states": {

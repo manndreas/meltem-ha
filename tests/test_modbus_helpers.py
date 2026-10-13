@@ -127,9 +127,7 @@ class TestLinkSetup:
             device=_PORT, baudrate=19200, bytesize=8, parity="E", stopbits=1
         )
 
-    def test_prepared_unit_asks_for_the_gateway_timing(
-        self, unit: MockModbusUnit
-    ) -> None:
+    def test_prepared_unit_asks_for_the_gateway_timing(self, unit: MockModbusUnit) -> None:
         prepared = prepare_unit(unit, 4, new_transport_policy())
 
         assert isinstance(prepared, PolicyUnit)
@@ -149,17 +147,13 @@ class TestReadGatewayNodeCount:
 
         assert await read_gateway_node_count(gateway) == 3
 
-    async def test_a_dead_link_is_a_connection_error(
-        self, gateway: MockModbusUnit
-    ) -> None:
+    async def test_a_dead_link_is_a_connection_error(self, gateway: MockModbusUnit) -> None:
         gateway.fail_requests(ModbusConnectionError("no port"))
 
         with pytest.raises(MeltemConnectionError):
             await read_gateway_node_count(gateway)
 
-    async def test_a_silent_gateway_is_a_modbus_error(
-        self, gateway: MockModbusUnit
-    ) -> None:
+    async def test_a_silent_gateway_is_a_modbus_error(self, gateway: MockModbusUnit) -> None:
         gateway.fail_requests(ModbusTimeoutError("silent"))
 
         with pytest.raises(MeltemModbusError) as err:
@@ -192,26 +186,20 @@ class TestDiscoverGatewayNodes:
             (REGISTER_GATEWAY_NODE_ADDRESS_1, len(addresses)),
         ]
 
-    async def test_caps_the_address_list_at_32_nodes(
-        self, gateway: MockModbusUnit
-    ) -> None:
+    async def test_caps_the_address_list_at_32_nodes(self, gateway: MockModbusUnit) -> None:
         gateway.holding[REGISTER_GATEWAY_NUMBER_OF_NODES] = 99
 
         await _discover(gateway)
 
         assert _reads(gateway)[-1] == (REGISTER_GATEWAY_NODE_ADDRESS_1, 32)
 
-    async def test_no_configured_nodes_yields_no_units(
-        self, gateway: MockModbusUnit
-    ) -> None:
+    async def test_no_configured_nodes_yields_no_units(self, gateway: MockModbusUnit) -> None:
         gateway.holding[REGISTER_GATEWAY_NUMBER_OF_NODES] = 0
 
         assert await _discover(gateway) == []
         assert _reads(gateway) == [(REGISTER_GATEWAY_NUMBER_OF_NODES, 1)]
 
-    async def test_a_silent_gateway_yields_no_units(
-        self, gateway: MockModbusUnit
-    ) -> None:
+    async def test_a_silent_gateway_yields_no_units(self, gateway: MockModbusUnit) -> None:
         gateway.fail_requests(ModbusTimeoutError("silent"))
 
         assert await _discover(gateway) == []
@@ -237,9 +225,7 @@ class TestDiscoverGatewayNodes:
 
 
 class TestDetectSlaveDetails:
-    async def test_detects_voc_profile_with_minimal_reads(
-        self, unit: MockModbusUnit
-    ) -> None:
+    async def test_detects_voc_profile_with_minimal_reads(self, unit: MockModbusUnit) -> None:
         unit.holding.update(
             {
                 REGISTER_PRODUCT_ID: _PRODUCT_ID_WORDS,

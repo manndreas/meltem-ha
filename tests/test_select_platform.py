@@ -78,9 +78,7 @@ class TestMeltemOperationModeSelect:
             (None, None),
         ],
     )
-    def test_current_option(
-        self, operation_mode: str | None, current_option: str | None
-    ) -> None:
+    def test_current_option(self, operation_mode: str | None, current_option: str | None) -> None:
         select = _operation_mode_select(RoomState(operation_mode=operation_mode))
 
         assert select.current_option == current_option
@@ -90,27 +88,21 @@ class TestMeltemOperationModeSelect:
 
         await select.async_select_option("automatic")
 
-        select.coordinator.async_set_operation_mode.assert_awaited_once_with(
-            "unit_1", "automatic"
-        )
+        select.coordinator.async_set_operation_mode.assert_awaited_once_with("unit_1", "automatic")
 
     async def test_selecting_inactive_leaves_sensor_control(self) -> None:
         select = _operation_mode_select(RoomState(operation_mode="co2_control"))
 
         await select.async_select_option("inactive")
 
-        select.coordinator.async_set_operation_mode.assert_awaited_once_with(
-            "unit_1", "inactive"
-        )
+        select.coordinator.async_set_operation_mode.assert_awaited_once_with("unit_1", "inactive")
 
     async def test_selecting_inactive_delegates_the_noop_decision(self) -> None:
         select = _operation_mode_select(RoomState(operation_mode="unbalanced"))
 
         await select.async_select_option("inactive")
 
-        select.coordinator.async_set_operation_mode.assert_awaited_once_with(
-            "unit_1", "inactive"
-        )
+        select.coordinator.async_set_operation_mode.assert_awaited_once_with("unit_1", "inactive")
 
     async def test_selecting_inactive_with_stale_state_still_sends_the_command(self) -> None:
         select = _operation_mode_select(RoomState(operation_mode="manual"))
@@ -118,9 +110,7 @@ class TestMeltemOperationModeSelect:
 
         await select.async_select_option("inactive")
 
-        select.coordinator.async_set_operation_mode.assert_awaited_once_with(
-            "unit_1", "inactive"
-        )
+        select.coordinator.async_set_operation_mode.assert_awaited_once_with("unit_1", "inactive")
 
 
 class TestMeltemPresetModeSelect:

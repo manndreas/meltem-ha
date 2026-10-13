@@ -194,9 +194,7 @@ def _device_names_by_slave(
     return names
 
 
-def _detected_profile_default(
-    slave: int, detected_profiles_by_slave: Mapping[int, str]
-) -> str:
+def _detected_profile_default(slave: int, detected_profiles_by_slave: Mapping[int, str]) -> str:
     """Return the default profile selection for a detected unit."""
 
     detected_profile = detected_profiles_by_slave.get(slave) or ""
@@ -382,9 +380,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return MeltemVentilationOptionsFlow()
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Collect the serial port and scan for connected units."""
 
         errors: dict[str, str] = {}
@@ -594,14 +590,10 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         deletes ``runtime_data`` whenever the entry is not loaded.
         """
 
-        runtime_data: MeltemRuntimeData | None = getattr(
-            self.config_entry, "runtime_data", None
-        )
+        runtime_data: MeltemRuntimeData | None = getattr(self.config_entry, "runtime_data", None)
         return runtime_data.coordinator if runtime_data is not None else None
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Choose which configuration action to perform."""
 
         return self.async_show_menu(
@@ -699,14 +691,10 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             description_placeholders=placeholders,
         )
 
-    async def _async_apply_profiles(
-        self, updated_data: dict[str, Any]
-    ) -> ConfigFlowResult:
+    async def _async_apply_profiles(self, updated_data: dict[str, Any]) -> ConfigFlowResult:
         """Persist changed room profiles and reload the entry."""
 
-        options = _build_options_result_data(
-            self.config_entry, self._max_requests_per_second
-        )
+        options = _build_options_result_data(self.config_entry, self._max_requests_per_second)
         self.hass.config_entries.async_update_entry(
             self.config_entry, data=updated_data, options=options
         )
@@ -788,9 +776,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                 slave: str(
                     existing_rooms.get(slave, {}).get(
                         "profile",
-                        _detected_profile_default(
-                            slave, self._detected_profile_by_slave
-                        ),
+                        _detected_profile_default(slave, self._detected_profile_by_slave),
                     )
                 )
                 for slave in self._discovered_slaves

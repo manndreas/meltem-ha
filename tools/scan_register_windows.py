@@ -85,9 +85,7 @@ async def read_window(
 ) -> WindowResult:
     count = end - start + 1
     read_fn = (
-        unit.read_holding_registers
-        if function_name == "holding"
-        else unit.read_input_registers
+        unit.read_holding_registers if function_name == "holding" else unit.read_input_registers
     )
     values: tuple[int, ...] = ()
     try:
@@ -153,9 +151,7 @@ async def main() -> int:
     print()
     print("summary:")
     for function_name in function_names:
-        counts = " ".join(
-            f"{status}={totals[function_name][status]:<3}" for status in STATUSES
-        )
+        counts = " ".join(f"{status}={totals[function_name][status]:<3}" for status in STATUSES)
         print(f"  {function_name:<7} {counts}")
     return 0
 

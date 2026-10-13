@@ -210,9 +210,7 @@ class MeltemModbusClient:
     def _unit(self, slave: int) -> PolicyUnit:
         unit = self._units.get(slave)
         if unit is None:
-            unit = self._units[slave] = prepare_unit(
-                self._unit_factory(slave), slave, self._policy
-            )
+            unit = self._units[slave] = prepare_unit(self._unit_factory(slave), slave, self._policy)
         return unit
 
     def _room_device(self, room: RoomConfig) -> MeltemRoomDevice:
@@ -229,9 +227,7 @@ class MeltemModbusClient:
         """Run one gateway operation and translate its errors."""
 
         if self._shut_down:
-            raise MeltemConnectionError(
-                f"Meltem gateway client on {self._port} was shut down"
-            )
+            raise MeltemConnectionError(f"Meltem gateway client on {self._port} was shut down")
         try:
             yield
         except MeltemModbusError:
@@ -243,9 +239,7 @@ class MeltemModbusClient:
         except ModbusError as err:
             raise MeltemModbusError(f"Modbus error while {description}: {err}") from err
         except Exception as err:
-            raise MeltemModbusError(
-                f"Unexpected error while {description}: {err!r}"
-            ) from err
+            raise MeltemModbusError(f"Unexpected error while {description}: {err!r}") from err
 
     async def async_validate_gateway(self) -> None:
         """Read the gateway's node count once to prove the link works.
@@ -404,9 +398,7 @@ class MeltemModbusClient:
 
         raw_code = PRESET_MODE_TO_RAW_CODE.get(preset_mode)
         if raw_code is None:
-            raise MeltemModbusError(
-                f"Unsupported preset mode {preset_mode!r} for room {room.key}"
-            )
+            raise MeltemModbusError(f"Unsupported preset mode {preset_mode!r} for room {room.key}")
 
         writes: tuple[tuple[str, int], ...]
         if preset_mode == PRESET_MODE_INTENSIVE:
@@ -523,9 +515,7 @@ class MeltemModbusClient:
             )
             return None
         if mode == MODE_SENSOR_CONTROL:
-            current_level = MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE.get(
-                current_level, current_level
-            )
+            current_level = MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE.get(current_level, current_level)
         return _ModeRead(
             mode=int(mode),
             current_level=int(current_level),

@@ -111,9 +111,10 @@ class TestDiagnostics:
             f"MeltemModbusError: Probe failed at {REDACTED}"
         )
         assert diagnostics["last_job_error"] == f"Job failed at {REDACTED}"
-        assert diagnostics["room_states"]["unit_1"]["group_read_health"][0][1][
-            "last_error"
-        ] == f"Read failed at {REDACTED}"
+        assert (
+            diagnostics["room_states"]["unit_1"]["group_read_health"][0][1]["last_error"]
+            == f"Read failed at {REDACTED}"
+        )
 
     async def test_result_is_json_serialisable(self, hass: HomeAssistant) -> None:
         result = await async_get_config_entry_diagnostics(hass, _entry(hass))
@@ -137,8 +138,8 @@ class TestDiagnostics:
 
     async def test_reports_a_failing_gateway_probe(self, hass: HomeAssistant) -> None:
         entry = _entry(hass)
-        entry.runtime_data.coordinator.async_discover_gateway_units.side_effect = (
-            MeltemModbusError("boom")
+        entry.runtime_data.coordinator.async_discover_gateway_units.side_effect = MeltemModbusError(
+            "boom"
         )
 
         result = await async_get_config_entry_diagnostics(hass, entry)
@@ -156,7 +157,8 @@ class TestDiagnostics:
         assert result["coordinator"]["unavailable_rooms"] == ["unit_1"]
 
     async def test_survives_an_entry_without_runtime_data(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         entry = _entry(hass, with_runtime=False)
 
@@ -171,7 +173,8 @@ class TestSystemHealth:
         assert await system_health_info(hass) == {"loaded_entries": 0}
 
     async def test_ignores_entries_that_are_not_loaded(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """Accessing runtime_data of a failed entry would raise."""
         entry = _entry(hass, with_runtime=False)
@@ -200,7 +203,8 @@ class TestSystemHealth:
         assert info["unavailable_units"] == "unit_1"
 
     async def test_redacts_the_serial_port_in_the_last_error(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """The system information is pasted into public issues as well."""
         _loaded_coordinator(hass).last_job_error = MeltemModbusError(f"Lost {_PORT}")

@@ -201,9 +201,5 @@ class PolicyUnit:
     async def write_registers(self, address: int, values: list[int]) -> None:
         await self._run(self._unit.write_registers, address, values, is_read=False)
 
-    async def _run[T](
-        self, operation: Callable[..., Awaitable[T]], *args: Any, is_read: bool
-    ) -> T:
-        return await self._policy.run(
-            self._unit, self._unit_id, operation, *args, is_read=is_read
-        )
+    async def _run[T](self, operation: Callable[..., Awaitable[T]], *args: Any, is_read: bool) -> T:
+        return await self._policy.run(self._unit, self._unit_id, operation, *args, is_read=is_read)

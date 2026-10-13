@@ -57,7 +57,9 @@ def target_levels(state: RoomState, *, airflow_is_fresh: bool) -> LevelPair:
         extract = (
             state.extract_target_level
             if state.extract_target_level is not None
-            else state.extract_air_flow if airflow_is_fresh else None
+            else state.extract_air_flow
+            if airflow_is_fresh
+            else None
         )
         return supply, extract
 

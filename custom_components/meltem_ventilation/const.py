@@ -90,9 +90,7 @@ PROFILE_METADATA: dict[str, ProfileMetadata] = {
 
 def _profiles_with(capability: str) -> frozenset[str]:
     return frozenset(
-        key
-        for key, metadata in PROFILE_METADATA.items()
-        if capability in metadata.capabilities
+        key for key, metadata in PROFILE_METADATA.items() if capability in metadata.capabilities
     )
 
 
@@ -281,9 +279,7 @@ CONTROL_LEVEL_RANGES: tuple[tuple[str, str], ...] = (
 # (health bookkeeping) and the coordinator (scheduling and availability).
 READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
     "flow": frozenset({"extract_air_flow", "supply_air_flow"}),
-    "flow_control": frozenset(
-        {"operation_mode", "preset_mode", "supply_level", "extract_level"}
-    ),
+    "flow_control": frozenset({"operation_mode", "preset_mode", "supply_level", "extract_level"}),
     "intensive": frozenset({"intensive"}),
     "status": frozenset({"error_status", "frost_protection_active", "rf_comm_status"}),
     "temperature": frozenset(

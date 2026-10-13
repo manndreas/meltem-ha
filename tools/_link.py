@@ -61,9 +61,7 @@ async def open_link(
     never counts as latency.
     """
 
-    link = ModbusConnection(
-        serial_params(port), timeout=TIMEOUT, message_spacing=message_spacing
-    )
+    link = ModbusConnection(serial_params(port), timeout=TIMEOUT, message_spacing=message_spacing)
     try:
         await link.connect()
     except ModbusConnectionError as err:
@@ -136,9 +134,7 @@ def tool_parser(description: str, *, slave: bool = False) -> argparse.ArgumentPa
         "(default: %(default)s).",
     )
     if slave:
-        parser.add_argument(
-            "--slave", type=int, required=True, help="Modbus address of the unit."
-        )
+        parser.add_argument("--slave", type=int, required=True, help="Modbus address of the unit.")
     return parser
 
 
