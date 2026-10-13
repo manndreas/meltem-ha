@@ -220,6 +220,31 @@ def _start_backoff(coordinator: MeltemDataUpdateCoordinator) -> None:
 
 
 class TestCoordinatorResilience:
+    def test_logs_gateway_unavailability_and_recovery_once(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+
+        with patch("custom_components.meltem_ventilation.coordinator._LOGGER.info") as info:
+            for _ in range(TRANSPORT_BACKOFF_AFTER_FAILURES - 1):
+                coordinator._on_transport_failure()
+            info.assert_not_called()
+
+            coordinator._on_transport_failure()
+            info.assert_called_once_with(
+                "Meltem gateway unavailable after %s consecutive transport failures; "
+                "backing off polling to %.0f s",
+                TRANSPORT_BACKOFF_AFTER_FAILURES,
+                TRANSPORT_BACKOFF_START_SECONDS,
+            )
+
+            coordinator._on_transport_failure()
+            info.assert_called_once()
+
+            coordinator._on_transport_success()
+            coordinator._on_transport_success()
+            assert info.call_count == 2
+
     def test_polling_backs_off_after_repeated_transport_failures(
         self, hass: HomeAssistant,
     ) -> None:

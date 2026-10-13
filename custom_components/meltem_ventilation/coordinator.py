@@ -453,13 +453,23 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         if seconds == self._backoff_seconds:
             return
 
+        if self._backoff_seconds is None:
+            _LOGGER.info(
+                "Meltem gateway unavailable after %s consecutive transport failures; "
+                "backing off polling to %.0f s",
+                self._consecutive_transport_failures,
+                seconds,
+            )
+        else:
+            _LOGGER.debug(
+                "Increasing Meltem gateway polling backoff to %.0f s after %s "
+                "consecutive transport failures",
+                seconds,
+                self._consecutive_transport_failures,
+            )
+
         self._backoff_seconds = seconds
         self.update_interval = timedelta(seconds=seconds)
-        _LOGGER.warning(
-            "Backing off Meltem gateway polling to %.0f s after %s consecutive transport failures",
-            seconds,
-            self._consecutive_transport_failures,
-        )
 
     async def async_set_level(self, room_key: str, level: int) -> None:
         """Write a new target level for one room.

@@ -17,8 +17,10 @@ Silver, Gold und Platinum werden für Core-Integrationen vergeben. Eine
 vor.
 
 Würde die Integration als Kandidat für Home Assistant Core bewertet, wäre sie
-nach dieser Prüfung **Bronze-konform**. Die bisher letzte offene Bronze-Regel
-zur Anleitung für das Entfernen ist jetzt erfüllt.
+nach dieser Prüfung **noch nicht Bronze-konform**. Alle übrigen anwendbaren
+Bronze-Regeln sind erfüllt; offen ist noch die Bereitstellung der Brand-Assets
+im zentralen Repository für Core-Integrationen. Die aktuelle HACS-Integration
+enthält die Assets lokal, wie es für Custom-Integrationen vorgesehen ist.
 
 Darüber hinaus scheitern einzelne Regeln höherer Stufen auch unabhängig davon,
 ob Bronze bereits erreicht ist. Die Quality Scale ist kumulativ: Eine Stufe
@@ -43,7 +45,7 @@ Dateipfade verlinken auf die geprüften Stellen im Repository.
 |---|---|---|
 | ➖ | [`action-setup`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/action-setup) | Es werden keine Service-Actions angeboten, die in `async_setup` registriert werden müssten. |
 | ✅ | [`appropriate-polling`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/appropriate-polling) | Der Coordinator begrenzt die Request-Rate, staffelt Lesejobs und verwendet bei Transportfehlern Backoff. [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [polling.py](../../custom_components/meltem_ventilation/polling.py) |
-| ✅ | [`brands`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/brands) | Branding-Dateien sind vorhanden: [icon.png](../../custom_components/meltem_ventilation/brand/icon.png) und [logo.png](../../custom_components/meltem_ventilation/brand/logo.png). |
+| ❌ | [`brands`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/brands) | Die lokalen [Brand-Assets](../../custom_components/meltem_ventilation/brand/icon.png) und [Logo-Dateien](../../custom_components/meltem_ventilation/brand/logo.png) sind für die HACS-Custom-Integration vorhanden. Für einen Core-Kandidaten fehlt jedoch ein Eintrag unter [`core_integrations/meltem_ventilation`](https://github.com/home-assistant/brands/tree/master/core_integrations) im zentralen [Brands-Repository](https://github.com/home-assistant/brands). |
 | ✅ | [`common-modules`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/common-modules) | Gemeinsame Verantwortlichkeiten sind in Module wie [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [polling.py](../../custom_components/meltem_ventilation/polling.py) und [read_health.py](../../custom_components/meltem_ventilation/read_health.py) ausgelagert. |
 | ✅ | [`config-flow-test-coverage`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-flow-test-coverage) | Die Gesamtsuite deckt [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py) zu 100 % ab. [test_config_flow.py](../../tests/test_config_flow.py) testet die Wiederherstellung nach Fehlern in User-, USB-, Options- und Reconfigure-Flows sowie, dass ein Gateway nicht doppelt eingerichtet werden kann. |
 | ✅ | [`config-flow`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-flow) | UI-Einrichtung, feldbezogene `data_description`-Texte für alle Config- und Options-Formularfelder sowie englische und deutsche Übersetzungen sind vorhanden. Verbindungs- und Geräteprofil-Konfiguration liegt in `ConfigEntry.data`; die Request-Rate wird als `ConfigEntry.options` behandelt. Die Migration übernimmt die bisher in `data` gespeicherte Rate nach `options`, ohne einen vorhandenen Optionswert zu überschreiben. [strings.json](../../custom_components/meltem_ventilation/strings.json), [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py), [__init__.py](../../custom_components/meltem_ventilation/__init__.py) |
@@ -64,8 +66,9 @@ Dateipfade verlinken auf die geprüften Stellen im Repository.
 
 Bei `config-flow` gehören auch die Teilanforderungen dazu: Kontext für
 Eingabefelder über `data_description` bereitzustellen und `ConfigEntry.data`
-und `ConfigEntry.options` zweckgemäß zu verwenden. Die erste Teilanforderung
-ist offen, die zweite ist erfüllt.
+und `ConfigEntry.options` zweckgemäß zu verwenden. Beides ist erfüllt; der Test
+[`test_all_config_flow_fields_have_descriptions`](../../tests/test_entity_descriptions.py)
+prüft die Beschreibungen für sämtliche Config- und Options-Flow-Felder.
 
 ## Silver
 
@@ -77,10 +80,10 @@ ist offen, die zweite ist erfüllt.
 | ✅ | [`docs-installation-parameters`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-installation-parameters) | Gateway, USB-Verbindung, Voraussetzungen, Port und Profilwahl werden in der [README.md](../../README.md) erklärt. |
 | ✅ | [`entity-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/entity-unavailable) | Entities werden bei nicht verfügbaren Räumen oder veralteten Lesegruppen als nicht verfügbar markiert. [entity.py](../../custom_components/meltem_ventilation/entity.py) |
 | ✅ | [`integration-owner`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/integration-owner) | `codeowners` ist im [manifest.json](../../custom_components/meltem_ventilation/manifest.json) gesetzt. |
-| ⚠️ | [`log-when-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/log-when-unavailable) | Wiederherstellung wird einmalig auf Info-Level protokolliert. Fehlgeschlagene Lesejobs werden dagegen als Warnings geloggt; ein einmaliges Info-Log beim Übergang in den nicht erreichbaren Zustand fehlt. [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py) |
+| ✅ | [`log-when-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/log-when-unavailable) | Beim Eintritt in den Gateway-Backoff wird die Nichterreichbarkeit einmal auf Info-Level protokolliert; beim ersten erfolgreichen Read danach folgt einmalig die Wiederherstellung. Weitere Backoff-Erhöhungen werden nur auf Debug-Level geloggt. [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [test_coordinator_and_config_helpers.py](../../tests/test_coordinator_and_config_helpers.py) |
 | ✅ | [`parallel-updates`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/parallel-updates) | Die Entity-Plattformen setzen `PARALLEL_UPDATES = 0`; die Serialisierung erfolgt zentral im Coordinator. Beispiele: [fan.py](../../custom_components/meltem_ventilation/fan.py), [sensor.py](../../custom_components/meltem_ventilation/sensor.py). |
 | ➖ | [`reauthentication-flow`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/reauthentication-flow) | Es gibt keine Zugangsdaten oder Authentifizierung, die erneuert werden könnten. |
-| ❌ | [`test-coverage`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/test-coverage) | Die Regel verlangt über 95 % Abdeckung für jedes Integrationsmodul. Die Gesamtdeckung ist zwar 99 %, [write_confirmation.py](../../custom_components/meltem_ventilation/write_confirmation.py) liegt aber bei 94 %. |
+| ✅ | [`test-coverage`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/test-coverage) | Im vollständigen Coverage-Lauf liegen alle Integrationsmodule über 95 %: 99 % insgesamt, 96 % im niedrigsten Modul (`modbus_helpers.py`) und 100 % in [write_confirmation.py](../../custom_components/meltem_ventilation/write_confirmation.py). Dabei wurde ein Plattformtest ausgeschlossen, dessen Teardown versucht, `/dev/ttyACM0` zu öffnen: [test_platform_matrix.py](../../tests/test_platform_matrix.py). Die ergänzten Branch-Tests stehen in [test_write_confirmation.py](../../tests/test_write_confirmation.py). |
 
 ## Gold
 
@@ -139,8 +142,9 @@ wurden keine Projektdateien verändert.
 
 ## Empfohlene nächste Schritte
 
-1. **Silver absichern:** `write_confirmation.py` auf über 95 % bringen und
-   beim Übergang in den Ausfallzustand ein einmaliges Info-Log ergänzen.
+1. **Bronze für eine Core-Kandidatur abschließen:** Brand-Assets passend zu
+   den Vorgaben im zentralen `core_integrations/meltem_ventilation`-Verzeichnis
+   bereitstellen.
 2. **Gold verbessern:** nutzbare Automationsbeispiele, präzise
    Polling-/Update-Angaben und `icons.json` ergänzen. Für automatische
    Geräteaufnahme müsste außerdem das Hinzufügen neuer Units während des
