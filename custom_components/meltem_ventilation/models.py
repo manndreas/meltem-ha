@@ -11,6 +11,8 @@ from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from homeassistant.config_entries import ConfigEntry
+
 from .const import READ_FAILURE_THRESHOLD
 
 if TYPE_CHECKING:
@@ -191,3 +193,6 @@ class MeltemRuntimeData:
     """Runtime objects kept for a config entry."""
 
     coordinator: MeltemDataUpdateCoordinator
+
+
+type MeltemIntegrationConfigEntry = ConfigEntry[MeltemRuntimeData]

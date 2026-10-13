@@ -19,7 +19,6 @@ from functools import partial
 from typing import Any
 
 from homeassistant.components.modbus import async_get_unit
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
@@ -49,12 +48,14 @@ from .modbus_helpers import (
     resolve_preferred_port_path,
     supported_entity_keys_for_profile,
 )
-from .models import MeltemRuntimeData, RoomConfig
+from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, RoomConfig
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_migrate_entry(
+    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
+) -> bool:
     """Migrate a config entry from an older schema."""
 
     if entry.version > 1:
@@ -81,7 +82,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-def _async_migrate_data_health_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+def _async_migrate_data_health_entities(
+    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
+) -> None:
     """Rename the airflow-only diagnostic while preserving registry settings."""
 
     registry = er.async_get(hass)
@@ -116,7 +119,7 @@ def _room_config(room: Mapping[str, Any]) -> RoomConfig:
     )
 
 
-def _max_requests_per_second(entry: ConfigEntry) -> float:
+def _max_requests_per_second(entry: MeltemIntegrationConfigEntry) -> float:
     return float(
         entry.options.get(
             CONF_MAX_REQUESTS_PER_SECOND,
@@ -125,7 +128,9 @@ def _max_requests_per_second(entry: ConfigEntry) -> float:
     )
 
 
-async def _async_normalize_port(hass: HomeAssistant, entry: ConfigEntry) -> str:
+async def _async_normalize_port(
+    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
+) -> str:
     """Store and return the stable ``/dev/serial/by-id`` path of the gateway port.
 
     A by-id link can appear after setup, so this is a runtime fix-up, not a migration.
@@ -143,7 +148,7 @@ async def _async_normalize_port(hass: HomeAssistant, entry: ConfigEntry) -> str:
 
 
 def _async_remove_unsupported_entities(
-    hass: HomeAssistant, entry: ConfigEntry, rooms: list[RoomConfig]
+    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry, rooms: list[RoomConfig]
 ) -> None:
     """Drop registry entries that no configured room/profile creates anymore."""
 
@@ -172,7 +177,7 @@ def _async_remove_unsupported_entities(
 
 
 def _async_sync_devices(
-    hass: HomeAssistant, entry: ConfigEntry, rooms: list[RoomConfig]
+    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry, rooms: list[RoomConfig]
 ) -> None:
     """Register the gateway device and drop devices of units no longer configured."""
 
@@ -188,7 +193,9 @@ def _async_sync_devices(
         registry.async_remove_device(device.id)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
+) -> bool:
     """Set up Meltem Modbus from a config entry."""
 
     port = await _async_normalize_port(hass, entry)
@@ -242,7 +249,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
+) -> bool:
     """Unload a config entry."""
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

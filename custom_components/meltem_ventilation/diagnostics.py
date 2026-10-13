@@ -6,11 +6,15 @@ from dataclasses import asdict
 from typing import Any
 
 from homeassistant.components.diagnostics import REDACTED, async_redact_data
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_PORT
-from .models import MeltemRuntimeData, RoomConfig, RoomState
+from .models import (
+    MeltemIntegrationConfigEntry,
+    MeltemRuntimeData,
+    RoomConfig,
+    RoomState,
+)
 
 TO_REDACT: set[str] = {CONF_PORT}
 
@@ -21,7 +25,7 @@ def redact_port(message: str | None, port: str) -> str | None:
     return message.replace(port, REDACTED) if message and port else message
 
 
-def _serialize_entry(entry: ConfigEntry) -> dict[str, Any]:
+def _serialize_entry(entry: MeltemIntegrationConfigEntry) -> dict[str, Any]:
     return {
         "entry_id": entry.entry_id,
         "title": entry.title,
@@ -54,7 +58,7 @@ def _serialize_room_state(state: RoomState, port: str) -> dict[str, Any]:
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MeltemIntegrationConfigEntry,
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
 

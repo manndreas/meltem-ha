@@ -15,7 +15,6 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
@@ -35,8 +34,14 @@ from .const import (
     HUMIDITY_PROFILES,
     VOC_PROFILES,
 )
+from .coordinator import MeltemDataUpdateCoordinator
 from .entity import MeltemEntity, gateway_device_info, room_supports_entity
-from .models import MeltemRuntimeData, RoomState
+from .models import (
+    MeltemIntegrationConfigEntry,
+    MeltemRuntimeData,
+    RoomConfig,
+    RoomState,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -170,7 +175,7 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MeltemIntegrationConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Meltem sensor entities."""
@@ -200,8 +205,8 @@ class MeltemSensorEntity(MeltemEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator,
-        room,
+        coordinator: MeltemDataUpdateCoordinator,
+        room: RoomConfig,
         description: MeltemSensorDescription,
     ) -> None:
         super().__init__(coordinator, room, description.key, description.key)
@@ -217,7 +222,9 @@ class MeltemModbusSlaveSensor(MeltemEntity, SensorEntity):
 
     entity_description = MODBUS_SLAVE_ID_DESCRIPTION
 
-    def __init__(self, coordinator, room) -> None:
+    def __init__(
+        self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig
+    ) -> None:
         key = MODBUS_SLAVE_ID_DESCRIPTION.key
         super().__init__(coordinator, room, key, key)
         self._attr_native_value = room.slave
@@ -229,7 +236,7 @@ class MeltemModbusDevicePathSensor(SensorEntity):
     entity_description = MODBUS_DEVICE_PATH_DESCRIPTION
     _attr_has_entity_name = True
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: MeltemIntegrationConfigEntry) -> None:
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_modbus_device_path"
         self._attr_device_info = gateway_device_info(entry.entry_id)
         self._attr_native_value = entry.data[CONF_PORT]
