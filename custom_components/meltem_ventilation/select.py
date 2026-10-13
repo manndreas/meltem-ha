@@ -48,10 +48,9 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
     Off, manual and unbalanced are reachable through the two fan entities and
     are therefore not offered here.
     """
-
     _requires_fresh_read_group = False
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_icon = "mdi:fan-auto"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "operation_mode", "operation_mode")
@@ -80,7 +79,6 @@ class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
     """Select entity for the confirmed app-style keypad quick modes."""
 
     _requires_fresh_read_group = False
-    _attr_icon = "mdi:flash-outline"
     _attr_options = list(PRESET_MODE_OPTIONS)
 
     def __init__(self, coordinator, room: RoomConfig) -> None:

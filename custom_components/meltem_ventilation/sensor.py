@@ -132,7 +132,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     ),
     MeltemSensorDescription(
         key="extract_air_flow",
-        icon="mdi:home-export-outline",
         device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR,
@@ -140,7 +139,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     ),
     MeltemSensorDescription(
         key="supply_air_flow",
-        icon="mdi:home-import-outline",
         device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR,
@@ -148,7 +146,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     ),
     MeltemSensorDescription(
         key="days_until_filter_change",
-        icon="mdi:calendar-clock",
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTime.DAYS,
@@ -157,7 +154,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     ),
     MeltemSensorDescription(
         key="operating_hours",
-        icon="mdi:fan-clock",
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.TOTAL_INCREASING,
         native_unit_of_measurement=UnitOfTime.HOURS,
