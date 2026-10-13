@@ -51,10 +51,10 @@ CI runs these checks, plus hassfest and the HACS validation.
 Useful focused test runs:
 
 ```bash
-pytest tests/test_modbus_client.py
-pytest tests/test_transport.py
-pytest tests/test_config_flow.py
-pytest tests/test_entity_descriptions.py
+pytest tests/components/meltem_ventilation/test_modbus_client.py
+pytest tests/components/meltem_ventilation/test_transport.py
+pytest tests/components/meltem_ventilation/test_config_flow.py
+pytest tests/components/meltem_ventilation/test_entity_descriptions.py
 ```
 
 ### Running the tests on Windows
@@ -68,7 +68,8 @@ needed, both local to your virtual environment and not part of the repository:
   are actually used (`flock` and the `LOCK_*` constants for `fcntl`,
   `getrlimit`, `setrlimit` and `RLIMIT_NOFILE` for `resource`).
 - `pytest-socket` blocks `socket.socketpair()` on Windows because it is
-  implemented through a real loopback connection. `tests/conftest.py` already
+  implemented through a real loopback connection. The integration's
+  `tests/components/meltem_ventilation/conftest.py` already
   contains a narrow workaround for this; it only re-enables `socketpair` and
   still blocks outbound sockets, so do not widen it.
 
@@ -87,7 +88,8 @@ python -m tools.raw_requests --help
   [docs/dev/LIVE_GATEWAY_TESTS.md](./docs/dev/LIVE_GATEWAY_TESTS.md), and never write
   the baud rate or the Modbus address of a unit.
 - The tools keep their own copy of the link settings in `tools/_link.py`;
-  `tests/test_tools.py` keeps it in line with `const.py`.
+  `tests/components/meltem_ventilation/test_tools.py` keeps it in line with
+  `const.py`.
 
 ## Contribution guidelines
 

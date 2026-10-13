@@ -27,7 +27,10 @@ from custom_components.meltem_ventilation.system_health import (
 )
 
 _STRINGS = (
-    Path(__file__).parent.parent / "custom_components" / "meltem_ventilation" / "strings.json"
+    Path(__file__).resolve().parents[3]
+    / "custom_components"
+    / "meltem_ventilation"
+    / "strings.json"
 )
 _SECRET = "secret-device"
 _PORT = f"/dev/serial/by-id/{_SECRET}"

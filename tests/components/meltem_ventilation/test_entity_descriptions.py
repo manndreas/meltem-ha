@@ -50,7 +50,7 @@ from custom_components.meltem_ventilation.trigger import (
 #  Helpers
 # ---------------------------------------------------------------------------
 
-_COMPONENT_DIR = Path(__file__).parent.parent / "custom_components" / "meltem_ventilation"
+_COMPONENT_DIR = Path(__file__).resolve().parents[3] / "custom_components" / "meltem_ventilation"
 _STRINGS = _COMPONENT_DIR / "strings.json"
 _ICONS = _COMPONENT_DIR / "icons.json"
 

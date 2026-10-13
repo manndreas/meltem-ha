@@ -592,7 +592,7 @@ Run R on every unit unless the test says otherwise.
   on the real port; the port is free after unload (HW-7 measurement 6).
 - **Type:** R
 - **Run:** a throwaway test in `$out\scripts\` along the lines of
-  `TestSharedModbusConnection` in [tests/test_init.py](../../tests/test_init.py),
+  `TestSharedModbusConnection` in [test_init.py](../../tests/components/meltem_ventilation/test_init.py),
   without patching `ModbusConnection`, with the real port and the discovered
   rooms. After the unload, P-3 must succeed.
 - **Limits:** the harness ships HA `2026.10.0b0` with
