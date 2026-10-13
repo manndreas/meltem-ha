@@ -17,11 +17,8 @@ Silver, Gold und Platinum werden für Core-Integrationen vergeben. Eine
 vor.
 
 Würde die Integration als Kandidat für Home Assistant Core bewertet, wäre sie
-nach dieser Prüfung **noch nicht Bronze-konform**. Die wesentlichen offenen
-Bronze-Punkte sind:
-
-- keine ausreichende Nutzerdokumentation der angebotenen Condition;
-- keine Anleitung zum Entfernen der Integration.
+nach dieser Prüfung **noch nicht Bronze-konform**. Der wesentliche offene
+Bronze-Punkt ist eine Anleitung zum Entfernen der Integration.
 
 Darüber hinaus scheitern einzelne Regeln höherer Stufen auch unabhängig davon,
 ob Bronze bereits erreicht ist. Die Quality Scale ist kumulativ: Eine Stufe
@@ -53,7 +50,7 @@ Dateipfade verlinken auf die geprüften Stellen im Repository.
 | ✅ | [`dependency-transparency`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/dependency-transparency) | Abhängigkeiten sind in [manifest.json](../../custom_components/meltem_ventilation/manifest.json) deklariert. Die geprüfte Laufzeitabhängigkeit `modbus-connection` ist auf PyPI und in einem öffentlichen Repository mit OSI-Lizenz, Release-Tag und CI verfügbar. |
 | ➖ | [`docs-actions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-actions) | Es werden keine Service-Actions angeboten. |
 | ✅ | [`docs-triggers`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-triggers) | Die eigene [Trigger-Anleitung](../TRIGGER_FILTER_CHANGE_DUE.md) erklärt Zweck und Zielauswahl, beschreibt `behavior` und `for`, enthält UI-Schritte und ein verwendbares YAML-Beispiel. Die [README.md](../../README.md) verlinkt die Seite. |
-| ❌ | [`docs-conditions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-conditions) | Die Filterwechsel-Condition hat UI-Texte, aber keine Nutzerdokumentation mit Parametern sowie Anleitung und Beispiel für UI und YAML. Siehe [conditions.yaml](../../custom_components/meltem_ventilation/conditions.yaml) und [README.md](../../README.md). |
+| ✅ | [`docs-conditions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-conditions) | Die eigene [Condition-Anleitung](../CONDITION_FILTER_CHANGE_DUE.md) erklärt Zweck und Parameter (`behavior`, `for`), enthält UI-Schritte und ein YAML-Beispiel. Die [README.md](../../README.md) verlinkt die Seite. |
 | ✅ | [`docs-high-level-description`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-high-level-description) | Die [README.md](../../README.md) erklärt Zweck, Hersteller, Gateway und Produktfamilien. |
 | ✅ | [`docs-installation-instructions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-installation-instructions) | Die [README.md](../../README.md) erklärt Voraussetzungen sowie HACS- und manuelle Installation. |
 | ❌ | [`docs-removal-instructions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-removal-instructions) | Eine Anleitung zum Entfernen der Integration ist in der [README.md](../../README.md) nicht vorhanden. |
@@ -143,8 +140,8 @@ wurden keine Projektdateien verändert.
 ## Empfohlene nächste Schritte
 
 1. **Bronze vervollständigen:** `data_description`-Texte ergänzen, die
-   ungetesteten Flow-Zweige abdecken, Dokumentation für Trigger und Condition
-   ergänzen sowie eine Anleitung zum Entfernen hinzufügen.
+   ungetesteten Flow-Zweige abdecken sowie eine Anleitung zum Entfernen
+   hinzufügen.
 2. **Silver absichern:** `write_confirmation.py` auf über 95 % bringen und
    beim Übergang in den Ausfallzustand ein einmaliges Info-Log ergänzen.
 3. **Gold verbessern:** nutzbare Automationsbeispiele, präzise
