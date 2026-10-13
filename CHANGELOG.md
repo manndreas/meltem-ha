@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.1.1
+
+- Migrate the configured maximum request rate from entry data to options while
+  preserving the existing value.
+- Log when a room becomes unavailable and when it recovers, while reducing
+  repetitive gateway-backoff log messages.
+- Add translated entity icons and English/German entity and config-flow
+  strings.
+- Document data updates, automation examples, the filter-change trigger and
+  condition, and integration removal; move developer documentation under
+  `docs/dev/`.
+- Enable strict type checking and use a runtime-data-typed config entry.
+
 ## 4.1.0
 
 - Read current mode and airflow targets from the read-only status block
