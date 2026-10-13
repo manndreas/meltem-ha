@@ -4,11 +4,11 @@ Status: 4.1.0
 
 This list only holds open items. Everything that used to be listed here as
 done is described in `CHANGELOG.md`. Hardware observations and reverse
-engineering notes are in `docs/MELTEM.md`, implementation notes in
-`docs/DEVELOPER.md`, manufacturer facts in `docs/reference/`.
+engineering notes are in `docs/dev/MELTEM.md`, implementation notes in
+`docs/dev/DEVELOPER.md`, manufacturer facts in `docs/dev/reference/`.
 
 Open items that need a measurement on real hardware before a decision are in
-`docs/HARDWARE_BACKLOG.md`.
+`docs/dev/HARDWARE_BACKLOG.md`.
 
 ## 1. Shortcut configuration in the shadow ranges `511xx` / `520xx`
 
@@ -29,10 +29,10 @@ Assessment:
   shortcut.
 
 Next step:
-- Only investigate further when convenient, see `docs/SETTING_RE_BACKLOG.md`.
+- Only investigate further when convenient, see `docs/dev/SETTING_RE_BACKLOG.md`.
 - The manufacturer documents the supply/extract airflows as device parameters
   (IDs 42-47) without a Modbus mapping, see
-  `docs/reference/device-parameters.md`.
+  `docs/dev/reference/device-parameters.md`.
 
 ## 2. Decode `PRODUCT_ID`
 
@@ -47,7 +47,7 @@ Finding:
 Next step:
 - Collect values from more units before guessing a decoding.
 - The manufacturer documents contain neither `116852` nor `VMD-22RPS44`; the
-  article numbers do not match, see `docs/reference/models.md`.
+  article numbers do not match, see `docs/dev/reference/models.md`.
 
 ## 3. Move the test harness to the final Home Assistant 2026.10
 
@@ -80,7 +80,7 @@ Finding:
 
 Next step:
 - Only with a benchmark on the real gateway, see test T-8 in
-  `docs/LIVE_GATEWAY_TESTS.md`. Update the parity test in
+  `docs/dev/LIVE_GATEWAY_TESTS.md`. Update the parity test in
   `tests/test_modbus_client.py` together with the ranges.
 
 ## 5. Raw register diagnostics

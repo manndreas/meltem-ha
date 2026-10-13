@@ -298,7 +298,7 @@ stored value remains unreadable through the captured ranges.
 
 Manufacturer documentation: device parameters 11 (airflow, default 100 m3/h)
 and 12 (duration, 0-240 min, default 15 min), stored permanently in the unit;
-no Modbus mapping documented. See `docs/reference/device-parameters.md`.
+no Modbus mapping documented. See `docs/dev/reference/device-parameters.md`.
 
 Target settings:
 
@@ -346,7 +346,7 @@ Current status:
 ### 2. Keypad and preset defaults
 
 Manufacturer documentation: LOW / MEDIUM / HIGH are device parameters 13 / 14 /
-15, key 4 (`HIGH I`) is 44 / 45. See `docs/reference/device-parameters.md`.
+15, key 4 (`HIGH I`) is 44 / 45. See `docs/dev/reference/device-parameters.md`.
 
 Target settings:
 
@@ -397,7 +397,7 @@ Current status:
 
 Manufacturer documentation: device parameters 42 / 43 (supply-only) and
 46 / 47 (extract-only), plus 196 (cross-ventilation runtime, default 120 min).
-See `docs/reference/device-parameters.md`.
+See `docs/dev/reference/device-parameters.md`.
 
 Target settings:
 

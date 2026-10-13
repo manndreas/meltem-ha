@@ -9,18 +9,18 @@ there.
 
 Related documents:
 
-- `docs/reference/` — manufacturer reference extracted from the Meltem documents
-- `docs/MELTEM.md` — observed register behaviour and traced register writes
-- `docs/DEVELOPER.md` — implementation notes and the decisions behind them
-- `docs/SETTING_RE_BACKLOG.md` — app-side settings reverse engineering
-- `docs/TODO.md` — remaining non-hardware work
-- `docs/LIVE_GATEWAY_TESTS.md` — test plan for an AI agent on the live gateway,
+- `docs/dev/reference/` — manufacturer reference extracted from the Meltem documents
+- `docs/dev/MELTEM.md` — observed register behaviour and traced register writes
+- `docs/dev/DEVELOPER.md` — implementation notes and the decisions behind them
+- `docs/dev/SETTING_RE_BACKLOG.md` — app-side settings reverse engineering
+- `docs/dev/TODO.md` — remaining non-hardware work
+- `docs/dev/LIVE_GATEWAY_TESTS.md` — test plan for an AI agent on the live gateway,
   covering every item below
 
 Status legend: `open` (needs measurement), `in progress` (code changed, live
 validation pending), `parked` (measured, decision deferred), `resolved` (move
-the decision into `docs/DEVELOPER.md` and the measured behaviour into
-`docs/MELTEM.md`).
+the decision into `docs/dev/DEVELOPER.md` and the measured behaviour into
+`docs/dev/MELTEM.md`).
 
 ---
 
@@ -52,7 +52,7 @@ switch in Home Assistant stays on.
 Intensive ventilation ends by itself after a configurable duration (device
 parameter 12, 0-240 min, default 15 min) and the previous program resumes.
 How this appears in `41120..41124` is not documented. See
-`docs/reference/functions.md` and `docs/reference/device-parameters.md`.
+`docs/dev/reference/functions.md` and `docs/dev/reference/device-parameters.md`.
 
 ### Why this cannot be fixed blind
 
@@ -60,7 +60,7 @@ How this appears in `41120..41124` is not documented. See
    also ends on its own after a runtime configured in the Meltem app, so
    self-clearing is plausible. If it self-clears, an extra write is pointless
    bus traffic; if it does not, the current behaviour is a real bug.
-2. `docs/reference/modbus.md` states that `41132` must always be written last and that
+2. `docs/dev/reference/modbus.md` states that `41132` must always be written last and that
    the unit accepts `41120..41132` only once `41132` has been written. That
    reads like a commit latch. A combined transaction
    (`41123 = 0`, `41124 = 0`, `41120 = 1`, `41121 = 0`, `41132 = 0`) has never
@@ -103,7 +103,7 @@ Tests: [W-8](LIVE_GATEWAY_TESTS.md#w-8--intensive-and-power-off),
   risk, but leaves the device state itself inconsistent, which the Meltem app
   might still act on.
 - **D — no change.** Correct if step 3 shows the firmware clears the registers
-  itself. Record the result in `docs/DEVELOPER.md` so it is not investigated
+  itself. Record the result in `docs/dev/DEVELOPER.md` so it is not investigated
   again.
 
 Preference before measurement: **C** if only the Home Assistant state is wrong,
@@ -142,7 +142,7 @@ The obvious improvement is to release the lock during the pure settle sleep.
 
 The gateway reaches the units over 868.3 MHz radio. The Modbus manuals give
 no timing guidance beyond the RTU frame rules. See
-`docs/reference/gateway.md` and `docs/reference/modbus.md`.
+`docs/dev/reference/gateway.md` and `docs/dev/reference/modbus.md`.
 
 ### Why this cannot be fixed blind
 
@@ -168,7 +168,7 @@ no timing guidance beyond the RTU frame rules. See
 2. Run the same measurement while a second unit is polled concurrently, to see
    whether interleaved traffic changes the required delay.
 3. Record how long current status `41101` and measured airflow `41020/41021`
-   need to reflect a write. `docs/MELTEM.md` already notes that the measured
+   need to reflect a write. `docs/dev/MELTEM.md` already notes that the measured
    airflow can lag behind.
 
 Tests: [W-1](LIVE_GATEWAY_TESTS.md#w-1--balanced-write-status-readback-and-airflow-lag),
@@ -253,7 +253,7 @@ Affected code: `modbus_client._decode_unbalanced_target_readback`
 `41121` / `41122` carry two different meanings in the same numeric range:
 
 - app shortcut airflow, encoded as `200 + airflow / 10`
-  (`203` = 30 m3/h, `205` = 50, `207` = 70 — traced, see `docs/MELTEM.md`)
+  (`203` = 30 m3/h, `205` = 50, `207` = 70 — traced, see `docs/dev/MELTEM.md`)
 - quick mode codes `227` / `228` / `229` / `230`
   (intensive / low / medium / high — also traced)
 
@@ -275,7 +275,7 @@ that time were not recorded.
 
 Supply-only and extract-only airflows are stored device parameters
 (IDs 42-47; `M-WRG-II` defaults 50 / 0 m3/h). No raw encoding is documented.
-See `docs/reference/device-parameters.md`.
+See `docs/dev/reference/device-parameters.md`.
 
 ### Why this is not fully settled
 
@@ -334,7 +334,7 @@ pending.
 
 Reading back `41120..41132` is not documented; the manuals only describe
 writing these registers. The `41100..41102` status map is community/live
-evidence, not a manufacturer guarantee. See `docs/reference/modbus.md` and
+evidence, not a manufacturer guarantee. See `docs/dev/reference/modbus.md` and
 the observations below.
 
 ### What to measure
@@ -728,7 +728,7 @@ behavior resolved.
 
 The live gateway was discovered on `/dev/ttyACM0` with six nodes
 `[3, 2, 4, 5, 7, 6]`. Selected raw evidence is preserved under
-[`docs/measurements/2026-10-09/`](measurements/2026-10-09/); other working
+[`docs/dev/measurements/2026-10-09/`](measurements/2026-10-09/); other working
 logs and snapshots were local-only and are not part of the repository.
 
 - **1 — Benchmarks:** The first tmodbus run completed six direct request
