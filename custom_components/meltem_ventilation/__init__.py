@@ -62,7 +62,21 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if entry.minor_version < 2:
         _async_migrate_data_health_entities(hass, entry)
-        hass.config_entries.async_update_entry(entry, minor_version=2)
+
+    if entry.minor_version < 3:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        if CONF_MAX_REQUESTS_PER_SECOND in data:
+            options.setdefault(
+                CONF_MAX_REQUESTS_PER_SECOND,
+                data.pop(CONF_MAX_REQUESTS_PER_SECOND),
+            )
+        hass.config_entries.async_update_entry(
+            entry,
+            data=data,
+            options=options,
+            minor_version=3,
+        )
 
     return True
 

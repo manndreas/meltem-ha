@@ -7,6 +7,9 @@
         "description": "An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB. The integration then scans the configured units and asks for the exact profile of each detected unit.",
         "data": {
           "port": "Serial port"
+        },
+        "data_description": {
+          "port": "Serial device path of the M-WRG-GW gateway connected to this Home Assistant host over USB."
         }
       },
       "reconfigure": {
@@ -14,6 +17,9 @@
         "description": "Update the serial port of the M-WRG-GW gateway. The integration reloads afterwards.",
         "data": {
           "port": "Serial port"
+        },
+        "data_description": {
+          "port": "Select the new serial device path for the M-WRG-GW gateway. The port is checked before it is saved."
         }
       },
       "confirm_usb": {
@@ -21,6 +27,9 @@
         "description": "Home Assistant found a USB device on {port} ({manufacturer}, {description}). An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB.",
         "data": {
           "port": "Serial port"
+        },
+        "data_description": {
+          "port": "Confirm or change the USB serial device path that Home Assistant discovered for the gateway."
         }
       },
       "profiles": {
@@ -42,6 +51,23 @@
           "slave_14": "Unit at Modbus address 14",
           "slave_15": "Unit at Modbus address 15",
           "slave_16": "Unit at Modbus address 16"
+        },
+        "data_description": {
+          "slave_2": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_3": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_4": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_5": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_6": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_7": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_8": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_9": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_10": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_11": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_12": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_13": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_14": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_15": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_16": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint."
         }
       }
     },
@@ -71,6 +97,9 @@
         "description": "Set how many poll jobs per second the integration may start on the gateway. One job can contain several Modbus requests. To change the serial port, reconfigure the integration.",
         "data": {
           "max_requests_per_second": "Maximum requests per second"
+        },
+        "data_description": {
+          "max_requests_per_second": "Maximum rate at which poll jobs start. Each job may contain several Modbus requests; lower rates reduce load on the gateway."
         }
       },
       "edit_profiles": {
@@ -92,6 +121,23 @@
           "slave_14": "Unit at Modbus address 14",
           "slave_15": "Unit at Modbus address 15",
           "slave_16": "Unit at Modbus address 16"
+        },
+        "data_description": {
+          "slave_2": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_3": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_4": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_5": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_6": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_7": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_8": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_9": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_10": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_11": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_12": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_13": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_14": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_15": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_16": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint."
         }
       },
       "rescan_units": {
@@ -117,6 +163,23 @@
           "slave_14": "Unit at Modbus address 14",
           "slave_15": "Unit at Modbus address 15",
           "slave_16": "Unit at Modbus address 16"
+        },
+        "data_description": {
+          "slave_2": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_3": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_4": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_5": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_6": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_7": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_8": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_9": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_10": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_11": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_12": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_13": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_14": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_15": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
+          "slave_16": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint."
         }
       }
     },

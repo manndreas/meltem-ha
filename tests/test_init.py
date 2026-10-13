@@ -70,7 +70,7 @@ def _entry(
     options: dict[str, Any] | None = None,
     entry_id: str = "test-entry-id",
     version: int = 1,
-    minor_version: int = 2,
+    minor_version: int = 3,
 ) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -332,7 +332,9 @@ class TestAsyncMigrateEntry:
         migrated = er.async_get(hass).async_get(legacy.entity_id)
         assert migrated is not None
         assert migrated.unique_id == f"{DOMAIN}_unit_1_data_health"
-        assert entry.minor_version == 2
+        assert entry.minor_version == 3
+        assert CONF_MAX_REQUESTS_PER_SECOND not in entry.data
+        assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 2.0
 
     async def test_migration_keeps_an_existing_data_health_entity(
         self, hass: HomeAssistant
@@ -346,6 +348,22 @@ class TestAsyncMigrateEntry:
         registry = er.async_get(hass)
         assert registry.async_get(legacy.entity_id).unique_id == legacy.unique_id
         assert registry.async_get(current.entity_id).unique_id == current.unique_id
+        assert entry.minor_version == 3
+
+    async def test_migration_preserves_an_existing_request_rate_option(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = _entry(
+            hass,
+            minor_version=2,
+            options={CONF_MAX_REQUESTS_PER_SECOND: 5.0},
+        )
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        assert CONF_MAX_REQUESTS_PER_SECOND not in entry.data
+        assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
+        assert entry.minor_version == 3
 
     async def test_migration_rejects_a_newer_major_version(
         self, hass: HomeAssistant
