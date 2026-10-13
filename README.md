@@ -73,6 +73,11 @@ fires when a Meltem unit reports that its filter needs replacing. See the
 [filter change due trigger guide](./docs/TRIGGER_FILTER_CHANGE_DUE.md) for the
 UI steps, trigger options, and a YAML example.
 
+The **Filter change due** condition lets an automation check that state after
+another trigger has fired. See the
+[filter change due condition guide](./docs/CONDITION_FILTER_CHANGE_DUE.md) for
+UI instructions, options, and a YAML example.
+
 ## Installation
 
 ### Requirements
