@@ -360,7 +360,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Meltem Modbus."""
 
     VERSION = 1
-    MINOR_VERSION = 2
+    MINOR_VERSION = 3
 
     def __init__(self) -> None:
         self._port = DEFAULT_PORT
@@ -496,7 +496,6 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 title=GATEWAY_NAME,
                 data={
                     CONF_PORT: self._port,
-                    CONF_MAX_REQUESTS_PER_SECOND: self._max_requests_per_second,
                     CONF_ROOMS: _build_rooms_from_profiles(
                         self._discovered_slaves,
                         user_input,

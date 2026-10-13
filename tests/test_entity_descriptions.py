@@ -338,6 +338,15 @@ class TestTranslations:
 
         assert _flatten_keys(translations) == _flatten_keys(_load_json(_STRINGS))
 
+    def test_all_config_flow_fields_have_descriptions(self) -> None:
+        strings = _load_json(_STRINGS)
+
+        for flow_type in ("config", "options"):
+            for step_id, step in strings[flow_type]["step"].items():
+                fields = set(step.get("data", {}))
+                descriptions = set(step.get("data_description", {}))
+                assert descriptions == fields, f"{flow_type}.{step_id}"
+
     def test_translations_cover_all_entity_keys(self) -> None:
         strings = _load_json(_STRINGS)["entity"]
 
