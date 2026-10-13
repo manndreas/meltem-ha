@@ -20,8 +20,7 @@ def _supported_unit_keyword(method: Callable[..., object], method_name: str) -> 
         if keyword in parameters:
             return keyword
     raise RuntimeError(
-        f"Unsupported pymodbus {method_name} signature: expected a "
-        "'device_id' or 'slave' parameter"
+        f"Unsupported pymodbus {method_name} signature: expected a 'device_id' or 'slave' parameter"
     )
 
 
@@ -33,9 +32,7 @@ def _adapt_unit_keyword(
         supplied = [keyword for keyword in _UNIT_KEYWORDS if keyword in kwargs]
         if len(supplied) == 2:
             if kwargs["device_id"] != kwargs["slave"]:
-                raise TypeError(
-                    f"Pass only one unit address to pymodbus {method_name}"
-                )
+                raise TypeError(f"Pass only one unit address to pymodbus {method_name}")
             kwargs.pop(next(keyword for keyword in supplied if keyword != target_keyword))
         elif supplied and supplied[0] != target_keyword:
             kwargs[target_keyword] = kwargs.pop(supplied[0])

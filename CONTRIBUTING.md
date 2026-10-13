@@ -37,15 +37,16 @@ versions pinned in `homeassistant/components/modbus/manifest.json` (see
 [docs/dev/TODO.md](./docs/dev/TODO.md) item 3). Tests never open a serial port; they
 run against `modbus_connection.mock.MockModbusConnection`.
 
-Run tests, lint, and the type check with:
+Run tests, formatting, lint, and the type check with:
 
 ```bash
 pytest
+ruff format --check custom_components tests tools
 ruff check custom_components tests tools
 mypy
 ```
 
-CI runs all three commands, plus hassfest and the HACS validation.
+CI runs these checks, plus hassfest and the HACS validation.
 
 Useful focused test runs:
 
@@ -108,4 +109,4 @@ Please include:
 - why the change is needed
 - any hardware assumptions or test setup details
 - logs or screenshots if the change affects setup, discovery, or entities
-- confirmation that `pytest`, ruff, and mypy pass
+- confirmation that `pytest`, Ruff formatting and lint, and mypy pass

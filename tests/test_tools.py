@@ -53,9 +53,12 @@ def test_link_settings_match_the_integration() -> None:
 
 
 def test_register_profile_scan_includes_mode_status_and_single_reads() -> None:
-    assert {
-        (spec.address, spec.count) for spec in PROFILE_READ_SPECS
-    } >= {(41100, 3), (41100, 1), (41101, 1), (41102, 1)}
+    assert {(spec.address, spec.count) for spec in PROFILE_READ_SPECS} >= {
+        (41100, 3),
+        (41100, 1),
+        (41101, 1),
+        (41102, 1),
+    }
 
 
 class _DeviceIdPymodbusClient:
@@ -76,9 +79,7 @@ class _SlavePymodbusClient:
     ) -> tuple[int, int, int]:
         return address, count, slave
 
-    def write_register(
-        self, address: int, value: int, *, slave: int = 1
-    ) -> tuple[int, int, int]:
+    def write_register(self, address: int, value: int, *, slave: int = 1) -> tuple[int, int, int]:
         return address, value, slave
 
 
@@ -102,9 +103,7 @@ def _install_legacy_baseline_keyword_shim(client_class: type[object]) -> None:
     client_class.write_register = compat_write
 
 
-@pytest.mark.parametrize(
-    "client_class", [_DeviceIdPymodbusClient, _SlavePymodbusClient]
-)
+@pytest.mark.parametrize("client_class", [_DeviceIdPymodbusClient, _SlavePymodbusClient])
 def test_pymodbus_compat_supports_the_pinned_benchmark_shim(
     client_class: type[object],
 ) -> None:
@@ -182,7 +181,9 @@ class TestIntegrationLikeBenchmark:
 
     @pytest.mark.parametrize("profiles", [None, {2: "s_fc", 3: "s_plain"}])
     async def test_discovery_derives_entity_keys_from_the_selected_profile(
-        self, link: MockModbusConnection, profiles: dict[int, str] | None,
+        self,
+        link: MockModbusConnection,
+        profiles: dict[int, str] | None,
     ) -> None:
         rooms = await bil.discover_rooms(link, "mock-port", profiles)
 
@@ -197,7 +198,10 @@ class TestIntegrationLikeBenchmark:
 
     @pytest.mark.parametrize("slave", [2, 3])
     async def test_cycle_counts_swallowed_timeouts_as_failures(
-        self, link: MockModbusConnection, room: RoomConfig, slave: int,
+        self,
+        link: MockModbusConnection,
+        room: RoomConfig,
+        slave: int,
     ) -> None:
         client = bil.MeltemModbusClient(link.for_unit, port="mock-port")
 
@@ -214,7 +218,9 @@ class TestIntegrationLikeBenchmark:
             assert samples[0].detail == ""
 
     async def test_cycle_counts_partial_mode_failures_as_failures(
-        self, link: MockModbusConnection, room: RoomConfig,
+        self,
+        link: MockModbusConnection,
+        room: RoomConfig,
     ) -> None:
         link.for_unit(2).fail_read(REGISTER_MODE_STATUS, IllegalDataAddressError())
         client = bil.MeltemModbusClient(link.for_unit, port="mock-port")
@@ -226,7 +232,10 @@ class TestIntegrationLikeBenchmark:
 
     @pytest.mark.parametrize("group", ["intensive", "temperature"])
     async def test_cycle_does_not_count_old_errors_from_skipped_groups(
-        self, link: MockModbusConnection, room: RoomConfig, group: str,
+        self,
+        link: MockModbusConnection,
+        room: RoomConfig,
+        group: str,
     ) -> None:
         client = bil.MeltemModbusClient(link.for_unit, port="mock-port")
         state = RoomState(target_level=30).with_read_health(
@@ -245,16 +254,20 @@ class TestIntegrationLikeBenchmark:
 
     @pytest.mark.parametrize("mode", bil.SINGLE_ROOM_MODES)
     async def test_write_experiments_restore_after_success(
-        self, link: MockModbusConnection, room: RoomConfig, experiment_args: Namespace, mode: str,
+        self,
+        link: MockModbusConnection,
+        room: RoomConfig,
+        experiment_args: Namespace,
+        mode: str,
     ) -> None:
         experiment_args.mode = mode
         client = bil.MeltemModbusClient(link.for_unit, port="mock-port")
         baseline = RoomState(target_level=30)
         with (
             patch.object(
-                client, "read_room_state", new=AsyncMock(
-                    side_effect=[baseline, RoomState(target_level=35), baseline]
-                )
+                client,
+                "read_room_state",
+                new=AsyncMock(side_effect=[baseline, RoomState(target_level=35), baseline]),
             ),
             patch.object(bil, "_timed_write", new=AsyncMock(wraps=bil._timed_write)) as write,
             patch.object(bil, "_observe", new=AsyncMock()),
@@ -262,9 +275,7 @@ class TestIntegrationLikeBenchmark:
         ):
             await bil.run_mode(experiment_args, client, link, [room])
 
-        assert [call.args[2:4] for call in write.call_args_list] == [
-            (35, "write"), (30, "restore")
-        ]
+        assert [call.args[2:4] for call in write.call_args_list] == [(35, "write"), (30, "restore")]
 
     @pytest.mark.parametrize("mode", bil.SINGLE_ROOM_MODES)
     @pytest.mark.parametrize(
@@ -292,13 +303,15 @@ class TestIntegrationLikeBenchmark:
         ):
             await bil.run_mode(experiment_args, client, link, [room])
 
-        assert [call.args[2:4] for call in write.call_args_list] == [
-            (35, "write"), (30, "restore")
-        ]
+        assert [call.args[2:4] for call in write.call_args_list] == [(35, "write"), (30, "restore")]
 
     @pytest.mark.parametrize("mode", bil.SINGLE_ROOM_MODES)
     async def test_write_experiments_restore_after_the_initial_write_fails(
-        self, link: MockModbusConnection, room: RoomConfig, experiment_args: Namespace, mode: str,
+        self,
+        link: MockModbusConnection,
+        room: RoomConfig,
+        experiment_args: Namespace,
+        mode: str,
     ) -> None:
         experiment_args.mode = mode
         client = bil.MeltemModbusClient(link.for_unit, port="mock-port")
@@ -307,18 +320,16 @@ class TestIntegrationLikeBenchmark:
                 client, "read_room_state", new=AsyncMock(return_value=RoomState(target_level=30))
             ),
             patch.object(
-                bil, "_timed_write", new=AsyncMock(
-                    side_effect=[bil.MeltemConnectionError("write failed"), None]
-                )
+                bil,
+                "_timed_write",
+                new=AsyncMock(side_effect=[bil.MeltemConnectionError("write failed"), None]),
             ) as write,
             patch.object(bil.asyncio, "sleep", new=AsyncMock()),
             pytest.raises(bil.MeltemConnectionError, match="write failed"),
         ):
             await bil.run_mode(experiment_args, client, link, [room])
 
-        assert [call.args[2:4] for call in write.call_args_list] == [
-            (35, "write"), (30, "restore")
-        ]
+        assert [call.args[2:4] for call in write.call_args_list] == [(35, "write"), (30, "restore")]
 
     @pytest.mark.parametrize("phase_failed", [False, True])
     async def test_restore_errors_are_reported_without_masking_the_original_failure(
@@ -333,12 +344,14 @@ class TestIntegrationLikeBenchmark:
         original_error = RuntimeError("observation failed") if phase_failed else None
         with (
             patch.object(
-                bil, "_timed_write", new=AsyncMock(
-                    side_effect=[None, RuntimeError("restore failed")]
-                )
+                bil,
+                "_timed_write",
+                new=AsyncMock(side_effect=[None, RuntimeError("restore failed")]),
             ),
             patch.object(bil, "_observe", new=AsyncMock(side_effect=original_error)),
-            pytest.raises(RuntimeError, match="observation failed" if phase_failed else "restore failed"),
+            pytest.raises(
+                RuntimeError, match="observation failed" if phase_failed else "restore failed"
+            ),
         ):
             await bil.run_mode(experiment_args, client, link, [room])
 
@@ -366,9 +379,7 @@ class TestWriteRegisters:
         with patch.object(sys, "argv", [*argv, *args]):
             return await write_registers.main()
 
-    async def test_a_failed_write_stops_before_the_apply(
-        self, link: MockModbusConnection
-    ) -> None:
+    async def test_a_failed_write_stops_before_the_apply(self, link: MockModbusConnection) -> None:
         unit = link.for_unit(2)
         unit.fail_write(REGISTER_CURRENT_LEVEL, IllegalDataValueError())
         written: list[WriteEvent] = []

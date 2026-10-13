@@ -120,9 +120,7 @@ def _unit_entity_keys(hass: HomeAssistant, entry_id: str) -> dict[Platform, set[
 
 
 @pytest.fixture(name="setup_profile")
-def setup_profile_fixture(
-    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
-) -> SetupProfile:
+def setup_profile_fixture(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> SetupProfile:
     """Set up an entry whose units all use one profile, without a gateway."""
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.MeltemModbusClient.async_validate_gateway",
@@ -147,9 +145,7 @@ def setup_profile_fixture(
                         "slave": room_number + 1,
                         "profile": profile,
                         "preview": "ID 1 | basic",
-                        "supported_entity_keys": supported_entity_keys_for_profile(
-                            profile
-                        ),
+                        "supported_entity_keys": supported_entity_keys_for_profile(profile),
                     }
                     for room_number in range(1, room_count + 1)
                 ],

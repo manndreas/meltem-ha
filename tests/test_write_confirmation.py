@@ -66,21 +66,14 @@ def test_airflow_readback_waits_for_a_supported_mode_and_available_targets() -> 
     health = ReadHealth(last_attempt=read_at, last_successful_read=read_at)
     confirmation = WriteConfirmation(expected_value=(60, 60), started_at=started_at)
 
-    no_mode = RoomState(
-        group_read_health=(("flow_control", health),)
-    )
+    no_mode = RoomState(group_read_health=(("flow_control", health),))
     assert _checked_confirmation(no_mode, "airflow_levels", confirmation) is None
 
     unbalanced_without_targets = RoomState(
         operation_mode=OPERATION_MODE_UNBALANCED,
         group_read_health=(("flow_control", health),),
     )
-    assert (
-        _checked_confirmation(
-            unbalanced_without_targets, "airflow_levels", confirmation
-        )
-        is None
-    )
+    assert _checked_confirmation(unbalanced_without_targets, "airflow_levels", confirmation) is None
 
 
 def test_readback_rejects_unknown_write_key() -> None:

@@ -83,9 +83,7 @@ _CAPABILITY_ENTITY_KEYS: dict[str, frozenset[str]] = {
             "humidity_max_level",
         }
     ),
-    "co2": frozenset(
-        {"co2_extract_air", "co2_starting_point", "co2_min_level", "co2_max_level"}
-    ),
+    "co2": frozenset({"co2_extract_air", "co2_starting_point", "co2_min_level", "co2_max_level"}),
     "voc": frozenset({"voc_supply_air"}),
 }
 
@@ -193,9 +191,7 @@ async def read_gateway_node_count(unit: ModbusUnit) -> int:
         raise MeltemModbusError(str(err)) from err
 
 
-async def discover_gateway_nodes(
-    unit: ModbusUnit, port: str, *, start: int, end: int
-) -> list[int]:
+async def discover_gateway_nodes(unit: ModbusUnit, port: str, *, start: int, end: int) -> list[int]:
     """Discover configured unit addresses via the Airios-style bridge registers.
 
     Raises ``MeltemConnectionError`` when the serial link cannot be opened; a
@@ -284,18 +280,12 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None]:
 
     detected = {key for key in _PLAUSIBLE_RANGES if _is_plausible(key, values.get(key))}
     detected_profile, capability_preview = next(
-        (
-            (suffix, preview)
-            for suffix, preview, keys in _SUFFIXES
-            if keys & detected
-        ),
+        ((suffix, preview) for suffix, preview, keys in _SUFFIXES if keys & detected),
         ("plain", "basic"),
     )
     product_id = values.get("product_id")
     preview = (
-        capability_preview
-        if product_id is None
-        else f"ID {product_id} | {capability_preview}"
+        capability_preview if product_id is None else f"ID {product_id} | {capability_preview}"
     )
     return detected_profile, preview
 

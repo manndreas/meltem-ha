@@ -53,10 +53,7 @@ def group_available(state: RoomState, group_key: str) -> bool:
     """Return whether a group's values are recent and have recovered."""
 
     health = state.read_health_for(group_key)
-    if (
-        health.last_successful_read is None
-        or health.consecutive_failures >= READ_FAILURE_THRESHOLD
-    ):
+    if health.last_successful_read is None or health.consecutive_failures >= READ_FAILURE_THRESHOLD:
         return False
     return not read_too_old(group_key, health.last_successful_read)
 

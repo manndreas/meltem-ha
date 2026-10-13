@@ -104,11 +104,7 @@ def _seed(
             for status_mode_value, write_value in MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE.items()
         }
         status_current = write_to_status_mode.get(status_current, status_current)
-    if (
-        len(mode) > 4
-        and mode[3] == MODE_MANUAL
-        and mode[4] == PRESET_MODE_CODE_INTENSIVE
-    ):
+    if len(mode) > 4 and mode[3] == MODE_MANUAL and mode[4] == PRESET_MODE_CODE_INTENSIVE:
         # Observed on slave 4 while an app-started override was running.
         status_mode, status_current, status_extract = 0, 0, 0
     unit.holding[REGISTER_MODE_STATUS] = [
@@ -418,10 +414,14 @@ class TestAirflowTargets:
                 assert health.consecutive_failures == 0
                 assert health.last_successful_read == health.last_attempt
                 assert health.last_error is None
-        assert _reads(unit) == [
-            (REGISTER_EXTRACT_AIR_FLOW, 2),
-            (REGISTER_MODE_STATUS, 3),
-        ] * 2
+        assert (
+            _reads(unit)
+            == [
+                (REGISTER_EXTRACT_AIR_FLOW, 2),
+                (REGISTER_MODE_STATUS, 3),
+            ]
+            * 2
+        )
 
     @pytest.mark.parametrize("profile", sorted(PROFILE_METADATA))
     async def test_every_supported_profile_uses_the_status_map(
@@ -614,9 +614,7 @@ class TestModeReadBackoff:
         assert client._mode_backoff.failures[key] == 5
         assert client._mode_backoff.is_active(key)
 
-    async def test_successful_write_clears_the_backoff(
-        self, client: MeltemModbusClient
-    ) -> None:
+    async def test_successful_write_clears_the_backoff(self, client: MeltemModbusClient) -> None:
         key = (2, "mode_status")
         client._mode_backoff.mark_failure(key, MeltemModbusError("no"))
 
@@ -703,9 +701,7 @@ class TestModeDecoding:
     ) -> None:
         _seed(unit, mode=[MODE_SENSOR_CONTROL, MODE_AUTOMATIC_VALUE, 0, 0, 0])
 
-        state = await _read_flow(
-            client, RoomState(operation_mode="manual", preset_mode="low"), _FC
-        )
+        state = await _read_flow(client, RoomState(operation_mode="manual", preset_mode="low"), _FC)
 
         assert state.operation_mode == "automatic"
         assert state.preset_mode is None

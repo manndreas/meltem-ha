@@ -58,9 +58,7 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
 
     _requires_fresh_read_group = False
     _attr_supported_features = (
-        FanEntityFeature.SET_SPEED
-        | FanEntityFeature.TURN_OFF
-        | FanEntityFeature.TURN_ON
+        FanEntityFeature.SET_SPEED | FanEntityFeature.TURN_OFF | FanEntityFeature.TURN_ON
     )
 
     def __init__(
@@ -150,6 +148,4 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
             if percentage > 0
             else 0
         )
-        await self.coordinator.async_set_direction_level(
-            self.room.key, self._direction, level
-        )
+        await self.coordinator.async_set_direction_level(self.room.key, self._direction, level)

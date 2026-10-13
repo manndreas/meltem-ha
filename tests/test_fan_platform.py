@@ -188,5 +188,3 @@ class TestAttributes:
 
         assert attributes["last_write_fallback"] == "unknown_mode_overridden"
         assert attributes["operating_mode_known"] is False
-
-

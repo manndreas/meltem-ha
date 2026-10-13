@@ -50,9 +50,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
             else "none"
         ),
         "unavailable_units": ", ".join(
-            room.key
-            for room in coordinator.rooms
-            if not coordinator.room_available(room.key)
+            room.key for room in coordinator.rooms if not coordinator.room_available(room.key)
         )
         or "none",
         "stale_read_groups": _stale_read_groups(coordinator),

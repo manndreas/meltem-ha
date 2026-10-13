@@ -31,9 +31,7 @@ def sleeps_fixture(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     async def _sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
-    monkeypatch.setattr(
-        "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
-    )
+    monkeypatch.setattr("custom_components.meltem_ventilation.device.transport.async_sleep", _sleep)
     return sleeps
 
 
@@ -135,9 +133,7 @@ class TestRetry:
 
 
 @pytest.fixture(name="clock")
-def clock_fixture(
-    monkeypatch: pytest.MonkeyPatch, sleeps: list[float]
-) -> SimpleNamespace:
+def clock_fixture(monkeypatch: pytest.MonkeyPatch, sleeps: list[float]) -> SimpleNamespace:
     clock = SimpleNamespace(now=100.0)
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.device.transport.time",
@@ -149,9 +145,7 @@ def clock_fixture(
         clock.now += seconds
         await asyncio.sleep(0)
 
-    monkeypatch.setattr(
-        "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
-    )
+    monkeypatch.setattr("custom_components.meltem_ventilation.device.transport.async_sleep", _sleep)
     return clock
 
 
@@ -174,11 +168,18 @@ class TestReadRequestRate:
 
     @pytest.mark.parametrize(
         "error",
-        [_SILENT, ModbusProtocolError("garbled"), GatewayTargetError(),
-         ModbusConnectionError("gone")],
+        [
+            _SILENT,
+            ModbusProtocolError("garbled"),
+            GatewayTargetError(),
+            ModbusConnectionError("gone"),
+        ],
     )
     async def test_retries_also_take_a_read_slot(
-        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace,
+        self,
+        policy: TransportPolicy,
+        unit: AsyncMock,
+        clock: SimpleNamespace,
         error: Exception,
     ) -> None:
         policy.update_request_rate(0.5)
@@ -227,7 +228,10 @@ class TestReadRequestRate:
         assert starts == pytest.approx([100.0, 100.5, 101.0])
 
     async def test_writes_do_not_wait_for_read_slots(
-        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace,
+        self,
+        policy: TransportPolicy,
+        unit: AsyncMock,
+        clock: SimpleNamespace,
         sleeps: list[float],
     ) -> None:
         policy.update_request_rate(0.5)
@@ -241,7 +245,10 @@ class TestReadRequestRate:
         assert sleeps == [2.0]
 
     async def test_rate_change_is_applied_to_an_already_waiting_read(
-        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace,
+        self,
+        policy: TransportPolicy,
+        unit: AsyncMock,
+        clock: SimpleNamespace,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         policy.update_request_rate(2.0)
@@ -264,8 +271,12 @@ class TestReadRequestRate:
 
     @pytest.mark.parametrize("shutdown", [False, True], ids=["cancel", "shutdown"])
     async def test_waiting_read_does_not_run_after_cancellation_or_shutdown(
-        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace,
-        monkeypatch: pytest.MonkeyPatch, shutdown: bool,
+        self,
+        policy: TransportPolicy,
+        unit: AsyncMock,
+        clock: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        shutdown: bool,
     ) -> None:
         policy.update_request_rate(2.0)
         await _run(policy, unit, AsyncMock(return_value=[1]))
@@ -411,9 +422,7 @@ class TestReadAnswerAge:
 
 
 class TestPolicyUnit:
-    async def test_register_requests_go_through_the_policy(
-        self, policy: TransportPolicy
-    ) -> None:
+    async def test_register_requests_go_through_the_policy(self, policy: TransportPolicy) -> None:
         link = MockModbusConnection()
         mock_unit = link.for_unit(2)
         mock_unit.holding[41020] = [30, 31]
@@ -427,9 +436,7 @@ class TestPolicyUnit:
         assert mock_unit.holding[42001] == 10
         assert policy.seconds_since_read_answer(2) is not None
 
-    async def test_everything_else_is_passed_through(
-        self, policy: TransportPolicy
-    ) -> None:
+    async def test_everything_else_is_passed_through(self, policy: TransportPolicy) -> None:
         mock_unit = MockModbusConnection().for_unit(4)
         unit = PolicyUnit(mock_unit, 4, policy)
 

@@ -63,9 +63,7 @@ def sleeps_fixture(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     async def _sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
-    monkeypatch.setattr(
-        "custom_components.meltem_ventilation.device.transport.async_sleep", _sleep
-    )
+    monkeypatch.setattr("custom_components.meltem_ventilation.device.transport.async_sleep", _sleep)
     return sleeps
 
 
@@ -108,9 +106,7 @@ class TestUnits:
         assert unit.message_spacing == 0.1
         assert unit.required_timeout == 0.8
 
-    async def test_each_unit_is_requested_once(
-        self, link: MockModbusConnection
-    ) -> None:
+    async def test_each_unit_is_requested_once(self, link: MockModbusConnection) -> None:
         requested: list[int] = []
 
         def _factory(unit_id: int) -> MockModbusUnit:

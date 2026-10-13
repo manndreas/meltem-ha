@@ -53,9 +53,7 @@ from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, RoomConfig
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_migrate_entry(
-    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
-) -> bool:
+async def async_migrate_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> bool:
     """Migrate a config entry from an older schema."""
 
     if entry.version > 1:
@@ -128,18 +126,14 @@ def _max_requests_per_second(entry: MeltemIntegrationConfigEntry) -> float:
     )
 
 
-async def _async_normalize_port(
-    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
-) -> str:
+async def _async_normalize_port(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> str:
     """Store and return the stable ``/dev/serial/by-id`` path of the gateway port.
 
     A by-id link can appear after setup, so this is a runtime fix-up, not a migration.
     """
 
     # Resolution walks /dev/serial/by-id, so it must not run in the event loop.
-    port = await hass.async_add_executor_job(
-        resolve_preferred_port_path, entry.data[CONF_PORT]
-    )
+    port = await hass.async_add_executor_job(resolve_preferred_port_path, entry.data[CONF_PORT])
     if port != entry.data[CONF_PORT] or entry.unique_id != port:
         hass.config_entries.async_update_entry(
             entry, data={**entry.data, CONF_PORT: port}, unique_id=port
@@ -193,9 +187,7 @@ def _async_sync_devices(
         registry.async_remove_device(device.id)
 
 
-async def async_setup_entry(
-    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
-) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> bool:
     """Set up Meltem Modbus from a config entry."""
 
     port = await _async_normalize_port(hass, entry)
@@ -243,15 +235,11 @@ async def async_setup_entry(
         del entry.runtime_data
         raise
 
-    entry.async_create_background_task(
-        hass, coordinator.async_refresh(), "meltem_first_refresh"
-    )
+    entry.async_create_background_task(hass, coordinator.async_refresh(), "meltem_first_refresh")
     return True
 
 
-async def async_unload_entry(
-    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
-) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> bool:
     """Unload a config entry."""
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

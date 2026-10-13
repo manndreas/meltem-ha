@@ -125,7 +125,9 @@ def setup_mocks(hass: HomeAssistant) -> Iterator[_SetupMocks]:
 
 class TestAsyncSetupEntry:
     async def test_setup_creates_coordinator_and_forwards_platforms(
-        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
+        self,
+        hass: HomeAssistant,
+        setup_mocks: _SetupMocks,
     ) -> None:
         entry = _entry(hass)
 
@@ -144,7 +146,9 @@ class TestAsyncSetupEntry:
         assert isinstance(entry.runtime_data, MeltemRuntimeData)
 
     async def test_setup_failure_after_coordinator_removes_runtime_data(
-        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
+        self,
+        hass: HomeAssistant,
+        setup_mocks: _SetupMocks,
     ) -> None:
         setup_mocks.forward.side_effect = RuntimeError("platform failed")
         entry = _entry(hass)
@@ -183,7 +187,9 @@ class TestAsyncSetupEntry:
         client.shutdown.assert_called_once()
 
     async def test_client_takes_its_units_from_the_modbus_integration(
-        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
+        self,
+        hass: HomeAssistant,
+        setup_mocks: _SetupMocks,
     ) -> None:
         entry = _entry(hass)
 
@@ -195,7 +201,9 @@ class TestAsyncSetupEntry:
         get_unit.assert_called_once_with(hass, entry, build_serial_params(_PORT), 2)
 
     async def test_setup_normalizes_port_path(
-        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
+        self,
+        hass: HomeAssistant,
+        setup_mocks: _SetupMocks,
     ) -> None:
         setup_mocks.resolve_port.side_effect = lambda _port: "/dev/serial/by-id/normalized"
         entry = _entry(hass, port="/dev/ttyACM0")
@@ -205,7 +213,9 @@ class TestAsyncSetupEntry:
         assert entry.data[CONF_PORT] == entry.unique_id == "/dev/serial/by-id/normalized"
 
     async def test_setup_derives_missing_entity_keys_from_the_profile(
-        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
+        self,
+        hass: HomeAssistant,
+        setup_mocks: _SetupMocks,
     ) -> None:
         """Legacy rooms without stored keys get their profile's entities, no probe."""
         entry = _entry(
@@ -220,7 +230,9 @@ class TestAsyncSetupEntry:
         assert "supported_entity_keys" not in entry.data[CONF_ROOMS][0]
 
     async def test_setup_ignores_entity_keys_stored_by_older_releases(
-        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
+        self,
+        hass: HomeAssistant,
+        setup_mocks: _SetupMocks,
     ) -> None:
         """Probe keys beyond the profile would schedule reads the unit cannot answer."""
         stored_keys = ["extract_air_flow", "humidity_starting_point"]
@@ -251,7 +263,10 @@ class TestAsyncSetupEntry:
     )
     @pytest.mark.usefixtures("setup_mocks")
     async def test_setup_removes_obsolete_entities(
-        self, hass: HomeAssistant, platform: str, key: str,
+        self,
+        hass: HomeAssistant,
+        platform: str,
+        key: str,
     ) -> None:
         entry = _entry(hass)
         obsolete = _register_entity(hass, entry, platform, key)
@@ -268,7 +283,8 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.usefixtures("setup_mocks")
     async def test_setup_keeps_obsolete_entities_of_other_entries(
-        self, hass: HomeAssistant,
+        self,
+        hass: HomeAssistant,
     ) -> None:
         """Room keys are only unique per gateway."""
         entry = _entry(hass)
@@ -279,7 +295,9 @@ class TestAsyncSetupEntry:
         assert er.async_get(hass).async_get(foreign.entity_id) is not None
 
     async def test_setup_respects_option_max_request_rate(
-        self, hass: HomeAssistant, setup_mocks: _SetupMocks,
+        self,
+        hass: HomeAssistant,
+        setup_mocks: _SetupMocks,
     ) -> None:
         entry = _entry(hass, options={CONF_MAX_REQUESTS_PER_SECOND: 5.0})
 
@@ -297,7 +315,9 @@ class TestAsyncSetupEntry:
 class TestAsyncUnloadEntry:
     @pytest.mark.parametrize("unloaded", [True, False])
     async def test_coordinator_and_client_shut_down_only_after_the_platforms(
-        self, hass: HomeAssistant, unloaded: bool,
+        self,
+        hass: HomeAssistant,
+        unloaded: bool,
     ) -> None:
         entry = _entry(hass)
         coordinator = MagicMock()
@@ -321,9 +341,7 @@ class TestAsyncUnloadEntry:
 
 
 class TestAsyncMigrateEntry:
-    async def test_migration_renames_the_airflow_health_entity(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_migration_renames_the_airflow_health_entity(self, hass: HomeAssistant) -> None:
         entry = _entry(hass, minor_version=1)
         legacy = _register_entity(hass, entry, "binary_sensor", "airflow_data_stale")
 
@@ -365,9 +383,7 @@ class TestAsyncMigrateEntry:
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
         assert entry.minor_version == 3
 
-    async def test_migration_rejects_a_newer_major_version(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_migration_rejects_a_newer_major_version(self, hass: HomeAssistant) -> None:
         entry = _entry(hass, version=2, minor_version=1)
 
         assert await async_migrate_entry(hass, entry) is False
@@ -391,9 +407,7 @@ class TestDeviceRegistrySync:
         assert gateway is not None
         assert gateway.model == "M-WRG-GW"
 
-    async def test_setup_removes_devices_of_unconfigured_units(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_setup_removes_devices_of_unconfigured_units(self, hass: HomeAssistant) -> None:
         entry = _entry(hass)
         registry = dr.async_get(hass)
         configured = registry.async_get_or_create(
@@ -429,9 +443,7 @@ class TestSharedModbusConnection:
             links.append(link)
             return link
 
-        return patch(
-            "homeassistant.components.modbus.connection.ModbusConnection", _connection
-        )
+        return patch("homeassistant.components.modbus.connection.ModbusConnection", _connection)
 
     async def test_unload_releases_the_link(self, hass: HomeAssistant) -> None:
         links: list[MockModbusConnection] = []

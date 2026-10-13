@@ -32,7 +32,9 @@ _DESCRIPTIONS = {description.key: description for description in BINARY_SENSOR_D
 def _fake_coordinator(data: dict[str, RoomState] | None = None) -> MagicMock:
     coordinator = MagicMock(spec=MeltemDataUpdateCoordinator)
     coordinator.data = data or {}
-    type(coordinator).safe_data = property(lambda self: self.data if isinstance(self.data, dict) else {})
+    type(coordinator).safe_data = property(
+        lambda self: self.data if isinstance(self.data, dict) else {}
+    )
     coordinator.last_update_success = True
     coordinator.async_add_listener = MagicMock(return_value=lambda: None)
     coordinator.read_group_for_entity.side_effect = lambda key: {
@@ -91,9 +93,7 @@ class TestBinarySensorEntityCreation:
         """The timestamps change on every poll."""
         entity = MeltemDataHealthBinarySensor(_fake_coordinator(), _ROOM)
 
-        assert {"flow", "flow_control", "intensive", "writes"} <= (
-            entity._unrecorded_attributes
-        )
+        assert {"flow", "flow_control", "intensive", "writes"} <= (entity._unrecorded_attributes)
 
 
 # ---------------------------------------------------------------------------

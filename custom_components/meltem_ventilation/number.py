@@ -66,9 +66,7 @@ CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] 
     _control_setting("humidity_starting_point", HUMIDITY_PROFILES),
     _control_setting("humidity_min_level", HUMIDITY_PROFILES),
     _control_setting("humidity_max_level", HUMIDITY_PROFILES),
-    _control_setting(
-        "co2_starting_point", CO2_PROFILES, UnitOfRatio.PARTS_PER_MILLION
-    ),
+    _control_setting("co2_starting_point", CO2_PROFILES, UnitOfRatio.PARTS_PER_MILLION),
     _control_setting("co2_min_level", CO2_PROFILES),
     _control_setting("co2_max_level", CO2_PROFILES),
 )

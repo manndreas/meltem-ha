@@ -73,9 +73,7 @@ async def _conflicting_unit(hass, params, unit_id):
 
 
 def _patch_validate_ok():
-    return patch(
-        f"{_PATCHES_BASE}.read_gateway_node_count", new=AsyncMock(return_value=1)
-    )
+    return patch(f"{_PATCHES_BASE}.read_gateway_node_count", new=AsyncMock(return_value=1))
 
 
 def _patch_scan(slaves: list[int]):
@@ -104,9 +102,7 @@ def _patch_resolve(port: str = _STABLE_PORT):
 
 
 def _patch_resolve_unchanged():
-    return patch(
-        f"{_PATCHES_BASE}.resolve_preferred_port_path", side_effect=lambda port: port
-    )
+    return patch(f"{_PATCHES_BASE}.resolve_preferred_port_path", side_effect=lambda port: port)
 
 
 async def _async_submit_port(hass: HomeAssistant, port: str = _PORT) -> ConfigFlowResult:
@@ -115,9 +111,7 @@ async def _async_submit_port(hass: HomeAssistant, port: str = _PORT) -> ConfigFl
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
-    return await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_PORT: port}
-    )
+    return await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PORT: port})
 
 
 async def _async_submit_usb_port(hass: HomeAssistant) -> ConfigFlowResult:
@@ -127,9 +121,7 @@ async def _async_submit_usb_port(hass: HomeAssistant) -> ConfigFlowResult:
         DOMAIN, context={"source": config_entries.SOURCE_USB}, data=_USB_DISCOVERY
     )
     assert result["step_id"] == "confirm_usb"
-    return await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_PORT: _PORT}
-    )
+    return await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PORT: _PORT})
 
 
 async def _async_open_option(
@@ -159,9 +151,7 @@ async def _async_reconfigure(
 
     result = await entry.start_reconfigure_flow(hass)
     assert result["step_id"] == "reconfigure"
-    return await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_PORT: port}
-    )
+    return await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PORT: port})
 
 
 async def _async_submit_profiles(
@@ -170,28 +160,20 @@ async def _async_submit_profiles(
     return await hass.config_entries.flow.async_configure(result["flow_id"], profiles)
 
 
-async def _async_retry_user_flow(
-    hass: HomeAssistant, flow_id: str
-) -> ConfigFlowResult:
+async def _async_retry_user_flow(hass: HomeAssistant, flow_id: str) -> ConfigFlowResult:
     """Recover a failed user flow and finish creating its config entry."""
 
     with _patch_scan([2]), _patch_detect(), _patch_resolve():
-        result = await hass.config_entries.flow.async_configure(
-            flow_id, {CONF_PORT: _PORT}
-        )
+        result = await hass.config_entries.flow.async_configure(flow_id, {CONF_PORT: _PORT})
     assert result["step_id"] == "profiles"
     return await _async_submit_profiles(hass, result, {"slave_2": "ii_plain"})
 
 
-async def _async_retry_usb_flow(
-    hass: HomeAssistant, flow_id: str
-) -> ConfigFlowResult:
+async def _async_retry_usb_flow(hass: HomeAssistant, flow_id: str) -> ConfigFlowResult:
     """Recover a failed USB flow and finish creating its config entry."""
 
     with _patch_scan([2]), _patch_detect(), _patch_resolve():
-        result = await hass.config_entries.flow.async_configure(
-            flow_id, {CONF_PORT: _PORT}
-        )
+        result = await hass.config_entries.flow.async_configure(flow_id, {CONF_PORT: _PORT})
     assert result["step_id"] == "profiles"
     return await _async_submit_profiles(hass, result, {"slave_2": "ii_plain"})
 
@@ -257,9 +239,7 @@ class TestConfigFlowUser:
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["result"].unique_id == _STABLE_PORT
 
-    async def test_user_step_no_devices_found_shows_error(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_user_step_no_devices_found_shows_error(self, hass: HomeAssistant) -> None:
         with _patch_scan([]), _patch_resolve():
             result = await _async_submit_port(hass)
 
@@ -269,9 +249,7 @@ class TestConfigFlowUser:
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["result"].unique_id == _STABLE_PORT
 
-    async def test_user_step_success_proceeds_to_profiles(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_user_step_success_proceeds_to_profiles(self, hass: HomeAssistant) -> None:
         with _patch_scan([2]), _patch_detect(), _patch_resolve():
             result = await _async_submit_port(hass)
 
@@ -308,9 +286,7 @@ class TestConfigFlowUser:
     async def test_user_step_scans_and_probes_on_one_link(
         self, hass: HomeAssistant, gateway_link: MockModbusConnection
     ) -> None:
-        gateway_link.for_unit(DEFAULT_GATEWAY_DEVICE_ID).holding.update(
-            {43901: 2, 43902: [2, 3]}
-        )
+        gateway_link.for_unit(DEFAULT_GATEWAY_DEVICE_ID).holding.update({43901: 2, 43902: [2, 3]})
         holds: list[str] = []
 
         @asynccontextmanager
@@ -367,9 +343,7 @@ class TestConfigFlowProfiles:
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "user"
 
-    async def test_profiles_step_creates_entry(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_profiles_step_creates_entry(self, hass: HomeAssistant) -> None:
         with _patch_scan([2]), _patch_detect("fc", "ID 2 | CO2"), _patch_resolve():
             result = await _async_submit_port(hass)
             result = await _async_submit_profiles(hass, result, {"slave_2": "ii_fc"})
@@ -387,9 +361,7 @@ class TestConfigFlowProfiles:
         assert entry.options == {}
         assert entry.unique_id == _STABLE_PORT
 
-    async def test_profiles_step_multiple_units(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_profiles_step_multiple_units(self, hass: HomeAssistant) -> None:
         with _patch_scan([2, 3]), _patch_detect(), _patch_resolve():
             result = await _async_submit_port(hass)
             result = await _async_submit_profiles(
@@ -425,9 +397,7 @@ class TestConfigFlowProfiles:
         assert list(result["data_schema"].schema.keys()) == ["slave_2"]
         assert "Hardware ID 2 | CO2" in result["description_placeholders"]["unit_details"]
 
-    async def test_usb_flow_returns_to_confirm_usb_on_scan_error(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_usb_flow_returns_to_confirm_usb_on_scan_error(self, hass: HomeAssistant) -> None:
         with _patch_scan_error(MeltemConnectionError("fail")):
             result = await _async_submit_usb_port(hass)
 
@@ -438,9 +408,7 @@ class TestConfigFlowProfiles:
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["result"].unique_id == _STABLE_PORT
 
-    async def test_usb_flow_recovers_after_no_units_are_found(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_usb_flow_recovers_after_no_units_are_found(self, hass: HomeAssistant) -> None:
         with _patch_scan([]):
             result = await _async_submit_usb_port(hass)
 
@@ -458,9 +426,7 @@ class TestConfigFlowProfiles:
 
 
 class TestConfigFlowEndToEnd:
-    async def test_full_flow_user_to_entry(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_full_flow_user_to_entry(self, hass: HomeAssistant) -> None:
         """Walk through the entire user flow: user step → profiles → entry creation."""
         with (
             _patch_scan([2, 3]),
@@ -538,14 +504,12 @@ class TestOptionsFlow:
 
         edit_profiles = await _async_open_option(hass, entry, "edit_profiles")
         assert edit_profiles["step_id"] == "edit_profiles"
-        assert "Hardware ID 2 | basic" in (
-            edit_profiles["description_placeholders"]["unit_details"]
+        assert (
+            "Hardware ID 2 | basic" in (edit_profiles["description_placeholders"]["unit_details"])
         )
 
         result = await _async_open_option(hass, entry, "rescan_units")
-        rescan = await hass.config_entries.options.async_configure(
-            result["flow_id"], {}
-        )
+        rescan = await hass.config_entries.options.async_configure(result["flow_id"], {})
         assert rescan["step_id"] == "rescan_units"
         assert rescan["errors"] == {"base": "cannot_connect"}
 
@@ -554,12 +518,8 @@ class TestOptionsFlow:
             async_discover_gateway_units=AsyncMock(return_value=[2]),
             async_probe_slave_details=AsyncMock(return_value=("plain", "ID 2 | basic")),
         )
-        with patch.object(
-            hass.config_entries, "async_reload", new=AsyncMock()
-        ) as mock_reload:
-            rescan = await hass.config_entries.options.async_configure(
-                rescan["flow_id"], {}
-            )
+        with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload:
+            rescan = await hass.config_entries.options.async_configure(rescan["flow_id"], {})
             assert rescan["step_id"] == "profiles"
             rescan = await hass.config_entries.options.async_configure(
                 rescan["flow_id"], {"slave_2": "ii_plain"}
@@ -572,9 +532,7 @@ class TestOptionsFlow:
     async def test_options_edit_profiles_without_units_returns_to_rescan(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        hass.config_entries.async_update_entry(
-            entry, data={**entry.data, CONF_ROOMS: []}
-        )
+        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_ROOMS: []})
 
         result = await _async_open_option(hass, entry, "edit_profiles")
 
@@ -598,9 +556,7 @@ class TestOptionsFlow:
     ) -> None:
         coordinator = _attach_coordinator(
             entry,
-            async_discover_gateway_units=AsyncMock(
-                side_effect=error, return_value=slaves
-            ),
+            async_discover_gateway_units=AsyncMock(side_effect=error, return_value=slaves),
             async_probe_slave_details=AsyncMock(return_value=("plain", "ID 2 | basic")),
         )
         result = await _async_open_option(hass, entry, "rescan_units")
@@ -612,12 +568,8 @@ class TestOptionsFlow:
 
         coordinator.async_discover_gateway_units.side_effect = None
         coordinator.async_discover_gateway_units.return_value = [2]
-        with patch.object(
-            hass.config_entries, "async_reload", new=AsyncMock()
-        ) as mock_reload:
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"], {}
-            )
+        with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload:
+            result = await hass.config_entries.options.async_configure(result["flow_id"], {})
             assert result["step_id"] == "profiles"
             result = await hass.config_entries.options.async_configure(
                 result["flow_id"], {"slave_2": "ii_plain"}
@@ -629,9 +581,7 @@ class TestOptionsFlow:
     async def test_options_request_rate_reloads_without_a_coordinator(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        with patch.object(
-            hass.config_entries, "async_reload", new=AsyncMock()
-        ) as mock_reload:
+        with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload:
             result = await _async_submit_request_rate(hass, entry)
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -663,9 +613,7 @@ class TestOptionsFlow:
     ) -> None:
         coordinator = _attach_coordinator(entry, update_request_rate=MagicMock())
 
-        with patch.object(
-            hass.config_entries, "async_reload", new=AsyncMock()
-        ) as mock_reload:
+        with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload:
             result = await _async_submit_request_rate(hass, entry)
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -680,9 +628,7 @@ class TestOptionsFlow:
         probe = AsyncMock(return_value=("fc", "ID 99 | CO2"))
         _attach_coordinator(entry, async_probe_slave_details=probe)
 
-        with patch.object(
-            hass.config_entries, "async_reload", new=AsyncMock()
-        ) as mock_reload:
+        with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload:
             result = await _async_open_option(hass, entry, "edit_profiles")
             result = await hass.config_entries.options.async_configure(
                 result["flow_id"], {"slave_2": "ii_fc"}

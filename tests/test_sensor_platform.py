@@ -162,9 +162,7 @@ class TestSensorNativeValue:
                 "extract_air_flow", RoomState(extract_air_flow=65, supply_air_flow=70), 65
             ),
             pytest.param("operating_hours", RoomState(operating_hours=12345), 12345),
-            pytest.param(
-                "days_until_filter_change", RoomState(days_until_filter_change=90), 90
-            ),
+            pytest.param("days_until_filter_change", RoomState(days_until_filter_change=90), 90),
             pytest.param("exhaust_temperature", RoomState(), None, id="not-read-yet"),
             pytest.param("exhaust_temperature", None, None, id="room-missing"),
         ],
@@ -202,8 +200,8 @@ class TestSensorAvailability:
     ) -> None:
         state = RoomState(supply_air_flow=30, exhaust_temperature=22.5)
         sensor = _sensor(key, state)
-        sensor.coordinator.read_group_available.side_effect = (
-            lambda _room_key, group: group != stale_group
+        sensor.coordinator.read_group_available.side_effect = lambda _room_key, group: (
+            group != stale_group
         )
 
         assert sensor.available is available

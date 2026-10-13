@@ -64,8 +64,7 @@ def main() -> None:
     baseline_script = Path.cwd() / "tools" / "benchmark_integration_like.py"
     if not baseline_script.is_file():
         raise SystemExit(
-            "Run this launcher from the 4009a32 baseline worktree; "
-            f"not found: {baseline_script}"
+            f"Run this launcher from the 4009a32 baseline worktree; not found: {baseline_script}"
         )
 
     _ensure_homeassistant_modules()

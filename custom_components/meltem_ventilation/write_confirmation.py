@@ -221,10 +221,6 @@ def _readback_value(state: RoomState, write_key: str) -> WriteValue | None:
 
 
 def _values_match(write_key: str, expected: WriteValue, actual: WriteValue) -> bool:
-    if (
-        write_key == "airflow_levels"
-        and isinstance(expected, tuple)
-        and isinstance(actual, tuple)
-    ):
+    if write_key == "airflow_levels" and isinstance(expected, tuple) and isinstance(actual, tuple):
         return levels_reached(actual, expected)
     return actual == expected

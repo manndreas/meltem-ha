@@ -109,9 +109,7 @@ class Status(Component):
 class Temperatures(Component):
     """Extract, outdoor, and exhaust air temperatures."""
 
-    register_ranges = (
-        (REGISTER_EXTRACT_AIR_TEMPERATURE, REGISTER_EXHAUST_AIR_TEMPERATURE + 1),
-    )
+    register_ranges = ((REGISTER_EXTRACT_AIR_TEMPERATURE, REGISTER_EXHAUST_AIR_TEMPERATURE + 1),)
 
     extract_air_temperature = _float32(REGISTER_EXTRACT_AIR_TEMPERATURE)
     outdoor_air_temperature = _float32(REGISTER_OUTDOOR_AIR_TEMPERATURE)
@@ -121,9 +119,7 @@ class Temperatures(Component):
 class SupplyTemperature(Component):
     """Supply air temperature."""
 
-    register_ranges = (
-        (REGISTER_SUPPLY_AIR_TEMPERATURE, REGISTER_SUPPLY_AIR_TEMPERATURE + 1),
-    )
+    register_ranges = ((REGISTER_SUPPLY_AIR_TEMPERATURE, REGISTER_SUPPLY_AIR_TEMPERATURE + 1),)
 
     supply_air_temperature = _float32(REGISTER_SUPPLY_AIR_TEMPERATURE)
 
