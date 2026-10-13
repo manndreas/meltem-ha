@@ -22,6 +22,11 @@ Bronze-Regeln sind erfüllt; offen ist noch die Bereitstellung der Brand-Assets
 im zentralen Repository für Core-Integrationen. Die aktuelle HACS-Integration
 enthält die Assets lokal, wie es für Custom-Integrationen vorgesehen ist.
 
+Wenn `brands` für die theoretische Bewertung ausgeklammert wird, sind die
+übrigen anwendbaren Bronze-Regeln und alle anwendbaren Silver-Regeln erfüllt.
+Der Stand wäre damit theoretisch Silver; formal bleibt die Integration eine
+Custom-Integration und erhält dadurch keine offizielle Silver-Einstufung.
+
 Darüber hinaus scheitern einzelne Regeln höherer Stufen auch unabhängig davon,
 ob Bronze bereits erreicht ist. Die Quality Scale ist kumulativ: Eine Stufe
 gilt erst als erfüllt, wenn alle anwendbaren Regeln dieser und aller
@@ -80,7 +85,7 @@ prüft die Beschreibungen für sämtliche Config- und Options-Flow-Felder.
 | ✅ | [`docs-installation-parameters`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-installation-parameters) | Gateway, USB-Verbindung, Voraussetzungen, Port und Profilwahl werden in der [README.md](../../README.md) erklärt. |
 | ✅ | [`entity-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/entity-unavailable) | Entities werden bei nicht verfügbaren Räumen oder veralteten Lesegruppen als nicht verfügbar markiert. [entity.py](../../custom_components/meltem_ventilation/entity.py) |
 | ✅ | [`integration-owner`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/integration-owner) | `codeowners` ist im [manifest.json](../../custom_components/meltem_ventilation/manifest.json) gesetzt. |
-| ✅ | [`log-when-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/log-when-unavailable) | Beim Eintritt in den Gateway-Backoff wird die Nichterreichbarkeit einmal auf Info-Level protokolliert; beim ersten erfolgreichen Read danach folgt einmalig die Wiederherstellung. Weitere Backoff-Erhöhungen werden nur auf Debug-Level geloggt. [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [test_coordinator_and_config_helpers.py](../../tests/test_coordinator_and_config_helpers.py) |
+| ✅ | [`log-when-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/log-when-unavailable) | Jeder Raum wird beim Erreichen des Fehlerlimits oder nach zu langer Stille einmal auf Info-Level als nicht verfügbar protokolliert; die nächste erfolgreiche Raumlesung protokolliert die Wiederherstellung einmal. Wiederholte Lesejob-Fehler werden nicht mehr als Warning ausgegeben. Gateway-Backoff-Änderungen bleiben auf Debug-Level. [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [test_coordinator_and_config_helpers.py](../../tests/test_coordinator_and_config_helpers.py) |
 | ✅ | [`parallel-updates`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/parallel-updates) | Die Entity-Plattformen setzen `PARALLEL_UPDATES = 0`; die Serialisierung erfolgt zentral im Coordinator. Beispiele: [fan.py](../../custom_components/meltem_ventilation/fan.py), [sensor.py](../../custom_components/meltem_ventilation/sensor.py). |
 | ➖ | [`reauthentication-flow`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/reauthentication-flow) | Es gibt keine Zugangsdaten oder Authentifizierung, die erneuert werden könnten. |
 | ✅ | [`test-coverage`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/test-coverage) | Im vollständigen Coverage-Lauf liegen alle Integrationsmodule über 95 %: 99 % insgesamt, 96 % im niedrigsten Modul (`modbus_helpers.py`) und 100 % in [write_confirmation.py](../../custom_components/meltem_ventilation/write_confirmation.py). Dabei wurde ein Plattformtest ausgeschlossen, dessen Teardown versucht, `/dev/ttyACM0` zu öffnen: [test_platform_matrix.py](../../tests/test_platform_matrix.py). Die ergänzten Branch-Tests stehen in [test_write_confirmation.py](../../tests/test_write_confirmation.py). |
