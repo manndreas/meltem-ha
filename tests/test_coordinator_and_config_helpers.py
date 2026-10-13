@@ -220,30 +220,100 @@ def _start_backoff(coordinator: MeltemDataUpdateCoordinator) -> None:
 
 
 class TestCoordinatorResilience:
-    def test_logs_gateway_unavailability_and_recovery_once(
+    def test_gateway_backoff_messages_are_debug_only(
         self, hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build_coordinator(hass, [_UNIT_1])
 
-        with patch("custom_components.meltem_ventilation.coordinator._LOGGER.info") as info:
+        with (
+            patch("custom_components.meltem_ventilation.coordinator._LOGGER.info") as info,
+            patch("custom_components.meltem_ventilation.coordinator._LOGGER.debug") as debug,
+        ):
             for _ in range(TRANSPORT_BACKOFF_AFTER_FAILURES - 1):
                 coordinator._on_transport_failure()
-            info.assert_not_called()
+            debug.assert_not_called()
 
             coordinator._on_transport_failure()
-            info.assert_called_once_with(
-                "Meltem gateway unavailable after %s consecutive transport failures; "
-                "backing off polling to %.0f s",
-                TRANSPORT_BACKOFF_AFTER_FAILURES,
+            debug.assert_called_once_with(
+                "Backing off Meltem gateway polling to %.0f s after %s consecutive "
+                "transport failures",
                 TRANSPORT_BACKOFF_START_SECONDS,
+                TRANSPORT_BACKOFF_AFTER_FAILURES,
             )
 
             coordinator._on_transport_failure()
-            info.assert_called_once()
+            info.assert_not_called()
+            assert debug.call_count == 2
 
             coordinator._on_transport_success()
             coordinator._on_transport_success()
+            info.assert_not_called()
+            assert debug.call_count == 3
+
+    async def test_room_unavailability_and_recovery_are_logged_once(
+        self, hass: HomeAssistant,
+    ) -> None:
+        room = RoomConfig(key="broken", name="Broken", profile="ii_plain", slave=2)
+        coordinator, client = _build_coordinator(hass, [room])
+        states = {"broken": RoomState(target_level=30)}
+        job = PollJob(
+            key="flow_broken",
+            room_key="broken",
+            refresh_plan=RefreshPlan.only(refresh_airflow=True),
+            interval_seconds=10,
+            next_due=0.0,
+        )
+
+        with (
+            patch("custom_components.meltem_ventilation.coordinator._LOGGER.info") as info,
+            patch("custom_components.meltem_ventilation.coordinator._LOGGER.warning") as warning,
+        ):
+            for _ in range(ROOM_UNAVAILABLE_AFTER_FAILURES):
+                states = await coordinator._read_one_job(states, job)
+            info.assert_called_once_with(
+                "Meltem room %s unavailable: %s",
+                "broken",
+                f"after {ROOM_UNAVAILABLE_AFTER_FAILURES} consecutive read failures: boom",
+            )
+            warning.assert_not_called()
+
+            states = await coordinator._read_one_job(states, job)
+            info.assert_called_once()
+            warning.assert_not_called()
+
+            with patch.object(
+                client,
+                "read_room_state",
+                new=AsyncMock(return_value=RoomState(target_level=30)),
+            ):
+                states = await coordinator._read_one_job(states, job)
+                states = await coordinator._read_one_job(states, job)
+
             assert info.call_count == 2
+            assert info.call_args.args == ("Meltem room %s reachable again", "broken")
+            warning.assert_not_called()
+
+    def test_silent_room_unavailability_and_recovery_are_logged_once(
+        self, hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        client.silent_seconds_by_slave[_UNIT_1.slave] = ROOM_SILENT_AFTER_SECONDS + 1
+
+        with patch("custom_components.meltem_ventilation.coordinator._LOGGER.info") as info:
+            assert not coordinator.room_available("unit_1")
+            assert not coordinator.room_available("unit_1")
+            info.assert_called_once_with(
+                "Meltem room %s unavailable: %s",
+                "unit_1",
+                f"no successful read for more than {ROOM_SILENT_AFTER_SECONDS:.0f} seconds",
+            )
+
+            client.silent_seconds_by_slave[_UNIT_1.slave] = 0
+            assert coordinator.room_available("unit_1")
+            assert coordinator.room_available("unit_1")
+            assert info.call_count == 2
+            assert info.call_args.args == ("Meltem room %s reachable again", "unit_1")
 
     def test_polling_backs_off_after_repeated_transport_failures(
         self, hass: HomeAssistant,

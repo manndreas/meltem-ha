@@ -135,6 +135,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._consecutive_transport_failures = 0
         self._backoff_seconds: float | None = None
         self._room_failures: dict[str, int] = {}
+        self._logged_unavailable_rooms: set[str] = set()
         self._writes = WriteConfirmations()
         self._optimistic_presets = OptimisticOverlay[str, str](
             hass, PRESET_OPTIMISTIC_SECONDS, self.async_update_listeners
@@ -205,17 +206,40 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         while showing frozen values, so availability is tracked per room.
         """
 
-        if self._room_failures.get(room_key, 0) >= ROOM_UNAVAILABLE_AFTER_FAILURES:
+        failures = self._room_failures.get(room_key, 0)
+        if failures >= ROOM_UNAVAILABLE_AFTER_FAILURES:
+            self._log_room_unavailable(
+                room_key, f"after {failures} consecutive read failures"
+            )
             return False
 
         room = self._rooms_by_key.get(room_key)
         if room is not None:
             silent_for = self.client.seconds_since_successful_read(room.slave)
             if silent_for is not None and silent_for > ROOM_SILENT_AFTER_SECONDS:
+                self._log_room_unavailable(
+                    room_key,
+                    f"no successful read for more than {ROOM_SILENT_AFTER_SECONDS:.0f} seconds",
+                )
                 return False
 
         state = self.safe_data.get(room_key)
-        return state is not None and state.has_data
+        available = state is not None and state.has_data
+        if available:
+            self._log_room_recovered(room_key)
+        return available
+
+    def _log_room_unavailable(self, room_key: str, reason: str) -> None:
+        if room_key in self._logged_unavailable_rooms:
+            return
+        self._logged_unavailable_rooms.add(room_key)
+        _LOGGER.info("Meltem room %s unavailable: %s", room_key, reason)
+
+    def _log_room_recovered(self, room_key: str) -> None:
+        if room_key not in self._logged_unavailable_rooms:
+            return
+        self._logged_unavailable_rooms.remove(room_key)
+        _LOGGER.info("Meltem room %s reachable again", room_key)
 
     def optimistic_preset_mode(self, room_key: str) -> str | None:
         """Return the pending preset selection while the gateway confirms it.
@@ -426,7 +450,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             return
         self._backoff_seconds = None
         self._schedule_next_tick()
-        _LOGGER.info("Meltem gateway reachable again, resuming normal polling rate")
+        _LOGGER.debug("Meltem gateway reachable again, resuming normal polling rate")
 
     def _on_transport_failure(self) -> None:
         self._consecutive_transport_failures += 1
@@ -454,11 +478,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             return
 
         if self._backoff_seconds is None:
-            _LOGGER.info(
-                "Meltem gateway unavailable after %s consecutive transport failures; "
-                "backing off polling to %.0f s",
-                self._consecutive_transport_failures,
+            _LOGGER.debug(
+                "Backing off Meltem gateway polling to %.0f s after %s consecutive "
+                "transport failures",
                 seconds,
+                self._consecutive_transport_failures,
             )
         else:
             _LOGGER.debug(
@@ -1053,9 +1077,14 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 job.refresh_plan,
             )
         except MeltemModbusError as err:
-            _LOGGER.warning("Failed to read room %s for job %s: %s", room.key, job.key, err)
             self._last_job_error = err
-            self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
+            failures = self._room_failures.get(room.key, 0) + 1
+            self._room_failures[room.key] = failures
+            if failures >= ROOM_UNAVAILABLE_AFTER_FAILURES:
+                self._log_room_unavailable(
+                    room.key,
+                    f"after {failures} consecutive read failures: {err}",
+                )
             refreshed_state = read_health.record_read_failures(
                 previous_state,
                 room,
@@ -1065,6 +1094,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         else:
             self._last_job_error = None
             self._room_failures.pop(room.key, None)
+            if refreshed_state.has_data:
+                self._log_room_recovered(room.key)
 
         if refreshed_state == previous_state:
             return previous_states
