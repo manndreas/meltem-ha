@@ -156,6 +156,38 @@ Open the integration options via `Settings` -> `Devices & Services` -> `Meltem M
 To move the gateway to another serial port, choose `Reconfigure` in the menu
 of the integration entry. The new port is checked before it is saved.
 
+## Data updates
+
+The integration polls the gateway; it does not receive pushed updates. The
+request-rate setting is a shared cap across all configured units, not an update
+interval for every entity. It defaults to **4 read requests per second** and
+can be set from **0.5 to 10 requests per second** in steps of 0.5. The cap
+includes retries and readback requests after writes; write sequences retain
+their separate hardware timing.
+
+Each unit's values are refreshed in groups:
+
+| Data group | Normal refresh interval |
+|---|---:|
+| Airflow and operating mode | 10 seconds |
+| Status, temperatures, and environment sensors | 60 seconds |
+| Filter status and days until filter change | 1 hour |
+| Operating hours | 1 hour |
+| Humidity and CO2 control settings | 1 hour |
+
+The scheduler staggers jobs across units and processes due jobs sequentially.
+At startup, values appear progressively rather than in one snapshot. More
+configured units, a lower request-rate cap, or transport retries can delay the
+initial scan and later refreshes; the intervals above are targets, not
+guaranteed delivery times.
+
+After three consecutive transport failures, polling backs off from 5 seconds
+and increases up to 60 seconds. A successful read resumes the normal schedule.
+Airflow data is considered stale after 30 seconds without a successful read;
+other groups become stale after three times their normal interval. A unit is
+marked unavailable after three consecutive failed read jobs or more than
+120 seconds without a successful response.
+
 ## Diagnostic entities
 
 Some diagnostic entities such as operating hours remain disabled by default.

@@ -98,7 +98,7 @@ prüft die Beschreibungen für sämtliche Config- und Options-Flow-Felder.
 | ✅ | [`diagnostics`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/diagnostics) | Diagnostics sind implementiert; der serielle Port wird aus den Ausgaben redigiert. [diagnostics.py](../../custom_components/meltem_ventilation/diagnostics.py) |
 | ➖ | [`discovery-update-info`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/discovery-update-info) | Die Verbindung erfolgt lokal über USB/seriellen Port; eine dynamische IP- oder Netzwerkadresse gibt es nicht zu aktualisieren. |
 | ✅ | [`discovery`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/discovery) | USB-Discovery und Scan der Units über das Gateway sind implementiert. [manifest.json](../../custom_components/meltem_ventilation/manifest.json), [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py) |
-| ⚠️ | [`docs-data-update`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-data-update) | Die [README.md](../../README.md) erklärt die konfigurierbare Request-Rate und den gestaffelten Start. Der Default von 4 Requests/s und die konkrete Update-Strategie bzw. deren Grenzen sind nicht vollständig beschrieben. [const.py](../../custom_components/meltem_ventilation/const.py), [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py) |
+| ✅ | [`docs-data-update`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-data-update) | Die [README.md](../../README.md) nennt die Default-Rate von 4 Requests/s und den Einstellbereich, dokumentiert die normalen Intervalle je Datengruppe, den gestaffelten Scheduler und die Folgen von mehr Units, niedrigerer Rate und Transport-Backoff. [const.py](../../custom_components/meltem_ventilation/const.py), [polling.py](../../custom_components/meltem_ventilation/polling.py), [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py) |
 | ❌ | [`docs-examples`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-examples) | Es sind keine verwendbaren Automations-YAML-Beispiele oder Blueprints dokumentiert. |
 | ✅ | [`docs-known-limitations`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-known-limitations) | Nicht verifizierte Hardwareprofile und die erforderliche manuelle Profilwahl werden in der [README.md](../../README.md) als Einschränkungen benannt. |
 | ✅ | [`docs-supported-devices`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-supported-devices) | Die [README.md](../../README.md) listet die unterstützten Profile und grenzt die Hardware ab, mit der getestet wurde. |
@@ -126,32 +126,30 @@ prüft die Beschreibungen für sämtliche Config- und Options-Flow-Felder.
 
 ## Verifikation
 
-Die Tests und statischen Prüfungen wurden am 13. Oktober 2026 in einer
-isolierten Umgebung mit Python 3.14.7 und den im Repository festgelegten
-Testabhängigkeiten ausgeführt:
+Die Tests und statischen Prüfungen wurden am 13. Oktober 2026 mit Python 3.14.7
+und den im Repository festgelegten Testabhängigkeiten ausgeführt:
 
-- **Pytest:** 661 bestanden.
-- **Gesamte Testabdeckung:** 99 %.
-- **`config_flow.py`:** 100 %.
-- **`write_confirmation.py`:** 94 %; verfehlt die Silver-Anforderung von über
-  95 % je Modul.
-- **Ruff:** alle Prüfungen bestanden.
+- **Coverage-Lauf:** 669 bestanden, 1 Plattformtest ausgeschlossen, dessen
+  Teardown `/dev/ttyACM0` zu öffnen versucht.
+- **Gesamte Testabdeckung:** 99 %; jedes Integrationsmodul liegt über 95 %,
+  das niedrigste bei 96 %.
+- **`config_flow.py` und `write_confirmation.py`:** jeweils 100 %.
+- **Ruff:** alle geänderten Python-Dateien bestanden.
 - **mypy:** keine Befunde in 28 Quelldateien.
 - **Hassfest und HACS-Validierung:** in diesem Audit nicht lokal ausgeführt;
   beide Jobs sind in [ci.yml](../../.github/workflows/ci.yml) konfiguriert.
 
-Die Coverage-Zahlen stammen aus `pytest --cov=custom_components.meltem_ventilation
---cov-report=term-missing:skip-covered`. Für den Audit wurden Abhängigkeiten in
-einer temporären Umgebung installiert und diese anschließend entfernt; es
-wurden keine Projektdateien verändert.
+Die Coverage-Zahlen stammen aus
+`pytest --cov=custom_components.meltem_ventilation --cov-report=term-missing
+--deselect=tests/test_platform_matrix.py::test_device_path_sensor_keeps_its_registry_entry_across_reloads`.
 
 ## Empfohlene nächste Schritte
 
 1. **Bronze für eine Core-Kandidatur abschließen:** Brand-Assets passend zu
    den Vorgaben im zentralen `core_integrations/meltem_ventilation`-Verzeichnis
    bereitstellen.
-2. **Gold verbessern:** nutzbare Automationsbeispiele, präzise
-   Polling-/Update-Angaben und `icons.json` ergänzen. Für automatische
+2. **Gold verbessern:** nutzbare Automationsbeispiele und `icons.json`
+   ergänzen. Für automatische
    Geräteaufnahme müsste außerdem das Hinzufügen neuer Units während des
    Betriebs umgesetzt werden.
 3. **Platinum vorbereiten:** striktes Typing schrittweise einführen und die
