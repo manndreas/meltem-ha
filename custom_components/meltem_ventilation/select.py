@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -16,8 +15,9 @@ from .const import (
     PRESET_MODE_OPTIONS,
     SENSOR_CONTROL_PROFILES,
 )
+from .coordinator import MeltemDataUpdateCoordinator
 from .entity import MeltemEntity, room_supports_entity
-from .models import MeltemRuntimeData, RoomConfig
+from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, RoomConfig
 
 # The coordinator serializes all gateway access itself.
 PARALLEL_UPDATES = 0
@@ -25,7 +25,7 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MeltemIntegrationConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Meltem select entities."""
@@ -52,7 +52,9 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
     _attr_entity_category = EntityCategory.CONFIG
     _attr_entity_category = EntityCategory.CONFIG
 
-    def __init__(self, coordinator, room: RoomConfig) -> None:
+    def __init__(
+        self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig
+    ) -> None:
         super().__init__(coordinator, room, "operation_mode", "operation_mode")
         options = [OPERATION_MODE_INACTIVE]
         if room.profile in HUMIDITY_PROFILES:
@@ -81,7 +83,9 @@ class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
     _requires_fresh_read_group = False
     _attr_options = list(PRESET_MODE_OPTIONS)
 
-    def __init__(self, coordinator, room: RoomConfig) -> None:
+    def __init__(
+        self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig
+    ) -> None:
         super().__init__(coordinator, room, "preset_mode", "preset_mode")
 
     @property

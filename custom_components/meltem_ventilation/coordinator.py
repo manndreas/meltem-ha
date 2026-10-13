@@ -20,7 +20,6 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
@@ -64,7 +63,14 @@ from .levels import (
 )
 from .modbus_client import MeltemModbusClient, normalize_control_setting
 from .modbus_helpers import MeltemModbusError
-from .models import EMPTY_ROOM_STATE, RefreshPlan, RoomConfig, RoomState, WriteValue
+from .models import (
+    EMPTY_ROOM_STATE,
+    MeltemIntegrationConfigEntry,
+    RefreshPlan,
+    RoomConfig,
+    RoomState,
+    WriteValue,
+)
 from .overlay import OptimisticOverlay
 from .polling import (
     AIRFLOW_REFRESH_PLAN,
@@ -120,7 +126,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self,
         hass: HomeAssistant,
         *,
-        config_entry: ConfigEntry,
+        config_entry: MeltemIntegrationConfigEntry,
         client: MeltemModbusClient,
         rooms: list[RoomConfig],
         max_requests_per_second: float,

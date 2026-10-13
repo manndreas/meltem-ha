@@ -122,7 +122,7 @@ prüft die Beschreibungen für sämtliche Config- und Options-Flow-Felder.
 |---|---|---|
 | ✅ | [`async-dependency`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/async-dependency) | Die Modbus-Kommunikation wird über asynchrone APIs ausgeführt; blockierende Pfadauflösung wird in einen Executor ausgelagert. [modbus_client.py](../../custom_components/meltem_ventilation/modbus_client.py), [__init__.py](../../custom_components/meltem_ventilation/__init__.py) |
 | ➖ | [`inject-websession`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/inject-websession) | Die Integration verwendet keine HTTP-Abhängigkeit bzw. Websession. |
-| ❌ | [`strict-typing`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/strict-typing) | Der vorhandene mypy-Lauf ist erfolgreich, aber [pyproject.toml](../../pyproject.toml) aktiviert keinen Strict-Modus. `check_untyped_defs = true` allein erfüllt die Regel nicht. |
+| ✅ | [`strict-typing`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/strict-typing) | [pyproject.toml](../../pyproject.toml) aktiviert `mypy`-Strict-Modus; die Integration verwendet den runtime-data-typisierten `MeltemIntegrationConfigEntry`. Nicht mehr benötigte `type: ignore[override]`-Direktiven wurden entfernt; die Executor-Rückgabe wird an der Home-Assistant-Grenze passend zum typisierten Worker auf `str` eingegrenzt. [models.py](../../custom_components/meltem_ventilation/models.py) |
 
 ## Verifikation
 
@@ -135,7 +135,9 @@ und den im Repository festgelegten Testabhängigkeiten ausgeführt:
   das niedrigste bei 96 %.
 - **`config_flow.py` und `write_confirmation.py`:** jeweils 100 %.
 - **Ruff:** alle geänderten Python-Dateien bestanden.
-- **mypy:** keine Befunde in 28 Quelldateien.
+- **mypy --strict:** keine Befunde in 28 Quelldateien; der als `Any` typisierte
+  Home-Assistant-Executor-Rückgabewert wird an der Aufrufgrenze anhand des
+  annotierten Worker-Ergebnisses als `str` behandelt.
 - **Hassfest und HACS-Validierung:** in diesem Audit nicht lokal ausgeführt;
   beide Jobs sind in [ci.yml](../../.github/workflows/ci.yml) konfiguriert.
 
@@ -150,5 +152,3 @@ Die Coverage-Zahlen stammen aus
    bereitstellen.
 2. **Gold verbessern:** Das Hinzufügen neuer Units während des Betriebs
    umsetzen, damit sie ohne erneuten Scan und Reload automatisch erscheinen.
-3. **Platinum vorbereiten:** striktes Typing schrittweise einführen und die
-   verbleibenden Typisierungsbefunde beheben.

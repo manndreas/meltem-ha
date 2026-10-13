@@ -10,18 +10,23 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.binary_sensor.const import BinarySensorDeviceClass
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import ALL_PROFILES, READ_GROUP_ENTITY_KEYS
+from .coordinator import MeltemDataUpdateCoordinator
 from .entity import MeltemEntity, room_supports_entity
-from .models import MeltemRuntimeData, RoomState
+from .models import (
+    MeltemIntegrationConfigEntry,
+    MeltemRuntimeData,
+    RoomConfig,
+    RoomState,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -63,7 +68,7 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MeltemIntegrationConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Meltem binary sensor entities."""
@@ -92,7 +97,12 @@ class MeltemBinarySensorEntity(MeltemEntity, BinarySensorEntity):
 
     entity_description: MeltemBinarySensorDescription
 
-    def __init__(self, coordinator, room, description: MeltemBinarySensorDescription) -> None:
+    def __init__(
+        self,
+        coordinator: MeltemDataUpdateCoordinator,
+        room: RoomConfig,
+        description: MeltemBinarySensorDescription,
+    ) -> None:
         super().__init__(coordinator, room, description.key, description.key)
         self.entity_description = description
 
@@ -109,7 +119,9 @@ class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
     # The timestamps change on every poll and would bloat the recorder.
     _unrecorded_attributes = frozenset({*READ_GROUP_ENTITY_KEYS, "writes"})
 
-    def __init__(self, coordinator, room) -> None:
+    def __init__(
+        self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig
+    ) -> None:
         super().__init__(coordinator, room, "data_health", "data_health")
 
     @property

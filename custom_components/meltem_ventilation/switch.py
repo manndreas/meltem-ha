@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .coordinator import MeltemDataUpdateCoordinator
 from .entity import MeltemEntity, room_supports_entity
-from .models import MeltemRuntimeData, RoomConfig
+from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, RoomConfig
 
 # The coordinator serializes all gateway access itself.
 PARALLEL_UPDATES = 0
@@ -16,7 +18,7 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MeltemIntegrationConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Meltem switch entities."""
@@ -40,7 +42,9 @@ class MeltemIntensiveSwitch(MeltemEntity, SwitchEntity):
 
     _requires_fresh_read_group = False
 
-    def __init__(self, coordinator, room: RoomConfig) -> None:
+    def __init__(
+        self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig
+    ) -> None:
         super().__init__(coordinator, room, "intensive", "intensive")
 
     @property
@@ -52,8 +56,8 @@ class MeltemIntensiveSwitch(MeltemEntity, SwitchEntity):
             return None
         return self.room_state.intensive_active
 
-    async def async_turn_on(self, **kwargs) -> None:
+    async def async_turn_on(self, **kwargs: Any) -> None:
         await self.coordinator.async_activate_intensive(self.room.key)
 
-    async def async_turn_off(self, **kwargs) -> None:
+    async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.async_deactivate_intensive(self.room.key)

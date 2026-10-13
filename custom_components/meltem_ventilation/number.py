@@ -15,7 +15,6 @@ from homeassistant.components.number import (
     NumberEntityDescription,
     NumberMode,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
@@ -25,8 +24,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import CO2_PROFILES, CONTROL_SETTING_LIMITS, HUMIDITY_PROFILES
+from .coordinator import MeltemDataUpdateCoordinator
 from .entity import MeltemEntity, room_supports_entity
-from .models import MeltemRuntimeData, RoomState
+from .models import (
+    MeltemIntegrationConfigEntry,
+    MeltemRuntimeData,
+    RoomConfig,
+    RoomState,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -75,7 +80,7 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MeltemIntegrationConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Meltem number entities."""
@@ -99,8 +104,8 @@ class MeltemControlSettingNumber(MeltemEntity, NumberEntity):
 
     def __init__(
         self,
-        coordinator,
-        room,
+        coordinator: MeltemDataUpdateCoordinator,
+        room: RoomConfig,
         description: MeltemControlSettingNumberDescription,
     ) -> None:
         super().__init__(coordinator, room, description.key, description.key)

@@ -10,13 +10,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any
+from typing import Any, cast
 
 import probatio as vol
 from homeassistant import config_entries
 from homeassistant.components.modbus import async_get_temporary_unit
-from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
-from homeassistant.core import callback
+from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import selector
@@ -50,12 +50,12 @@ from .modbus_helpers import (
     read_gateway_node_count,
     resolve_preferred_port_path,
 )
-from .models import MeltemRuntimeData
+from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
 # Probed sensor suffix to the preselected profile; the series stays M-WRG-II.
-_SUFFIX_DEFAULT_PROFILES = {
+_SUFFIX_DEFAULT_PROFILES: dict[str, str] = {
     "plain": "ii_plain",
     "f": "ii_f",
     "fc": "ii_fc",
@@ -66,7 +66,7 @@ type _Probe = Callable[[int], Awaitable[tuple[str, str | None]]]
 
 
 def _build_options_result_data(
-    config_entry: ConfigEntry, request_rate: float
+    config_entry: MeltemIntegrationConfigEntry, request_rate: float
 ) -> dict[str, object]:
     """Return the persisted options payload for finishing an options flow."""
 
@@ -175,7 +175,7 @@ def _unit_details(
 
 @callback
 def _device_names_by_slave(
-    hass, config_entry_id: str, rooms: list[Mapping[str, Any]]
+    hass: HomeAssistant, config_entry_id: str, rooms: list[Mapping[str, Any]]
 ) -> dict[int, str]:
     """Map unit addresses to the device names the user set in Home Assistant.
 
@@ -257,7 +257,7 @@ class _PortInUseError(MeltemConnectionError):
 
 @asynccontextmanager
 async def _temporary_units(
-    hass, port: str
+    hass: HomeAssistant, port: str
 ) -> AsyncIterator[Callable[[int], Awaitable[ModbusUnit]]]:
     """Hold units on the gateway link for one flow step.
 
@@ -317,7 +317,7 @@ async def _async_probe_units(
 
 
 async def _async_discover_units(
-    hass, port: str
+    hass: HomeAssistant, port: str
 ) -> tuple[list[int], dict[int, str], dict[int, str]]:
     """Read the unit list from the gateway and probe every unit on one link.
 
@@ -340,20 +340,23 @@ async def _async_discover_units(
     return slaves, previews, profiles
 
 
-async def _async_validate_port(hass, port: str) -> None:
+async def _async_validate_port(hass: HomeAssistant, port: str) -> None:
     """Check that a gateway answers on the given serial port."""
 
     async with _temporary_units(hass, port) as unit_for:
         await read_gateway_node_count(await unit_for(DEFAULT_GATEWAY_DEVICE_ID))
 
 
-async def _async_resolve_port(hass, port: str) -> str:
+async def _async_resolve_port(hass: HomeAssistant, port: str) -> str:
     """Resolve the stable serial path off the event loop.
 
     Resolution walks ``/dev/serial/by-id``, which is blocking filesystem I/O.
     """
 
-    return await hass.async_add_executor_job(resolve_preferred_port_path, port)
+    return cast(
+        str,
+        await hass.async_add_executor_job(resolve_preferred_port_path, port),
+    )
 
 
 class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -373,14 +376,14 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(
-        config_entry: ConfigEntry,
+        config_entry: MeltemIntegrationConfigEntry,
     ) -> MeltemVentilationOptionsFlow:
         """Return the options flow handler."""
 
         return MeltemVentilationOptionsFlow()
 
     async def async_step_user(
-        self, user_input: dict | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Collect the serial port and scan for connected units."""
 
@@ -420,7 +423,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return await self.async_step_confirm_usb()
 
     async def async_step_confirm_usb(
-        self, user_input: dict | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Confirm a discovered USB device before scanning units."""
 
@@ -484,7 +487,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return None
 
     async def async_step_profiles(
-        self, user_input: dict | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Collect the profile for each detected unit."""
 
@@ -519,7 +522,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_reconfigure(
-        self, user_input: dict | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Change the serial port of the gateway."""
 
@@ -597,7 +600,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         return runtime_data.coordinator if runtime_data is not None else None
 
     async def async_step_init(
-        self, user_input: dict | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Choose which configuration action to perform."""
 
@@ -611,7 +614,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_edit_request_rate(
-        self, user_input: dict | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Change the maximum poll-job start rate."""
 
@@ -639,7 +642,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_edit_profiles(
-        self, user_input: dict | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit the profiles for already known units without rescanning."""
 
@@ -696,7 +699,9 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             description_placeholders=placeholders,
         )
 
-    async def _async_apply_profiles(self, updated_data: dict) -> ConfigFlowResult:
+    async def _async_apply_profiles(
+        self, updated_data: dict[str, Any]
+    ) -> ConfigFlowResult:
         """Persist changed room profiles and reload the entry."""
 
         options = _build_options_result_data(
@@ -709,7 +714,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         return self.async_create_entry(title="", data=options)
 
     async def async_step_rescan_units(
-        self, user_input: dict | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Rescan the gateway for configured units and update the integration."""
 
@@ -752,7 +757,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         return None
 
     async def async_step_profiles(
-        self, user_input: dict | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Update profiles after a rescan."""
 

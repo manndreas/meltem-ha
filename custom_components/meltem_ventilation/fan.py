@@ -8,9 +8,10 @@ mode with separate supply and extract targets.
 from __future__ import annotations
 
 import math
+from typing import Any
 
-from homeassistant.components.fan import FanEntity, FanEntityFeature
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.fan import FanEntity
+from homeassistant.components.fan.const import FanEntityFeature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util.percentage import (
@@ -25,8 +26,9 @@ from .const import (
     LEVEL_WRITE_FALLBACK_BALANCED,
     profile_max_airflow,
 )
+from .coordinator import MeltemDataUpdateCoordinator
 from .entity import MeltemEntity, room_supports_entity
-from .models import MeltemRuntimeData, RoomConfig
+from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, RoomConfig
 
 DEFAULT_TURN_ON_PERCENTAGE = 50
 
@@ -36,7 +38,7 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MeltemIntegrationConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Meltem fan entities."""
@@ -61,7 +63,12 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         | FanEntityFeature.TURN_ON
     )
 
-    def __init__(self, coordinator, room: RoomConfig, direction: str) -> None:
+    def __init__(
+        self,
+        coordinator: MeltemDataUpdateCoordinator,
+        room: RoomConfig,
+        direction: str,
+    ) -> None:
         entity_key = f"{direction}_level"
         super().__init__(coordinator, room, entity_key, entity_key)
         self._direction = direction
@@ -103,13 +110,13 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
             return supply, extract
         return extract, supply
 
-    @property  # type: ignore[override]
+    @property
     def is_on(self) -> bool | None:
         percentage = self.percentage
         return None if percentage is None else percentage > 0
 
-    @property  # type: ignore[override]
-    def percentage(self) -> int | None:  # type: ignore[override]
+    @property
+    def percentage(self) -> int | None:
         level, _other_level = self._directional_levels()
         if level is None:
             return None
@@ -123,7 +130,7 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         self,
         percentage: int | None = None,
         preset_mode: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         if percentage is None:
             if self.is_on:
@@ -132,7 +139,7 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
             percentage = self._last_on_percentage
         await self.async_set_percentage(percentage or DEFAULT_TURN_ON_PERCENTAGE)
 
-    async def async_turn_off(self, **kwargs) -> None:
+    async def async_turn_off(self, **kwargs: Any) -> None:
         await self.async_set_percentage(0)
 
     async def async_set_percentage(self, percentage: int) -> None:
