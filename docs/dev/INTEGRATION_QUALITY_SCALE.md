@@ -17,8 +17,8 @@ Silver, Gold und Platinum werden für Core-Integrationen vergeben. Eine
 vor.
 
 Würde die Integration als Kandidat für Home Assistant Core bewertet, wäre sie
-nach dieser Prüfung **noch nicht Bronze-konform**. Der wesentliche offene
-Bronze-Punkt ist eine Anleitung zum Entfernen der Integration.
+nach dieser Prüfung **Bronze-konform**. Die bisher letzte offene Bronze-Regel
+zur Anleitung für das Entfernen ist jetzt erfüllt.
 
 Darüber hinaus scheitern einzelne Regeln höherer Stufen auch unabhängig davon,
 ob Bronze bereits erreicht ist. Die Quality Scale ist kumulativ: Eine Stufe
@@ -53,7 +53,7 @@ Dateipfade verlinken auf die geprüften Stellen im Repository.
 | ✅ | [`docs-conditions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-conditions) | Die eigene [Condition-Anleitung](../CONDITION_FILTER_CHANGE_DUE.md) erklärt Zweck und Parameter (`behavior`, `for`), enthält UI-Schritte und ein YAML-Beispiel. Die [README.md](../../README.md) verlinkt die Seite. |
 | ✅ | [`docs-high-level-description`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-high-level-description) | Die [README.md](../../README.md) erklärt Zweck, Hersteller, Gateway und Produktfamilien. |
 | ✅ | [`docs-installation-instructions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-installation-instructions) | Die [README.md](../../README.md) erklärt Voraussetzungen sowie HACS- und manuelle Installation. |
-| ❌ | [`docs-removal-instructions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-removal-instructions) | Eine Anleitung zum Entfernen der Integration ist in der [README.md](../../README.md) nicht vorhanden. |
+| ✅ | [`docs-removal-instructions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-removal-instructions) | Die [Anleitung zum Entfernen](../REMOVE_INTEGRATION.md) beschreibt das Entfernen des Config-Entries sowie die Deinstallation per HACS und manuell. Sie ist in der [README.md](../../README.md) verlinkt. |
 | ➖ | [`entity-event-setup`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/entity-event-setup) | Die Integration abonniert keine Entity-Events, für die Lifecycle-Registrierung erforderlich wäre. |
 | ✅ | [`entity-unique-id`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/entity-unique-id) | Room-Entities erhalten stabile IDs über die gemeinsame [entity.py](../../custom_components/meltem_ventilation/entity.py)-Basisklasse. |
 | ✅ | [`has-entity-name`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/has-entity-name) | Die gemeinsame Entity-Basisklasse setzt `has_entity_name`; der zusätzliche Sensor setzt es ebenfalls. [entity.py](../../custom_components/meltem_ventilation/entity.py), [sensor.py](../../custom_components/meltem_ventilation/sensor.py) |
@@ -139,14 +139,11 @@ wurden keine Projektdateien verändert.
 
 ## Empfohlene nächste Schritte
 
-1. **Bronze vervollständigen:** `data_description`-Texte ergänzen, die
-   ungetesteten Flow-Zweige abdecken sowie eine Anleitung zum Entfernen
-   hinzufügen.
-2. **Silver absichern:** `write_confirmation.py` auf über 95 % bringen und
+1. **Silver absichern:** `write_confirmation.py` auf über 95 % bringen und
    beim Übergang in den Ausfallzustand ein einmaliges Info-Log ergänzen.
-3. **Gold verbessern:** nutzbare Automationsbeispiele, präzise
+2. **Gold verbessern:** nutzbare Automationsbeispiele, präzise
    Polling-/Update-Angaben und `icons.json` ergänzen. Für automatische
    Geräteaufnahme müsste außerdem das Hinzufügen neuer Units während des
    Betriebs umgesetzt werden.
-4. **Platinum vorbereiten:** striktes Typing schrittweise einführen und die
+3. **Platinum vorbereiten:** striktes Typing schrittweise einführen und die
    verbleibenden Typisierungsbefunde beheben.
