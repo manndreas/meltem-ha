@@ -102,6 +102,11 @@ UI instructions, options, and a YAML example.
 Copy `custom_components/meltem_ventilation/` into your Home Assistant config
 directory and restart Home Assistant.
 
+## Removing the integration
+
+To remove the config entry and uninstall the integration from HACS or a manual
+installation, follow the [removal instructions](./docs/REMOVE_INTEGRATION.md).
+
 ## Setup
 
 1. Open `Settings` -> `Devices & Services`
