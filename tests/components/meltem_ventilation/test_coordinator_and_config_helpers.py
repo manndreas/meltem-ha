@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -2000,7 +2000,7 @@ class TestCoordinator:
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
         coordinator.data = {"unit_1": state}
 
-        with pytest.raises(HomeAssistantError) as err:
+        with pytest.raises(ServiceValidationError) as err:
             await coordinator.async_set_control_setting("unit_1", setting_key, value)
 
         assert err.value.translation_key == "control_level_range"
@@ -2046,7 +2046,7 @@ class TestCoordinator:
         )
 
         assert results[0] is None
-        assert isinstance(results[1], HomeAssistantError)
+        assert isinstance(results[1], ServiceValidationError)
         assert results[1].translation_key == "control_level_range"
         assert client.write_control_setting_calls == [("unit_1", *writes[0])]
         state = coordinator.safe_data["unit_1"]
@@ -2069,7 +2069,7 @@ class TestCoordinator:
             writes.reverse()
 
         await coordinator.async_set_control_setting("unit_1", *writes[0])
-        with pytest.raises(HomeAssistantError) as err:
+        with pytest.raises(ServiceValidationError) as err:
             await coordinator.async_set_control_setting("unit_1", *writes[1])
 
         assert err.value.translation_key == "control_level_range"
