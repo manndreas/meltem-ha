@@ -50,6 +50,7 @@ from .const import (
     RAW_CODE_TO_PRESET_MODE,
     RAW_VALUE_TO_SENSOR_MODE,
     READ_GROUP_ENTITY_KEYS,
+    REGISTER_CURRENT_LEVEL,
     SENSOR_MODE_TO_RAW_VALUE,
     VOC_PROFILES,
     profile_max_airflow,
@@ -299,6 +300,20 @@ class MeltemModbusClient:
                 state,
                 group_read_health=_updated_read_health(room, previous_state, refresh_plan, job),
             )
+
+    async def read_balanced_target_readback(self, room: RoomConfig) -> int:
+        """Read the exact set-side airflow target used to confirm balanced writes."""
+
+        async with self._gateway_operation(
+            f"reading balanced airflow target register {REGISTER_CURRENT_LEVEL} for room {room.key}"
+        ):
+            values = await self._unit(room.slave).read_holding_registers(REGISTER_CURRENT_LEVEL, 1)
+            if len(values) != 1 or not 0 <= values[0] <= 200:
+                raise MeltemModbusError(
+                    f"Register {REGISTER_CURRENT_LEVEL} returned an invalid raw airflow target "
+                    f"for room {room.key}: {values!r}"
+                )
+            return _scale_raw_level_to_airflow(room, values[0])
 
     async def _poll(
         self,
@@ -578,13 +593,7 @@ class MeltemModbusClient:
             state,
             operation_mode=operation_mode,
             target_level=target_level,
-            balanced_target_readback=(
-                _scale_raw_level_to_airflow(room, raw_current_level)
-                if operation_mode in (OPERATION_MODE_OFF, OPERATION_MODE_MANUAL)
-                and raw_current_level is not None
-                and 0 <= raw_current_level <= 200
-                else None
-            ),
+            balanced_target_readback=None,
             extract_target_level=extract_target_level,
             preset_mode=_decode_preset_mode(block, raw_extract_target, state.preset_mode),
             intensive_active=state.intensive_active if block is None else False,
@@ -741,14 +750,34 @@ def _decode_balanced_target_readback(
     extract_air_flow: int | None,
     supply_air_flow: int | None,
 ) -> int | None:
-    """Return a balanced target readback or fall back to measured airflow."""
+    """Return a balanced target for display, falling back to measured airflow."""
 
-    if raw_level is not None and 0 <= raw_level <= 200:
-        return _scale_raw_level_to_airflow(room, raw_level)
+    target = _decode_balanced_target_value(room, raw_level)
+    if target is not None:
+        return target
 
     # A shared "current level" only makes sense when both airflow
     # directions are effectively balanced.
     return derive_balanced_airflow(extract_air_flow, supply_air_flow)
+
+
+def _decode_balanced_target_value(room: RoomConfig, raw_level: int | None) -> int | None:
+    """Decode a readable balanced target without substituting measured airflow."""
+
+    if raw_level is None:
+        return None
+    if 0 <= raw_level <= 200:
+        return _scale_raw_level_to_airflow(room, raw_level)
+    return _decode_app_encoded_airflow(room, raw_level)
+
+
+def _decode_app_encoded_airflow(room: RoomConfig, raw_level: int) -> int | None:
+    """Decode the app's ``200 + airflow / 10`` encoding within the profile limit."""
+
+    if raw_level <= APP_UNBALANCED_PRESET_BASE:
+        return None
+    airflow = (raw_level - APP_UNBALANCED_PRESET_BASE) * 10
+    return airflow if airflow <= profile_max_airflow(room.profile) else None
 
 
 def _decode_unbalanced_target_readback(room: RoomConfig, raw_level: int) -> int | None:
@@ -756,14 +785,7 @@ def _decode_unbalanced_target_readback(room: RoomConfig, raw_level: int) -> int 
 
     if 0 <= raw_level <= 200:
         return _scale_raw_level_to_airflow(room, raw_level)
-    if raw_level > APP_UNBALANCED_PRESET_BASE:
-        # The app encodes the shortcut airflow as 200 + m3/h per 10. Quick
-        # mode codes land in the same range but decode far above the rated
-        # airflow, so they must not be reported as a target.
-        max_airflow = profile_max_airflow(room.profile)
-        airflow = (raw_level - APP_UNBALANCED_PRESET_BASE) * 10
-        return airflow if airflow <= max_airflow else None
-    return None
+    return _decode_app_encoded_airflow(room, raw_level)
 
 
 def _decode_operation_mode(mode_value: int, current_value: int) -> str | None:

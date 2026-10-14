@@ -26,8 +26,12 @@ from custom_components.meltem_ventilation.const import (
     MODE_SENSOR_CONTROL,
     MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE,
     MODE_UNBALANCED,
+    PRESET_MODE_CODE_HIGH,
     PRESET_MODE_CODE_INTENSIVE,
+    PRESET_MODE_CODE_LOW,
+    PRESET_MODE_CODE_MEDIUM,
     PROFILE_METADATA,
+    REGISTER_CURRENT_LEVEL,
     REGISTER_EXHAUST_AIR_TEMPERATURE,
     REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_EXTRACT_AIR_TEMPERATURE,
@@ -365,8 +369,68 @@ class TestAirflowTargets:
         state = await _read_flow(client, RoomState(target_level=30))
 
         assert state.target_level == 60
-        assert state.balanced_target_readback == 60
+        assert state.balanced_target_readback is None
         assert state.extract_target_level is None
+
+    @pytest.mark.parametrize(
+        ("status_level", "expected_target"),
+        [(203, 30), (204, 40), (206, 60), (210, 100)],
+    )
+    async def test_balanced_app_encoded_status_is_not_an_exact_target_readback(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        status_level: int,
+        expected_target: int,
+    ) -> None:
+        _seed(unit, flow=(60, 60), mode=[MODE_MANUAL, status_level, 0, 0, 0])
+
+        state = await _read_flow(client)
+
+        assert state.target_level == expected_target
+        assert state.balanced_target_readback is None
+        assert state.preset_mode is None
+
+    async def test_balanced_target_confirmation_reads_only_set_register_41121(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        unit.holding[REGISTER_CURRENT_LEVEL] = [130]
+
+        target = await client.read_balanced_target_readback(_PLAIN)
+
+        assert target == 65
+        assert _reads(unit) == [(REGISTER_CURRENT_LEVEL, 1)]
+
+    async def test_balanced_target_confirmation_rejects_non_airflow_codes(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        unit.holding[REGISTER_CURRENT_LEVEL] = [230]
+
+        with pytest.raises(MeltemModbusError, match="invalid raw airflow target"):
+            await client.read_balanced_target_readback(_PLAIN)
+
+    @pytest.mark.parametrize(
+        ("profile", "status_level", "flow", "expected_target"),
+        [
+            ("ii_plain", 211, (60, 60), 60),
+            ("s_plain", 210, (97, 97), 97),
+        ],
+    )
+    async def test_balanced_app_encoded_status_respects_profile_limit(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        profile: str,
+        status_level: int,
+        flow: tuple[int, int],
+        expected_target: int,
+    ) -> None:
+        _seed(unit, flow=flow, mode=[MODE_MANUAL, status_level, 0, 0, 0])
+
+        state = await _read_flow(client, room=replace(_PLAIN, profile=profile))
+
+        assert state.target_level == expected_target
+        assert state.balanced_target_readback is None
 
     async def test_target_falls_back_to_balanced_airflow(
         self, client: MeltemModbusClient, unit: MockModbusUnit
@@ -634,10 +698,17 @@ class TestModeDecoding:
         [
             pytest.param(
                 (30, 30),
-                [MODE_MANUAL, 229, 0, 0, 0],
+                [MODE_MANUAL, PRESET_MODE_CODE_MEDIUM, 0, 0, 0],
                 RoomState(operation_mode="manual"),
                 "medium",
                 id="app-code",
+            ),
+            pytest.param(
+                (60, 60),
+                [MODE_MANUAL, PRESET_MODE_CODE_HIGH, 0, 0, 0],
+                RoomState(operation_mode="manual"),
+                "high",
+                id="high-preset",
             ),
             pytest.param(
                 (50, 0),
@@ -662,7 +733,7 @@ class TestModeDecoding:
             ),
             pytest.param(
                 (30, 30),
-                [MODE_MANUAL, 228, 0, 0, 0],
+                [MODE_MANUAL, PRESET_MODE_CODE_LOW, 0, 0, 0],
                 RoomState(preset_mode="intensive"),
                 "low",
                 id="cleared-shadow-registers-give-the-base-preset",
@@ -683,6 +754,7 @@ class TestModeDecoding:
         state = await _read_flow(client, previous)
 
         assert state.preset_mode == expected_preset
+        assert state.balanced_target_readback is None
 
     async def test_raw_200_is_not_misdecoded_as_extract_only(
         self, client: MeltemModbusClient, unit: MockModbusUnit

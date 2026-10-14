@@ -109,6 +109,9 @@ class _FakeClient:
             )
         return state
 
+    async def read_balanced_target_readback(self, room: RoomConfig) -> int:
+        return 0
+
     async def write_level(self, room: RoomConfig, level: int) -> None:
         self.write_level_calls.append((room.key, level))
 

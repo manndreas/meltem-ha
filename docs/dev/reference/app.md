@@ -50,6 +50,12 @@ power-on (`FBH` 6.2).
 | Intensive | "Intensivlüftung" | time-limited intensive ventilation | `APP` slide 30 |
 | Standby | "Standby" | the unit goes into standby, closes the flaps and waits for a new command. The command can come from a time program, the unit's own keys, InControl, the 4-way push button, the external radio sensors or the app | `APP` slide 30 |
 
+The slide deck gives the manual range but not its step size. A user observation
+of the official iOS app on 2026-10-14 found that manual airflow is selectable
+in 10 m³/h increments and applies the same target to supply and extract. This
+describes the app UI only; it does not establish a device or Modbus resolution
+limit.
+
 Information shown per unit (`APP` slide 31):
 
 - filter change indicator in days (time remaining until a filter change is
