@@ -7,6 +7,10 @@ and which candidate solutions exist. How to measure is in
 [LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md); every entry names its tests
 there.
 
+Every live run for an item is written up in detail here, in a dated subsection
+of that item. Other documents only summarise it and link here; the behavior a
+run establishes goes as a short finding into `docs/dev/MELTEM.md`.
+
 Related documents:
 
 - `docs/dev/reference/` — manufacturer reference extracted from the Meltem documents
@@ -251,52 +255,96 @@ the observed values `204` and `206` fit `200 + airflow / 10` for targets 40
 and 60. The client now decodes this app encoding for balanced status when the
 result is within the profile maximum; preset codes `228..230` remain distinct.
 This run used the integration-like client rather than the live Home Assistant
-coordinator; the coordinator confirmation was separately validated in W-17.
+coordinator; the coordinator confirmation was validated separately in
+[W-17](#w-17-home-assistant-write-confirmation-on-2026-10-14).
+
+### W-17 Home Assistant write confirmation on 2026-10-14
+
+Real Home Assistant `2026.10.0` drove slave `4` (M-WRG-II, software `2326`,
+mapped as unit 3), starting from HIGH at measured `60/60 m3/h` with status
+`[3,230,0]`.
+
+- **First attempt, mismatch:** the supply `63%` write was confirmed at
+  `63/60`. After at least 10 seconds, the extract `63%` write remained
+  `mismatch` for more than 60 seconds (`expected=63/63`, `actual=63/60`,
+  `last_error=null`). With HA stopped, raw reads returned
+  `41100..41102=[3,126,0]`, `41120=3`, `41121=126`, `41122=120`, `41132=0`,
+  `41016=0`, and measured airflow `60/60`. The stored `41121` target was
+  therefore `63 m3/h`, but these values did not show what the coordinator had
+  read when it reported the mismatch. The approved HIGH restore (`41120=3`,
+  `41121=230`, `41132=0`) was verified at status `[3,230,0]`, `41122=120`,
+  `41016=0`, and `60/60`.
+- **Cause and fix:** offline tracing found the cause in the retry gate:
+  `mismatch` remained eligible for recovery in `confirm()`, but
+  `needs_confirmation()` excluded it, so no later exact `41121` read was
+  made. The coordinator now continues exact reads for mismatched writes; a
+  regression test covers an initial unbalanced `63/60` read followed by a
+  manual-mode exact `63` readback.
+- **Retest, pass:** again from HIGH, measured `60/60`, and fresh read-health
+  groups, supply `63%` was confirmed at `63/60`; after at least 10 seconds,
+  extract `63%` was confirmed at `63/63` with `last_error=null`. With HA
+  stopped, raw reads returned the same values as after the first attempt. The
+  measured airflow had not yet converged, which is a separate settle-time
+  observation (see below). The approved HIGH restore was verified at
+  `[3,230,0]`, `41121=230`, `41122=120`, `41132=0`, `41016=0`, and `60/60`.
+  The live mapping was `63% -> 63 m3/h`, not the previously assumed
+  `64 m3/h`. Local captures, not archived:
+  `all_known-slave4-20261014-145009-W17-confirmed-before-restore.json` and
+  `all_known-slave4-20261014-145023-W17-confirmed-restored-baseline.json`.
+
+This validates the coordinator's balanced-write confirmation on the tested
+M-WRG-II, not on M-WRG-S.
 
 ### Follow-up airflow lag through Home Assistant on 2026-10-14
 
-With slave `4` back at fresh HIGH and measured `60/60 m3/h`, HA commanded the
-supply fan to `40%`. The coordinator confirmed expected/actual `[40,60]`;
-measured supply remained `60` at about 5 s and read `40` by 11.4 s, while
-extract stayed at `60`. After more than 10 s, the extract fan was set to `40%`;
-HA confirmed `[40,40]`. Measured airflow was still `40/60` at about 5 s and
-read `40/40` by 9.2 s. Selecting HIGH was confirmed at the preset-register
-readback, but measured airflow stayed `40/40` through about 16 s and read
-`60/60` by 17 s. The following fresh flow-group read also reported `60/60`;
-the read-health groups were fresh and both write statuses were confirmed.
+Five controlled cycles on slave `4` started from fresh HIGH at measured
+`60/60 m3/h`: supply fan `40%`, after more than 10 seconds extract fan `40%`,
+then the HIGH preset. Measured airflow comes from HA's flow-group reads about
+every 10 seconds, so the times below are polling bounds, not physical response
+times.
 
-These are polling-based bounds from one M-WRG-II unit, not a guarantee of
-physical response time. They do show that target confirmation is earlier than
-measured convergence, and that the return from `40/40` to HIGH took longer
-than the downward airflow step in this observation.
+- **Cycle 1:** HA confirmed supply `[40,60]`; measured supply was still `60`
+  at about 5 s and `40` by 11.4 s, while extract stayed at `60`. HA confirmed
+  extract `[40,40]`; measured airflow was still `40/60` at about 5 s and
+  `40/40` by 9.2 s. HIGH was confirmed at the preset-register readback, but
+  measured airflow stayed `40/40` through about 16 s and read `60/60` by 17 s
+  and on the following fresh read. The read-health groups were fresh and both
+  write statuses were confirmed.
+- **Cycle 2:** measured `40/60` and then `40/40` within 9.1 s and 7.9 s of the
+  respective write starts. After the confirmed HIGH preset, fresh reads still
+  showed `40/40` at 27 s and showed `60/60` by 47.5 s and on the next fresh
+  poll. With HA stopped, single-register reads verified status `[3,230,0]`,
+  `41120=3`, `41121=230`, `41122=120`, `41123=0`, `41124=0`, `41132=0`,
+  `41016=0`, and measured `60/60`. Local capture, not archived:
+  `all_known-slave4-20261014-151659-HA-airflow-lag-HIGH-restored.json`.
+- **Cycle 3:** supply airflow reached `40` by 12.7 s. The first read after
+  the extract write mismatched at `[40,60]`; the next fresh flow poll
+  confirmed `[40,40]` and measured `40/40` about 12 s after that write. HIGH
+  was confirmed at `13:18:43.476 UTC`; a flow read at `13:18:45.262`, about
+  1.8 s later, already showed `60/60`, and the next fresh poll at
+  `13:18:53.116` still did.
+- **Cycle 4:** the supply and extract `40%` service calls returned at
+  `13:42:18.746` and `13:42:19.097 UTC`; these are service completion times,
+  not readback confirmations. The fresh flow read at `13:42:23.672` still
+  showed `60/60` and a `[40,60]` mismatch; the next at `13:42:34.170` showed
+  `40/40` and confirmed `[40,40]`. The HIGH request started at
+  `13:42:41.104`; its readback at `13:42:46.164` confirmed HIGH while flow was
+  still `40/40`, and the next read at `13:42:48.262` showed `60/60`, about
+  2.1 s later. Reads were fresh and error-free throughout.
+- **Cycle 5:** the two `40%` service calls returned at `13:46:21.847` and
+  `13:46:22.311 UTC`. The fresh read at `13:46:26.560` confirmed target
+  `[40,40]` while airflow was still `60/60`; the next at `13:46:37.054`
+  measured `40/40`. HIGH was requested at `13:46:37.373`; its readback at
+  `13:46:42.426` confirmed HIGH with airflow still `40/40`, and the next read
+  at `13:46:47.594` showed `60/60`, about 5.2 s later. Reads were fresh and
+  error-free.
 
-A repeat cycle again reached measured `40/60` and then `40/40` within 9.1 s
-and 7.9 s of the respective HA write starts. On the return to HIGH, the preset
-write was confirmed, but fresh reads still showed `40/40` at 27 s and showed
-`60/60` by 47.5 s and on the next fresh poll. After HA stopped, single-register
-reads verified status `[3,230,0]`, `41120=3`, `41121=230`, `41122=120`,
-`41123=0`, `41124=0`, `41132=0`, `41016=0`, and measured `60/60`.
-The restored-state capture is
-`all_known-slave4-20261014-151659-HA-airflow-lag-HIGH-restored.json`.
-In a third cycle, the first post-extract read mismatched at `[40,60]`; the next
-fresh flow poll confirmed `[40,40]` and measured `40/40` about 12 s after that
-write. Supply airflow reached `40` by 12.7 s. After HIGH was confirmed, a flow
-read about 1.8 s later already showed `60/60`, which remained on the next fresh
-poll. Across the first three repetitions, HIGH return observations ranged
-from under 2 s to 16–17 s and 27–47.5 s. In a fourth controlled cycle, two
-fresh HA flow reads after the 40% writes showed `60/60` with a `[40,60]`
-mismatch at `13:42:23.672 UTC`, then `40/40` with confirmed `[40,40]` at
-`13:42:34.170`. The HIGH preset readback confirmed at `13:42:46.164` while
-flow was still `40/40`; the next fresh read at `13:42:48.262` showed
-`60/60`, about 2.1 s later. The writes were healthy and reads were fresh.
-This further supports variable return times, not a single settle interval.
-In a fifth controlled cycle, the fresh read at `13:46:26.560 UTC` confirmed
-target `[40,40]` while measured airflow remained `60/60`; the next read at
-`13:46:37.054` measured `40/40`. The HIGH preset readback at `13:46:42.426`
-confirmed HIGH with airflow still `40/40`; the next read at
-`13:46:47.594` measured `60/60`, about 5.2 s later. Reads remained fresh
-without errors. The service-call response and register/readback confirmation
-are distinct events. Do not change timing from these five repetitions;
+Target confirmation always came before measured convergence, and the
+service-call response, the register readback, and the measured airflow are
+distinct events. The observed return to HIGH ranged from under 2 s through
+about 2.1 s, 5.2 s, and 16–17 s to 27–47.5 s, so there is no single settle
+interval. These are bounds from one M-WRG-II unit and HA's poll cadence, not
+a response-time guarantee. Do not change timing from these five cycles;
 gather more controlled samples first.
 
 ### One-second raw airflow polls on 2026-10-14
@@ -308,7 +356,7 @@ polls 1–6 and `40/40` at poll 7; `40/40` held through all 60 polls. Restoring
 `41120=3`, `41121=230`, `41132=0` returned `60/60` already at poll 1 and held
 through all 60 polls. All 120 reads succeeded. Final single-register reads
 verified `[3,230,0]`, `41120=3`, `41121=230`, `41122=120`, `41123=0`,
-`41124=0`, `41132=0`, `41016=0`, and `60/60`. Capture:
+`41124=0`, `41132=0`, `41016=0`, and `60/60`. Local capture, not archived:
 `all_known-slave4-20261014-152255-W17-HA-airflow-lag-raw-timing-HIGH-restored.json`.
 
 This uses direct current-level register writes, not HA's quick-mode service.
@@ -328,11 +376,13 @@ manual `40 m3/h` setup before this replay reached measured `40/40` by poll 3.
 Final readback was `[3,230,0]`, `41120..41124=[3,230,120,0,0]`,
 `41132=0`, and measured `60/60`. This is the same register order over the
 raw tool transport, not the HA tmodbus transport; it does not explain the
-slower HA observations. Capture:
+slower HA observations. Local capture, not archived:
 `all_known-slave4-20261014-152627-W17-HA-preset-sequence-raw-HIGH-restored.json`.
 
 ### Six-slave read load during raw airflow observation
 
+This run defined test
+[W-18](LIVE_GATEWAY_TESTS.md#w-18--measured-airflow-under-the-full-polling-load).
 With HA stopped and a fresh all-known snapshot saved, one serial client ran
 the integration's real `build_jobs` schedule for all six configured slaves,
 at the same 4 requests/s limit and 0.1 s request spacing. An additional raw
@@ -346,9 +396,9 @@ transport diagnostics showed zero timeouts and zero link recycles. The
 before/after all-known captures differed only in shadow/meta counters, with
 the unit's runtime and documented settings restored. This one loaded run did
 not reproduce the long HA return outlier; it does not exclude an intermittent
-delay. Raw log:
-`w18-six-slave-interleaved-airflow.jsonl`. Captures:
-`all_known-slave4-20261014-155722-before-W18-six-slave-load.json` and
+delay. Local raw log and captures, not archived:
+`w18-six-slave-interleaved-airflow.jsonl`,
+`all_known-slave4-20261014-155722-before-W18-six-slave-load.json`, and
 `all_known-slave4-20261014-160332-after-W18-six-slave-load.json`.
 
 ### Candidate solutions (HW-2)
@@ -490,7 +540,11 @@ Slave `4` was then power-cycled for about five minutes. Immediately after
 power-up, the five-register read, two-register read, and single reads at
 `41121` / `41122` still returned exception code `0x05`. The unit therefore
 does not become readable from a power cycle alone. Whether a first write
-unlocks it remained unknown at that point.
+unlocks it remained unknown at that point. The airflow registers
+`41020..41021` answered on the first post-power-up read and on five
+consecutive samples with `20/20 m3/h`, matching the Meltem app; five more
+minutes of polling changed neither the reading nor produced transport
+timeouts. No Modbus writes were made up to this point.
 
 After an explicitly authorized write of `41120=3`, `41121=40`, and
 `41132=0`, the two-register read at `41120` became readable as `[3, 40]` and
@@ -541,16 +595,12 @@ input-register map was found on this unit. Single-register FC03 reads of
 not find a read-only unlock path.
 
 The ioBroker community template identifies `41100..41102` as polled
-read-only mode/supply/extract status and keeps `41120..41122` plus `41132`
-as set registers. A direct FC03 read of `41100×3` succeeded on all six
-slaves without writes:
-`2=[3,229,0]`, `3=[3,229,0]`, `4=[4,0,208]`, `5=[3,228,0]`,
-`6=[4,68,203]`, `7=[3,229,0]`. These values match the observed preset and
-unbalanced states. The integration now uses this status map for all
-supported M-WRG-S and M-WRG-II profiles on the user's explicit assumption
-that both series behave alike. Only M-WRG-II has been directly measured so
-far. The map remains community/live-observation evidence, not a
-manufacturer-documented register map.
+read-only mode/supply/extract status. A direct FC03 read of `41100×3`
+succeeded on all six slaves without writes, with values that match the
+observed preset and unbalanced states; the values and later checks are in
+[MELTEM.md](MELTEM.md#read-only-mode-status-at-4110041102). This status map is
+what the integration now reads, see
+[Current implementation](#current-implementation).
 
 A cross-check against [pyairios](https://github.com/scabrero/pyairios) found
 no generic login or read-unlock sequence. Its
@@ -575,46 +625,34 @@ which disables the mobile-app connection. This is community evidence, not an
 official vendor procedure; do not switch modes or reset the bridge as an
 unlock experiment.
 
-T-10 provided a separate uncontrolled clue on slave `5`: the mode-group
-readings became successful during the soak, and the post-soak probe decoded an
-intensive state. The user reported several wall-button operations on slave `5`
-during T-10, but the times and actions were not recorded. The observed
-register values and limitation are recorded in
-[MELTEM.md](MELTEM.md#mode-read-change-during-t-10). No Modbus writes were sent
-to slave `5`; this is not a controlled measurement of what made the block
-readable.
-
-During T-10, no Modbus writes were made, but the user reported operating
-slave `5`'s wall button several times. Its airflow jobs reported the same
-mode-register code `0x05` for 6,228 rounds, then reported success for 2,412
-rounds. A post-soak R-9 read returned the full block
+T-10 provided a separate, uncontrolled clue on slave `5` (firmware `2584`).
+No Modbus writes were made, but the user reported operating its wall button
+several times; the times and actions were not recorded. Its airflow jobs
+reported the mode-register code `0x05` for 6,228 rounds, then succeeded for
+2,412 rounds. A post-soak R-9 read returned the full block
 `41120..41124 = [0, 0, 0, 3, 227]`; the integration decoded
 `intensive_active=True`, and `41020..41021` read `75/75 m3/h`. Because the
 button actions were not timestamped or controlled, this is a correlation, not
 evidence that a wall-button action unlocked the block or caused the intensive
-state. Slave `5` uses firmware `2584`; repeat this observation under
-controlled conditions before changing HW-4 behavior.
+state. Repeat this observation under controlled conditions before changing
+HW-4 behavior.
 
 ### Remaining validation
 
 - **HA deployment/read health:** verified on 2026-10-14 with isolated HA Core
   `2026.10.0` and all six configured units. Slave `4`'s `flow_control` and
   `intensive` groups were fresh without a mode change.
-- Confirm status-block/single-register parity on an M-WRG-II unit in R-12.
+- **Status-block/single-register parity (R-12):** matched on all six
+  M-WRG-II units on 2026-10-14, see
+  [MELTEM.md](MELTEM.md#read-only-mode-status-at-4110041102).
 - Validate the assumed same register map on an M-WRG-S unit when available.
   Since `4.1.0` there is no fallback to the set registers: a unit that refuses
   `41100` keeps `flow_control` and `intensive` stale and its mode, quick mode,
   and intensive state unknown.
-- **HA coordinator write confirmation (W-17):** the first run mismatched
-  (`expected=63/63`, `actual=63/60`). Code inspection found that `mismatch`
-  remained recoverable in `confirm()`, but `needs_confirmation()` excluded it,
-  so a later exact `41121` read was skipped. A regression test now covers a
-  stale unbalanced read followed by a matching manual-mode read. The live
-  retest confirmed `63/63`; after stopping HA, raw `41121=126` verified the
-  stored `63 m3/h` target while measured airflow remained `60/60`. The HIGH
-  baseline was restored and verified. This validates the coordinator path on
-  the tested M-WRG-II, not M-WRG-S; see
-  [W-17](LIVE_GATEWAY_TESTS.md#w-17--home-assistant-coordinator-balanced-write-confirmation).
+- **HA coordinator write confirmation (W-17):** validated on the tested
+  M-WRG-II after a coordinator fix; the first run had ended in a mismatch.
+  M-WRG-S is still open. See
+  [W-17 under HW-2](#w-17-home-assistant-write-confirmation-on-2026-10-14).
 - **Sensor-mode subcodes:** the read-side codes `48` (automatic), `112`
   (humidity control), and `176` (CO2 control) come only from the ioBroker
   script's decode; none of the six units was in sensor control during the
@@ -726,7 +764,7 @@ connection (tmodbus via `modbus-connection`). The request shapes and their
 order are unchanged and covered by tests against an in-memory gateway, but
 the original timing and error findings in this backlog were measured with
 pymodbus. A first live comparison with tmodbus was run on 2026-10-02; results
-and the remaining open release-gate items are below.
+and the remaining post-release items are below.
 
 Two behaviors found in review depend on how the gateway answers and are left
 as they are until measured:
@@ -782,9 +820,13 @@ tmodbus transport introduced in `4.0.0`. They are no longer a release gate for
 ### Partial measurement: HW-7 on 2026-10-02
 
 - **Measurement 1:** The six read-only benchmark scenarios completed 1,440
-  requests per transport with no failures. tmodbus was not slower than the
-  pymodbus baseline in those simple request patterns. The gap-0 T-3 run failed
-  during gateway discovery; the tested gaps `0.05..0.3 s` passed once each.
+  requests per transport, alternating A-B-A-B, with no failures and no
+  protocol or desynchronization errors. The pymodbus baseline had average
+  latencies of `18.6..19.5 ms` and p95 `19.6..19.8 ms`; tmodbus averaged
+  about `15.8 ms`, with p95 `15.9..16.8 ms`, p99 `16.7 ms`, and maximum
+  `16.9 ms`. tmodbus was therefore not slower in those simple request
+  patterns. The gap-0 T-3 run timed out while reading the discovery list at
+  `43902`; the tested gaps `0.05..0.3 s` passed 60/60 requests once each.
 - **Measurements 2 and 5:** Unconfigured slave `8` timed out after about
   `0.8 s` in G-5. During the ten-minute T-5 run, each of its 60 airflow jobs
   used two requests and took about `1.8 s`; `link_recycles` stayed at `0`.
@@ -842,10 +884,8 @@ refreshes and 240/240 scheduler jobs successful, while tmodbus reported
 mode-register exception code `5`. These success counts are not directly
 comparable. The raw register-profile tests showed the same mode-register
 exceptions on both transports. HW-7 remains open: active Busy behavior and
-the USB lifecycle are still unmeasured. The first real Home Assistant balanced
-write in W-17 mismatched; after a coordinator fix, its retest confirmed the
-write on slave `4`. T-10 was transport-stable but did not meet the proposed
-whole-job success threshold.
+the USB lifecycle are still unmeasured. T-10 was transport-stable but did not
+meet the proposed whole-job success threshold.
 The powered-off-unit test saw successful integration jobs, but did not log
 their returned state. The integration-like success/error comparison still
 needs a like-for-like interpretation.
@@ -887,8 +927,9 @@ logs and snapshots were local-only and are not part of the repository.
   must not be counted as a pass or repeated.
 - **3 / 4 — Mode reads and write confirmation:** On slave `4`, W-1 read back
   target `41121=40` after requesting `20 m3/h`; measured airflow changed from
-  `80/0` to `20/20` by observation six. After the helper's restore, the
-  person manually restored `80/0`, which a later read confirmed. The
+  `80/0` to `20/20` by observation six. After the helper restored its own
+  target to off, the person manually restored `80/0`, which a later read
+  confirmed. The
   post-restore snapshot contained multiple shadow-register differences whose
   cause is unknown. The test used a helper, not the Home Assistant
   coordinator; the freshly powered-unit mode-read case remains open.
@@ -931,7 +972,10 @@ logs and snapshots were local-only and are not part of the repository.
   `41101=206` for raw target `41121=120` on restore. This contradicts the raw
   `0..200` echo assumption. The final HIGH restore was verified after two
   minutes with `41016=0`; the full five-register set block still returned
-  exception `0x05`. See the detailed HW-2 measurement above.
+  exception `0x05`. See
+  [Follow-up W-1 on 2026-10-14](#follow-up-w-1-on-2026-10-14) under HW-2.
+  The real Home Assistant coordinator confirmed balanced writes in W-17 after
+  a fix, see [W-17](#w-17-home-assistant-write-confirmation-on-2026-10-14).
 
 ### Current disposition
 
@@ -941,15 +985,16 @@ logs and snapshots were local-only and are not part of the repository.
 - **2 — Powered-off unit:** partial. The 2026-10-09 H-1 run exceeded its
   five-minute limit and did not record values; it is inconclusive, not a pass.
 - **3 — Mode status map:** partial. Block/single parity succeeded on all six
-  connected nodes on 2026-10-14; Home Assistant deployment and M-WRG-S
-  validation remain open (HW-4 / R-12).
+  connected nodes on 2026-10-14, and the HA deployment read the status map
+  with fresh read-health groups; M-WRG-S validation remains open (HW-4 /
+  R-12).
 - **4 — Writes:** partial. W-1 measured the airflow response, but `41101`
   returned app-encoded values rather than the raw `41121` target. The client
   decodes this encoding for displayed targets, while balanced write
   confirmation reads the exact set-side `41121` value only while a write is
-  pending. Focused tests cover this path; a helper rather than the real Home
-  Assistant coordinator performed the hardware write, so live confirmation
-  remains unmeasured.
+  pending. W-17 confirmed this path with the real Home Assistant coordinator
+  on M-WRG-II. The settle time after writes varies widely (HW-2), and the lock
+  duration in the live coordinator has not been measured.
 - **5 — Busy:** inconclusive. No Busy response appeared in passive runs, and
   the active stimulus was not run under the current pacing safety rules.
 - **6 — Link lifecycle:** partial. Port locking and new-process reopening

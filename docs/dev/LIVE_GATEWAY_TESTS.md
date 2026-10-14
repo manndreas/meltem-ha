@@ -284,7 +284,7 @@ Run R on every unit unless the test says otherwise.
 - **Checks:** `40002` PRODUCT_ID = `116852`, `40011` PRODUCT_NAME =
   `VMD-22RPS44`, `40021` = `40002`, `40004` software version `2326` / `2584`
   ([MELTEM.md](MELTEM.md#product-registers-and-readable-islands)). Raw material
-  for decoding the product ID ([TODO.md](TODO.md) item 2) and for telling
+  for decoding the product ID ([TODO-2](TODO.md#todo-2--decode-product_id)) and for telling
   `M-WRG-S` from `M-WRG-II`.
 - **Type:** R
 - **Run:** per unit
@@ -405,7 +405,7 @@ Run R on every unit unless the test says otherwise.
 ### R-9 — Mode block before any write
 
 - **Checks:** many units reject `41120..41124` until a write occurred (HW-4
-  measurement 1, [MELTEM.md](MELTEM.md#target-readback-and-measured-airflow)).
+  measurement 1, [MELTEM.md](MELTEM.md#set-register-readback-at-4112041124)).
 - **Type:** R
 - **Run:** before any W test touches the unit, run
   `& $py -m tools.raw_requests --port $port --slave $s` without request
@@ -577,7 +577,7 @@ Run R on every unit unless the test says otherwise.
 
 ### T-8 — Wider block reads (optional)
 
-- **Checks:** groundwork for wider block reads ([TODO.md](TODO.md) item 4).
+- **Checks:** groundwork for wider block reads ([TODO-4](TODO.md#todo-4--wider-block-reads)).
   Not part of HW-7 post-release validation. The `register_ranges` stay
   unchanged until a benchmark backs a change.
 - **Type:** R
@@ -660,8 +660,9 @@ Notes on the tools:
 
 ### W-1 — Balanced write: status readback and airflow lag
 
-- **Checks:** status register `41101` reflects a balanced write at once
-  (60 m³/h ↔ raw `120`); `41020/41021` lag behind
+- **Checks:** status register `41101` reports a balanced target in the app
+  encoding `200 + airflow / 10` (60 m³/h ↔ `206`), while the set register
+  `41121` holds the raw value (`120`); `41020/41021` lag behind
   ([MELTEM.md](MELTEM.md#target-readback-and-measured-airflow)); HW-2
   measurement 3; HW-7 measurement 4.
 - **Type:** W
@@ -674,10 +675,11 @@ Notes on the tools:
   `Push-Location ..\meltem-ha-baseline; & $py ..\meltem-ha\tools\run_pymodbus_baseline.py --port $port --gap 0.1 --mode write_observe --room-index $ri --delta <d> --observe-seconds 60 --sample-interval 1; Pop-Location`.
 - **Pass:** the client decodes the new target from `41100..41102` in the first
   sample. Record the time until `41020/41021` reach the target (±1) per delta.
-  Record raw `41101` in every sample: since `4.1.0` balanced write
-  confirmation relies on it echoing the raw `0..200` value written to `41121`
-  (HW-4). Another encoding or a later change means every balanced fan write
-  ends `unconfirmed`; report it before the release.
+  Record raw `41101` and `41121` in every sample. The integration confirms a
+  balanced write only from the exact `41121` readback and uses `41101` for
+  display ([DEVELOPER.md](DEVELOPER.md#target-readback-and-measured-airflow));
+  a `41101` value that fits neither the raw nor the `200 + airflow / 10` form
+  is a finding for HW-4.
 
 ### W-2 — Settle delay sweep
 
@@ -913,7 +915,7 @@ Notes on the tools:
 
 - **Checks:** the live coordinator's exact `41121` readback for a balanced
   directional-fan write, separately from the time taken for measured airflow
-  to change.
+  to change (HW-2, HW-7 measurement 4).
 - **Type:** W
 - **Run:**
   1. Use the real Home Assistant integration and a mapped room on the live
@@ -932,113 +934,25 @@ Notes on the tools:
   balanced write is confirmed at `63/63` within 60 seconds. Measured airflow
   may lag and is not the immediate pass criterion. Restore and verify the
   baseline before ending the test.
-- **First attempt on 2026-10-14 — mismatch:** the test began on slave `4`
-  (M-WRG-II, software `2326`) at HIGH, measured `60/60 m3/h`, with status
-  `[3,230,0]`. The supply `63%` write was confirmed at `63/60`. After at least
-  10 seconds, the extract `63%` write remained `mismatch` for more than
-  60 seconds (`expected=63/63`, `actual=63/60`, `last_error=null`). After
-  Home Assistant was stopped, raw reads returned
-  `41100..41102=[3,126,0]`, `41120=3`, `41121=126`, `41122=120`,
-  `41132=0`, `41016=0`, and measured airflow `60/60`. This confirms the
-  stored `41121` target was `63 m3/h`, but does not explain the coordinator's
-  mismatch. The approved HIGH restore (`41120=3`, `41121=230`, `41132=0`)
-  was verified at status `[3,230,0]`, `41122=120`, `41016=0`, and `60/60`.
-- **Cause and fix:** `mismatch` was not final in `confirm()`, but
-  `needs_confirmation()` excluded it, blocking later exact-target reads.
-  A regression test now models the initial unbalanced `63/60` read followed
-  by a manual-mode exact `41121` read and recovery to `confirmed`.
-- **Retest on 2026-10-14 — pass:** after reloading the fixed integration,
-  supply `63%` was confirmed at `63/60`; after at least 10 seconds, extract
-  `63%` was confirmed at `63/63` with `last_error=null`. HA was stopped and
-  raw reads showed `41100..41102=[3,126,0]`, `41120=3`, `41121=126`,
-  `41122=120`, `41132=0`, `41016=0`, and measured airflow `60/60`.
-  The target confirmation passed; the measured airflow had not yet converged.
-  The approved HIGH restore was verified at `[3,230,0]`, `41121=230`,
-  `41122=120`, `41132=0`, `41016=0`, and `60/60`. The live mapping was
-  `63% -> 63 m3/h`, not `64 m3/h`.
-  Captures: `all_known-slave4-20261014-145009-W17-confirmed-before-restore.json`
-  and `all_known-slave4-20261014-145023-W17-confirmed-restored-baseline.json`.
-- **Separate measured-airflow follow-up:** from fresh HIGH at measured
-  `60/60`, HA confirmed supply `40%` as `[40,60]`; measured airflow changed
-  from `60/60` to `40/60` between about 5 and 11.4 seconds. More than
-  10 seconds later, HA confirmed extract `40%` as `[40,40]`; measured flow
-  changed from `40/60` to `40/40` between about 5 and 9.2 seconds. HIGH was
-  confirmed as a preset write; measured airflow changed from `40/40` to
-  `60/60` between about 16 and 17 seconds, then stayed `60/60` at the next
-  fresh flow read. Both write outcomes were `confirmed` with no errors.
-  Treat these as bounds from this unit and the HA poll cadence, not a general
-  response-time guarantee.
-- **Repeat:** from the same HIGH `60/60` baseline, measured airflow reached
-  `40/60` by 9.1 s after the supply write and `40/40` by 7.9 s after the
-  extract write; both writes were confirmed. The HIGH preset was confirmed,
-  but airflow remained `40/40` at 27 s and returned to `60/60` by 47.5 s,
-  remaining there at the next fresh poll. After HA stopped, raw reads verified
-  `[3,230,0]`, `41120=3`, `41121=230`, `41122=120`, `41123=0`, `41124=0`,
-  `41132=0`, `41016=0`, and measured `60/60`. Capture:
-  `all_known-slave4-20261014-151659-HA-airflow-lag-HIGH-restored.json`.
-  In a third repetition, supply `40/60` was measured by 12.7 s. The extract
-  write's first read mismatched at `[40,60]`; the next fresh poll confirmed
-  `[40,40]` and measured `40/40` at about 12 s. After HIGH was confirmed, the
-  next flow read about 1.8 s later already showed `60/60`, still present at
-  the   following fresh poll. Across the first three repetitions, observed HIGH
-  return bounds ranged from under 2 s through 16–17 s to 27–47.5 s.
-- **Fourth controlled HA repetition:** the supply and extract `40%` service
-  calls returned at `13:42:18.746 UTC` and `13:42:19.097 UTC`; these are
-  service completion times, not airflow readback confirmations. The fresh
-  flow read at `13:42:23.672` still showed `60/60` and write status
-  `mismatch`, actual `[40,60]`. The next fresh read at `13:42:34.170` showed
-  `40/40` and confirmed `[40,40]`. The HIGH preset request started at
-  `13:42:41.104`; the fresh readback at `13:42:46.164` confirmed HIGH while
-  measured flow remained `40/40`. The next flow read at `13:42:48.262` showed
-  `60/60`, about 2.1 s later. Reads were fresh and error-free throughout.
-  Across four repetitions, HIGH return observations range from under 2 s to
-  about 2.1 s, 16–17 s, and 27–47.5 s.
-- **Fifth controlled repetition:** the two `40%` fan service calls returned
-  at `13:46:21.847` and `13:46:22.311 UTC`. A fresh read at `13:46:26.560`
-  confirmed target `[40,40]` while measured flow was still `60/60`; the next
-  read at `13:46:37.054` measured `40/40`. The HIGH preset was requested at
-  `13:46:37.373`; the readback at `13:46:42.426` confirmed HIGH while measured
-  flow remained `40/40`. The next read at `13:46:47.594` measured `60/60`,
-  about 5.2 s later. Reads were fresh and error-free. Across five
-  repetitions, HIGH return bounds range from under 2 s to about 2.1 s, 5.2 s,
-  16–17 s, and 27–47.5 s; do not tune timing from this small sample.
-- **One-second raw timing comparison:** with HA stopped, direct writes
-  `41120=3`, `41121=80`, `41132=0` left airflow at `60/60` for six one-second
-  polls and reached `40/40` at poll 7, holding through poll 60. Restoring
-  `41120=3`, `41121=230`, `41132=0` read `60/60` at poll 1 and held through
-  poll 60. All 120 reads succeeded. Final raw values were
-  `[3,230,0]`, `41120=3`, `41121=230`, `41122=120`, `41123=0`, `41124=0`,
-  `41132=0`, `41016=0`, `41020/41021=60/60`. This compares the direct
-  current-level path; it does not substitute for timing the HA quick-mode
-  service. Capture:
-  `all_known-slave4-20261014-152255-W17-HA-airflow-lag-raw-timing-HIGH-restored.json`.
-- **Raw replay of the HA preset sequence:** from measured `40/40`, write
-  `41123=0`, `41124=0`, `41120=3`, `41121=230`, `41132=0` in the HA client's
-  order. The first one-second airflow read remained `40/40`; the second read
-  was `60/60`, and it held through poll 60. All 60 reads succeeded. The
-  preceding 40 m3/h setup reached `40/40` by poll 3. Final verification was
-  `[3,230,0]`, `41120..41124=[3,230,120,0,0]`, `41132=0`, measured `60/60`.
-  This replays the register sequence over the raw tool transport, not HA's
-  tmodbus transport, and does not resolve the longer HA-observed delays.
-  Capture:
-  `all_known-slave4-20261014-152627-W17-HA-preset-sequence-raw-HIGH-restored.json`.
-- **W-18, six-slave polling load:** after saving a fresh all-known snapshot and
-  stopping HA, one serial client ran the integration's actual `build_jobs`
-  plans for all six configured slaves at 4 requests/s, with 0.1 s request
-  spacing. An extra raw `41020..41021` read sampled slave 4 about once per
-  second. Manual 40 m3/h was first measured at `14:01:59.134 UTC`, about
-  6.9 s after the write call returned. The HIGH preset write returned at
-  `14:02:04.062`; the first raw `60/60` sample arrived at `14:02:09.134`,
-  about 5.1 s later. Across the 60-second HIGH observation, four initial
-  samples showed `40/40`, then 53 showed `60/60`; the largest sample gap was
-  1.8 s. All scheduler reads succeeded; transport diagnostics showed zero
-  timeouts and link recycles. The before/after captures differed only in
-  shadow/meta counters, and slave 4's runtime was restored to HIGH. This
-  loaded run did not reproduce the earlier 27–47.5 s outlier, but one run
-  cannot rule out intermittent delays. Raw log:
-  `w18-six-slave-interleaved-airflow.jsonl`. Captures:
-  `all_known-slave4-20261014-155722-before-W18-six-slave-load.json` and
-  `all_known-slave4-20261014-160332-after-W18-six-slave-load.json`.
+
+### W-18 — Measured airflow under the full polling load
+
+- **Checks:** whether the integration's full read schedule for all units
+  delays the measured airflow response after a write, separately from Home
+  Assistant's 10-second flow polling (HW-2).
+- **Type:** W on the test unit, R on all other units
+- **Run:** stop Home Assistant and take the all-known snapshot. A throwaway
+  script in `$out\scripts\`, built from
+  [B.2](#b2--integration-client-with-request-counter), runs the integration's
+  `build_jobs` plans for every discovered unit on one link at the configured
+  request rate (for example 4 requests/s with 0.1 s spacing), while a second
+  task reads `41020..41021` of the test unit about once per second. Write a
+  balanced manual target, wait until it is measured, then write the previous
+  preset with the integration's preset sequence and observe for 60 seconds.
+- **Pass:** informational. Record per write the time from the returned write
+  call to the first sample at the target, the largest sample gap, and the
+  scheduler's read failures, timeouts, and link recycles. Restore from the
+  snapshot and compare the after-capture.
 
 ## H — Tests that need a person
 
@@ -1113,7 +1027,8 @@ repeats if needed.
 
 - **Checks:** [SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md) (families
   `intensive`, `keypad`, `cross_ventilation`, `humidity`, `co2`);
-  [TODO.md](TODO.md) item 1 (shortcut configuration in `511xx` / `520xx`).
+  [TODO-1](TODO.md#todo-1--shortcut-configuration-in-the-shadow-ranges-511xx--520xx)
+  (shortcut configuration in `511xx` / `520xx`).
 - **Run:** follow the capture workflow and stop criteria in
   SETTING_RE_BACKLOG.md: `capture_setting_family --family <f> --label baseline`;
   the person changes one app setting; capture with `--compare-latest`; the
@@ -1163,15 +1078,6 @@ repeats if needed.
 - **Pass:** no new transient read failures compared with the previous release;
   every recycle explained.
 
-## Not covered
-
-- Switching to 9600 baud via `30000` or changing the slave address via
-  `30002`: changes the bus settings; never written by this plan.
-- The gateway LAN interface and the cloud API.
-- A gateway factory reset: removes all radio pairings.
-- [TODO.md](TODO.md) item 3 (test harness for HA `2026.10`): no hardware
-  needed.
-
 ## HW-7 — Post-release tmodbus validation
 
 `4.0.0` has been released. The measurements below remain open post-release
@@ -1185,10 +1091,17 @@ incomparable.
 | 1. Benchmarks | latency and timeout rate against the pymodbus baseline | T-1, T-2, T-3, T-4 |
 | 2. Powered-off unit | timeout or code 10/11, requests per job, unwanted `disconnect()` | G-5, T-5, H-1 |
 | 3. Mode status map | block/single parity and M-WRG-S validation (HW-4) | R-12, H-2 |
-| 4. Writes | `41101` status confirmation, settle time, lock duration (HW-2) | W-1, W-2, W-3, W-6 |
+| 4. Writes | write confirmation via the exact `41121` readback, settle time, lock duration (HW-2) | W-1, W-2, W-3, W-6, W-17 |
 | 5. Busy | does the gateway answer code 6, and for how long | T-6 |
 | 6. Link lifecycle | USB replug, reload, unload release and reopen the port | T-7, T-9, H-3, H-9 |
 | 7. Soak | 24 hours of operation with all units | T-10, H-9 |
+
+## Not covered
+
+- Switching to 9600 baud via `30000` or changing the slave address via
+  `30002`: changes the bus settings; never written by this plan.
+- The gateway LAN interface and the cloud API.
+- A gateway factory reset: removes all radio pairings.
 
 ## Recording results
 
@@ -1196,7 +1109,8 @@ Keep raw output in the local results directory outside the repository; do not
 link to files that are not checked in. Keep the summary in `$out\SUMMARY.md`.
 If raw evidence is essential to a durable hardware finding, copy only the
 relevant, reviewed capture into `docs/dev/measurements/<date>/` and link that
-tracked copy:
+tracked copy. When a write-up names a capture that stays local, mark it as
+"local, not archived" so nobody looks for it in the repository:
 
 | ID | Time | Units | Result | Key numbers | Raw file |
 | --- | --- | --- | --- | --- | --- |
@@ -1205,21 +1119,28 @@ tracked copy:
 Result is one of `pass`, `fail`, `inconclusive`, `blocked`, or `skipped`, with
 a reason for every result other than `pass`.
 
-Afterwards, move the findings into the documentation:
+Afterwards, move the findings into the documentation. Write each run up in
+detail exactly once; every other document gets at most a short summary and a
+link to that write-up:
 
-- **HW items:** add a "Measured on `<date>`" paragraph with the numbers to the
-  item in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md), update its status, and
-  name the candidate the numbers support. For resolved items the decision
-  moves to [DEVELOPER.md](DEVELOPER.md) and the measured behavior to
-  [MELTEM.md](MELTEM.md).
-- **Hardware observations** (islands, encodings, product IDs, word order,
-  swap): [MELTEM.md](MELTEM.md), with the date and the software version of the
-  unit.
+- **HW items:** add a dated subsection with the numbers to the item in
+  [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md), update its status, and name the
+  candidate the numbers support. This is the detailed write-up of the run.
+- **Behavior the run establishes:** a short finding under the matching topic
+  in [MELTEM.md](MELTEM.md) that links to the HW subsection. For resolved items
+  the decision moves to [DEVELOPER.md](DEVELOPER.md).
+- **Hardware observations without an open HW item** (islands, encodings,
+  product IDs, word order, swap, host and link behavior): the detailed
+  write-up goes under the matching topic in [MELTEM.md](MELTEM.md), with the
+  date and the software version of the unit.
 - **Answers to manufacturer open questions:** do not edit the manufacturer
   tables in `docs/dev/reference/`. Record the observation in MELTEM.md and link it
   from the open question.
 - **HW-7 validation:** note under HW-7 which of its seven measurements passed,
   see [HW-7 post-release validation](#hw-7--post-release-tmodbus-validation).
+- **This plan:** do not add results to the test descriptions; it only
+  describes how to measure. A new procedure, such as a new test ID, is added
+  here as a test.
 
 Report to the person: failed and inconclusive tests, the candidate solutions
 the data supports, and the H tests still open.

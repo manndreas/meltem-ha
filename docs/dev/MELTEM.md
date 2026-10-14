@@ -5,6 +5,21 @@ engineered** on real hardware and is not covered by the manufacturer
 documentation. Examples are register quirks of the tested `M-WRG-GW` gateway
 and traced app writes.
 
+Each topic starts with the established behaviour, followed by its evidence.
+A live run for an open item in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) is
+written up in detail there; this file states what the run established and
+links to it.
+
+Topics:
+
+- [Gateway and request pacing](#gateway-and-request-pacing)
+- [Identity and readable registers](#identity-and-readable-registers)
+- [Temperature register quirk](#temperature-register-quirk)
+- [Operating mode and set registers](#operating-mode-and-set-registers)
+- [Target readback and measured airflow](#target-readback-and-measured-airflow)
+- [Reverse-engineered app preset behavior](#reverse-engineered-app-preset-behavior)
+- [Unit and link lifecycle](#unit-and-link-lifecycle)
+
 Manufacturer facts have moved to [reference/](reference/README.md):
 
 - Modbus settings, register map, write sequences and scaling:
@@ -16,22 +31,9 @@ Manufacturer facts have moved to [reference/](reference/README.md):
 - persistent device parameters (LOW / MEDIUM / HIGH, intensive, ...):
   [reference/device-parameters.md](reference/device-parameters.md)
 
-## Registers not covered by the collected manufacturer documents
+## Gateway and request pacing
 
-The integration uses `41013` as "VOC, supply air" (UINT16, `ppm`) for the
-`O/VOC-AUL` profile. An earlier version of this file listed the register and
-an `O/VOC-AUL` column (all temperatures, both humidities, CO2 and VOC) in the
-sensor matrix. None of the documents collected in `docs/meltem/` contains the
-register or the option. Their origin is unknown; treat both as unverified.
-
-Read-only probes on 2026-10-02 found that gateway address `1` rejected holding
-registers `41998..42001` with Modbus exception `0x02` (`Illegal Data Address`).
-The same gateway still answered uptime at `41019` and discovery at `43901` /
-`43902..`. Function `0x04` for `41020..41021`, diagnostics `0x08` subfunction
-`0`, report-server-ID `0x11`, and device-identification `0x2B/0x0E` returned
-Modbus exception `0x01` on the gateway and unit `2`.
-
-## Discovery and unit list
+### Discovery and unit list
 
 The gateway answers on its own Modbus address `1` and lists the units it
 knows there. On the tested gateway:
@@ -44,349 +46,42 @@ On 2026-10-02 the same count and address list appeared in ten consecutive
 probes. The gateway uptime increased from `2422` to `2895` seconds across a
 later interval of more than five minutes.
 
-## Mode reads after a power cycle
+### Gateway registers and function codes
 
-On 2026-10-02, slave `4` was powered off for about five minutes, then read
-immediately after power-up. The five-register read at `41120`, the two-register
-fallback, and single-register reads at `41121` / `41122` all still returned
-Modbus exception `0x05`. No Modbus writes were made.
+Read-only probes on 2026-10-02 found that gateway address `1` rejected holding
+registers `41998..42001` with Modbus exception `0x02` (`Illegal Data Address`).
+The same gateway still answered uptime at `41019` and discovery at `43901` /
+`43902..`. Function `0x04` for `41020..41021`, diagnostics `0x08` subfunction
+`0`, report-server-ID `0x11`, and device-identification `0x2B/0x0E` returned
+Modbus exception `0x01` on the gateway and unit `2`.
 
-The unit answered `41020..41021` on the first post-power-up read and on five
-consecutive samples. They reported `20/20 m3/h`, matching the Meltem app.
-Five minutes of further polling did not change the airflow reading or produce
-transport timeouts. This is an observation for this one unit, not a conclusion
-that all units behave the same after power loss.
+### Request pacing and block reads
 
-After an explicitly authorized write sequence on that unit
-(`41120=3`, `41121=40`, `41132=0`), the short read at `41120` returned
-`[3, 40]` and `41121` returned `40`. The five-register read at `41120` and
-single read at `41122` still returned exception `0x05` at 1, 10, and 60
-seconds. The integration decoded manual balanced operation at `20/20 m3/h`.
-This does not establish whether the five-register block is unsupported on all
-units; the post-write behavior has only been checked on slave `4`.
+- requests sent too quickly cause partial reads, stale data, or a temporary
+  loss of all values; the gateway answers one request after the other
+- a request gap of `0.1 s` was stable; no gap at all inflated latency heavily
+  without improving reliability
+- setup scans are sensitive to short timeouts
+- stable block reads: airflow `41020..41021`, status `41016..41018`, and
+  temperatures `41002..41005` plus a separate `41009`
+- over tmodbus (since `4.0.0`), simple reads took about `16 ms` on average,
+  slightly faster than with the earlier pymodbus client (`18.6..19.5 ms`)
+- in the one request-gap sweep, gaps of `0.05..0.3 s` passed, while gap `0`
+  timed out reading the discovery list; this is not enough evidence to reduce
+  the established `0.1 s` gap
+- a 24-hour read-only soak with six units saw no transport timeouts, protocol
+  errors, Busy answers, or link recycles
+- reading another unit while a write settles caused no failures, but raised
+  read latency from about `16 ms` to up to `134 ms`
 
-After a second five-minute power cycle, the short read still returned
-`[3, 40]`, `41121` still returned `40`, and `41020..41021` remained at
-`20/20 m3/h`. The five-register read and `41122` still returned exception
-`0x05`. The integration continued to decode manual balanced operation.
+The benchmark, gap-sweep, and soak runs are written up under
+[HW-7](HARDWARE_BACKLOG.md#hw-7--validate-the-tmodbus-transport-on-the-real-gateway),
+the interleaved-traffic run (W-3) under
+[HW-2](HARDWARE_BACKLOG.md#partial-measurement-on-2026-10-02).
 
-## W-5 follow-up on 2026-10-09
+## Identity and readable registers
 
-On slave `4`, the pre-write airflow read returned `[80, 0]` (`41020` extract,
-`41021` supply) and `41016=0`. All R-9 mode reads returned exception `0x05`.
-Because `41021` was zero, it could not safely serve as the balanced test
-target; with approval, W-5 instead wrote `41120=3`, `41121=40`,
-`41132=0` (manual balanced `20/20 m3/h`).
-
-At 1, 10, and 60 seconds, the two-register read returned `[3, 40]` and
-`41121` returned `40`; airflow was `20/20 m3/h` and `41016` remained `0`.
-The five-register read at `41120` and single read at `41122` still returned
-exception `0x05`. This confirms that the write unlocked the short basic mode
-and target read, but not the five-register block or `41122`.
-
-The unit was restored to the pre-test extract/supply state with
-`41120=4`, `41121=0`, `41122=160`, `41132=0`. After two minutes,
-`41020..41021` returned `[80, 0]` and `41016=0`; the short read returned
-`[4, 0]`, `41121=0`, and `41122=160`, while the five-register read still
-returned `0x05`. The first restore attempt had the supply/extract directions
-reversed and briefly produced `[0, 80]`; it was corrected before the final
-verification. The before/after all-known snapshots also show changes in
-`511xx` and `52008..52010`; those shadow values were not written or restored,
-and their cause is not established.
-
-A read-only FC04 probe on slave `4` returned exception `0x01` for
-`41120×5`, `41120×2`, `41121`, and `41122`. A control read of known airflow
-registers `41020×2` also returned `0x01`, so this unit does not expose these
-values through a separate input-register map. A single-register FC03 read of
-`41120×1` returned exception `0x05` on all six slaves; reducing the read
-length does not provide a read-only unlock path.
-
-## Read-only mode status at `41100..41102`
-
-The ioBroker community template in
-[ioBroker/modbus-templates#57](https://github.com/ioBroker/modbus-templates/pull/57)
-separates pollable status registers `41100..41102` from set registers
-`41120..41122` and commit `41132`. A direct FC03 read of `41100×3` succeeded
-on all six M-WRG-II slaves without any writes:
-
-| Slave | `41100` mode | `41101` supply/status subtype | `41102` extract |
-| --- | ---: | ---: | ---: |
-| 2 | 3 | 229 | 0 |
-| 3 | 3 | 229 | 0 |
-| 4 | 4 | 0 | 208 |
-| 5 | 3 | 228 | 0 |
-| 6 | 4 | 68 | 203 |
-| 7 | 3 | 229 | 0 |
-
-The values match the current preset/unbalanced states seen during testing.
-The ioBroker template decodes mode `3` subcodes `228/229/230` as LOW/MED/HIGH,
-mode `4` as unbalanced, and sensor-mode status subcodes separately from the
-write values. This gives the integration a read-only source for current mode
-and targets; `41120..41122` remain the write interface. The implementation
-now uses this map for every supported M-WRG-S and M-WRG-II profile, based on
-the user's explicit assumption that the two series behave alike. Direct
-hardware validation is currently only from M-WRG-II units; the M-WRG-S path
-still needs confirmation when such a unit is available. The manufacturer
-manual does not document this status map, so treat it as observed/community
-evidence rather than a manufacturer guarantee.
-
-A later read-only FC03 check on 2026-10-09 returned the same three-register
-values from all six slaves in about 15-17 ms each. No slave had the intensive
-status pattern used by the client decoder (`mode=3, submode=227` or
-`mode=0, submode=0`) during that scan. This used the locally exposed serial
-interface and does not establish that USB access is manufacturer supported.
-
-A further read-only check on 2026-10-14 compared `41100×3` with single reads
-of `41100`, `41101`, and `41102` on all six connected nodes. Each block matched
-its three single-register values:
-
-| Slave | Software | `41100..41102` | `41020/41021` |
-| --- | ---: | --- | --- |
-| 2 | 2326 | `[3, 229, 0]` | `[30, 30]` |
-| 3 | 2326 | `[3, 229, 0]` | `[30, 30]` |
-| 4 | 2326 | `[3, 230, 0]` | `[60, 60]` |
-| 5 | 2584 | `[3, 228, 0]` | `[30, 30]` |
-| 6 | 2326 | `[3, 203, 0]` | `[30, 30]` |
-| 7 | 2326 | `[3, 229, 0]` | `[30, 30]` |
-
-The integration-like discovery reported profile `ii_plain` for all six; only
-slave `4` was confirmed as M-WRG-II by the person during this run. This does
-not validate M-WRG-S. The gateway product ID was `116852` on each node.
-
-In a separate check while the user had intensive ventilation active on slave
-`4`, FC03 `41100×3` returned `[0, 0, 0]` in 16.6 ms. This matches the active
-pattern decoded by the integration and confirms intensive-state detection on
-this M-WRG-II unit for that operating state. It does not validate M-WRG-S or
-expose the configured intensive airflow/duration. The separate T-10
-observation on slave `5` used the set-side `41120..41124` block and was
-uncontrolled; it is not needed as evidence for this status-map result.
-
-### Status values without hardware evidence
-
-The ioBroker script decodes sensor control from `41100=2` with subcodes `112`
-(humidity), `176` (CO2), and `48` (automatic), and intensive from `3/227` as
-well as `0/0`. None of the six units was in sensor control during the captures,
-and only `0/0/0` was seen for intensive. The sensor subcodes fit the write
-values `112`, `144`, and `16` with bit `32` set. The integration additionally
-accepts `144` as CO2 control, which ioBroker does not list. Any other subcode
-decodes to an unknown operating mode; the raw status is neither logged nor
-included in the diagnostics. Open checks are listed under HW-4 in
-[HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md#remaining-validation).
-
-A user-authorized app test on slave `2` changed only the intensive run-on time
-from 15 to 20 minutes and back to 15. The read-only capture found no readable
-value in `41120..41124` or `41132`; only shadow/meta counters changed, and the
-restore capture had no further raw differences. This did not identify a
-duration register; the detailed captures and noise caveat are in
-[SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md).
-
-### Why earlier hardware scans did not identify it
-
-The register range was not missing from the scans. The 2026-03-31 holding
-register sweep already found readable windows at `41100..41109`, then
-single-register reads narrowed this to `41100..41113`. The capture tool
-classified this only as `mode_and_runtime_state`; the raw values had no
-documented meanings in the manufacturer material gathered for the project.
-Meanwhile, the runtime profiler and `raw_requests` defaults focused on the
-known set-register block at `41120+`, and the profiler did not request
-`41100`. The ioBroker template supplied the missing semantic clue that
-`41100..41102` are the current-state map and `41120+` are set registers.
-This was a classification/tool-coverage gap, not a failure of the broad scan
-to see the range.
-
-## Reads while a unit is powered off
-
-In the H-1 follow-up, the integration client completed 35 airflow jobs for
-slave `4` while it was physically off, using 2-3 requests per job and reporting
-no read-group error. The run did not log returned airflow values, so whether
-the gateway served cached data remains unknown.
-
-After power-up, `41020..41021` repeatedly returned `[80, 0]`, while
-`41120..41121` still decoded manual target `20` and the status flags were `0`.
-The person confirmed the Meltem app and physical airflow also showed `80/0`,
-with no unexpected behavior. This differs from the `20/20` measured airflow
-after earlier W-6 restores; no writes were made after this final power cycle.
-
-In the 2026-10-09 H-1 follow-up, slave `4` was again switched off while the
-polling helper ran. The unit remained off for 6 min 5 s, exceeding the test
-plan's five-minute maximum; this deviation must not be treated as a valid H-1
-pass or repeated. The helper reported completed airflow jobs without
-transport timeouts or link recycles, but did not record the returned values.
-Whether the gateway served cached data is therefore still unknown.
-
-## Mode-read change during T-10
-
-During the 2026-10-02/03 T-10 soak, slave `5`'s airflow jobs first reported
-mode-group exception `0x05` and later began succeeding. After the soak, five
-full reads of `41120..41124` returned `[0, 0, 0, 3, 227]`; `41020..41021`
-returned `75/75 m3/h`, and the integration decoded `intensive_active=True`.
-The user reported several wall-button operations on slave `5` during the run.
-No Modbus writes were sent to it, but the button actions were not timestamped,
-so their relation to the read change and intensive state is unknown. The
-24-hour job counts and transport outcome are summarized under
-[HW-7](HARDWARE_BACKLOG.md#hw-7--validate-the-tmodbus-transport-on-the-real-gateway).
-
-## Home Assistant restart on 2026-10-08
-
-The Core debug export `home-assistant_2026-10-08T18-44-34.916Z.log`
-captured a restart of HA `2026.10.0` with integration `4.0.0`, six units, and
-the configured rate `3 req/s`. Log timestamps below are local CEST (UTC+2).
-
-- At `20:38:11.133`, opening the serial connection timed out while `serialx`
-  was waiting for the executor to reconfigure the port. The connection was
-  established at `20:38:12.048`, before the first RTU request. The log does
-  not establish whether executor contention, USB readiness, or another cause
-  delayed the open; this is not an unanswered register read.
-- Gateway validation and the initial full room scan sent 58 RTU requests
-  between `20:38:12.079` and `20:38:25.360`, including up to eight sends in a
-  calendar second. The first coordinator refresh completed at `20:38:25.477`
-  in `12.788 s`, with `success: True`. The old rate cap limited room/job
-  starts rather than individual read telegrams.
-- Every room's first airflow read succeeded. All 288 recorded coordinator
-  refreshes through `20:44:34.517` reported success, but mode-register reads
-  still returned exception `0x05`: full/short/single fallbacks on slaves
-  `2`, `3`, `6`, and `7`; the full block on slave `5`, whose short read worked.
-  This is consistent with the separate [mode-read findings](#mode-reads-after-a-power-cycle),
-  not evidence of a transport timeout or recovery of every read group.
-
-The person reported a transient "Datenlesestatus" problem on each restart.
-The export does not contain the entity's exact on/off transition, so neither
-the opening timeout nor the startup traffic is proven to cause that indication.
-The progressive startup and shared read pacing described in
-[DEVELOPER.md](DEVELOPER.md#polling-strategy) address the observed burst; their
-effect on the real restart still needs the H-9 check.
-
-## Home Assistant startup on 2026-10-09
-
-Three H-9 startup runs captured HA `2026.10.0` with integration `4.0.1`, six
-units, and an effective request rate of `3 req/s`. Local log timestamps are
-CEST (UTC+2).
-
-- The effective rate appeared at `10:39:23.827`, `10:50:40.714`, and
-  `10:59:30.944` for runs R1, R2, and R3. The first airflow reads for all six
-  units completed in the ranges `10:39:26..10:39:40`,
-  `10:50:43..10:50:52`, and `10:59:33..10:59:45`, respectively.
-- The first filter reads for all units completed by `10:40:21`, `10:51:12`,
-  and `11:00:06`; the first operating-hours reads completed by `10:40:32`,
-  `10:51:19`, and `11:00:19`.
-- The full logs contain 369, 378, and 367 function-`0x03` sends for R1/R2/R3.
-  The shortest intervals between successive sends were `350`, `349`, and
-  `348 ms`; none was shorter than the `333 ms` interval required at the
-  configured rate.
-- Each diagnostics snapshot showed six rooms with state, successful
-  coordinator updates, no unavailable rooms, a null `last_job_error`, and
-  zero consecutive transport timeouts and link recycles.
-- The mode-register exception `0x05` persisted on slaves `2`, `3`, `4`, `6`,
-  and `7`; slave `5` had successful mode-group reads at each snapshot. The
-  activity export shows the aggregate data-health entity changing from off
-  to on for five rooms shortly after startup in R1 and R2; the one that
-  remained off corresponds to the successful mode-group reads. These
-  exceptions are answered Modbus responses, not transport timeouts. The R3
-  activity export was not included, so its aggregate entity history cannot be
-  checked.
-
-The follow-up reload/unload capture (test4) also showed a clean link
-lifecycle. On reload, the serial connection closed at `11:13:19.374` and
-reopened at `11:13:19.481`. On deactivation, the final RTU request was at
-`11:16:16.835`; the serial link closed by `11:16:18.100`. No RTU requests
-were logged while the integration was unloaded. After re-enabling, the link
-reopened at `11:17:08.929`, the first request followed at `11:17:08.932`, and
-all six units had successful first airflow-read responses by `11:17:18.266`.
-The 112 function-`0x03` requests after re-enable had a minimum spacing of
-`349 ms`. No warnings, errors, or link-recycle markers appeared in the
-captured logs. Mode-group reads still received exception `0x05` responses;
-these are Modbus replies rather than transport timeouts. A diagnostics export
-was not supplied for this run, so coordinator counters cannot be confirmed.
-
-Together, the startup and reload/unload captures support observed pacing,
-first-pass read progress, and clean release/reacquisition during HA lifecycle
-changes. H-9 remains partial: the competing-hub port-conflict check (skipped)
-and comparison with the previous release were not performed. No 24-hour soak
-was performed.
-
-## USB disconnect and port recovery on 2026-10-09
-
-The serial port was confirmed as `/dev/ttyACM0`; P-3 discovered six nodes
-`[3, 2, 4, 5, 7, 6]`. T-7 confirmed exclusive access: a competing P-3 process
-exited with code `2` while the watcher held the port, and P-3 reopened it
-successfully 20/20 times after the watcher stopped.
-
-During H-3, the standalone polling helper reported a lost serial connection
-and exited with code `2` after the USB adapter was unplugged. Following
-reconnection, the port name remained `/dev/ttyACM0` and a new P-3 probe
-succeeded. The first post-reconnect probe reported gateway uptime of 7 seconds,
-and immediate airflow reads returned exception `0x05` for all six slaves. The
-person confirmed normal fan operation at that time.
-
-A later H-3 follow-up used the running Home Assistant integration; its logs
-were provided locally and are not archived in this repository. The USB loss
-was reported at `11:25:08.732`.
-After six consecutive port-open failures and backoffs up to 40 seconds, the
-same serial path reopened automatically at `11:26:28.475`, and the coordinator
-logged the gateway reachable again. This confirms transport-level
-reconnection by the running client. The later capture continues through
-`11:35:36.041` and shows gradual airflow-read recovery after initial
-`0x05` responses: successful reads from register `41020` first returned for
-slave `6` at `11:28:22.805`, slave `3` at `11:30:22.989`, slave `2` at
-`11:31:07.709`, slave `5` at `11:32:39.926`, slave `4` at `11:32:47.958`,
-and slave `7` at `11:34:38.787`. At the end of the capture, the latest
-airflow read for each of the six slaves had succeeded.
-
-No successful mode-block responses were observed after reconnect: recorded
-reads at `41120` / `41121` returned exception `0x05` across all six units.
-The latest logged attempts vary by unit because of mode-read backoff. A
-per-group `Datenlesestatus` state snapshot at `11:56:06 CEST` confirms this
-for one room: `flow_control` and `intensive` each had three consecutive
-failures, no successful read in the current coordinator state, and
-`stale=true`, with the last error identifying the five-register read at
-`41120` returning exception code `5`. In that same snapshot, `flow`, `status`,
-`temperature`, `filter`, and `hours` were fresh and had zero failures; no
-write outcome was pending. A six-room snapshot at `12:00 CEST` showed the same
-pattern on every room: `flow_control` and `intensive` had three consecutive
-failures, were stale, and reported the `41120` count-5 exception; all other
-reported read groups had zero failures and were not stale. Five rooms had no
-successful `flow_control` read in the current coordinator state; one room's
-last successful read was at `11:25:04 CEST`, just before the USB loss. The
-previously shared room state had already changed to `Problem` at `11:17:39
-CEST`, about seven minutes before the disconnect, so that problem state did
-not originate with this disconnect. The precise USB replug time was not
-recorded; airflow recovery took up to about eight minutes after the transport
-reopened, so the H-3 one-airflow-round recovery criterion was not demonstrated.
-The `link_recycles` counter cannot be confirmed.
-
-### HA-host reconnect at 12:33 CEST
-
-The next core log shows RTU traffic resuming at `12:34:12.479`; by its end at
-`12:51:50.849`, the latest airflow read had succeeded for all six units.
-Several earlier airflow reads in this window still returned `0x05` on slaves
-`2`, `3`, `4`, `5`, and `6`; slave `7` had no such failures in the window.
-The latest temperature and status-block reads also succeeded. The five-register
-mode read at `41120` returned `0x05` on all six units. Its two-register
-fallback continued returning `0x05` on slaves `2`, `3`, `4`, `6`, and `7`;
-slave `5` returned `[3, 228]` successfully on 42 of 44 attempts. The direct
-W-5 fallback previously observed on slave `4` was therefore not observed by HA
-after this reconnect.
-
-At `12:44:38`, the HA core log records five acknowledged function-`0x06`
-writes to slave `5`: `41123=0`, `41124=0`, `41120=3`, `41121=228`, and
-`41132=0`. This exactly matches the integration's LOW-preset write sequence.
-The person identified the write as coming from the bathroom humidity-control
-automation and confirmed no manual bus write or button press. The write was
-followed by successful short mode reads on slave `5`, but the full
-five-register read remained unavailable.
-
-Per-room state attributes captured at `13:01 CEST` show the current
-`Datenlesestatus` split: five rooms are `on`, each with three consecutive
-`flow_control` and `intensive` failures and `stale=true` from the
-`41120` count-5 exception. Their `flow`, `status`, `temperature`, `filter`,
-and `hours` groups are not stale. The bathroom is `off`: its `flow_control`
-read succeeded with zero failures after the LOW preset write, and `intensive`
-has no attempt because the short-read fallback marks that optional group
-skipped. The bathroom's `writes.preset_mode` outcome is confirmed with both
-expected and actual value `low`. A single earlier filter-block `0x05` on each
-room has only one consecutive failure and is not stale.
-
-## Product registers and readable islands
+### Product registers and readable islands
 
 All six tested `M-WRG-II` units returned the same product registers:
 
@@ -454,7 +149,7 @@ Registers that did not answer on the tested setup:
 - `41050 BYPASS_MODE`
 - `41051 BYPASS_STATUS`
 
-## Readable areas with incomplete meanings
+### Readable areas with incomplete meanings
 
 The 2026-03-31 single-register scan was on slave `2`; it establishes
 readability on that unit, not identical behavior across every profile.
@@ -489,7 +184,15 @@ their bus readability and function code have not been verified. The planned
 read-only probe is [R-8](LIVE_GATEWAY_TESTS.md); that plan explicitly forbids
 writing either register.
 
-## Slave 5 (bathroom) compared with the other units
+### Registers not covered by the collected manufacturer documents
+
+The integration uses `41013` as "VOC, supply air" (UINT16, `ppm`) for the
+`O/VOC-AUL` profile. An earlier version of this file listed the register and
+an `O/VOC-AUL` column (all temperatures, both humidities, CO2 and VOC) in the
+sensor matrix. None of the documents collected in `docs/meltem/` contains the
+register or the option. Their origin is unknown; treat both as unverified.
+
+### Slave 5 (bathroom) compared with the other units
 
 The user identified slave `5` as the bathroom unit and said it is the only
 unit without moisture recovery. In the saved R-1 capture from 2026-10-02, the
@@ -541,255 +244,6 @@ The wider identity reads are preserved for
 [slave 5](measurements/2026-10-09/pe-identity-slave5.txt) and
 [slave 4](measurements/2026-10-09/pe-identity-slave4.txt).
 
-## Request pacing and block reads
-
-- requests sent too quickly cause partial reads, stale data, or a temporary
-  loss of all values; the gateway answers one request after the other
-- a request gap of `0.1 s` was stable; no gap at all inflated latency heavily
-  without improving reliability
-- setup scans are sensitive to short timeouts
-- stable block reads: airflow `41020..41021`, status `41016..41018`, and
-  temperatures `41002..41005` plus a separate `41009`
-
-The 2026-10-02 A-B-A-B comparison covered six simple read scenarios with 1,440
-requests per transport. The pre-4.0.0 pymodbus runs had 100% successful
-requests, average latencies from `18.6` to `19.5 ms`, and p95 from `19.6` to
-`19.8 ms`. The current tmodbus runs also had 100% successful requests, average
-latencies around `15.8 ms`, p95 from `15.9` to `16.8 ms`, p99 `16.7 ms`, and
-maximum `16.9 ms`. No protocol or desynchronization errors appeared in those
-scenarios.
-
-In the request-gap sweep, gap `0` timed out while reading the gateway's
-discovery list at `43902`; gaps `0.05..0.3 s` each completed 60/60 requests.
-This was one sweep, so it is not enough evidence to reduce the established
-`0.1 s` request gap.
-
-On 2026-10-02, W-1 on slave `4` changed the balanced target from `20` to
-`16`, `24`, and `40 m3/h` (`41121=32`, `48`, and `80`). Each target appeared in
-the first post-write sample about one second later; each sample read itself
-took about `0.48 s`. For targets 16 and 24, measured airflow `41020..41021`
-stayed at `20/20 m3/h` for the full 60-second observations. At target 40, the
-measured airflow changed to `40/40` by the first sample and stayed there for
-the 60-second observation. All runs restored the target to `20`; the
-integration decoded manual balanced `20/20` after restoration.
-
-W-2 then applied a target of `30 m3/h` from a `20/20` baseline. Across three
-repetitions each at configured settle delays of `0`, `0.5`, `1.0`, and `1.5 s`,
-the first integration target poll returned `30` every time, including at
-`0 s`. The immediate `41020..41021` measured-airflow block still read `20/20`;
-the target readback is not evidence that the fans have already reached the new
-airflow.
-
-During W-3, a second task read slave `3`'s airflow registers every `0.5 s`
-while slave `4` cycled between target `30` and restored target `20`. The
-primary target confirmation and restores succeeded in all 12 trials, and all
-30 reads on slave `3` returned `[30, 30]`. The idle baseline was
-`15.4..16.7 ms`; during interleaved traffic reads took up to `134.4 ms`.
-There were no read failures or link recycles.
-
-The T-10 soak ran read-only for 8,640 rounds over 24 h 1 min with six units.
-All 288 transport diagnostics showed zero consecutive timeouts and link
-recycles; no timeout, protocol/desynchronization, or Busy errors were logged.
-Temperature, status, and slow plans succeeded on every unit. Airflow jobs
-reported the known mode-group exception `0x05` on slaves `2`, `3`, `6`, and
-`7` for the full run and on slave `5` for 6,228 jobs; on slave `5`, 2,412
-airflow jobs later succeeded. The user reported operating slave `5`'s wall
-button several times during the soak, so that transition cannot be attributed
-to polling alone. Slave `4` airflow jobs succeeded throughout. The T-10
-transport findings are strong, but the proposed 99.5% total-job threshold was
-not met because the mode-group failures remain in the job results.
-
-The simple request-scenario and request-gap baselines above were measured with
-pymodbus. HW-7 in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) repeats those
-benchmarks with the shared Modbus connection.
-
-In the 2026-10-09 follow-up, the first tmodbus run completed all six direct
-request scenarios (720 requests total) without errors; mean latency was about
-`15.6..15.8 ms` and p95 about `15.7..15.9 ms`. This was not reproducible
-after a later USB reconnect: direct airflow reads then returned exception
-`0x05` across all six slaves on both the baseline and current runs. The
-baseline integration-like full/scheduler benchmark also failed during
-discovery because the pinned pymodbus API did not accept its `slave` keyword,
-and it sent no poll requests. These results do not form a valid full
-transport comparison.
-
-## Target readback and measured airflow
-
-The manuals describe `41121` only as part of the write sequence. On the tested
-gateway it reads back the last written raw balanced target:
-
-- a baseline of `60 m3/h` corresponded to `41121 = 120`
-- writing `64 m3/h` changed `41121` to `128` at once; `10 m3/h` and the
-  restore were reflected at once as well
-- on several units `41121` returned a Modbus exception until the first write
-  to that unit; afterwards it was readable and followed every write
-- older readings such as `230` lie outside the raw range `0..200`; they match
-  the HIGH quick mode code from the
-  [traced app writes](#reverse-engineered-app-preset-behavior)
-
-`41020` (extract) and `41021` (supply) show the effective airflow and lag
-behind the target:
-
-- small balanced writes did not always show up at once; a large change such
-  as `60 -> 10 m3/h` did
-- a write on unit `4` from `60` to `65 m3/h` showed up in `41020..41021` after
-  about 4 s, and the restore to `60 m3/h` after a few seconds; the same held
-  while all six units were polled in one loop
-- in W-6 on `2026-10-02`, unit `4` stayed at `20/20 m3/h` for 20 s while
-  `41120=3` and `41121=80` were staged; after `41132=0`, it reached `40/40`
-  within about 5 s. Restoring `41121=40` and writing `41132=0` returned it to
-  `20/20` within a few seconds; status/error flags stayed clear
-- this W-6 sequence showed no airflow change before the apply write even
-  though `41121` already read `80`; target-register readback alone does not
-  mean the requested airflow has been applied
-- in W-1 on `2026-10-09`, slave `4` started at measured `80/0 m3/h`. The
-  requested `20 m3/h` target read back as `41121=40` by the first observation;
-  measured airflow remained `80/0` for the first five observations and was
-  `20/20` by observation six. The helper then restored its own target to off.
-  The person manually restored `80/0`, which a later read confirmed. The
-  post-restore snapshot had multiple shadow-register differences, whose cause
-  was not isolated.
-- in W-1 on `2026-10-14`, slave `4` (M-WRG-II, software `2326`) started at
-  measured `60/60 m3/h` and status `[3, 230, 0]` (HIGH). Writing `40 m3/h`
-  set raw `41121=80`, but the current-state map returned `[3, 204, 0]`;
-  `41101=204` matches `200 + 40 / 10`, not the written raw value. The status
-  stayed at that value during the 60-second observation. Measured airflow
-  remained `60/60` for five observations and reached `40/40` by observation
-  six, then held through observation 60. The helper restored balanced
-  `60/60` with `41121=120`, for which status was `[3, 206, 0]`; this also
-  matches `200 + 60 / 10`.
-
-  The explicitly approved HIGH restore (`41120=3`, `41121=230`, `41132=0`)
-  returned status `[3, 230, 0]`, measured airflow `60/60`, and `41016=0`.
-  These values were unchanged two minutes later. After the first write,
-  `41120×2` read `[3, 230]` but `41120×5` still returned exception `0x05`.
-  The pre-test snapshot had also found `41120..41124` and `41132` unreadable;
-  `42001..42009` became readable in the post-test snapshot although none was
-  written. Shadow-register differences were observed but not explained.
-  This disproves the assumption that `41101` echoes the raw balanced `41121`
-  target. The status decoder accepts the observed `200 + airflow / 10` form
-  for displaying a balanced target within the profile limit, while keeping
-  preset codes `227..230` separate. Balanced write confirmation instead reads
-  `41121` directly while the write is pending; the live Home Assistant result
-  is recorded in W-17 below.
-- The first W-17 run on `2026-10-14` used real Home Assistant `2026.10.0`
-  with unit 3 mapped to slave `4`, starting from HIGH at measured `60/60 m3/h`.
-  Setting the supply fan to `63%` was confirmed as `63/60`; after at least
-  10 seconds, setting the extract fan to `63%` remained `mismatch` for more
-  than 60 seconds (`expected=63/63`, `actual=63/60`, `last_error=null`).
-  After stopping HA, raw reads showed `41100..41102=[3,126,0]`,
-  `41120=3`, `41121=126`, `41122=120`, `41132=0`, `41016=0`, and measured
-  airflow `60/60`. The post-stop values confirmed the stored target, but did
-  not show what the coordinator read when it reported the mismatch.
-- Offline tracing found the cause in the retry gate: `mismatch` remained
-  eligible for recovery in `confirm()`, but `needs_confirmation()` excluded
-  it, preventing a later exact `41121` read. The coordinator now continues
-  exact reads for mismatched writes; a regression test covers an initial
-  unbalanced `63/60` mismatch followed by a manual-mode exact `63` readback.
-- The W-17 retest with that fix again started at HIGH, measured `60/60`, and
-  fresh read-health groups. Supply `63%` confirmed `63/60`; after at least
-  10 seconds, extract `63%` confirmed `63/63` (`last_error=null`). With HA
-  stopped, raw reads returned `41100..41102=[3,126,0]`, `41120=3`,
-  `41121=126`, `41122=120`, `41132=0`, `41016=0`, and measured airflow
-  `60/60`. The target confirmation passed; measured airflow had not yet
-  converged and is a separate settle-time observation. The approved HIGH
-  restore (`41120=3`, `41121=230`, `41132=0`) was verified with status
-  `[3,230,0]`, `41122=120`, `41016=0`, and measured airflow `60/60`.
-  The live mapping was `63% -> 63 m3/h`, not the previously assumed
-  `64 m3/h`.
-- The separate HA airflow-lag follow-up started from fresh HIGH at measured
-  `60/60 m3/h`. A supply-fan command to `40%` was confirmed as `[40,60]`;
-  measured supply was still `60` at about 5 seconds and was `40` by 11.4
-  seconds, while extract remained `60`. More than 10 seconds later, the
-  extract-fan command to `40%` was confirmed as `[40,40]`; measured airflow
-  was still `40/60` at about 5 seconds and `40/40` by 9.2 seconds. Selecting
-  HIGH was confirmed immediately as a preset write, but measured airflow
-  remained `40/40` through about 16 seconds and returned to `60/60` by
-  17 seconds. The next fresh flow-group read also reported `60/60`; all
-  read-health groups were fresh and both writes had `status=confirmed`.
-  These are bounds from HA's polling observations on this one M-WRG-II unit,
-  not a guaranteed fan response time.
-- One repeat cycle from the same `60/60` HIGH baseline gave a different return
-  time. Supply `40%` was confirmed at `[40,60]` and measured supply was `40`
-  by 9.1 seconds; after more than 10 seconds, extract `40%` was confirmed at
-  `[40,40]` and measured airflow was `40/40` by 7.9 seconds. Selecting HIGH
-  again was confirmed as `high`, but fresh airflow reads still showed `40/40`
-  at 27 seconds; they showed `60/60` by 47.5 seconds and on the next fresh
-  poll. After stopping HA, raw reads confirmed
-  `41100..41102=[3,230,0]`, `41120=3`, `41121=230`, `41122=120`,
-  `41123=0`, `41124=0`, `41132=0`, `41016=0`, and `41020..41021=60/60`.
-  The all-known capture is
-  `all_known-slave4-20261014-151659-HA-airflow-lag-HIGH-restored.json`.
-  The differing return times show why these observations are bounds, not a
-  stable device timing specification.
-- A third cycle showed the same delayed readback recovery as the initial W-17
-  attempt: the extract `40%` write first read as mismatch `[40,60]`, then the
-  next fresh airflow poll confirmed `[40,40]` and measured `40/40` at about
-  12 seconds after that write. The preceding supply `40%` write was confirmed
-  at `[40,60]` and measured `40/60` by 12.7 seconds. HIGH was confirmed at
-  `13:18:43.476 UTC`; a flow read at `13:18:45.262` already showed `60/60`,
-  and the next fresh poll at `13:18:53.116` still showed `60/60`. Thus the
-  Across the first three cycles, observed HIGH return delays ranged from under
-  2 seconds to about 47.5 seconds, further evidence that HA poll observations
-  do not define a deterministic physical settle time.
-- A fourth controlled cycle recorded individual HA flow-group readbacks. The
-  supply and extract `40%` service calls returned at `13:42:18.746 UTC` and
-  `13:42:19.097 UTC`. The first fresh flow read at `13:42:23.672` still
-  measured `60/60` and showed write status `mismatch`, `[40,60]`; the next
-  read at `13:42:34.170` measured `40/40` and confirmed `[40,40]`. The HIGH
-  preset request started at `13:42:41.104`; its fresh readback at
-  `13:42:46.164` confirmed HIGH while measured flow was still `40/40`. The
-  next flow read at `13:42:48.262` measured `60/60`, about 2.1 seconds later.
-  Reads remained fresh with no failures. Thus the fourth observed HIGH return
-  was much faster than the 27–47.5-second outlier; keep the observed spread
-  rather than inferring a fixed settle time.
-- A fifth controlled cycle showed the target/measurement distinction again.
-  The two `40%` fan service calls returned at `13:46:21.847` and
-  `13:46:22.311 UTC`. A fresh read at `13:46:26.560` confirmed target
-  `[40,40]`, while measured airflow was still `60/60`; the next read at
-  `13:46:37.054` measured `40/40`. The HIGH preset was requested at
-  `13:46:37.373`; its readback at `13:46:42.426` confirmed HIGH while airflow
-  was still `40/40`. The next read at `13:46:47.594` measured `60/60`, about
-  5.2 seconds later. Reads remained fresh and error-free.
-- To separate device response from HA's 10-second flow polling, HA was stopped
-  and the equivalent current-level registers were written directly. From HIGH,
-  raw writes `41120=3`, `41121=80`, `41132=0` left measured airflow at `60/60`
-  for the first six one-second polls; poll 7 first read `40/40`, which held
-  through poll 60. Restoring with `41120=3`, `41121=230`, `41132=0` read
-  `60/60` on poll 1 and stayed there through poll 60. All 120 polls succeeded.
-  Final raw verification returned status `[3,230,0]`, `41120=3`,
-  `41121=230`, `41122=120`, `41123=0`, `41124=0`, `41132=0`,
-  `41016=0`, and `41020..41021=60/60`. This direct current-level sequence
-  is a timing comparison, not the HA quick-mode service path. Capture:
-  `all_known-slave4-20261014-152255-W17-HA-airflow-lag-raw-timing-HIGH-restored.json`.
-- A second raw run replayed HA's exact HIGH preset register order
-  (`41123=0`, `41124=0`, `41120=3`, `41121=230`, then `41132=0`) after
-  verifying measured `40/40`. The first one-second sample still read `40/40`;
-  the second read `60/60`, which held through poll 60. All 60 reads succeeded.
-  The preceding direct `40 m3/h` setup reached measured `40/40` by poll 3 in
-  this run. Final verification again returned `[3,230,0]`, set registers
-  `41120..41124=[3,230,120,0,0]`, `41132=0`, and measured `60/60`. This was a
-  raw-client replay of the same register order, not a run through HA's
-  tmodbus transport. Capture:
-  `all_known-slave4-20261014-152627-W17-HA-preset-sequence-raw-HIGH-restored.json`.
-- W-18 compared the exact integration polling schedule under load. With HA
-  stopped, one serial client ran the real `build_jobs` plans for all six
-  configured slaves at the 4 requests/s limit, while an extra raw read of
-  `41020..41021` sampled slave 4 about once per second. Manual 40 m3/h was
-  first measured at `14:01:59.134 UTC`, about 6.9 s after its write returned.
-  The HIGH preset write returned at `14:02:04.062`; the first raw `60/60`
-  sample arrived at `14:02:09.134`, about 5.1 s later. During the 60-second
-  HIGH observation, four initial samples still showed `40/40`, followed by
-  53 samples at `60/60`; the largest sampling gap was 1.8 s. All scheduled
-  reads across the six slaves succeeded, with zero transport timeouts or link
-  recycles. The all-known before/after captures differed only in shadow/meta
-  counters; slave 4's runtime and documented settings were restored. This
-  single loaded run did not reproduce the 27–47.5 s outlier, but cannot rule
-  out an intermittent delay. Captures:
-  `all_known-slave4-20261014-155722-before-W18-six-slave-load.json`,
-  `all_known-slave4-20261014-160332-after-W18-six-slave-load.json`, and
-  `w18-six-slave-interleaved-airflow.jsonl`.
-
 ## Temperature register quirk
 
 Observed on tested `M-WRG-GW` gateways:
@@ -802,6 +256,198 @@ Observed on tested `M-WRG-GW` gateways:
 The 2026-10-02 scan could not re-evaluate the swap: all six discovered units
 were `ii_plain`; `41000` and `41002` decoded as NaN, while `41004` was a
 plausible room temperature. Repeat the swap test on a sensor-equipped variant.
+
+## Operating mode and set registers
+
+The current operating mode and targets are read from the status map at
+`41100..41102`; the set registers `41120..41124` and the apply register
+`41132` are the write interface and cannot be relied on for reading.
+
+### Read-only mode status at `41100..41102`
+
+The ioBroker community template in
+[ioBroker/modbus-templates#57](https://github.com/ioBroker/modbus-templates/pull/57)
+separates pollable status registers `41100..41102` from set registers
+`41120..41122` and commit `41132`. A direct FC03 read of `41100×3` succeeded
+on all six M-WRG-II slaves without any writes:
+
+| Slave | `41100` mode | `41101` supply/status subtype | `41102` extract |
+| --- | ---: | ---: | ---: |
+| 2 | 3 | 229 | 0 |
+| 3 | 3 | 229 | 0 |
+| 4 | 4 | 0 | 208 |
+| 5 | 3 | 228 | 0 |
+| 6 | 4 | 68 | 203 |
+| 7 | 3 | 229 | 0 |
+
+The values match the current preset/unbalanced states seen during testing.
+The ioBroker template decodes mode `3` subcodes `228/229/230` as LOW/MED/HIGH,
+mode `4` as unbalanced, and sensor-mode status subcodes separately from the
+write values. This gives the integration a read-only source for current mode
+and targets; `41120..41122` remain the write interface. The implementation
+now uses this map for every supported M-WRG-S and M-WRG-II profile, based on
+the user's explicit assumption that the two series behave alike. Direct
+hardware validation is currently only from M-WRG-II units; the M-WRG-S path
+still needs confirmation when such a unit is available. The manufacturer
+manual does not document this status map, so treat it as observed/community
+evidence rather than a manufacturer guarantee.
+
+A later read-only FC03 check on 2026-10-09 returned the same three-register
+values from all six slaves in about 15-17 ms each. No slave had the intensive
+status pattern used by the client decoder (`mode=3, submode=227` or
+`mode=0, submode=0`) during that scan. This used the locally exposed serial
+interface and does not establish that USB access is manufacturer supported.
+
+A further read-only check on 2026-10-14 compared `41100×3` with single reads
+of `41100`, `41101`, and `41102` on all six connected nodes. Each block matched
+its three single-register values:
+
+| Slave | Software | `41100..41102` | `41020/41021` |
+| --- | ---: | --- | --- |
+| 2 | 2326 | `[3, 229, 0]` | `[30, 30]` |
+| 3 | 2326 | `[3, 229, 0]` | `[30, 30]` |
+| 4 | 2326 | `[3, 230, 0]` | `[60, 60]` |
+| 5 | 2584 | `[3, 228, 0]` | `[30, 30]` |
+| 6 | 2326 | `[3, 203, 0]` | `[30, 30]` |
+| 7 | 2326 | `[3, 229, 0]` | `[30, 30]` |
+
+The integration-like discovery reported profile `ii_plain` for all six; only
+slave `4` was confirmed as M-WRG-II by the person during this run. This does
+not validate M-WRG-S. The gateway product ID was `116852` on each node.
+
+In a separate check while the user had intensive ventilation active on slave
+`4`, FC03 `41100×3` returned `[0, 0, 0]` in 16.6 ms. This matches the active
+pattern decoded by the integration and confirms intensive-state detection on
+this M-WRG-II unit for that operating state. It does not validate M-WRG-S or
+expose the configured intensive airflow/duration. The separate T-10
+observation on slave `5` used the set-side `41120..41124` block and was
+uncontrolled; it is not needed as evidence for this status-map result.
+
+#### Status values without hardware evidence
+
+The ioBroker script decodes sensor control from `41100=2` with subcodes `112`
+(humidity), `176` (CO2), and `48` (automatic), and intensive from `3/227` as
+well as `0/0`. None of the six units was in sensor control during the captures,
+and only `0/0/0` was seen for intensive. The sensor subcodes fit the write
+values `112`, `144`, and `16` with bit `32` set. The integration additionally
+accepts `144` as CO2 control, which ioBroker does not list. Any other subcode
+decodes to an unknown operating mode; the raw status is neither logged nor
+included in the diagnostics. Open checks are listed under HW-4 in
+[HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md#remaining-validation).
+
+A user-authorized app test on slave `2` changed only the intensive run-on time
+from 15 to 20 minutes and back to 15. The read-only capture found no readable
+value in `41120..41124` or `41132`; only shadow/meta counters changed, and the
+restore capture had no further raw differences. This did not identify a
+duration register; the detailed captures and noise caveat are in
+[SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md).
+
+#### Why earlier hardware scans did not identify it
+
+The register range was not missing from the scans. The 2026-03-31 holding
+register sweep already found readable windows at `41100..41109`, then
+single-register reads narrowed this to `41100..41113`. The capture tool
+classified this only as `mode_and_runtime_state`; the raw values had no
+documented meanings in the manufacturer material gathered for the project.
+Meanwhile, the runtime profiler and `raw_requests` defaults focused on the
+known set-register block at `41120+`, and the profiler did not request
+`41100`. The ioBroker template supplied the missing semantic clue that
+`41100..41102` are the current-state map and `41120+` are set registers.
+This was a classification/tool-coverage gap, not a failure of the broad scan
+to see the range.
+
+### Set-register readback at `41120..41124`
+
+The manuals only describe writing `41120..41124`. Reading them back is
+unreliable on the tested M-WRG-II units, which is why the integration reads the
+current state from `41100..41102` and uses the set registers for writes only:
+
+- before any write in a session, all six units answered the five-register and
+  two-register reads at `41120` and single reads of `41121` / `41122` with
+  exception `0x05`; a five-minute power cycle did not change that on slave `4`
+- after a balanced write (`41120=3`, `41121=40`, `41132=0`) on slave `4`, the
+  two-register read at `41120` and the single read of `41121` returned the
+  written values and stayed readable through one later power cycle; the
+  five-register read and `41122` still returned `0x05`
+- a week later, after the gateway had moved to another computer, the reads
+  were refused again until the next write (W-5 on 2026-10-09); the same held
+  before W-1 on 2026-10-14
+- after an unbalanced restore on the same unit (`41120=4`, `41121=0`,
+  `41122=160`), `41121` and `41122` both read back, while the five-register
+  read still returned `0x05`
+- neither function `0x04` nor a single-register FC03 read of `41120` offers a
+  read-only path: FC04 returned `0x01`, even for the airflow block
+  `41020×2`, and FC03 `41120×1` returned `0x05` on all six units
+- after the first write of W-1 on 2026-10-14, `41120×2` read `[3, 230]` on
+  slave `4` while `41120×5` still returned `0x05`; `42001..42009`, which the
+  pre-test snapshot could not read, also became readable although none was
+  written
+- during the 24-hour T-10 soak, the set registers of slave `5` became
+  readable without any Modbus write, after uncontrolled wall-button
+  operations, and then read `[0, 0, 0, 3, 227]` (intensive)
+- after a USB reconnect, Home Assistant's five-register read failed on all six
+  units and its two-register fallback succeeded only on slave `5`, see
+  [HA-host reconnect at 12:33 CEST](#ha-host-reconnect-at-1233-cest)
+
+The individual runs, including the restore steps and the shadow-register side
+effects, are written up under
+[HW-4](HARDWARE_BACKLOG.md#hw-4--units-that-reject-the-five-register-mode-block).
+
+## Target readback and measured airflow
+
+The manuals describe `41121` only as part of the write sequence. On the tested
+gateway it reads back the last written raw balanced target, once the unit
+accepts the read at all (see
+[Set-register readback](#set-register-readback-at-4112041124)):
+
+- a baseline of `60 m3/h` corresponded to `41121 = 120`
+- writing `64 m3/h` changed `41121` to `128` at once; `10 m3/h` and the
+  restore were reflected at once as well
+- on several units `41121` returned a Modbus exception until the first write
+  to that unit; afterwards it was readable and followed every write
+- older readings such as `230` lie outside the raw range `0..200`; they match
+  the HIGH quick mode code from the
+  [traced app writes](#reverse-engineered-app-preset-behavior)
+- through Home Assistant, the fan percentage `63%` on an M-WRG-II was stored
+  as `41121=126`, that is `63 m3/h`, not the previously assumed `64 m3/h`
+  (W-17)
+
+The status register `41101` does not echo this raw value. For a balanced
+target it reports the app encoding `200 + airflow / 10`: raw targets `80` and
+`120` (40 and 60 m3/h) appeared as `204` and `206`, and HIGH as `230`
+(W-1 on 2026-10-14).
+
+`41020` (extract) and `41021` (supply) show the effective airflow and lag
+behind the target:
+
+- a staged target has no effect until `41132=0` is written; in W-6 the
+  airflow stayed unchanged for 20 s with `41121` already at the new value, and
+  changed within about 5 s of the commit
+- small balanced writes did not always show up at once; a large change such
+  as `60 -> 10 m3/h` did. From a `20/20` baseline, targets 16 and 24 were not
+  reached within 60 s, while 40 was reached by the first sample (W-1 on
+  2026-10-02)
+- a write on unit `4` from `60` to `65 m3/h` showed up in `41020..41021`
+  after about 4 s, and the restore to `60 m3/h` after a few seconds; the same
+  held while all six units were polled in one loop
+- with one-second polling, a manual step from HIGH down to `40/40` took about
+  3 to 7 s; the return to HIGH took 1 to 2 s, both with the direct
+  current-level writes and with the integration's preset sequence. Under the
+  full six-unit polling load (W-18), the two steps took about 7 s and 5 s
+- through Home Assistant's 10-second flow polling, the return to HIGH was
+  observed after anywhere from under 2 s to 27–47.5 s across five cycles; the
+  long outliers are not explained
+- the target readback therefore comes before measured convergence and never
+  proves that the fans have reached the new airflow; the integration does not
+  confirm writes from `41020/41021`
+
+The individual runs are written up under
+[HW-2](HARDWARE_BACKLOG.md#hw-2--writes-block-the-whole-gateway-for-several-seconds),
+including [W-17](HARDWARE_BACKLOG.md#w-17-home-assistant-write-confirmation-on-2026-10-14)
+and the
+[Home Assistant airflow-lag cycles](HARDWARE_BACKLOG.md#follow-up-airflow-lag-through-home-assistant-on-2026-10-14);
+the 2026-10-09 W-1 run is under
+[HW-7](HARDWARE_BACKLOG.md#follow-up-measurements-on-2026-10-09).
 
 ## Reverse-engineered app preset behavior
 
@@ -961,3 +607,199 @@ Important limitation:
 - therefore missing LEDs for these two shortcuts should currently be treated
   as likely normal device behavior, not as proof that the HA integration is
   writing the wrong runtime preset registers
+
+## Unit and link lifecycle
+
+How the gateway and the integration behave when a unit loses power, Home
+Assistant restarts, or the USB link drops:
+
+- a physically powered-off unit did not cause timeouts: the gateway kept
+  answering its airflow jobs, possibly from cached data
+- opening the serial port once timed out at startup before the first request;
+  the connection came up about a second later (2026-10-08)
+- with the shared read-telegram pacing, Home Assistant restarts kept every
+  read at least the configured interval apart, and reload, unload, and
+  re-enable released and reacquired the link cleanly (2026-10-09)
+- after a USB loss, the running integration reopened the same port by itself
+  after about 80 s; airflow reads first returned exception `0x05` on all
+  units and recovered over up to about eight minutes (2026-10-09)
+
+The dated sections below are the evidence. What they contribute to the
+transport validation is summarised under
+[HW-7](HARDWARE_BACKLOG.md#hw-7--validate-the-tmodbus-transport-on-the-real-gateway).
+
+### Reads while a unit is powered off
+
+In two H-1 runs, slave `4` was switched off while the integration client
+polled all units. Its airflow jobs kept completing in 2-3 requests (35 jobs in
+the first run), without transport timeouts or link recycles. Neither run
+logged the returned values, so whether the gateway served cached data is
+unknown. The 2026-10-09 run also exceeded the five-minute limit (6 min 5 s)
+and is not a valid pass; it must not be repeated that way.
+
+After power-up in the first run, `41020..41021` read `[80, 0]`, matching the
+Meltem app and the physical airflow, while the then-used set-register read
+still decoded manual target `20`. This differs from the `20/20` measured after
+earlier W-6 restores; no writes were made after that final power cycle. The
+runs are written up as HW-7 measurement 2 under
+[HW-7](HARDWARE_BACKLOG.md#partial-measurement-hw-7-on-2026-10-02).
+
+### Home Assistant restart on 2026-10-08
+
+The Core debug export `home-assistant_2026-10-08T18-44-34.916Z.log` (local,
+not archived) captured a restart of HA `2026.10.0` with integration `4.0.0`, six units, and
+the configured rate `3 req/s`. Log timestamps below are local CEST (UTC+2).
+
+- At `20:38:11.133`, opening the serial connection timed out while `serialx`
+  was waiting for the executor to reconfigure the port. The connection was
+  established at `20:38:12.048`, before the first RTU request. The log does
+  not establish whether executor contention, USB readiness, or another cause
+  delayed the open; this is not an unanswered register read.
+- Gateway validation and the initial full room scan sent 58 RTU requests
+  between `20:38:12.079` and `20:38:25.360`, including up to eight sends in a
+  calendar second. The first coordinator refresh completed at `20:38:25.477`
+  in `12.788 s`, with `success: True`. The old rate cap limited room/job
+  starts rather than individual read telegrams.
+- Every room's first airflow read succeeded. All 288 recorded coordinator
+  refreshes through `20:44:34.517` reported success, but mode-register reads
+  still returned exception `0x05`: full/short/single fallbacks on slaves
+  `2`, `3`, `6`, and `7`; the full block on slave `5`, whose short read worked.
+  This is consistent with the separate [set-register findings](#set-register-readback-at-4112041124),
+  not evidence of a transport timeout or recovery of every read group.
+
+The person reported a transient "Datenlesestatus" problem on each restart.
+The export does not contain the entity's exact on/off transition, so neither
+the opening timeout nor the startup traffic is proven to cause that indication.
+The progressive startup and shared read pacing described in
+[DEVELOPER.md](DEVELOPER.md#polling-strategy) address the observed burst; their
+effect on the real restart still needs the H-9 check.
+
+### Home Assistant startup on 2026-10-09
+
+Three H-9 startup runs captured HA `2026.10.0` with integration `4.0.1`, six
+units, and an effective request rate of `3 req/s`. Local log timestamps are
+CEST (UTC+2).
+
+- The effective rate appeared at `10:39:23.827`, `10:50:40.714`, and
+  `10:59:30.944` for runs R1, R2, and R3. The first airflow reads for all six
+  units completed in the ranges `10:39:26..10:39:40`,
+  `10:50:43..10:50:52`, and `10:59:33..10:59:45`, respectively.
+- The first filter reads for all units completed by `10:40:21`, `10:51:12`,
+  and `11:00:06`; the first operating-hours reads completed by `10:40:32`,
+  `10:51:19`, and `11:00:19`.
+- The full logs contain 369, 378, and 367 function-`0x03` sends for R1/R2/R3.
+  The shortest intervals between successive sends were `350`, `349`, and
+  `348 ms`; none was shorter than the `333 ms` interval required at the
+  configured rate.
+- Each diagnostics snapshot showed six rooms with state, successful
+  coordinator updates, no unavailable rooms, a null `last_job_error`, and
+  zero consecutive transport timeouts and link recycles.
+- The mode-register exception `0x05` persisted on slaves `2`, `3`, `4`, `6`,
+  and `7`; slave `5` had successful mode-group reads at each snapshot. The
+  activity export shows the aggregate data-health entity changing from off
+  to on for five rooms shortly after startup in R1 and R2; the one that
+  remained off corresponds to the successful mode-group reads. These
+  exceptions are answered Modbus responses, not transport timeouts. The R3
+  activity export was not included, so its aggregate entity history cannot be
+  checked.
+
+The follow-up reload/unload capture (test4) also showed a clean link
+lifecycle. On reload, the serial connection closed at `11:13:19.374` and
+reopened at `11:13:19.481`. On deactivation, the final RTU request was at
+`11:16:16.835`; the serial link closed by `11:16:18.100`. No RTU requests
+were logged while the integration was unloaded. After re-enabling, the link
+reopened at `11:17:08.929`, the first request followed at `11:17:08.932`, and
+all six units had successful first airflow-read responses by `11:17:18.266`.
+The 112 function-`0x03` requests after re-enable had a minimum spacing of
+`349 ms`. No warnings, errors, or link-recycle markers appeared in the
+captured logs. Mode-group reads still received exception `0x05` responses;
+these are Modbus replies rather than transport timeouts. A diagnostics export
+was not supplied for this run, so coordinator counters cannot be confirmed.
+
+Together, the startup and reload/unload captures support observed pacing,
+first-pass read progress, and clean release/reacquisition during HA lifecycle
+changes. H-9 remains partial: the competing-hub port-conflict check (skipped)
+and comparison with the previous release were not performed. No 24-hour soak
+was performed.
+
+### USB disconnect and port recovery on 2026-10-09
+
+The serial port was confirmed as `/dev/ttyACM0`; P-3 discovered six nodes
+`[3, 2, 4, 5, 7, 6]`. T-7 confirmed exclusive access: a competing P-3 process
+exited with code `2` while the watcher held the port, and P-3 reopened it
+successfully 20/20 times after the watcher stopped.
+
+During H-3, the standalone polling helper reported a lost serial connection
+and exited with code `2` after the USB adapter was unplugged. Following
+reconnection, the port name remained `/dev/ttyACM0` and a new P-3 probe
+succeeded. The first post-reconnect probe reported gateway uptime of 7 seconds,
+and immediate airflow reads returned exception `0x05` for all six slaves. The
+person confirmed normal fan operation at that time.
+
+A later H-3 follow-up used the running Home Assistant integration; its logs
+were provided locally and are not archived in this repository. The USB loss
+was reported at `11:25:08.732`.
+After six consecutive port-open failures and backoffs up to 40 seconds, the
+same serial path reopened automatically at `11:26:28.475`, and the coordinator
+logged the gateway reachable again. This confirms transport-level
+reconnection by the running client. The later capture continues through
+`11:35:36.041` and shows gradual airflow-read recovery after initial
+`0x05` responses: successful reads from register `41020` first returned for
+slave `6` at `11:28:22.805`, slave `3` at `11:30:22.989`, slave `2` at
+`11:31:07.709`, slave `5` at `11:32:39.926`, slave `4` at `11:32:47.958`,
+and slave `7` at `11:34:38.787`. At the end of the capture, the latest
+airflow read for each of the six slaves had succeeded.
+
+No successful mode-block responses were observed after reconnect: recorded
+reads at `41120` / `41121` returned exception `0x05` across all six units.
+The latest logged attempts vary by unit because of mode-read backoff. A
+per-group `Datenlesestatus` state snapshot at `11:56:06 CEST` confirms this
+for one room: `flow_control` and `intensive` each had three consecutive
+failures, no successful read in the current coordinator state, and
+`stale=true`, with the last error identifying the five-register read at
+`41120` returning exception code `5`. In that same snapshot, `flow`, `status`,
+`temperature`, `filter`, and `hours` were fresh and had zero failures; no
+write outcome was pending. A six-room snapshot at `12:00 CEST` showed the same
+pattern on every room: `flow_control` and `intensive` had three consecutive
+failures, were stale, and reported the `41120` count-5 exception; all other
+reported read groups had zero failures and were not stale. Five rooms had no
+successful `flow_control` read in the current coordinator state; one room's
+last successful read was at `11:25:04 CEST`, just before the USB loss. The
+previously shared room state had already changed to `Problem` at `11:17:39
+CEST`, about seven minutes before the disconnect, so that problem state did
+not originate with this disconnect. The precise USB replug time was not
+recorded; airflow recovery took up to about eight minutes after the transport
+reopened, so the H-3 one-airflow-round recovery criterion was not demonstrated.
+The `link_recycles` counter cannot be confirmed.
+
+#### HA-host reconnect at 12:33 CEST
+
+The next core log shows RTU traffic resuming at `12:34:12.479`; by its end at
+`12:51:50.849`, the latest airflow read had succeeded for all six units.
+Several earlier airflow reads in this window still returned `0x05` on slaves
+`2`, `3`, `4`, `5`, and `6`; slave `7` had no such failures in the window.
+The latest temperature and status-block reads also succeeded. The five-register
+mode read at `41120` returned `0x05` on all six units. Its two-register
+fallback continued returning `0x05` on slaves `2`, `3`, `4`, `6`, and `7`;
+slave `5` returned `[3, 228]` successfully on 42 of 44 attempts. The direct
+W-5 fallback previously observed on slave `4` was therefore not observed by HA
+after this reconnect.
+
+At `12:44:38`, the HA core log records five acknowledged function-`0x06`
+writes to slave `5`: `41123=0`, `41124=0`, `41120=3`, `41121=228`, and
+`41132=0`. This exactly matches the integration's LOW-preset write sequence.
+The person identified the write as coming from the bathroom humidity-control
+automation and confirmed no manual bus write or button press. The write was
+followed by successful short mode reads on slave `5`, but the full
+five-register read remained unavailable.
+
+Per-room state attributes captured at `13:01 CEST` show the current
+`Datenlesestatus` split: five rooms are `on`, each with three consecutive
+`flow_control` and `intensive` failures and `stale=true` from the
+`41120` count-5 exception. Their `flow`, `status`, `temperature`, `filter`,
+and `hours` groups are not stale. The bathroom is `off`: its `flow_control`
+read succeeded with zero failures after the LOW preset write, and `intensive`
+has no attempt because the short-read fallback marks that optional group
+skipped. The bathroom's `writes.preset_mode` outcome is confirmed with both
+expected and actual value `low`. A single earlier filter-block `0x05` on each
+room has only one consecutive failure and is not stale.
