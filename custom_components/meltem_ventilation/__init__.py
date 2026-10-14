@@ -118,12 +118,7 @@ def _room_config(room: Mapping[str, Any]) -> RoomConfig:
 
 
 def _max_requests_per_second(entry: MeltemIntegrationConfigEntry) -> float:
-    return float(
-        entry.options.get(
-            CONF_MAX_REQUESTS_PER_SECOND,
-            entry.data.get(CONF_MAX_REQUESTS_PER_SECOND, DEFAULT_MAX_REQUESTS_PER_SECOND),
-        )
-    )
+    return float(entry.options.get(CONF_MAX_REQUESTS_PER_SECOND, DEFAULT_MAX_REQUESTS_PER_SECOND))
 
 
 async def _async_normalize_port(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> str:

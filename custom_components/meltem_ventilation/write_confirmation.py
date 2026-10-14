@@ -25,6 +25,9 @@ _FLOW_CONTROL_WRITES = _BASE_MODE_WRITES | {"intensive"}
 _WRITES_HIDDEN_BY_INTENSIVE = frozenset({"airflow_levels", "operation_mode"})
 # Outcomes a later readback can no longer change.
 _FINAL_STATUSES = frozenset({"failed", "confirmed", "superseded"})
+# Outcomes a later exact readback can still turn into a confirmation; an
+# unverifiable write is judged once the intensive override has ended.
+_CONFIRMABLE_STATUSES = frozenset({"pending", "unconfirmed", "mismatch", "unverifiable"})
 # Outcomes that flag data health while they are recent.
 _UNHEALTHY_STATUSES = frozenset({"unconfirmed", "mismatch", "failed"})
 
@@ -142,22 +145,24 @@ class WriteConfirmations:
         return bool(self.by_room.get(room_key))
 
     def needs_confirmation(self, room_key: str, write_key: str) -> bool:
-        """Return whether a write can still be confirmed by a later readback."""
+        """Return whether a recent write can still be confirmed by a later readback.
+
+        The window ends with the data-health retention, so an extra readback
+        never outlives the outcome it could still clear.
+        """
 
         confirmation = self.by_room.get(room_key, {}).get(write_key)
-        return confirmation is not None and confirmation.status in (
-            "pending",
-            "unconfirmed",
-            "mismatch",
+        return (
+            confirmation is not None
+            and confirmation.status in _CONFIRMABLE_STATUSES
+            and _recent(confirmation)
         )
 
     def unhealthy(self, room_key: str) -> bool:
         """Return whether a recent write failed, mismatched, or stayed unconfirmed."""
 
-        now = dt_util.utcnow()
         return any(
-            confirmation_status(confirmation) in _UNHEALTHY_STATUSES
-            and (now - confirmation.started_at).total_seconds() <= WRITE_HEALTH_RETENTION_SECONDS
+            confirmation_status(confirmation) in _UNHEALTHY_STATUSES and _recent(confirmation)
             for confirmation in self.by_room.get(room_key, {}).values()
         )
 
@@ -174,6 +179,11 @@ class WriteConfirmations:
             }
             for write_key, confirmation in self.by_room.get(room_key, {}).items()
         }
+
+
+def _recent(confirmation: WriteConfirmation) -> bool:
+    age = (dt_util.utcnow() - confirmation.started_at).total_seconds()
+    return age <= WRITE_HEALTH_RETENTION_SECONDS
 
 
 def _checked_confirmation(

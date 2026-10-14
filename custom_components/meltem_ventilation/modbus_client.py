@@ -15,7 +15,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from typing import Any, cast
+from typing import Any
 
 from homeassistant.util import dt as dt_util
 from modbus_connection import (
@@ -55,7 +55,7 @@ from .const import (
     VOC_PROFILES,
     profile_max_airflow,
 )
-from .device import MeltemRoomDevice, PolicyUnit
+from .device import MeltemRoomDevice
 from .device.components import ModeStatus
 from .modbus_helpers import (
     MeltemConnectionError,
@@ -177,7 +177,7 @@ class MeltemModbusClient:
         self._policy = new_transport_policy()
         if max_requests_per_second is not None:
             self.update_request_rate(max_requests_per_second)
-        self._units: dict[int, PolicyUnit] = {}
+        self._units: dict[int, ModbusUnit] = {}
         self._devices: dict[int, MeltemRoomDevice] = {}
         # Avoid repeatedly polling a status block that a unit refuses.
         self._mode_backoff = _ReadBackoff()
@@ -212,7 +212,7 @@ class MeltemModbusClient:
         unit = self._units.get(slave)
         if unit is None:
             unit = self._units[slave] = prepare_unit(self._unit_factory(slave), slave, self._policy)
-        return cast(ModbusUnit, unit)
+        return unit
 
     def _room_device(self, room: RoomConfig) -> MeltemRoomDevice:
         device = self._devices.get(room.slave)
@@ -301,19 +301,22 @@ class MeltemModbusClient:
                 group_read_health=_updated_read_health(room, previous_state, refresh_plan, job),
             )
 
-    async def read_balanced_target_readback(self, room: RoomConfig) -> int:
-        """Read the exact set-side airflow target used to confirm balanced writes."""
+    async def read_balanced_target_readback(self, room: RoomConfig) -> int | None:
+        """Read the exact set-side airflow target used to confirm balanced writes.
+
+        Returns ``None`` when the register holds no raw ``0..200`` airflow, for
+        example a quick-mode code that the app or keypad wrote after the write.
+        """
 
         async with self._gateway_operation(
             f"reading balanced airflow target register {REGISTER_CURRENT_LEVEL} for room {room.key}"
         ):
-            values = await self._unit(room.slave).read_holding_registers(REGISTER_CURRENT_LEVEL, 1)
-            if len(values) != 1 or not 0 <= values[0] <= 200:
-                raise MeltemModbusError(
-                    f"Register {REGISTER_CURRENT_LEVEL} returned an invalid raw airflow target "
-                    f"for room {room.key}: {values!r}"
-                )
-            return _scale_raw_level_to_airflow(room, values[0])
+            readback = self._room_device(room).current_level_readback
+            await readback.async_update()
+            raw_level = readback.value
+        if raw_level is None or not 0 <= raw_level <= 200:
+            return None
+        return _scale_raw_level_to_airflow(room, int(raw_level))
 
     async def _poll(
         self,

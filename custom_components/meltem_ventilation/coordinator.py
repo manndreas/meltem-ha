@@ -50,6 +50,7 @@ from .const import (
     PRESET_MODE_INTENSIVE,
     PRESET_MODE_SUPPLY_ONLY,
     READ_GROUP_ENTITY_KEYS,
+    REGISTER_CURRENT_LEVEL,
     SENSOR_OPERATION_MODES,
     TARGET_OPTIMISTIC_SECONDS,
     WRITE_SETTLE_SECONDS,
@@ -133,7 +134,7 @@ class _CoordinatorClient(Protocol):
         self, room: RoomConfig, previous_state: RoomState, refresh_plan: RefreshPlan
     ) -> RoomState: ...
 
-    async def read_balanced_target_readback(self, room: RoomConfig) -> int: ...
+    async def read_balanced_target_readback(self, room: RoomConfig) -> int | None: ...
 
     async def write_level(self, room: RoomConfig, level: int) -> None: ...
 
@@ -181,6 +182,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._backoff_seconds: float | None = None
         self._room_failures: dict[str, int] = {}
         self._logged_unavailable_rooms: set[str] = set()
+        self._target_read_failing: set[str] = set()
         self._writes = WriteConfirmations()
         self._optimistic_presets = OptimisticOverlay[str, str](
             hass, PRESET_OPTIMISTIC_SECONDS, self.async_update_listeners
@@ -251,38 +253,44 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         while showing frozen values, so availability is tracked per room.
         """
 
+        if self._room_unavailable_reason(room_key) is not None:
+            return False
+        state = self.safe_data.get(room_key)
+        return state is not None and state.has_data
+
+    def _room_unavailable_reason(self, room_key: str) -> str | None:
+        """Return why a room is unavailable despite cached data, or ``None``."""
+
         failures = self._room_failures.get(room_key, 0)
         if failures >= ROOM_UNAVAILABLE_AFTER_FAILURES:
-            self._log_room_unavailable(room_key, f"after {failures} consecutive read failures")
-            return False
+            return f"after {failures} consecutive read failures"
 
         room = self._rooms_by_key.get(room_key)
         if room is not None:
             silent_for = self.client.seconds_since_successful_read(room.slave)
             if silent_for is not None and silent_for > ROOM_SILENT_AFTER_SECONDS:
-                self._log_room_unavailable(
-                    room_key,
-                    f"no successful read for more than {ROOM_SILENT_AFTER_SECONDS:.0f} seconds",
-                )
-                return False
+                return f"no successful read for more than {ROOM_SILENT_AFTER_SECONDS:.0f} seconds"
+        return None
 
-        state = self.safe_data.get(room_key)
-        available = state is not None and state.has_data
-        if available:
-            self._log_room_recovered(room_key)
-        return available
+    def _log_room_availability(
+        self, room_key: str, state: RoomState, error: MeltemModbusError | None
+    ) -> None:
+        """Log once when a room becomes unavailable and once when it recovers.
 
-    def _log_room_unavailable(self, room_key: str, reason: str) -> None:
-        if room_key in self._logged_unavailable_rooms:
-            return
-        self._logged_unavailable_rooms.add(room_key)
-        _LOGGER.info("Meltem room %s unavailable: %s", room_key, reason)
+        Runs after every read job of the room, so availability queries from
+        entities, diagnostics, or system health stay free of side effects.
+        """
 
-    def _log_room_recovered(self, room_key: str) -> None:
-        if room_key not in self._logged_unavailable_rooms:
-            return
-        self._logged_unavailable_rooms.remove(room_key)
-        _LOGGER.info("Meltem room %s reachable again", room_key)
+        reason = self._room_unavailable_reason(room_key)
+        if reason is not None:
+            if room_key not in self._logged_unavailable_rooms:
+                self._logged_unavailable_rooms.add(room_key)
+                if error is not None:
+                    reason = f"{reason}: {error}"
+                _LOGGER.info("Meltem room %s unavailable: %s", room_key, reason)
+        elif state.has_data and room_key in self._logged_unavailable_rooms:
+            self._logged_unavailable_rooms.remove(room_key)
+            _LOGGER.info("Meltem room %s reachable again", room_key)
 
     def optimistic_preset_mode(self, room_key: str) -> str | None:
         """Return the pending preset selection while the gateway confirms it.
@@ -991,10 +999,15 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     async def _read_balanced_target_if_pending(
         self, room: RoomConfig, state: RoomState
     ) -> RoomState:
-        """Read the exact set register for a fresh, still-confirmable write."""
+        """Read the exact set register for a fresh, still-confirmable write.
+
+        A running intensive override hides the base mode, so the write is only
+        judged once it has ended.
+        """
 
         if (
             not read_health.group_fresh(state, "flow_control")
+            or state.intensive_active
             or state.operation_mode not in (OPERATION_MODE_MANUAL, OPERATION_MODE_OFF)
             or not self._writes.needs_confirmation(room.key, "airflow_levels")
         ):
@@ -1004,11 +1017,25 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         try:
             target = await self.client.read_balanced_target_readback(room)
         except MeltemModbusError as err:
-            _LOGGER.warning(
-                "Could not read set-side airflow target register 41121 for room %s "
+            # A unit can refuse the set register for a while; one warning per
+            # failing streak keeps every later airflow poll out of the log.
+            level = logging.DEBUG if room.key in self._target_read_failing else logging.WARNING
+            self._target_read_failing.add(room.key)
+            _LOGGER.log(
+                level,
+                "Could not read set-side airflow target register %s for room %s "
                 "while confirming a write: %s",
+                REGISTER_CURRENT_LEVEL,
                 room.key,
                 err,
+            )
+            return state
+        self._target_read_failing.discard(room.key)
+        if target is None:
+            _LOGGER.debug(
+                "Register %s of room %s holds no raw airflow target; the write stays unconfirmed",
+                REGISTER_CURRENT_LEVEL,
+                room.key,
             )
             return state
         return replace(state, balanced_target_readback=target)
@@ -1109,6 +1136,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         room = self._rooms_by_key[job.room_key]
         previous_state = previous_states.get(room.key, EMPTY_ROOM_STATE)
+        error: MeltemModbusError | None = None
 
         try:
             refreshed_state = await self.client.read_room_state(
@@ -1117,14 +1145,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 job.refresh_plan,
             )
         except MeltemModbusError as err:
-            self._last_job_error = err
-            failures = self._room_failures.get(room.key, 0) + 1
-            self._room_failures[room.key] = failures
-            if failures >= ROOM_UNAVAILABLE_AFTER_FAILURES:
-                self._log_room_unavailable(
-                    room.key,
-                    f"after {failures} consecutive read failures: {err}",
-                )
+            _LOGGER.debug("Failed to read room %s for job %s: %s", room.key, job.key, err)
+            error = self._last_job_error = err
+            self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
             refreshed_state = read_health.record_read_failures(
                 previous_state,
                 room,
@@ -1134,11 +1157,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         else:
             self._last_job_error = None
             self._room_failures.pop(room.key, None)
-            if refreshed_state.has_data:
-                self._log_room_recovered(room.key)
             if job.refresh_plan.refresh_airflow:
                 refreshed_state = await self._read_balanced_target_if_pending(room, refreshed_state)
 
+        self._log_room_availability(room.key, refreshed_state, error)
         if refreshed_state == previous_state:
             return previous_states
         return {**previous_states, room.key: refreshed_state}

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import cast
 
 from modbus_connection import (
     ModbusConnectionError,
@@ -159,7 +160,7 @@ def new_transport_policy() -> TransportPolicy:
     )
 
 
-def prepare_unit(unit: ModbusUnit, unit_id: int, policy: TransportPolicy) -> PolicyUnit:
+def prepare_unit(unit: ModbusUnit, unit_id: int, policy: TransportPolicy) -> ModbusUnit:
     """Ask the link for the gateway's timing and wrap the unit in the retry policy.
 
     The timeout must be asked for before the first request, since a lower
@@ -168,7 +169,10 @@ def prepare_unit(unit: ModbusUnit, unit_id: int, policy: TransportPolicy) -> Pol
 
     unit.set_message_spacing(REQUEST_GAP_SECONDS)
     unit.require_timeout(FIXED_TIMEOUT)
-    return PolicyUnit(unit, unit_id, policy)
+    # PolicyUnit overrides the register requests the integration sends and
+    # hands every other ModbusUnit member to the wrapped unit via __getattr__,
+    # which the protocol check cannot see.
+    return cast(ModbusUnit, PolicyUnit(unit, unit_id, policy))
 
 
 # ---------------------------------------------------------------------------

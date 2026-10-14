@@ -1,11 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- Confirm balanced airflow writes with a single read of the set register
+  `41121`, because the status value `41101` reports balanced targets as
+  `200 + airflow / 10` rather than the written raw value.
+- Read `41121` only while an airflow write is at most 10 minutes old and still
+  open, skip it during intensive ventilation, treat a quick-mode code there as
+  no airflow target instead of an error, and warn once per failing streak
+  instead of on every airflow poll.
+- Judge a balanced airflow write made during intensive ventilation once the
+  override has ended.
+- Log a unit becoming unavailable and its recovery from the poll results only,
+  so diagnostics and system health no longer trigger these messages and a
+  silent unit no longer alternates between them; log single failed read jobs at
+  debug level.
+- Return to Home Assistant's standard coordinator entity with plain entity
+  properties instead of the hand-invalidated cached properties from 4.1.1.
+- Lint the Markdown files with Markdownlint and type-check the integration,
+  tests, and tools with Pyright in CI.
+
 ## 4.1.1
 
 - Migrate the configured maximum request rate from entry data to options while
   preserving the existing value.
 - Log when a room becomes unavailable and when it recovers, while reducing
   repetitive gateway-backoff log messages.
+- Report an invalid humidity or CO2 control range as a service validation
+  error instead of a generic Home Assistant error.
 - Add translated entity icons and English/German entity and config-flow
   strings.
 - Document data updates, automation examples, the filter-change trigger and

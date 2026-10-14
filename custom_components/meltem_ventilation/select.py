@@ -1,8 +1,9 @@
 """Select entities for Meltem operating modes."""
 
+# Home Assistant types entity state as cached_property; like Home Assistant Core,
+# these entities override it with plain properties computed from coordinator data.
+# pyright: reportIncompatibleVariableOverride=false
 from __future__ import annotations
-
-from functools import cached_property
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
@@ -53,7 +54,6 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
 
     _requires_fresh_read_group = False
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "operation_mode", "operation_mode")
@@ -64,7 +64,7 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
             options.extend(["co2_control", "automatic"])
         self._attr_options = options
 
-    @cached_property
+    @property
     def current_option(self) -> str | None:
         if not self.coordinator.read_group_fresh(self.room.key, "flow_control"):
             return None
@@ -87,7 +87,7 @@ class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
     def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "preset_mode", "preset_mode")
 
-    @cached_property
+    @property
     def current_option(self) -> str | None:
         optimistic = self.coordinator.optimistic_preset_mode(self.room.key)
         if optimistic is not None:

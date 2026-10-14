@@ -46,7 +46,8 @@ ruff check custom_components tests tools
 mypy
 ```
 
-CI runs these checks, plus hassfest and the HACS validation.
+CI runs these checks, plus Pyright on `custom_components`, `tests` and `tools`, Markdownlint,
+hassfest, and the HACS validation.
 
 Useful focused test runs:
 
