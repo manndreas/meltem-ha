@@ -1022,6 +1022,23 @@ Notes on the tools:
   tmodbus transport, and does not resolve the longer HA-observed delays.
   Capture:
   `all_known-slave4-20261014-152627-W17-HA-preset-sequence-raw-HIGH-restored.json`.
+- **W-18, six-slave polling load:** after saving a fresh all-known snapshot and
+  stopping HA, one serial client ran the integration's actual `build_jobs`
+  plans for all six configured slaves at 4 requests/s, with 0.1 s request
+  spacing. An extra raw `41020..41021` read sampled slave 4 about once per
+  second. Manual 40 m3/h was first measured at `14:01:59.134 UTC`, about
+  6.9 s after the write call returned. The HIGH preset write returned at
+  `14:02:04.062`; the first raw `60/60` sample arrived at `14:02:09.134`,
+  about 5.1 s later. Across the 60-second HIGH observation, four initial
+  samples showed `40/40`, then 53 showed `60/60`; the largest sample gap was
+  1.8 s. All scheduler reads succeeded; transport diagnostics showed zero
+  timeouts and link recycles. The before/after captures differed only in
+  shadow/meta counters, and slave 4's runtime was restored to HIGH. This
+  loaded run did not reproduce the earlier 27–47.5 s outlier, but one run
+  cannot rule out intermittent delays. Raw log:
+  `w18-six-slave-interleaved-airflow.jsonl`. Captures:
+  `all_known-slave4-20261014-155722-before-W18-six-slave-load.json` and
+  `all_known-slave4-20261014-160332-after-W18-six-slave-load.json`.
 
 ## H — Tests that need a person
 
