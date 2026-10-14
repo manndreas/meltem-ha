@@ -141,6 +141,16 @@ class WriteConfirmations:
     def has_any(self, room_key: str) -> bool:
         return bool(self.by_room.get(room_key))
 
+    def needs_confirmation(self, room_key: str, write_key: str) -> bool:
+        """Return whether a write can still be confirmed by a later readback."""
+
+        confirmation = self.by_room.get(room_key, {}).get(write_key)
+        return confirmation is not None and confirmation.status in (
+            "pending",
+            "unconfirmed",
+            "mismatch",
+        )
+
     def unhealthy(self, room_key: str) -> bool:
         """Return whether a recent write failed, mismatched, or stayed unconfirmed."""
 

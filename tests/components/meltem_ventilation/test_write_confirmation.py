@@ -7,7 +7,10 @@ from datetime import timedelta
 import pytest
 from homeassistant.util import dt as dt_util
 
-from custom_components.meltem_ventilation.const import OPERATION_MODE_UNBALANCED
+from custom_components.meltem_ventilation.const import (
+    OPERATION_MODE_MANUAL,
+    OPERATION_MODE_UNBALANCED,
+)
 from custom_components.meltem_ventilation.models import ReadHealth, RoomState, WriteConfirmation
 from custom_components.meltem_ventilation.write_confirmation import (
     CONTROL_SETTING_WRITE_PREFIX,
@@ -74,6 +77,26 @@ def test_airflow_readback_waits_for_a_supported_mode_and_available_targets() -> 
         group_read_health=(("flow_control", health),),
     )
     assert _checked_confirmation(unbalanced_without_targets, "airflow_levels", confirmation) is None
+
+
+@pytest.mark.parametrize("target_level", [40, 60])
+def test_app_encoded_balanced_readback_confirms_a_level_write(target_level: int) -> None:
+    confirmations = WriteConfirmations()
+    confirmations.record_pending("unit_1", "airflow_levels", (target_level, target_level))
+    started_at = confirmations.by_room["unit_1"]["airflow_levels"].started_at
+    read_at = started_at + timedelta(seconds=1)
+    state = RoomState(
+        operation_mode=OPERATION_MODE_MANUAL,
+        balanced_target_readback=target_level,
+        group_read_health=(
+            ("flow_control", ReadHealth(last_attempt=read_at, last_successful_read=read_at)),
+        ),
+    )
+
+    assert confirmations.confirm({"unit_1": state}) is True
+    confirmation = confirmations.by_room["unit_1"]["airflow_levels"]
+    assert confirmation.status == "confirmed"
+    assert confirmation.actual_value == (target_level, target_level)
 
 
 def test_readback_rejects_unknown_write_key() -> None:

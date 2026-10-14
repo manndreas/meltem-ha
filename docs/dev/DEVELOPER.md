@@ -485,23 +485,32 @@ The current-state map at `41100..41102` reports the operating mode and targets;
 `41020/41021` show the effective airflow and can lag behind, see
 [MELTEM.md](MELTEM.md). Therefore:
 
-- `41101` confirms the balanced target from read-only status; values are scaled
-  using the selected profile's airflow range
+- `41101` can provide a status target for display; values are scaled using the
+  selected profile's airflow range
 - `41020/41021` stay the authoritative current airflow and never confirm a
   write
-- if `41101` is missing or implausible, the balanced target falls back to the
-  measured airflow
+- balanced airflow writes are confirmed by a single-register read of the exact
+  set-side target at `41121` while the write remains eligible for confirmation
 - in unbalanced mode the status values `41101/41102` provide supply/extract
   targets; the previous target is kept if the status read fails
 
-Open assumption (HW-4, W-1): balanced write confirmation relies on `41101`
-echoing the raw `0..200` target that was written to `41121`, soon after the
-apply latch. The observed status values fit that (slave `6` showed a raw
-supply `68` next to an app-encoded extract `203`), but no balanced write has
-yet been followed by a status read. If the status reported another encoding
-or lagged behind, every balanced fan write would become `unconfirmed` and
-flag `data_health`; unbalanced readbacks decode both raw and `200 + n`
-values and are less exposed.
+W-1 on 2026-10-14 tested this assumption on slave `4` (M-WRG-II). Writing
+balanced `40 m3/h` set `41121=80`, while the current-state map returned
+`41100..41102=[3, 204, 0]`; restoring balanced `60 m3/h` set `41121=120` and
+returned `[3, 206, 0]`. Both status values fit `200 + airflow / 10`, not the
+raw `0..200` set-register value. The final HIGH restore returned `[3, 230, 0]`.
+
+The client decodes `41101` as either the raw `0..200` value or the app encoding
+`200 + airflow / 10` when the resulting airflow is within the selected profile's
+maximum, for display only. It does not use this coarse status value or measured
+airflow to confirm a balanced write. While a write is pending, unconfirmed, or
+mismatched, the coordinator reads `41121` separately and scales its exact raw
+value with the profile range. Keeping mismatches eligible lets a later exact
+read recover from a transient stale mode/target read. If the set-side read
+fails, the write is not confirmed and a later airflow poll may retry it rather
+than falling back to another source. Preset codes `227..230` keep their
+separate mode meanings. W-17 confirmed this path on an M-WRG-II unit; see
+[LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md#w-17--home-assistant-coordinator-balanced-write-confirmation).
 
 ### Per-unit availability on read failures
 

@@ -225,6 +225,35 @@ commit returned measured airflow to `20/20` by the next approximately
 two-second sample after it remained at 40 at one second. Status/error flags
 stayed `0`.
 
+### Follow-up W-1 on 2026-10-14
+
+On slave `4` (M-WRG-II, software `2326`, integration `4.1.1`), the measured
+baseline was `60/60 m3/h` with status `[3, 230, 0]` (HIGH). The pre-test
+snapshot could not read `41120..41124` or `41132`. W-1 wrote a balanced target
+of `40 m3/h` (`41121=80`) and observed for 60 seconds at one-second intervals.
+The current-state map returned `[3, 204, 0]` throughout; `41101=204`, not the
+written raw target `80`. The measured airflow stayed at `60/60` for the first
+five observations, reached `40/40` by observation six (about six seconds), and
+stayed there through observation 60. All 62 timed operations/snapshots
+succeeded; mean duration was `587.3 ms`, p95 `595.8 ms`.
+
+The helper restored balanced `60/60` with raw target `41121=120`; status was
+`[3, 206, 0]`. The explicitly approved final restore wrote HIGH
+(`41120=3`, `41121=230`, `41132=0`). Immediately and two minutes later, status
+was `[3, 230, 0]`, measured airflow was `60/60`, and `41016=0`. After the first
+write, `41120×2` read `[3, 230]`, while `41120×5` still returned exception
+`0x05`. Registers `42001..42009` also became readable although none was written;
+the corresponding pre-test values were unreadable. Shadow-register values
+changed as well, and their cause is not established.
+
+This W-1 disproved the assumption that `41101` echoes the raw balanced target:
+the observed values `204` and `206` fit `200 + airflow / 10` for targets 40
+and 60. The client now decodes this app encoding for balanced status when the
+result is within the profile maximum; preset codes `228..230` remain distinct.
+The test used the integration-like client, not the live Home Assistant
+coordinator, so its write-confirmation outcome remains unmeasured. Validate
+the coordinator path before release.
+
 ### Candidate solutions (HW-2)
 
 - **A — shorten `WRITE_SETTLE_SECONDS`.** If the measurement shows the unit
@@ -471,19 +500,24 @@ controlled conditions before changing HW-4 behavior.
 
 ### Remaining validation
 
-- Deploy the status-read implementation to Home Assistant and verify the
-  `flow_control` and `intensive` health groups recover without a mode change.
+- **HA deployment/read health:** verified on 2026-10-14 with isolated HA Core
+  `2026.10.0` and all six configured units. Slave `4`'s `flow_control` and
+  `intensive` groups were fresh without a mode change.
 - Confirm status-block/single-register parity on an M-WRG-II unit in R-12.
 - Validate the assumed same register map on an M-WRG-S unit when available.
   Since `4.1.0` there is no fallback to the set registers: a unit that refuses
   `41100` keeps `flow_control` and `intensive` stale and its mode, quick mode,
   and intensive state unknown.
-- **Status as write confirmation (before relying on `4.1.0`):** balanced
-  writes are confirmed only when `41101` reads back the raw `0..200` target.
-  No balanced write has yet been followed by a status read; run
-  [W-1](LIVE_GATEWAY_TESTS.md#w-1--balanced-write-status-readback-and-airflow-lag)
-  and record raw `41101`. Another encoding or a delay past the readback would
-  turn every balanced fan write into `unconfirmed`.
+- **HA coordinator write confirmation (W-17):** the first run mismatched
+  (`expected=63/63`, `actual=63/60`). Code inspection found that `mismatch`
+  remained recoverable in `confirm()`, but `needs_confirmation()` excluded it,
+  so a later exact `41121` read was skipped. A regression test now covers a
+  stale unbalanced read followed by a matching manual-mode read. The live
+  retest confirmed `63/63`; after stopping HA, raw `41121=126` verified the
+  stored `63 m3/h` target while measured airflow remained `60/60`. The HIGH
+  baseline was restored and verified. This validates the coordinator path on
+  the tested M-WRG-II, not M-WRG-S; see
+  [W-17](LIVE_GATEWAY_TESTS.md#w-17--home-assistant-coordinator-balanced-write-confirmation).
 - **Sensor-mode subcodes:** the read-side codes `48` (automatic), `112`
   (humidity control), and `176` (CO2 control) come only from the ioBroker
   script's decode; none of the six units was in sensor control during the
@@ -635,7 +669,8 @@ from before `4.0.0`
    `link_recycles` in the diagnostics stays at 0 while other units answer.
 3. A freshly powered unit: read-only mode-status reads for the supported
    M-WRG-S and M-WRG-II profiles (HW-4 / R-12).
-4. Write confirmation via status `41101` and the settle time after writes (HW-2).
+4. Home Assistant write confirmation via the exact `41121` set-register
+   readback, plus the settle time after writes (HW-2 / W-17).
 5. Whether the gateway ever answers with code 6, and for how long.
 6. Unplug and replug the USB cable; reload and unload the entry: the port is
    released and the link comes back.
@@ -710,8 +745,10 @@ refreshes and 240/240 scheduler jobs successful, while tmodbus reported
 mode-register exception code `5`. These success counts are not directly
 comparable. The raw register-profile tests showed the same mode-register
 exceptions on both transports. HW-7 remains open: active Busy behavior and
-the real Home Assistant write/USB lifecycle are still unmeasured. T-10 was
-transport-stable but did not meet the proposed whole-job success threshold.
+the USB lifecycle are still unmeasured. The first real Home Assistant balanced
+write in W-17 mismatched; after a coordinator fix, its retest confirmed the
+write on slave `4`. T-10 was transport-stable but did not meet the proposed
+whole-job success threshold.
 The powered-off-unit test saw successful integration jobs, but did not log
 their returned state. The integration-like success/error comparison still
 needs a like-for-like interpretation.
@@ -786,6 +823,19 @@ logs and snapshots were local-only and are not part of the repository.
 - **7 — Soak:** The 24-hour run was not repeated, per the person's instruction.
   The 2026-10-02 T-10 result remains the only soak evidence.
 
+### Follow-up measurements on 2026-10-14
+
+- **3 — Mode status map:** A read-only comparison of `41100×3` with reads of
+  `41100`, `41101`, and `41102` singly matched on all six connected nodes.
+  Slave `4` was confirmed as M-WRG-II; M-WRG-S validation remains open.
+- **4 — Writes:** W-1 on slave `4` changed measured airflow from `60/60` to
+  `40/40` after about six seconds, with no failed timed operations. However,
+  the status map returned `41101=204` for raw target `41121=80`, and
+  `41101=206` for raw target `41121=120` on restore. This contradicts the raw
+  `0..200` echo assumption. The final HIGH restore was verified after two
+  minutes with `41016=0`; the full five-register set block still returned
+  exception `0x05`. See the detailed HW-2 measurement above.
+
 ### Current disposition
 
 - **1 — Benchmarks:** partial. The initial direct tmodbus scenarios passed,
@@ -793,12 +843,16 @@ logs and snapshots were local-only and are not part of the repository.
   zero-request failure prevent a comparable full result.
 - **2 — Powered-off unit:** partial. The 2026-10-09 H-1 run exceeded its
   five-minute limit and did not record values; it is inconclusive, not a pass.
-- **3 — Mode status map:** partial. The read-only block succeeded on all six
-  M-WRG-II units; single-register parity, Home Assistant deployment, and
-  M-WRG-S validation remain open (HW-4 / R-12).
-- **4 — Writes:** partial. W-1 confirmed target readback and a measured-airflow
-  change on slave `4`, but a helper rather than the real Home Assistant
-  coordinator performed the write.
+- **3 — Mode status map:** partial. Block/single parity succeeded on all six
+  connected nodes on 2026-10-14; Home Assistant deployment and M-WRG-S
+  validation remain open (HW-4 / R-12).
+- **4 — Writes:** partial. W-1 measured the airflow response, but `41101`
+  returned app-encoded values rather than the raw `41121` target. The client
+  decodes this encoding for displayed targets, while balanced write
+  confirmation reads the exact set-side `41121` value only while a write is
+  pending. Focused tests cover this path; a helper rather than the real Home
+  Assistant coordinator performed the hardware write, so live confirmation
+  remains unmeasured.
 - **5 — Busy:** inconclusive. No Busy response appeared in passive runs, and
   the active stimulus was not run under the current pacing safety rules.
 - **6 — Link lifecycle:** partial. Port locking and new-process reopening

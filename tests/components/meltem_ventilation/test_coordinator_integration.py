@@ -63,6 +63,9 @@ class _FakeClient:
     def __init__(self) -> None:
         self.read_calls: list[tuple[str, RefreshPlan]] = []
         self.next_read_state = RoomState(target_level=42)
+        self.target_read_calls: list[str] = []
+        self.next_balanced_target_readback = 42
+        self.target_read_error: MeltemModbusError | None = None
         self.fail_rooms: set[str] = set()
         self.last_request_rate: float | None = None
 
@@ -85,6 +88,12 @@ class _FakeClient:
         if room.key in self.fail_rooms:
             raise MeltemModbusError(f"boom: {room.key}")
         return self.next_read_state
+
+    async def read_balanced_target_readback(self, room: RoomConfig) -> int:
+        self.target_read_calls.append(room.key)
+        if self.target_read_error is not None:
+            raise self.target_read_error
+        return self.next_balanced_target_readback
 
     def seconds_since_successful_read(self, slave: int) -> float | None:
         return None
@@ -201,6 +210,7 @@ class TestFirstRefresh:
 
         assert coordinator.data == {"unit_1": client.next_read_state}
         assert client.read_calls == [("unit_1", AIRFLOW_REFRESH_PLAN)]
+        assert client.target_read_calls == []
         assert coordinator.data_health_stale("unit_2") is None
         assert not coordinator.room_available("unit_2")
         clock.now += _update_interval_seconds(coordinator)
@@ -855,6 +865,115 @@ class TestReadOneJob:
 
         assert result["unit_1"].target_level == 77
         assert result["unit_2"].target_level == 20
+
+    async def test_pending_balanced_write_reads_exact_target_on_airflow_poll(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator._writes.record_pending("unit_1", "airflow_levels", (65, 65))
+        fresh = dt_util.utcnow()
+        client.next_read_state = RoomState(operation_mode="manual").with_read_health(
+            "flow_control",
+            ReadHealth(last_attempt=fresh, last_successful_read=fresh),
+        )
+        client.next_balanced_target_readback = 65
+
+        result = await coordinator._read_one_job({}, _due_job("flow"))
+
+        assert client.target_read_calls == ["unit_1"]
+        assert result["unit_1"].balanced_target_readback == 65
+        coordinator._confirm_pending_writes(result)
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
+
+    async def test_balanced_write_mismatch_can_recover_with_later_exact_readback(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator._writes.record_pending("unit_1", "airflow_levels", (63, 63))
+        first_read = dt_util.utcnow()
+        client.next_read_state = RoomState(
+            operation_mode="unbalanced",
+            target_level=63,
+            extract_target_level=60,
+        ).with_read_health(
+            "flow_control",
+            ReadHealth(last_attempt=first_read, last_successful_read=first_read),
+        )
+
+        first_result = await coordinator._read_one_job({}, _due_job("flow"))
+        coordinator._confirm_pending_writes(first_result)
+
+        confirmation = coordinator._writes.by_room["unit_1"]["airflow_levels"]
+        assert confirmation.status == "mismatch"
+        assert confirmation.actual_value == (63, 60)
+        assert client.target_read_calls == []
+
+        second_read = dt_util.utcnow()
+        client.next_read_state = RoomState(operation_mode="manual").with_read_health(
+            "flow_control",
+            ReadHealth(last_attempt=second_read, last_successful_read=second_read),
+        )
+        client.next_balanced_target_readback = 63
+
+        second_result = await coordinator._read_one_job(first_result, _due_job("flow"))
+        coordinator._confirm_pending_writes(second_result)
+
+        confirmation = coordinator._writes.by_room["unit_1"]["airflow_levels"]
+        assert client.target_read_calls == ["unit_1"]
+        assert second_result["unit_1"].balanced_target_readback == 63
+        assert confirmation.status == "confirmed"
+        assert confirmation.actual_value == (63, 63)
+
+    async def test_poll_without_pending_balanced_write_skips_target_register(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build(hass)
+
+        await coordinator._read_one_job({}, _due_job("flow"))
+
+        assert client.target_read_calls == []
+
+    async def test_unbalanced_write_skips_balanced_target_register(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator._writes.record_pending("unit_1", "airflow_levels", (40, 60))
+        fresh = dt_util.utcnow()
+        client.next_read_state = RoomState(
+            operation_mode="unbalanced",
+            target_level=40,
+            extract_target_level=60,
+        ).with_read_health(
+            "flow_control",
+            ReadHealth(last_attempt=fresh, last_successful_read=fresh),
+        )
+
+        await coordinator._read_one_job({}, _due_job("flow"))
+
+        assert client.target_read_calls == []
+
+    async def test_unreadable_target_register_does_not_confirm_from_status_or_measured_airflow(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build(hass)
+        fresh = dt_util.utcnow()
+        client.next_read_state = RoomState(
+            operation_mode="manual",
+            target_level=65,
+            balanced_target_readback=None,
+        ).with_read_health(
+            "flow_control",
+            ReadHealth(last_attempt=fresh, last_successful_read=fresh),
+        )
+        client.target_read_error = MeltemModbusError("read 41121 refused")
+        coordinator._writes.record_pending("unit_1", "airflow_levels", (65, 65))
+
+        result = await coordinator._read_one_job({}, _due_job("flow"))
+        coordinator._confirm_pending_writes(result)
+
+        assert client.target_read_calls == ["unit_1"]
+        assert result["unit_1"].balanced_target_readback is None
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "pending"
 
     async def test_failed_read_preserves_previous(
         self,

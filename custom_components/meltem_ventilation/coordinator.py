@@ -17,6 +17,7 @@ import math
 import operator
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
@@ -131,6 +132,8 @@ class _CoordinatorClient(Protocol):
     async def read_room_state(
         self, room: RoomConfig, previous_state: RoomState, refresh_plan: RefreshPlan
     ) -> RoomState: ...
+
+    async def read_balanced_target_readback(self, room: RoomConfig) -> int: ...
 
     async def write_level(self, room: RoomConfig, level: int) -> None: ...
 
@@ -971,6 +974,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 )
                 failed = True
 
+            if not failed and refresh_plan.refresh_airflow:
+                refreshed_room = await self._read_balanced_target_if_pending(room, refreshed_room)
+
             updated_states = {**self.safe_data, room.key: refreshed_room}
             if refreshed_room != previous_state:
                 self.async_set_updated_data(updated_states)
@@ -981,6 +987,31 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
             if attempt < POST_WRITE_REFRESH_RETRIES:
                 await async_sleep(POST_WRITE_REFRESH_INTERVAL_SECONDS)
+
+    async def _read_balanced_target_if_pending(
+        self, room: RoomConfig, state: RoomState
+    ) -> RoomState:
+        """Read the exact set register for a fresh, still-confirmable write."""
+
+        if (
+            not read_health.group_fresh(state, "flow_control")
+            or state.operation_mode not in (OPERATION_MODE_MANUAL, OPERATION_MODE_OFF)
+            or not self._writes.needs_confirmation(room.key, "airflow_levels")
+        ):
+            return state
+
+        await self._async_wait_for_read_slot()
+        try:
+            target = await self.client.read_balanced_target_readback(room)
+        except MeltemModbusError as err:
+            _LOGGER.warning(
+                "Could not read set-side airflow target register 41121 for room %s "
+                "while confirming a write: %s",
+                room.key,
+                err,
+            )
+            return state
+        return replace(state, balanced_target_readback=target)
 
     async def _async_wait_for_read_slot(self) -> None:
         """Wait until the request-rate cap allows the next read, then claim it."""
@@ -1105,6 +1136,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self._room_failures.pop(room.key, None)
             if refreshed_state.has_data:
                 self._log_room_recovered(room.key)
+            if job.refresh_plan.refresh_airflow:
+                refreshed_state = await self._read_balanced_target_if_pending(room, refreshed_state)
 
         if refreshed_state == previous_state:
             return previous_states

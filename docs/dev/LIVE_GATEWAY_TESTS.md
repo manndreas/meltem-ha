@@ -909,6 +909,56 @@ Notes on the tools:
 - **Pass:** each decoded field matches within two refreshes. Restore from the
   snapshot.
 
+### W-17 — Home Assistant coordinator balanced-write confirmation
+
+- **Checks:** the live coordinator's exact `41121` readback for a balanced
+  directional-fan write, separately from the time taken for measured airflow
+  to change.
+- **Type:** W
+- **Run:**
+  1. Use the real Home Assistant integration and a mapped room on the live
+     gateway. Record the baseline and take a settings snapshot. Confirm the
+     unit is not in an error state.
+  2. Call `fan.set_percentage` for the supply fan at `63%`. Wait at least
+     10 seconds, then call it for the extract fan at `63%`.
+  3. For up to 60 seconds, record the `airflow_levels` write status,
+     `expected_value`, `actual_value`, `last_error`, and read-health freshness.
+  4. Stop Home Assistant before using any raw Modbus tool. Read the relevant
+     status and set registers individually; do not issue raw requests while
+     Home Assistant owns the serial port.
+  5. Restore the exact pre-test state using the captured values. Verify the
+     raw registers and measured airflow, then restart Home Assistant.
+- **Pass:** the first directional write is confirmed at `63/60`; the second
+  balanced write is confirmed at `63/63` within 60 seconds. Measured airflow
+  may lag and is not the immediate pass criterion. Restore and verify the
+  baseline before ending the test.
+- **First attempt on 2026-10-14 — mismatch:** the test began on slave `4`
+  (M-WRG-II, software `2326`) at HIGH, measured `60/60 m3/h`, with status
+  `[3,230,0]`. The supply `63%` write was confirmed at `63/60`. After at least
+  10 seconds, the extract `63%` write remained `mismatch` for more than
+  60 seconds (`expected=63/63`, `actual=63/60`, `last_error=null`). After
+  Home Assistant was stopped, raw reads returned
+  `41100..41102=[3,126,0]`, `41120=3`, `41121=126`, `41122=120`,
+  `41132=0`, `41016=0`, and measured airflow `60/60`. This confirms the
+  stored `41121` target was `63 m3/h`, but does not explain the coordinator's
+  mismatch. The approved HIGH restore (`41120=3`, `41121=230`, `41132=0`)
+  was verified at status `[3,230,0]`, `41122=120`, `41016=0`, and `60/60`.
+- **Cause and fix:** `mismatch` was not final in `confirm()`, but
+  `needs_confirmation()` excluded it, blocking later exact-target reads.
+  A regression test now models the initial unbalanced `63/60` read followed
+  by a manual-mode exact `41121` read and recovery to `confirmed`.
+- **Retest on 2026-10-14 — pass:** after reloading the fixed integration,
+  supply `63%` was confirmed at `63/60`; after at least 10 seconds, extract
+  `63%` was confirmed at `63/63` with `last_error=null`. HA was stopped and
+  raw reads showed `41100..41102=[3,126,0]`, `41120=3`, `41121=126`,
+  `41122=120`, `41132=0`, `41016=0`, and measured airflow `60/60`.
+  The target confirmation passed; the measured airflow had not yet converged.
+  The approved HIGH restore was verified at `[3,230,0]`, `41121=230`,
+  `41122=120`, `41132=0`, `41016=0`, and `60/60`. The live mapping was
+  `63% -> 63 m3/h`, not `64 m3/h`.
+  Captures: `all_known-slave4-20261014-145009-W17-confirmed-before-restore.json`
+  and `all_known-slave4-20261014-145023-W17-confirmed-restored-baseline.json`.
+
 ## H — Tests that need a person
 
 The agent prepares the measurement, asks for exactly one action, measures, and

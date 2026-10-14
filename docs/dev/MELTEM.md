@@ -136,6 +136,23 @@ status pattern used by the client decoder (`mode=3, submode=227` or
 `mode=0, submode=0`) during that scan. This used the locally exposed serial
 interface and does not establish that USB access is manufacturer supported.
 
+A further read-only check on 2026-10-14 compared `41100×3` with single reads
+of `41100`, `41101`, and `41102` on all six connected nodes. Each block matched
+its three single-register values:
+
+| Slave | Software | `41100..41102` | `41020/41021` |
+| --- | ---: | --- | --- |
+| 2 | 2326 | `[3, 229, 0]` | `[30, 30]` |
+| 3 | 2326 | `[3, 229, 0]` | `[30, 30]` |
+| 4 | 2326 | `[3, 230, 0]` | `[60, 60]` |
+| 5 | 2584 | `[3, 228, 0]` | `[30, 30]` |
+| 6 | 2326 | `[3, 203, 0]` | `[30, 30]` |
+| 7 | 2326 | `[3, 229, 0]` | `[30, 30]` |
+
+The integration-like discovery reported profile `ii_plain` for all six; only
+slave `4` was confirmed as M-WRG-II by the person during this run. This does
+not validate M-WRG-S. The gateway product ID was `116852` on each node.
+
 In a separate check while the user had intensive ventilation active on slave
 `4`, FC03 `41100×3` returned `[0, 0, 0]` in 16.6 ms. This matches the active
 pattern decoded by the integration and confirms intensive-state detection on
@@ -632,6 +649,54 @@ behind the target:
   The person manually restored `80/0`, which a later read confirmed. The
   post-restore snapshot had multiple shadow-register differences, whose cause
   was not isolated.
+- in W-1 on `2026-10-14`, slave `4` (M-WRG-II, software `2326`) started at
+  measured `60/60 m3/h` and status `[3, 230, 0]` (HIGH). Writing `40 m3/h`
+  set raw `41121=80`, but the current-state map returned `[3, 204, 0]`;
+  `41101=204` matches `200 + 40 / 10`, not the written raw value. The status
+  stayed at that value during the 60-second observation. Measured airflow
+  remained `60/60` for five observations and reached `40/40` by observation
+  six, then held through observation 60. The helper restored balanced
+  `60/60` with `41121=120`, for which status was `[3, 206, 0]`; this also
+  matches `200 + 60 / 10`.
+
+  The explicitly approved HIGH restore (`41120=3`, `41121=230`, `41132=0`)
+  returned status `[3, 230, 0]`, measured airflow `60/60`, and `41016=0`.
+  These values were unchanged two minutes later. After the first write,
+  `41120×2` read `[3, 230]` but `41120×5` still returned exception `0x05`.
+  The pre-test snapshot had also found `41120..41124` and `41132` unreadable;
+  `42001..42009` became readable in the post-test snapshot although none was
+  written. Shadow-register differences were observed but not explained.
+  This disproves the assumption that `41101` echoes the raw balanced `41121`
+  target. The status decoder accepts the observed `200 + airflow / 10` form
+  for displaying a balanced target within the profile limit, while keeping
+  preset codes `227..230` separate. Balanced write confirmation instead reads
+  `41121` directly while the write is pending; the live Home Assistant result
+  is recorded in W-17 below.
+- The first W-17 run on `2026-10-14` used real Home Assistant `2026.10.0`
+  with unit 3 mapped to slave `4`, starting from HIGH at measured `60/60 m3/h`.
+  Setting the supply fan to `63%` was confirmed as `63/60`; after at least
+  10 seconds, setting the extract fan to `63%` remained `mismatch` for more
+  than 60 seconds (`expected=63/63`, `actual=63/60`, `last_error=null`).
+  After stopping HA, raw reads showed `41100..41102=[3,126,0]`,
+  `41120=3`, `41121=126`, `41122=120`, `41132=0`, `41016=0`, and measured
+  airflow `60/60`. The post-stop values confirmed the stored target, but did
+  not show what the coordinator read when it reported the mismatch.
+- Offline tracing found the cause in the retry gate: `mismatch` remained
+  eligible for recovery in `confirm()`, but `needs_confirmation()` excluded
+  it, preventing a later exact `41121` read. The coordinator now continues
+  exact reads for mismatched writes; a regression test covers an initial
+  unbalanced `63/60` mismatch followed by a manual-mode exact `63` readback.
+- The W-17 retest with that fix again started at HIGH, measured `60/60`, and
+  fresh read-health groups. Supply `63%` confirmed `63/60`; after at least
+  10 seconds, extract `63%` confirmed `63/63` (`last_error=null`). With HA
+  stopped, raw reads returned `41100..41102=[3,126,0]`, `41120=3`,
+  `41121=126`, `41122=120`, `41132=0`, `41016=0`, and measured airflow
+  `60/60`. The target confirmation passed; measured airflow had not yet
+  converged and is a separate settle-time observation. The approved HIGH
+  restore (`41120=3`, `41121=230`, `41132=0`) was verified with status
+  `[3,230,0]`, `41122=120`, `41016=0`, and measured airflow `60/60`.
+  The live mapping was `63% -> 63 m3/h`, not the previously assumed
+  `64 m3/h`.
 
 ## Temperature register quirk
 
