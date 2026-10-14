@@ -1,4 +1,4 @@
-"""Verify which entities each unit profile produces.
+"""Verify which entities each unit profile produces and that they follow updates.
 
 The platform setup functions are otherwise untested, so a missing entry in
 BASE_SUPPORTED_ENTITY_KEYS or a wrong supported_profiles filter would go
@@ -16,6 +16,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import (
@@ -29,7 +30,7 @@ from custom_components.meltem_ventilation.const import (
 from custom_components.meltem_ventilation.modbus_helpers import (
     supported_entity_keys_for_profile,
 )
-from custom_components.meltem_ventilation.models import RoomState
+from custom_components.meltem_ventilation.models import ReadHealth, RoomState
 
 type SetupProfile = Callable[..., Awaitable[str]]
 
@@ -235,6 +236,41 @@ async def test_unit_devices_hang_off_the_gateway_device(
     migrated_entry = hass.config_entries.async_get_entry(entry_id)
     assert migrated_entry is not None
     assert migrated_entry.minor_version == 3
+
+
+async def test_entity_states_follow_every_coordinator_update(
+    hass: HomeAssistant, setup_profile: SetupProfile
+) -> None:
+    """Entity state is computed on every update instead of being cached across them."""
+    entry_id = await setup_profile("ii_plain")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    coordinator = entry.runtime_data.coordinator
+    registry = er.async_get(hass)
+    sensor_id = registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_unit_1_exhaust_temperature"
+    )
+    problem_id = registry.async_get_entity_id(
+        Platform.BINARY_SENSOR, DOMAIN, f"{DOMAIN}_unit_1_error_status"
+    )
+    assert sensor_id is not None
+    assert problem_id is not None
+
+    for temperature, error in ((20.5, False), (21.5, True)):
+        read_at = dt_util.utcnow()
+        health = ReadHealth(last_attempt=read_at, last_successful_read=read_at)
+        state = RoomState(exhaust_temperature=temperature, error_status=error)
+        for group_key in ("temperature", "status"):
+            state = state.with_read_health(group_key, health)
+        coordinator.async_set_updated_data({"unit_1": state})
+        await hass.async_block_till_done()
+
+        sensor_state = hass.states.get(sensor_id)
+        problem_state = hass.states.get(problem_id)
+        assert sensor_state is not None
+        assert problem_state is not None
+        assert sensor_state.state == str(temperature)
+        assert problem_state.state == ("on" if error else "off")
 
 
 async def test_device_path_sensor_keeps_its_registry_entry_across_reloads(

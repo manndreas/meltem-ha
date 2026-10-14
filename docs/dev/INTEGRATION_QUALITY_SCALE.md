@@ -83,7 +83,7 @@ checks the descriptions for every config and options flow field.
 | ✅ | [`docs-installation-parameters`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-installation-parameters) | The [README.md](../../README.md) explains the gateway, USB connection, requirements, port, and profile selection. |
 | ✅ | [`entity-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/entity-unavailable) | Entities are marked unavailable when rooms are unavailable or read groups are stale. [entity.py](../../custom_components/meltem_ventilation/entity.py) |
 | ✅ | [`integration-owner`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/integration-owner) | `codeowners` is set in [manifest.json](../../custom_components/meltem_ventilation/manifest.json). |
-| ✅ | [`log-when-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/log-when-unavailable) | Each room is logged once at Info level when it reaches the failure threshold or has been silent too long; the next successful room read logs its recovery once. Repeated read-job failures are no longer logged as Warnings. Gateway backoff changes remain at Debug level. [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [test_coordinator_and_config_helpers.py](../../tests/components/meltem_ventilation/test_coordinator_and_config_helpers.py) |
+| ✅ | [`log-when-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/log-when-unavailable) | Each room is logged once at Info level when it reaches the failure threshold or has been silent too long, and once when it recovers. The check runs after every read job of the room, so availability queries from entities, diagnostics, and system health have no side effects. Single failed read jobs and gateway backoff changes are logged at Debug level. [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [test_coordinator_and_config_helpers.py](../../tests/components/meltem_ventilation/test_coordinator_and_config_helpers.py) |
 | ✅ | [`parallel-updates`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/parallel-updates) | Entity platforms set `PARALLEL_UPDATES = 0`; serialization is handled centrally by the coordinator. Examples: [fan.py](../../custom_components/meltem_ventilation/fan.py), [sensor.py](../../custom_components/meltem_ventilation/sensor.py). |
 | ➖ | [`reauthentication-flow`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/reauthentication-flow) | There are no credentials or authentication to renew. |
 | ✅ | [`test-coverage`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/test-coverage) | In the full coverage run, every integration module is above 95%: 99% overall, 96% for the lowest-coverage module (`modbus_helpers.py`), and 100% for [write_confirmation.py](../../custom_components/meltem_ventilation/write_confirmation.py). One platform test was excluded because its teardown attempts to open `/dev/ttyACM0`: [test_platform_matrix.py](../../tests/components/meltem_ventilation/test_platform_matrix.py). The added branch tests are in [test_write_confirmation.py](../../tests/components/meltem_ventilation/test_write_confirmation.py). |
@@ -124,18 +124,28 @@ checks the descriptions for every config and options flow field.
 
 ## Verification
 
-Tests and static checks were run on October 13, 2026, with Python 3.14.7 and
-the test dependencies pinned by the repository:
+Tests and static checks were last run on October 14, 2026, on Windows with
+Python 3.14.7 and the test dependencies pinned by the repository:
 
-- **Coverage run:** 670 passed; one platform test was excluded because its
-  teardown attempts to open `/dev/ttyACM0`.
-- **Overall test coverage:** 99%; every integration module is above 95%, with
-  the lowest at 96%.
+- **Coverage run:** 698 passed and one skipped; one platform test was
+  excluded because its teardown attempts to open `/dev/ttyACM0`. The skipped
+  test resolves a `/dev/serial/by-id` symlink, which Windows cannot create
+  without elevated rights; it runs on Linux.
+- **Overall test coverage:** 99%. Every integration module except
+  `modbus_helpers.py` is at 97% or above; that module reaches 91% only on
+  Windows, where the skipped symlink test leaves the by-id resolution
+  uncovered. The October 13 run reported 96% for it.
 - **`config_flow.py` and `write_confirmation.py`:** 100% each.
-- **Ruff:** all changed Python files passed.
+- **Ruff:** `ruff format --check` and `ruff check` passed for
+  `custom_components`, `tests`, and `tools`.
 - **mypy --strict:** no findings in 28 source files; the Home Assistant
   executor's `Any` return value is treated as `str` at the call boundary based
   on the annotated worker result.
+- **Pyright 1.1.414 (standard mode):** no findings in `custom_components`,
+  `tests`, and `tools`; the entity modules disable only
+  `reportIncompatibleVariableOverride`, because Home Assistant types entity
+  state as `cached_property` while the integration overrides it with plain
+  properties.
 - **Hassfest and HACS validation:** not run locally for this audit; both jobs
   are configured in [ci.yml](../../.github/workflows/ci.yml).
 

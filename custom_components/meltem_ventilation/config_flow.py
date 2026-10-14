@@ -275,8 +275,7 @@ async def _temporary_units(
                     )
                 except HomeAssistantError as err:
                     raise _PortInUseError(str(err)) from err
-                # PolicyUnit delegates the remaining ModbusUnit methods dynamically.
-                units[slave] = cast(ModbusUnit, prepare_unit(unit, slave, policy))
+                units[slave] = prepare_unit(unit, slave, policy)
             return units[slave]
 
         yield unit_for
@@ -366,7 +365,6 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._port = DEFAULT_PORT
-        self._max_requests_per_second = DEFAULT_MAX_REQUESTS_PER_SECOND
         self._discovered_slaves: list[int] = []
         self._preview_by_slave: dict[int, str] = {}
         self._detected_profile_by_slave: dict[int, str] = {}
@@ -571,11 +569,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
 
         return float(
             self.config_entry.options.get(
-                CONF_MAX_REQUESTS_PER_SECOND,
-                self.config_entry.data.get(
-                    CONF_MAX_REQUESTS_PER_SECOND,
-                    DEFAULT_MAX_REQUESTS_PER_SECOND,
-                ),
+                CONF_MAX_REQUESTS_PER_SECOND, DEFAULT_MAX_REQUESTS_PER_SECOND
             )
         )
 

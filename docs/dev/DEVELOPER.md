@@ -39,7 +39,8 @@ These are the most important practical findings from the latest hardware tests:
 - `41120..41124` are set registers and are not used for routine polling
 - `41020/41021` behave like the effective/current airflow and may lag behind
 - many devices refuse reads of the set registers, the five-register block even
-  after a write; they are therefore used for writes only (see HW-4)
+  after a write; routine polling therefore never reads them, and only a recent
+  balanced airflow write is confirmed by a single read of `41121` (see HW-4)
 - immediate write confirmation polling created unnecessary bus load and was
   removed for airflow writes
 - short read failures preserve the previous state, but a unit that keeps
@@ -368,8 +369,8 @@ operation. Otherwise it writes manual mode using the known airflow, so a stale
 manual-mode cache cannot silently discard the command.
 
 The minimum level of a sensor control must not exceed its maximum level;
-`async_set_control_setting` refuses such a write with `control_level_range`
-before it reaches the unit. Validation runs under the same gateway lock as
+`async_set_control_setting` refuses such a write with a
+`ServiceValidationError` (`control_level_range`) before it reaches the unit. Validation runs under the same gateway lock as
 the write, so concurrent changes cannot both pass against an old range.
 Accepted settings without a successful readback are used instead of cached
 values for the opposite bound. Both values are compared after rounding to
@@ -389,11 +390,15 @@ operating-mode write does not clear the intensive registers, so a readback
 that still reports intensive cannot show it: the write is recorded as
 `unverifiable`, which does not flag `data_health`. Unlike `confirmed` or
 `superseded` it is not final; the first readback after the override ends
-confirms or mismatches it. A quick-mode write clears the intensive registers,
-so a remaining intensive status is judged as a normal mismatch.
+confirms or mismatches it. A balanced airflow write needs the `41121` read for
+that, so it is only judged within `WRITE_HEALTH_RETENTION_SECONDS` of the
+write. A quick-mode write clears the intensive registers, so a remaining
+intensive status is judged as a normal mismatch.
 
-The set-register block `41120..41124` is used for writes only; `41132` is
-still written last as the apply latch.
+The set-register block `41120..41124` is used for writes; the only read is
+the single-register confirmation read of `41121` described under
+[Target readback and measured airflow](#target-readback-and-measured-airflow).
+`41132` is still written last as the apply latch.
 
 Write errors reach the UI as translated `HomeAssistantError`s (`exceptions` in
 `strings.json`) instead of an "Unknown error".
@@ -497,20 +502,30 @@ raw `41121` target: it reports balanced targets as `200 + airflow / 10`, see
 The client decodes `41101` as either the raw `0..200` value or the app encoding
 `200 + airflow / 10` when the resulting airflow is within the selected profile's
 maximum, for display only. It does not use this coarse status value or measured
-airflow to confirm a balanced write. While a write is pending, unconfirmed, or
-mismatched, the coordinator reads `41121` separately and scales its exact raw
-value with the profile range. Keeping mismatches eligible lets a later exact
-read recover from a transient stale mode/target read. If the set-side read
-fails, the write is not confirmed and a later airflow poll may retry it rather
-than falling back to another source. Preset codes `227..230` keep their
-separate mode meanings. W-17 confirmed this path on an M-WRG-II unit; see
+airflow to confirm a balanced write. While a write is pending, unconfirmed,
+mismatched, or unverifiable, and at most for `WRITE_HEALTH_RETENTION_SECONDS`
+after it started, the coordinator reads `41121` separately on airflow polls
+and scales its exact raw value with the profile range. Keeping mismatches
+eligible lets a later exact read recover from a transient stale mode/target
+read; the time limit stops the extra request once the write could no longer
+flag `data_health`. While intensive ventilation hides the base mode, the read
+is skipped, and an `unverifiable` write is judged by the first exact read after
+the override ends, provided that happens within the same window; otherwise it
+stays `unverifiable`, which does not flag `data_health`. A value outside
+`0..200`, such as a quick-mode code written by the app or keypad, is no
+airflow target and leaves the write unconfirmed.
+If the set-side read fails, the write is not confirmed and a later airflow
+poll may retry it rather than falling back to another source; the first
+failure of a streak is logged as a warning, repeats at debug level. Preset
+codes `227..230` keep their separate mode meanings. W-17 confirmed this path
+on an M-WRG-II unit; see
 [W-17 in HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md#w-17-home-assistant-write-confirmation-on-2026-10-14).
 
 ### Per-unit availability on read failures
 
 When the gateway is unplugged or otherwise unavailable, the integration keeps
-the previous entity state in memory for a short while and logs read failures.
-This avoids flapping on transient outages.
+the previous entity state in memory for a short while and logs each failed
+read job at debug level. This avoids flapping on transient outages.
 
 Beyond that grace period the entities of an affected unit are marked
 unavailable rather than showing frozen values:
@@ -524,6 +539,12 @@ unavailable rather than showing frozen values:
 - units that still respond keep working independently
 - polling backs off progressively while the gateway stays unreachable
 - writes fail until communication is restored
+
+A unit's change to unavailable and its recovery are each logged once at info
+level. The check runs after every read job of that unit, so availability
+queries from entities, diagnostics, or system health have no side effects. A
+job whose optional reads swallowed their errors does not count as a recovery
+while the unit stays silent.
 
 ### Temperatures are not identical conceptually
 
@@ -692,7 +713,8 @@ and every entity platform, including:
 - the link settings in `tools/_link.py` against `const.py`
 
 CI also runs `mypy` (configured in `pyproject.toml`) against the Home
-Assistant version the test harness installs.
+Assistant version the test harness installs, Pyright on `custom_components`, `tests` and `tools`,
+and Markdownlint.
 
 See `CONTRIBUTING.md` for environment setup, the test commands, and the
 Windows-specific workarounds.
@@ -746,3 +768,8 @@ activates a half-written sequence.
 - Be careful when touching scan timing; it can affect how many devices are found.
 - Use `41100..41102`, not the write-side `41120..41122`, for current mode state.
 - Keep `M-WRG-S` and `M-WRG-II` airflow scaling separate.
+- Compute entity state in plain `@property` overrides, as Home Assistant Core
+  does. Home Assistant types these attributes as `cached_property`, so the
+  entity modules disable Pyright's `reportIncompatibleVariableOverride`; a
+  `cached_property` override would freeze the value between coordinator
+  updates.

@@ -7,7 +7,7 @@ import types
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -322,6 +322,7 @@ class TestCoordinatorResilience:
         with (
             patch("custom_components.meltem_ventilation.coordinator._LOGGER.info") as info,
             patch("custom_components.meltem_ventilation.coordinator._LOGGER.warning") as warning,
+            patch("custom_components.meltem_ventilation.coordinator._LOGGER.debug") as debug,
         ):
             for _ in range(ROOM_UNAVAILABLE_AFTER_FAILURES):
                 states = await coordinator._read_one_job(states, job)
@@ -331,6 +332,9 @@ class TestCoordinatorResilience:
                 f"after {ROOM_UNAVAILABLE_AFTER_FAILURES} consecutive read failures: boom",
             )
             warning.assert_not_called()
+            debug.assert_any_call(
+                "Failed to read room %s for job %s: %s", "broken", "flow_broken", ANY
+            )
 
             states = await coordinator._read_one_job(states, job)
             info.assert_called_once()
@@ -348,17 +352,27 @@ class TestCoordinatorResilience:
             assert info.call_args.args == ("Meltem room %s reachable again", "broken")
             warning.assert_not_called()
 
-    def test_silent_room_unavailability_and_recovery_are_logged_once(
+    async def test_silent_room_unavailability_and_recovery_are_logged_once(
         self,
         hass: HomeAssistant,
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_1])
-        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        states = {"unit_1": RoomState(target_level=30)}
+        coordinator.data = states
         client.silent_seconds_by_slave[_UNIT_1.slave] = ROOM_SILENT_AFTER_SECONDS + 1
+        job = PollJob(
+            key="flow",
+            room_key="unit_1",
+            refresh_plan=RefreshPlan.only(refresh_airflow=True),
+            interval_seconds=10,
+            next_due=0.0,
+        )
 
         with patch("custom_components.meltem_ventilation.coordinator._LOGGER.info") as info:
-            assert not coordinator.room_available("unit_1")
-            assert not coordinator.room_available("unit_1")
+            # Optional reads swallow their errors, so a silent unit's job still
+            # succeeds; that must not count as a recovery.
+            states = await coordinator._read_one_job(states, job)
+            states = await coordinator._read_one_job(states, job)
             info.assert_called_once_with(
                 "Meltem room %s unavailable: %s",
                 "unit_1",
@@ -366,10 +380,24 @@ class TestCoordinatorResilience:
             )
 
             client.silent_seconds_by_slave[_UNIT_1.slave] = 0
-            assert coordinator.room_available("unit_1")
-            assert coordinator.room_available("unit_1")
+            states = await coordinator._read_one_job(states, job)
+            states = await coordinator._read_one_job(states, job)
             assert info.call_count == 2
             assert info.call_args.args == ("Meltem room %s reachable again", "unit_1")
+
+    def test_availability_queries_do_not_log(self, hass: HomeAssistant) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        client.silent_seconds_by_slave[_UNIT_1.slave] = ROOM_SILENT_AFTER_SECONDS + 1
+
+        with patch("custom_components.meltem_ventilation.coordinator._LOGGER.info") as info:
+            assert not coordinator.room_available("unit_1")
+            client.silent_seconds_by_slave[_UNIT_1.slave] = 0
+            assert coordinator.room_available("unit_1")
+            coordinator._room_failures["unit_1"] = ROOM_UNAVAILABLE_AFTER_FAILURES
+            assert not coordinator.room_available("unit_1")
+
+        info.assert_not_called()
 
     def test_polling_backs_off_after_repeated_transport_failures(
         self,

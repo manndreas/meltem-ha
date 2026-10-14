@@ -7,6 +7,7 @@ from modbus_connection.model import Component, Device, ManualComponent, raw_regi
 
 from ..const import (
     REGISTER_CO2_EXTRACT_AIR,
+    REGISTER_CURRENT_LEVEL,
     REGISTER_DAYS_UNTIL_FILTER_CHANGE,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
@@ -60,6 +61,9 @@ class MeltemRoomDevice(Device):
         self.control_settings = ControlSettings(unit)
         self.rf_comm_status = Register(unit, base_offset=REGISTER_RF_COMM_STATUS)
         self.mode = ModeBlock(unit)
+        # Single-register read of the set-side balanced target, only used to
+        # confirm a recent airflow write; the five-register block stays unread.
+        self.current_level_readback = Register(unit, base_offset=REGISTER_CURRENT_LEVEL)
         self.mode_status = ModeStatus(unit)
         self.command = Command(unit)
 

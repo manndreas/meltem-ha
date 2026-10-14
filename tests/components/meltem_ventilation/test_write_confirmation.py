@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -10,6 +11,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.meltem_ventilation.const import (
     OPERATION_MODE_MANUAL,
     OPERATION_MODE_UNBALANCED,
+    WRITE_HEALTH_RETENTION_SECONDS,
 )
 from custom_components.meltem_ventilation.models import ReadHealth, RoomState, WriteConfirmation
 from custom_components.meltem_ventilation.write_confirmation import (
@@ -102,3 +104,30 @@ def test_app_encoded_balanced_readback_confirms_a_level_write(target_level: int)
 def test_readback_rejects_unknown_write_key() -> None:
     with pytest.raises(ValueError, match="Unknown write confirmation key"):
         _readback_value(RoomState(), "unknown")
+
+
+@pytest.mark.parametrize("status", ["pending", "unconfirmed", "mismatch", "unverifiable"])
+def test_open_write_needs_confirmation_until_the_health_retention_ends(status: str) -> None:
+    confirmations = WriteConfirmations()
+    confirmations.record_pending("unit_1", "airflow_levels", (60, 60))
+    confirmations.set_status("unit_1", "airflow_levels", status)
+
+    assert confirmations.needs_confirmation("unit_1", "airflow_levels")
+
+    confirmation = confirmations.by_room["unit_1"]["airflow_levels"]
+    confirmations.by_room["unit_1"]["airflow_levels"] = replace(
+        confirmation,
+        started_at=confirmation.started_at - timedelta(seconds=WRITE_HEALTH_RETENTION_SECONDS + 1),
+    )
+
+    assert not confirmations.needs_confirmation("unit_1", "airflow_levels")
+
+
+@pytest.mark.parametrize("status", ["confirmed", "failed", "superseded"])
+def test_final_write_needs_no_confirmation(status: str) -> None:
+    confirmations = WriteConfirmations()
+    confirmations.record_pending("unit_1", "airflow_levels", (60, 60))
+    confirmations.set_status("unit_1", "airflow_levels", status)
+
+    assert not confirmations.needs_confirmation("unit_1", "airflow_levels")
+    assert not confirmations.needs_confirmation("unit_2", "airflow_levels")

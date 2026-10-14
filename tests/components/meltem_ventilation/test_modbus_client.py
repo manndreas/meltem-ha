@@ -401,12 +401,20 @@ class TestAirflowTargets:
         assert target == 65
         assert _reads(unit) == [(REGISTER_CURRENT_LEVEL, 1)]
 
-    async def test_balanced_target_confirmation_rejects_non_airflow_codes(
+    @pytest.mark.parametrize("raw_level", [PRESET_MODE_CODE_HIGH, 204])
+    async def test_balanced_target_confirmation_ignores_non_airflow_codes(
+        self, client: MeltemModbusClient, unit: MockModbusUnit, raw_level: int
+    ) -> None:
+        unit.holding[REGISTER_CURRENT_LEVEL] = [raw_level]
+
+        assert await client.read_balanced_target_readback(_PLAIN) is None
+
+    async def test_balanced_target_confirmation_reports_a_refused_register(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
-        unit.holding[REGISTER_CURRENT_LEVEL] = [230]
+        unit.fail_read(REGISTER_CURRENT_LEVEL, _REJECTED)
 
-        with pytest.raises(MeltemModbusError, match="invalid raw airflow target"):
+        with pytest.raises(MeltemModbusError, match="balanced airflow target register 41121"):
             await client.read_balanced_target_readback(_PLAIN)
 
     @pytest.mark.parametrize(

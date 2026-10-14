@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import replace
@@ -22,7 +23,7 @@ from custom_components.meltem_ventilation.binary_sensor import (
     MeltemBinarySensorEntity,
     MeltemDataHealthBinarySensor,
 )
-from custom_components.meltem_ventilation.const import DOMAIN
+from custom_components.meltem_ventilation.const import DOMAIN, WRITE_HEALTH_RETENTION_SECONDS
 from custom_components.meltem_ventilation.coordinator import (
     TRANSPORT_BACKOFF_MAX_SECONDS,
     TRANSPORT_BACKOFF_START_SECONDS,
@@ -64,7 +65,7 @@ class _FakeClient:
         self.read_calls: list[tuple[str, RefreshPlan]] = []
         self.next_read_state = RoomState(target_level=42)
         self.target_read_calls: list[str] = []
-        self.next_balanced_target_readback = 42
+        self.next_balanced_target_readback: int | None = 42
         self.target_read_error: MeltemModbusError | None = None
         self.fail_rooms: set[str] = set()
         self.last_request_rate: float | None = None
@@ -89,7 +90,7 @@ class _FakeClient:
             raise MeltemModbusError(f"boom: {room.key}")
         return self.next_read_state
 
-    async def read_balanced_target_readback(self, room: RoomConfig) -> int:
+    async def read_balanced_target_readback(self, room: RoomConfig) -> int | None:
         self.target_read_calls.append(room.key)
         if self.target_read_error is not None:
             raise self.target_read_error
@@ -175,6 +176,12 @@ def _due_job(group_key: str, room_key: str = "unit_1") -> PollJob:
 
 def _read_ok(at: datetime) -> ReadHealth:
     return ReadHealth(last_attempt=at, last_successful_read=at)
+
+
+def _fresh_manual_state() -> RoomState:
+    return RoomState(operation_mode="manual").with_read_health(
+        "flow_control", _read_ok(dt_util.utcnow())
+    )
 
 
 def _with_health(state: RoomState, group_keys: Iterable[str], health: ReadHealth) -> RoomState:
@@ -974,6 +981,80 @@ class TestReadOneJob:
         assert client.target_read_calls == ["unit_1"]
         assert result["unit_1"].balanced_target_readback is None
         assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "pending"
+
+    async def test_target_register_is_not_read_after_the_health_retention(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build(hass)
+        client.next_read_state = _fresh_manual_state()
+        coordinator._writes.record_pending("unit_1", "airflow_levels", (65, 65))
+        coordinator._writes.set_status("unit_1", "airflow_levels", "mismatch")
+        confirmation = coordinator._writes.by_room["unit_1"]["airflow_levels"]
+        coordinator._writes.by_room["unit_1"]["airflow_levels"] = replace(
+            confirmation,
+            started_at=confirmation.started_at
+            - timedelta(seconds=WRITE_HEALTH_RETENTION_SECONDS + 1),
+        )
+
+        await coordinator._read_one_job({}, _due_job("flow"))
+
+        assert client.target_read_calls == []
+
+    async def test_failing_target_register_warns_once_per_failing_streak(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build(hass)
+        client.next_read_state = _fresh_manual_state()
+        coordinator._writes.record_pending("unit_1", "airflow_levels", (65, 65))
+        refused = MeltemModbusError("read 41121 refused")
+
+        with patch("custom_components.meltem_ventilation.coordinator._LOGGER.log") as log:
+            for error in (refused, refused, None, refused):
+                client.target_read_error = error
+                await coordinator._read_one_job({}, _due_job("flow"))
+
+        assert len(client.target_read_calls) == 4
+        assert [call.args[0] for call in log.call_args_list] == [
+            logging.WARNING,
+            logging.DEBUG,
+            logging.WARNING,
+        ]
+
+    async def test_quick_mode_code_in_target_register_leaves_the_write_pending(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build(hass)
+        client.next_read_state = _fresh_manual_state()
+        client.next_balanced_target_readback = None
+        coordinator._writes.record_pending("unit_1", "airflow_levels", (65, 65))
+
+        result = await coordinator._read_one_job({}, _due_job("flow"))
+        coordinator._confirm_pending_writes(result)
+
+        assert client.target_read_calls == ["unit_1"]
+        assert result["unit_1"].balanced_target_readback is None
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "pending"
+
+    async def test_unverifiable_balanced_write_is_judged_after_intensive_ends(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator._writes.record_pending("unit_1", "airflow_levels", (65, 65))
+        client.next_read_state = replace(_fresh_manual_state(), intensive_active=True)
+
+        during = await coordinator._read_one_job({}, _due_job("flow"))
+        coordinator._confirm_pending_writes(during)
+
+        assert client.target_read_calls == []
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "unverifiable"
+
+        client.next_read_state = _fresh_manual_state()
+        client.next_balanced_target_readback = 65
+        after = await coordinator._read_one_job(during, _due_job("flow"))
+        coordinator._confirm_pending_writes(after)
+
+        assert client.target_read_calls == ["unit_1"]
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
 
     async def test_failed_read_preserves_previous(
         self,

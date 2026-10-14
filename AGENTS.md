@@ -45,7 +45,7 @@
 ## Validation
 
 - Tests need Python 3.14; see `CONTRIBUTING.md` for the setup and the Windows workarounds
-- Run tests with `pytest`, lint with `ruff check custom_components tests tools`, and type-check with `mypy`; CI runs all three, plus hassfest and the HACS validation
+- Run tests with `pytest`, lint with `ruff check custom_components tests tools`, and type-check with `mypy`; CI runs all three, plus `ruff format --check`, Pyright on `custom_components`, `tests` and `tools`, Markdownlint, hassfest, and the HACS validation
 - Focused runs are usually enough while iterating, for example:
   - `pytest tests/components/meltem_ventilation/test_modbus_client.py`
   - `pytest tests/components/meltem_ventilation/test_transport.py`

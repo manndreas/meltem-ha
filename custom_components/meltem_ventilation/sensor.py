@@ -4,11 +4,13 @@ This platform exposes read-only measurements. Which sensors a unit gets follows
 from the profile selected for it during setup.
 """
 
+# Home Assistant types entity state as cached_property; like Home Assistant Core,
+# these entities override it with plain properties computed from coordinator data.
+# pyright: reportIncompatibleVariableOverride=false
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from functools import cached_property
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -202,6 +204,8 @@ async def async_setup_entry(
 class MeltemSensorEntity(MeltemEntity, SensorEntity):
     """Representation of one Meltem sensor."""
 
+    entity_description: MeltemSensorDescription
+
     def __init__(
         self,
         coordinator: MeltemDataUpdateCoordinator,
@@ -209,12 +213,11 @@ class MeltemSensorEntity(MeltemEntity, SensorEntity):
         description: MeltemSensorDescription,
     ) -> None:
         super().__init__(coordinator, room, description.key, description.key)
-        self._description = description
         self.entity_description = description
 
-    @cached_property
+    @property
     def native_value(self) -> int | float | None:
-        return self._description.value_fn(self.room_state)
+        return self.entity_description.value_fn(self.room_state)
 
 
 class MeltemModbusSlaveSensor(MeltemEntity, SensorEntity):
