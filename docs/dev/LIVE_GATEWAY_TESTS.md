@@ -596,9 +596,9 @@ Run R on every unit unless the test says otherwise.
   `TestSharedModbusConnection` in [test_init.py](../../tests/components/meltem_ventilation/test_init.py),
   without patching `ModbusConnection`, with the real port and the discovered
   rooms. After the unload, P-3 must succeed.
-- **Limits:** the harness ships HA `2026.10.0b0` with
-  `modbus-connection 4.12.3`, not a stable HA `2026.10.x` release. If the
-  harness's checks for lingering
+- **Limits:** the configured harness uses stable HA `2026.10.0` with
+  `modbus-connection 4.12.3`, but it is not a separate live HA deployment. If
+  the harness's checks for lingering
   tasks or threads fail on the serial backend, mark the test as blocked;
   [H-9](#h-9--real-home-assistant-instance) covers it.
 
