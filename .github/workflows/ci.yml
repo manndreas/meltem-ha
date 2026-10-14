@@ -97,8 +97,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-test.txt
 
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+
       - name: Run mypy
         run: mypy
+
+      - name: Run Pyright on tests and tools
+        run: npx --yes pyright@1.1.414 --pythonpath "$(command -v python)" tests tools
 
       - name: Run test suite
         run: pytest
