@@ -772,6 +772,23 @@ behind the target:
   raw-client replay of the same register order, not a run through HA's
   tmodbus transport. Capture:
   `all_known-slave4-20261014-152627-W17-HA-preset-sequence-raw-HIGH-restored.json`.
+- W-18 compared the exact integration polling schedule under load. With HA
+  stopped, one serial client ran the real `build_jobs` plans for all six
+  configured slaves at the 4 requests/s limit, while an extra raw read of
+  `41020..41021` sampled slave 4 about once per second. Manual 40 m3/h was
+  first measured at `14:01:59.134 UTC`, about 6.9 s after its write returned.
+  The HIGH preset write returned at `14:02:04.062`; the first raw `60/60`
+  sample arrived at `14:02:09.134`, about 5.1 s later. During the 60-second
+  HIGH observation, four initial samples still showed `40/40`, followed by
+  53 samples at `60/60`; the largest sampling gap was 1.8 s. All scheduled
+  reads across the six slaves succeeded, with zero transport timeouts or link
+  recycles. The all-known before/after captures differed only in shadow/meta
+  counters; slave 4's runtime and documented settings were restored. This
+  single loaded run did not reproduce the 27–47.5 s outlier, but cannot rule
+  out an intermittent delay. Captures:
+  `all_known-slave4-20261014-155722-before-W18-six-slave-load.json`,
+  `all_known-slave4-20261014-160332-after-W18-six-slave-load.json`, and
+  `w18-six-slave-interleaved-airflow.jsonl`.
 
 ## Temperature register quirk
 

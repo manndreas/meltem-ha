@@ -331,6 +331,26 @@ raw tool transport, not the HA tmodbus transport; it does not explain the
 slower HA observations. Capture:
 `all_known-slave4-20261014-152627-W17-HA-preset-sequence-raw-HIGH-restored.json`.
 
+### Six-slave read load during raw airflow observation
+
+With HA stopped and a fresh all-known snapshot saved, one serial client ran
+the integration's real `build_jobs` schedule for all six configured slaves,
+at the same 4 requests/s limit and 0.1 s request spacing. An additional raw
+`41020..41021` read sampled slave 4 about once per second. The manual 40 m3/h
+target was first measured at `14:01:59.134 UTC`, 6.9 s after the write call
+returned. After the HIGH preset write returned at `14:02:04.062`, the first
+raw `60/60` sample arrived at `14:02:09.134` (5.1 s later). Over the
+60-second HIGH observation, four initial samples were `40/40`, then 53 were
+`60/60`; the maximum sample gap was 1.8 s. All scheduled reads succeeded;
+transport diagnostics showed zero timeouts and zero link recycles. The
+before/after all-known captures differed only in shadow/meta counters, with
+the unit's runtime and documented settings restored. This one loaded run did
+not reproduce the long HA return outlier; it does not exclude an intermittent
+delay. Raw log:
+`w18-six-slave-interleaved-airflow.jsonl`. Captures:
+`all_known-slave4-20261014-155722-before-W18-six-slave-load.json` and
+`all_known-slave4-20261014-160332-after-W18-six-slave-load.json`.
+
 ### Candidate solutions (HW-2)
 
 - **A — shorten `WRITE_SETTLE_SECONDS`.** If the measurement shows the unit
