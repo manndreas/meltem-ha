@@ -61,6 +61,22 @@ jobs:
           ruff format --check custom_components tests tools
           ruff check custom_components tests tools
 
+  markdownlint:
+    name: Markdownlint
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+
+      - name: Lint Markdown
+        run: git ls-files -z -- '*.md' | xargs -0 npx --yes markdownlint-cli2@0.23.3
+
   pytest:
     name: Pytest
     runs-on: ubuntu-26.04

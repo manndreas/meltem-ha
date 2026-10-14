@@ -29,6 +29,7 @@ from custom_components.meltem_ventilation.const import (
 from custom_components.meltem_ventilation.modbus_helpers import (
     supported_entity_keys_for_profile,
 )
+from custom_components.meltem_ventilation.models import RoomState
 
 type SetupProfile = Callable[..., Awaitable[str]]
 
@@ -130,6 +131,10 @@ def setup_profile_fixture(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) 
         "custom_components.meltem_ventilation.coordinator."
         "MeltemDataUpdateCoordinator.async_refresh",
         AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.MeltemModbusClient.read_room_state",
+        AsyncMock(return_value=RoomState()),
     )
 
     async def _setup(profile: str, room_count: int = 1) -> str:
