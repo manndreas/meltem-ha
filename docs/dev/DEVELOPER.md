@@ -38,10 +38,8 @@ These are the most important practical findings from the latest hardware tests:
   M-WRG-II, and assumed for M-WRG-S
 - `41120..41124` are set registers and are not used for routine polling
 - `41020/41021` behave like the effective/current airflow and may lag behind
-- many devices return Modbus exceptions for the set registers before a write;
-  on slave `4`, the old two-register fallback and `41121` became readable
-  after W-5 and remained readable through a power cycle, while the old
-  five-register block and `41122` stayed unavailable (see HW-4)
+- many devices refuse reads of the set registers, the five-register block even
+  after a write; they are therefore used for writes only (see HW-4)
 - immediate write confirmation polling created unnecessary bus load and was
   removed for airflow writes
 - short read failures preserve the previous state, but a unit that keeps
@@ -179,15 +177,13 @@ exception response starts the mode backoff, because only that is the HW-4
 refusal; a timeout is retried on the next flow job. The setup probe also stops
 at the first timeout of a unit.
 
-An unconfigured address timed out. In the H-1 follow-up, airflow jobs for
-physically powered-off slave `4` completed successfully in 2-3 requests with
-no timeout or link recycle; the returned state was not logged, so
-gateway-cached data cannot be ruled out. After power-up, measured airflow read
-`80/0` while the then-current set-register fallback decoded manual target `20`; the person
-confirmed the app and physical unit matched. No Busy/code-6 response was
-observed; the active stress test was not run because its gap-0 command
-conflicts with the hardware-test pacing rule. See HW-7 in
-[HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md).
+So far an unconfigured address timed out after about 0.8 s, while a
+physically powered-off unit caused no timeout at all: the gateway kept
+answering its airflow jobs, possibly from cached data. No Busy/code-6 response
+has been observed. The per-job skip therefore stays tied to timeouts until
+HW-7 shows how the gateway reports a powered-off unit; the measurements are in
+[HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md#hw-7--validate-the-tmodbus-transport-on-the-real-gateway)
+and [MELTEM.md](MELTEM.md#reads-while-a-unit-is-powered-off).
 
 The `homeassistant.components.modbus` API is new and still changing
 (`get_hub` is already deprecated). Keep the lower bound in the manifest tight
@@ -494,11 +490,9 @@ The current-state map at `41100..41102` reports the operating mode and targets;
 - in unbalanced mode the status values `41101/41102` provide supply/extract
   targets; the previous target is kept if the status read fails
 
-W-1 on 2026-10-14 tested this assumption on slave `4` (M-WRG-II). Writing
-balanced `40 m3/h` set `41121=80`, while the current-state map returned
-`41100..41102=[3, 204, 0]`; restoring balanced `60 m3/h` set `41121=120` and
-returned `[3, 206, 0]`. Both status values fit `200 + airflow / 10`, not the
-raw `0..200` set-register value. The final HIGH restore returned `[3, 230, 0]`.
+W-1 on 2026-10-14 disproved the earlier assumption that `41101` echoes the
+raw `41121` target: it reports balanced targets as `200 + airflow / 10`, see
+[MELTEM.md](MELTEM.md#target-readback-and-measured-airflow).
 
 The client decodes `41101` as either the raw `0..200` value or the app encoding
 `200 + airflow / 10` when the resulting airflow is within the selected profile's
@@ -510,7 +504,7 @@ read recover from a transient stale mode/target read. If the set-side read
 fails, the write is not confirmed and a later airflow poll may retry it rather
 than falling back to another source. Preset codes `227..230` keep their
 separate mode meanings. W-17 confirmed this path on an M-WRG-II unit; see
-[LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md#w-17--home-assistant-coordinator-balanced-write-confirmation).
+[W-17 in HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md#w-17-home-assistant-write-confirmation-on-2026-10-14).
 
 ### Per-unit availability on read failures
 
@@ -710,14 +704,14 @@ If something breaks:
 1. Verify the integration loads at all.
 2. Check logs:
 
-```bash
-ha core logs | grep meltem_ventilation
-```
+   ```bash
+   ha core logs | grep meltem_ventilation
+   ```
 
-1. Confirm scan results.
-2. Confirm the correct serial port is used.
-3. Confirm the correct model profiles were chosen.
-4. Only then investigate individual register behavior.
+3. Confirm scan results.
+4. Confirm the correct serial port is used.
+5. Confirm the correct model profiles were chosen.
+6. Only then investigate individual register behavior.
 
 Useful local tools in this repo (async, on `modbus-connection` with tmodbus
 since `4.0.0`; any earlier commit has the pymodbus versions):

@@ -33,8 +33,8 @@ Do not install `homeassistant`, `pytest` or `pytest-asyncio` separately -
 The harness ships Home Assistant `2026.10` but not the requirements of its
 Modbus integration, from which the integration gets its serial link, so
 `requirements-test.txt` adds the `modbus-connection`, `tmodbus` and `pymodbus`
-versions pinned in `homeassistant/components/modbus/manifest.json` (see
-[docs/dev/TODO.md](./docs/dev/TODO.md) item 3). Tests never open a serial port; they
+versions pinned in `homeassistant/components/modbus/manifest.json`; compare
+them again whenever the harness pin is raised. Tests never open a serial port; they
 run against `modbus_connection.mock.MockModbusConnection`.
 
 Run tests, formatting, lint, and the type check with:
@@ -101,6 +101,10 @@ python -m tools.raw_requests --help
 - Put manufacturer facts into the matching file under `docs/dev/reference/` with a
   source ID, and hardware observations into `docs/dev/MELTEM.md`. Never commit the
   original Meltem PDFs.
+- Write up each live measurement in detail only once, under its HW item in
+  `docs/dev/HARDWARE_BACKLOG.md` or, without an HW item, in `docs/dev/MELTEM.md`;
+  other documents summarise it and link there. See "Recording results" in
+  [docs/dev/LIVE_GATEWAY_TESTS.md](./docs/dev/LIVE_GATEWAY_TESTS.md#recording-results).
 - If you change release metadata, keep `custom_components/meltem_ventilation/manifest.json`, `pyproject.toml`, and `CHANGELOG.md` in sync.
 
 ## Pull requests

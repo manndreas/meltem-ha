@@ -33,6 +33,8 @@
 
 - Keep user-visible terminology aligned with the Meltem manuals where practical
 - Put new manufacturer facts into the matching file under `docs/dev/reference/` with a source ID; put hardware observations into `docs/dev/MELTEM.md`
+- Write up each live measurement in detail only once: under its HW item in `docs/dev/HARDWARE_BACKLOG.md`, or under the matching topic in `docs/dev/MELTEM.md` when no HW item applies; elsewhere summarise and link. `docs/dev/LIVE_GATEWAY_TESTS.md` describes procedures, not results
+- Refer to items in `docs/dev/TODO.md` by their permanent `TODO-n` ID, never by list position
 - Never commit the original Meltem PDFs; summarize facts in own words instead of copying text or figures
 - Be conservative with Modbus timing and grouped reads; gateway behavior is sensitive
 - Keep the `register_ranges` of the components unchanged unless a gateway benchmark backs the change; the parity test in `tests/components/meltem_ventilation/test_modbus_client.py` guards them

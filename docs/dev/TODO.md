@@ -10,7 +10,11 @@ engineering notes are in `docs/dev/MELTEM.md`, implementation notes in
 Open items that need a measurement on real hardware before a decision are in
 `docs/dev/HARDWARE_BACKLOG.md`.
 
-## 1. Shortcut configuration in the shadow ranges `511xx` / `520xx`
+Item IDs are permanent, like the `HW-n` IDs: a finished item is removed, and
+its ID is not reused, so references such as `TODO-4` stay valid. Link to an
+item by its ID, never by its position in the list.
+
+## TODO-1 — Shortcut configuration in the shadow ranges `511xx` / `520xx`
 
 Priority: low
 Status: open, reverse engineering interest only
@@ -37,7 +41,7 @@ Next step:
   (IDs 42-47) without a Modbus mapping, see
   `docs/dev/reference/device-parameters.md`.
 
-## 2. Decode `PRODUCT_ID`
+## TODO-2 — Decode `PRODUCT_ID`
 
 Priority: low
 Status: open
@@ -54,7 +58,7 @@ Next step:
 - The manufacturer documents contain neither `116852` nor `VMD-22RPS44`; the
   article numbers do not match, see `docs/dev/reference/models.md`.
 
-## 3. Wider block reads
+## TODO-4 — Wider block reads
 
 Priority: low
 Status: open, after the HW-7 post-release validation
@@ -71,7 +75,7 @@ Next step:
   `docs/dev/LIVE_GATEWAY_TESTS.md`. Update the parity test in
   `tests/components/meltem_ventilation/test_modbus_client.py` together with the ranges.
 
-## 4. Raw register diagnostics
+## TODO-5 — Raw register diagnostics
 
 Priority: low
 Status: open
