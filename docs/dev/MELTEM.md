@@ -697,6 +697,81 @@ behind the target:
   `[3,230,0]`, `41122=120`, `41016=0`, and measured airflow `60/60`.
   The live mapping was `63% -> 63 m3/h`, not the previously assumed
   `64 m3/h`.
+- The separate HA airflow-lag follow-up started from fresh HIGH at measured
+  `60/60 m3/h`. A supply-fan command to `40%` was confirmed as `[40,60]`;
+  measured supply was still `60` at about 5 seconds and was `40` by 11.4
+  seconds, while extract remained `60`. More than 10 seconds later, the
+  extract-fan command to `40%` was confirmed as `[40,40]`; measured airflow
+  was still `40/60` at about 5 seconds and `40/40` by 9.2 seconds. Selecting
+  HIGH was confirmed immediately as a preset write, but measured airflow
+  remained `40/40` through about 16 seconds and returned to `60/60` by
+  17 seconds. The next fresh flow-group read also reported `60/60`; all
+  read-health groups were fresh and both writes had `status=confirmed`.
+  These are bounds from HA's polling observations on this one M-WRG-II unit,
+  not a guaranteed fan response time.
+- One repeat cycle from the same `60/60` HIGH baseline gave a different return
+  time. Supply `40%` was confirmed at `[40,60]` and measured supply was `40`
+  by 9.1 seconds; after more than 10 seconds, extract `40%` was confirmed at
+  `[40,40]` and measured airflow was `40/40` by 7.9 seconds. Selecting HIGH
+  again was confirmed as `high`, but fresh airflow reads still showed `40/40`
+  at 27 seconds; they showed `60/60` by 47.5 seconds and on the next fresh
+  poll. After stopping HA, raw reads confirmed
+  `41100..41102=[3,230,0]`, `41120=3`, `41121=230`, `41122=120`,
+  `41123=0`, `41124=0`, `41132=0`, `41016=0`, and `41020..41021=60/60`.
+  The all-known capture is
+  `all_known-slave4-20261014-151659-HA-airflow-lag-HIGH-restored.json`.
+  The differing return times show why these observations are bounds, not a
+  stable device timing specification.
+- A third cycle showed the same delayed readback recovery as the initial W-17
+  attempt: the extract `40%` write first read as mismatch `[40,60]`, then the
+  next fresh airflow poll confirmed `[40,40]` and measured `40/40` at about
+  12 seconds after that write. The preceding supply `40%` write was confirmed
+  at `[40,60]` and measured `40/60` by 12.7 seconds. HIGH was confirmed at
+  `13:18:43.476 UTC`; a flow read at `13:18:45.262` already showed `60/60`,
+  and the next fresh poll at `13:18:53.116` still showed `60/60`. Thus the
+  Across the first three cycles, observed HIGH return delays ranged from under
+  2 seconds to about 47.5 seconds, further evidence that HA poll observations
+  do not define a deterministic physical settle time.
+- A fourth controlled cycle recorded individual HA flow-group readbacks. The
+  supply and extract `40%` service calls returned at `13:42:18.746 UTC` and
+  `13:42:19.097 UTC`. The first fresh flow read at `13:42:23.672` still
+  measured `60/60` and showed write status `mismatch`, `[40,60]`; the next
+  read at `13:42:34.170` measured `40/40` and confirmed `[40,40]`. The HIGH
+  preset request started at `13:42:41.104`; its fresh readback at
+  `13:42:46.164` confirmed HIGH while measured flow was still `40/40`. The
+  next flow read at `13:42:48.262` measured `60/60`, about 2.1 seconds later.
+  Reads remained fresh with no failures. Thus the fourth observed HIGH return
+  was much faster than the 27–47.5-second outlier; keep the observed spread
+  rather than inferring a fixed settle time.
+- A fifth controlled cycle showed the target/measurement distinction again.
+  The two `40%` fan service calls returned at `13:46:21.847` and
+  `13:46:22.311 UTC`. A fresh read at `13:46:26.560` confirmed target
+  `[40,40]`, while measured airflow was still `60/60`; the next read at
+  `13:46:37.054` measured `40/40`. The HIGH preset was requested at
+  `13:46:37.373`; its readback at `13:46:42.426` confirmed HIGH while airflow
+  was still `40/40`. The next read at `13:46:47.594` measured `60/60`, about
+  5.2 seconds later. Reads remained fresh and error-free.
+- To separate device response from HA's 10-second flow polling, HA was stopped
+  and the equivalent current-level registers were written directly. From HIGH,
+  raw writes `41120=3`, `41121=80`, `41132=0` left measured airflow at `60/60`
+  for the first six one-second polls; poll 7 first read `40/40`, which held
+  through poll 60. Restoring with `41120=3`, `41121=230`, `41132=0` read
+  `60/60` on poll 1 and stayed there through poll 60. All 120 polls succeeded.
+  Final raw verification returned status `[3,230,0]`, `41120=3`,
+  `41121=230`, `41122=120`, `41123=0`, `41124=0`, `41132=0`,
+  `41016=0`, and `41020..41021=60/60`. This direct current-level sequence
+  is a timing comparison, not the HA quick-mode service path. Capture:
+  `all_known-slave4-20261014-152255-W17-HA-airflow-lag-raw-timing-HIGH-restored.json`.
+- A second raw run replayed HA's exact HIGH preset register order
+  (`41123=0`, `41124=0`, `41120=3`, `41121=230`, then `41132=0`) after
+  verifying measured `40/40`. The first one-second sample still read `40/40`;
+  the second read `60/60`, which held through poll 60. All 60 reads succeeded.
+  The preceding direct `40 m3/h` setup reached measured `40/40` by poll 3 in
+  this run. Final verification again returned `[3,230,0]`, set registers
+  `41120..41124=[3,230,120,0,0]`, `41132=0`, and measured `60/60`. This was a
+  raw-client replay of the same register order, not a run through HA's
+  tmodbus transport. Capture:
+  `all_known-slave4-20261014-152627-W17-HA-preset-sequence-raw-HIGH-restored.json`.
 
 ## Temperature register quirk
 
