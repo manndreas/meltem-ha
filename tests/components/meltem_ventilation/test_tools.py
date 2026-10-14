@@ -5,15 +5,17 @@ from __future__ import annotations
 import asyncio
 import sys
 from argparse import Namespace
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from modbus_connection import IllegalDataAddressError, IllegalDataValueError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection, WriteEvent
+from modbus_connection.tmodbus import ModbusConnection
 
 from custom_components.meltem_ventilation.const import (
     DEFAULT_GATEWAY_DEVICE_ID,
@@ -38,6 +40,10 @@ from tools._pymodbus_compat import install_pymodbus_unit_keyword_compat
 from tools.profile_register_reads import SPECS as PROFILE_READ_SPECS
 
 _MANUAL_80_SEQUENCE = ((REGISTER_MODE, 3), (REGISTER_CURRENT_LEVEL, 80), (REGISTER_APPLY, 0))
+
+
+def _benchmark_connection(link: MockModbusConnection) -> ModbusConnection:
+    return cast(ModbusConnection, link)
 
 
 def test_link_settings_match_the_integration() -> None:
@@ -86,8 +92,8 @@ class _SlavePymodbusClient:
 def _install_legacy_baseline_keyword_shim(client_class: type[object]) -> None:
     """Mirror the alias conversion used by the pinned benchmark script."""
 
-    original_read = client_class.read_holding_registers
-    original_write = client_class.write_register
+    original_read = getattr(client_class, "read_holding_registers")
+    original_write = getattr(client_class, "write_register")
 
     def compat_read(self: object, *args: object, **kwargs: object) -> object:
         if "device_id" in kwargs and "slave" not in kwargs:
@@ -99,8 +105,8 @@ def _install_legacy_baseline_keyword_shim(client_class: type[object]) -> None:
             kwargs["slave"] = kwargs.pop("device_id")
         return original_write(self, *args, **kwargs)
 
-    client_class.read_holding_registers = compat_read
-    client_class.write_register = compat_write
+    setattr(client_class, "read_holding_registers", compat_read)
+    setattr(client_class, "write_register", compat_write)
 
 
 @pytest.mark.parametrize("client_class", [_DeviceIdPymodbusClient, _SlavePymodbusClient])
@@ -112,8 +118,10 @@ def test_pymodbus_compat_supports_the_pinned_benchmark_shim(
     _install_legacy_baseline_keyword_shim(isolated_client_class)
 
     client = isolated_client_class()
-    assert client.read_holding_registers(41020, count=2, device_id=7) == (41020, 2, 7)
-    assert client.write_register(41121, value=40, device_id=7) == (41121, 40, 7)
+    read_holding_registers = getattr(client, "read_holding_registers")
+    write_register = getattr(client, "write_register")
+    assert read_holding_registers(41020, count=2, device_id=7) == (41020, 2, 7)
+    assert write_register(41121, value=40, device_id=7) == (41121, 40, 7)
 
 
 def test_pymodbus_compat_rejects_conflicting_unit_keywords() -> None:
@@ -121,7 +129,7 @@ def test_pymodbus_compat_rejects_conflicting_unit_keywords() -> None:
     install_pymodbus_unit_keyword_compat(client_class)
 
     with pytest.raises(TypeError, match="Pass only one unit address"):
-        client_class().read_holding_registers(41020, count=2, slave=6, device_id=7)
+        getattr(client_class(), "read_holding_registers")(41020, count=2, slave=6, device_id=7)
 
 
 def test_pymodbus_compat_fails_clearly_on_unknown_api() -> None:
@@ -185,7 +193,7 @@ class TestIntegrationLikeBenchmark:
         link: MockModbusConnection,
         profiles: dict[int, str] | None,
     ) -> None:
-        rooms = await bil.discover_rooms(link, "mock-port", profiles)
+        rooms = await bil.discover_rooms(_benchmark_connection(link), "mock-port", profiles)
 
         assert [room.slave for room in rooms] == [2, 3]
         assert [room.profile for room in rooms] == (
@@ -273,7 +281,7 @@ class TestIntegrationLikeBenchmark:
             patch.object(bil, "_observe", new=AsyncMock()),
             patch.object(bil.asyncio, "sleep", new=AsyncMock()),
         ):
-            await bil.run_mode(experiment_args, client, link, [room])
+            await bil.run_mode(experiment_args, client, _benchmark_connection(link), [room])
 
         assert [call.args[2:4] for call in write.call_args_list] == [(35, "write"), (30, "restore")]
 
@@ -301,7 +309,7 @@ class TestIntegrationLikeBenchmark:
             patch.object(bil.asyncio, "sleep", new=AsyncMock()),
             pytest.raises(type(error), match=str(error)),
         ):
-            await bil.run_mode(experiment_args, client, link, [room])
+            await bil.run_mode(experiment_args, client, _benchmark_connection(link), [room])
 
         assert [call.args[2:4] for call in write.call_args_list] == [(35, "write"), (30, "restore")]
 
@@ -327,7 +335,7 @@ class TestIntegrationLikeBenchmark:
             patch.object(bil.asyncio, "sleep", new=AsyncMock()),
             pytest.raises(bil.MeltemConnectionError, match="write failed"),
         ):
-            await bil.run_mode(experiment_args, client, link, [room])
+            await bil.run_mode(experiment_args, client, _benchmark_connection(link), [room])
 
         assert [call.args[2:4] for call in write.call_args_list] == [(35, "write"), (30, "restore")]
 
@@ -353,7 +361,7 @@ class TestIntegrationLikeBenchmark:
                 RuntimeError, match="observation failed" if phase_failed else "restore failed"
             ),
         ):
-            await bil.run_mode(experiment_args, client, link, [room])
+            await bil.run_mode(experiment_args, client, _benchmark_connection(link), [room])
 
         assert "ERROR: restoring airflow of slave 2 failed: RuntimeError: restore failed" in (
             capsys.readouterr().out
@@ -362,7 +370,7 @@ class TestIntegrationLikeBenchmark:
 
 class TestWriteRegisters:
     @pytest.fixture(name="link")
-    def link_fixture(self) -> MockModbusConnection:
+    def link_fixture(self) -> Iterator[MockModbusConnection]:
         link = MockModbusConnection()
 
         @asynccontextmanager

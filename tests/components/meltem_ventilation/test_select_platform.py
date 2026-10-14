@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -47,12 +47,13 @@ def _preset_select(
 )
 def test_available_while_flow_control_is_stale(build) -> None:
     select = build()
-    select.coordinator.read_group_available.return_value = False
-    select.coordinator.read_group_fresh.return_value = False
-
-    assert select.available is True
-    assert select.current_option is None
-    select.coordinator.read_group_available.assert_not_called()
+    with (
+        patch.object(select.coordinator, "read_group_available", return_value=False) as available,
+        patch.object(select.coordinator, "read_group_fresh", return_value=False),
+    ):
+        assert select.available is True
+        assert select.current_option is None
+        available.assert_not_called()
 
 
 class TestMeltemOperationModeSelect:
@@ -86,31 +87,44 @@ class TestMeltemOperationModeSelect:
     async def test_select_option_delegates_to_coordinator(self) -> None:
         select = _operation_mode_select(profile="ii_fc_voc")
 
-        await select.async_select_option("automatic")
+        with patch.object(
+            select.coordinator, "async_set_operation_mode", new_callable=AsyncMock
+        ) as set_operation_mode:
+            await select.async_select_option("automatic")
 
-        select.coordinator.async_set_operation_mode.assert_awaited_once_with("unit_1", "automatic")
+        set_operation_mode.assert_awaited_once_with("unit_1", "automatic")
 
     async def test_selecting_inactive_leaves_sensor_control(self) -> None:
         select = _operation_mode_select(RoomState(operation_mode="co2_control"))
 
-        await select.async_select_option("inactive")
+        with patch.object(
+            select.coordinator, "async_set_operation_mode", new_callable=AsyncMock
+        ) as set_operation_mode:
+            await select.async_select_option("inactive")
 
-        select.coordinator.async_set_operation_mode.assert_awaited_once_with("unit_1", "inactive")
+        set_operation_mode.assert_awaited_once_with("unit_1", "inactive")
 
     async def test_selecting_inactive_delegates_the_noop_decision(self) -> None:
         select = _operation_mode_select(RoomState(operation_mode="unbalanced"))
 
-        await select.async_select_option("inactive")
+        with patch.object(
+            select.coordinator, "async_set_operation_mode", new_callable=AsyncMock
+        ) as set_operation_mode:
+            await select.async_select_option("inactive")
 
-        select.coordinator.async_set_operation_mode.assert_awaited_once_with("unit_1", "inactive")
+        set_operation_mode.assert_awaited_once_with("unit_1", "inactive")
 
     async def test_selecting_inactive_with_stale_state_still_sends_the_command(self) -> None:
         select = _operation_mode_select(RoomState(operation_mode="manual"))
-        select.coordinator.read_group_fresh.return_value = False
+        with (
+            patch.object(select.coordinator, "read_group_fresh", return_value=False),
+            patch.object(
+                select.coordinator, "async_set_operation_mode", new_callable=AsyncMock
+            ) as set_operation_mode,
+        ):
+            await select.async_select_option("inactive")
 
-        await select.async_select_option("inactive")
-
-        select.coordinator.async_set_operation_mode.assert_awaited_once_with("unit_1", "inactive")
+        set_operation_mode.assert_awaited_once_with("unit_1", "inactive")
 
 
 class TestMeltemPresetModeSelect:
@@ -120,10 +134,11 @@ class TestMeltemPresetModeSelect:
     @pytest.mark.parametrize("pending", ["low", "medium", PRESET_MODE_INACTIVE])
     def test_pending_selection_is_visible_with_stale_readback(self, pending: str) -> None:
         select = _preset_select()
-        select.coordinator.read_group_fresh.return_value = False
-        select.coordinator.optimistic_preset_mode.return_value = pending
-
-        assert select.current_option == pending
+        with (
+            patch.object(select.coordinator, "read_group_fresh", return_value=False),
+            patch.object(select.coordinator, "optimistic_preset_mode", return_value=pending),
+        ):
+            assert select.current_option == pending
 
     @pytest.mark.parametrize(
         ("state", "optimistic", "current_option"),
@@ -161,22 +176,37 @@ class TestMeltemPresetModeSelect:
         self, state: RoomState, optimistic: str | None, current_option: str | None
     ) -> None:
         select = _preset_select(state)
-        select.coordinator.optimistic_preset_mode.return_value = optimistic
-
-        assert select.current_option == current_option
+        with patch.object(select.coordinator, "optimistic_preset_mode", return_value=optimistic):
+            assert select.current_option == current_option
 
     async def test_select_option_sets_preset_mode(self) -> None:
         select = _preset_select()
 
-        await select.async_select_option("high")
+        with (
+            patch.object(
+                select.coordinator, "async_set_preset_mode", new_callable=AsyncMock
+            ) as set_preset_mode,
+            patch.object(
+                select.coordinator, "async_clear_preset_mode", new_callable=AsyncMock
+            ) as clear_preset_mode,
+        ):
+            await select.async_select_option("high")
 
-        select.coordinator.async_set_preset_mode.assert_awaited_once_with("unit_1", "high")
-        select.coordinator.async_clear_preset_mode.assert_not_awaited()
+        set_preset_mode.assert_awaited_once_with("unit_1", "high")
+        clear_preset_mode.assert_not_awaited()
 
     async def test_select_option_can_clear_preset_mode(self) -> None:
         select = _preset_select()
 
-        await select.async_select_option(PRESET_MODE_INACTIVE)
+        with (
+            patch.object(
+                select.coordinator, "async_clear_preset_mode", new_callable=AsyncMock
+            ) as clear_preset_mode,
+            patch.object(
+                select.coordinator, "async_set_preset_mode", new_callable=AsyncMock
+            ) as set_preset_mode,
+        ):
+            await select.async_select_option(PRESET_MODE_INACTIVE)
 
-        select.coordinator.async_clear_preset_mode.assert_awaited_once_with("unit_1")
-        select.coordinator.async_set_preset_mode.assert_not_awaited()
+        clear_preset_mode.assert_awaited_once_with("unit_1")
+        set_preset_mode.assert_not_awaited()

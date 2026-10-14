@@ -40,7 +40,7 @@ from .const import (
     SENSOR_CONTROL_PROFILES,
 )
 from .coordinator import MeltemDataUpdateCoordinator
-from .entity import gateway_device_info
+from .entity import gateway_device_info, gateway_identifiers
 from .modbus_client import MeltemModbusClient
 from .modbus_helpers import (
     MeltemModbusError,
@@ -179,7 +179,7 @@ def _async_sync_devices(
     gateway = gateway_device_info(entry.entry_id)
     # Unit devices reference the gateway via ``via_device_id``, so it must exist first.
     registry.async_get_or_create(config_entry_id=entry.entry_id, **gateway)
-    configured = {(DOMAIN, room.key) for room in rooms} | gateway["identifiers"]
+    configured = {(DOMAIN, room.key) for room in rooms} | gateway_identifiers(entry.entry_id)
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
         if device.identifiers & configured:
             continue

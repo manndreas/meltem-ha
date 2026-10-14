@@ -66,7 +66,7 @@ def _install_package_stub() -> None:
     )
     package_module = sys.modules.setdefault(PACKAGE, type(sys)(PACKAGE))
     package_module.__path__ = [str(REPO_ROOT / "custom_components" / "meltem_ventilation")]
-    custom_components_module.meltem_ventilation = package_module
+    setattr(custom_components_module, "meltem_ventilation", package_module)
 
 
 _install_homeassistant_stub()
@@ -562,7 +562,7 @@ async def main() -> int:
     args = parse_args()
 
     # prepare_unit reads the spacing from its module when it sets a unit up.
-    modbus_helpers.REQUEST_GAP_SECONDS = args.gap
+    setattr(modbus_helpers, "REQUEST_GAP_SECONDS", args.gap)
 
     # The first request opens the link, after every unit asked for its
     # timeout, just like the shared connection in Home Assistant.

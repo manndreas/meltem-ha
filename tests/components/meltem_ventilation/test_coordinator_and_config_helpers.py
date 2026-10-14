@@ -151,6 +151,12 @@ class _FakeClient:
     def update_request_rate(self, max_requests_per_second: float) -> None:
         self.max_requests_per_second = max_requests_per_second
 
+    def transport_diagnostics(self) -> dict[str, float | int | None]:
+        return {}
+
+    def shutdown(self) -> None:
+        pass
+
 
 _SLEEP = "custom_components.meltem_ventilation.coordinator.async_sleep"
 _UNIT_1 = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
@@ -212,6 +218,50 @@ def _build_coordinator(
 def _start_backoff(coordinator: MeltemDataUpdateCoordinator) -> None:
     for _ in range(TRANSPORT_BACKOFF_AFTER_FAILURES):
         coordinator._on_transport_failure()
+
+
+def _update_interval_seconds(coordinator: MeltemDataUpdateCoordinator) -> float:
+    update_interval = coordinator.update_interval
+    assert update_interval is not None
+    return update_interval.total_seconds()
+
+
+def _write_status(coordinator: MeltemDataUpdateCoordinator, write_key: str) -> str:
+    writes = coordinator.data_health_attributes("unit_1")["writes"]
+    assert isinstance(writes, dict)
+    confirmation = writes[write_key]
+    assert isinstance(confirmation, dict)
+    status = confirmation.get("status")
+    assert isinstance(status, str)
+    return status
+
+
+def _control_level_state(family: str, minimum: int, maximum: int) -> RoomState:
+    if family == "humidity":
+        return RoomState(humidity_min_level=minimum, humidity_max_level=maximum)
+    if family == "co2":
+        return RoomState(co2_min_level=minimum, co2_max_level=maximum)
+    raise AssertionError(f"Unexpected control family: {family}")
+
+
+def _set_control_level(state: RoomState, setting_key: str, value: int) -> RoomState:
+    if setting_key == "humidity_min_level":
+        return replace(state, humidity_min_level=value)
+    if setting_key == "humidity_max_level":
+        return replace(state, humidity_max_level=value)
+    if setting_key == "co2_min_level":
+        return replace(state, co2_min_level=value)
+    if setting_key == "co2_max_level":
+        return replace(state, co2_max_level=value)
+    raise AssertionError(f"Unexpected control setting: {setting_key}")
+
+
+def _control_level_range(state: RoomState, family: str) -> tuple[int | None, int | None]:
+    if family == "humidity":
+        return state.humidity_min_level, state.humidity_max_level
+    if family == "co2":
+        return state.co2_min_level, state.co2_max_level
+    raise AssertionError(f"Unexpected control family: {family}")
 
 
 # ---------------------------------------------------------------------------
@@ -326,16 +376,16 @@ class TestCoordinatorResilience:
 
         _start_backoff(coordinator)
 
-        assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_START_SECONDS
+        assert _update_interval_seconds(coordinator) == TRANSPORT_BACKOFF_START_SECONDS
 
         for _ in range(1100):
             coordinator._on_transport_failure()
 
-        assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_MAX_SECONDS
+        assert _update_interval_seconds(coordinator) == TRANSPORT_BACKOFF_MAX_SECONDS
 
         coordinator._on_transport_success()
         assert coordinator._backoff_seconds is None
-        assert coordinator.update_interval.total_seconds() < TRANSPORT_BACKOFF_START_SECONDS
+        assert _update_interval_seconds(coordinator) < TRANSPORT_BACKOFF_START_SECONDS
 
     def test_request_rate_change_does_not_cancel_active_backoff(
         self,
@@ -346,7 +396,7 @@ class TestCoordinatorResilience:
 
         coordinator.update_request_rate(1.0)
 
-        assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_START_SECONDS
+        assert _update_interval_seconds(coordinator) == TRANSPORT_BACKOFF_START_SECONDS
         assert client.max_requests_per_second == 1.0
 
     def test_room_becomes_unavailable_after_repeated_read_failures(
@@ -445,7 +495,7 @@ class TestCoordinatorResilience:
             await coordinator._async_update_data()
 
         assert coordinator.update_interval != normal_interval
-        assert coordinator.update_interval.total_seconds() >= TRANSPORT_BACKOFF_START_SECONDS
+        assert _update_interval_seconds(coordinator) >= TRANSPORT_BACKOFF_START_SECONDS
 
     async def test_successful_job_restores_the_normal_rate(
         self,
@@ -460,7 +510,7 @@ class TestCoordinatorResilience:
         await coordinator._async_update_data()
 
         assert coordinator._backoff_seconds is None
-        assert coordinator.update_interval.total_seconds() < TRANSPORT_BACKOFF_START_SECONDS
+        assert _update_interval_seconds(coordinator) < TRANSPORT_BACKOFF_START_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -1198,9 +1248,7 @@ class TestAirflowWriteConfirmation:
             )
         )
 
-        assert coordinator.data_health_attributes("unit_1")["writes"][initial_key]["status"] == (
-            "superseded"
-        )
+        assert _write_status(coordinator, initial_key) == "superseded"
         assert coordinator.data_health_stale("unit_1") is False
         if initial_key == "preset_mode":
             assert coordinator.optimistic_preset_mode("unit_1") is None
@@ -1409,8 +1457,7 @@ class TestAirflowWriteConfirmation:
         )
 
         assert coordinator.data_health_stale("unit_1") is False
-        writes = coordinator.data_health_attributes("unit_1")["writes"]
-        assert writes["airflow_levels"]["status"] == "failed"
+        assert _write_status(coordinator, "airflow_levels") == "failed"
 
     def test_stale_read_group_flags_data_health(
         self,
@@ -1949,8 +1996,7 @@ class TestCoordinator:
             started_at=now - timedelta(seconds=WRITE_CONFIRMATION_TIMEOUT_SECONDS + 1),
         )
 
-        writes = coordinator.data_health_attributes("unit_1")["writes"]
-        assert writes[_HUMIDITY_START_WRITE]["status"] == "unconfirmed"
+        assert _write_status(coordinator, _HUMIDITY_START_WRITE) == "unconfirmed"
         assert coordinator.data_health_stale("unit_1") is True
 
     async def test_control_setting_keeps_confirmed_value_when_refresh_fails(
@@ -2027,13 +2073,13 @@ class TestCoordinator:
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
         min_key, max_key = f"{family}_min_level", f"{family}_max_level"
-        client.next_read_state = RoomState(**{min_key: 10, max_key: 100})
+        client.next_read_state = _control_level_state(family, 10, 100)
         coordinator.data = {"unit_1": client.next_read_state}
 
         async def _yielding_write(room: RoomConfig, setting_key: str, value: int) -> int:
             await asyncio.sleep(0)
             client.write_control_setting_calls.append((room.key, setting_key, value))
-            client.next_read_state = replace(client.next_read_state, **{setting_key: value})
+            client.next_read_state = _set_control_level(client.next_read_state, setting_key, value)
             return value
 
         client.write_control_setting = _yielding_write
@@ -2050,7 +2096,9 @@ class TestCoordinator:
         assert results[1].translation_key == "control_level_range"
         assert client.write_control_setting_calls == [("unit_1", *writes[0])]
         state = coordinator.safe_data["unit_1"]
-        assert getattr(state, min_key) <= getattr(state, max_key)
+        minimum, maximum = _control_level_range(state, family)
+        assert minimum is not None and maximum is not None
+        assert minimum <= maximum
 
     @pytest.mark.parametrize("family", ["humidity", "co2"])
     @pytest.mark.parametrize("minimum_first", [False, True], ids=("maximum-first", "minimum-first"))
@@ -2062,7 +2110,7 @@ class TestCoordinator:
     ) -> None:
         coordinator, client = _build_coordinator(hass, [_UNIT_F])
         min_key, max_key = f"{family}_min_level", f"{family}_max_level"
-        coordinator.data = {"unit_1": RoomState(**{min_key: 10, max_key: 100})}
+        coordinator.data = {"unit_1": _control_level_state(family, 10, 100)}
         client.read_room_state = _failing("readback failed")
         writes = [(min_key, 80), (max_key, 20)]
         if not minimum_first:
@@ -2203,13 +2251,13 @@ class TestOptionsFlow:
     async def test_options_init_shows_the_menu(self, hass: HomeAssistant) -> None:
         result = await self._build_flow(hass).async_step_init(None)
 
-        assert result["type"] == "menu"
-        assert result["step_id"] == "init"
-        assert set(result["menu_options"]) == {
+        assert result.get("type") == "menu"
+        assert result.get("step_id") == "init"
+        assert result.get("menu_options") == [
             "edit_request_rate",
             "edit_profiles",
             "rescan_units",
-        }
+        ]
 
     async def test_options_rescan_keeps_known_profiles_and_suggests_detected_ones(
         self,
@@ -2222,10 +2270,14 @@ class TestOptionsFlow:
 
         result = await flow.async_step_rescan_units({})
 
-        assert result["type"] == "form"
-        assert result["step_id"] == "profiles"
-        assert result["description_placeholders"]["device_count"] == "3"
-        defaults = {key.schema: key.default() for key in result["data_schema"].schema}
+        assert result.get("type") == "form"
+        assert result.get("step_id") == "profiles"
+        placeholders = result.get("description_placeholders")
+        assert placeholders is not None
+        assert placeholders["device_count"] == "3"
+        data_schema = result.get("data_schema")
+        assert data_schema is not None
+        defaults = {key.schema: key.default() for key in data_schema.schema}
         assert defaults == {"slave_2": "ii_plain", "slave_3": "ii_f", "slave_4": "ii_f"}
         assert flow._preview_by_slave == {2: "ID 2", 3: "ID 3", 4: "ID 4"}
 
@@ -2247,8 +2299,8 @@ class TestOptionsFlow:
 
         result = await flow.async_step_rescan_units({})
 
-        assert result["step_id"] == "rescan_units"
-        assert result["errors"] == {"base": error}
+        assert result.get("step_id") == "rescan_units"
+        assert result.get("errors") == {"base": error}
         assert flow._discovered_slaves == []
 
     async def test_options_profiles_without_a_rescan_return_to_the_menu(
@@ -2257,8 +2309,8 @@ class TestOptionsFlow:
     ) -> None:
         result = await self._build_flow(hass).async_step_profiles(None)
 
-        assert result["type"] == "menu"
-        assert result["step_id"] == "init"
+        assert result.get("type") == "menu"
+        assert result.get("step_id") == "init"
 
     async def test_options_profiles_updates_entry_data_and_reloads(
         self,
@@ -2268,19 +2320,18 @@ class TestOptionsFlow:
         flow._discovered_slaves = [2]
         flow._preview_by_slave = {2: "ID 116852 | basic"}
         flow._detected_profile_by_slave = {2: "plain"}
-        flow.async_create_entry = lambda title="", data=None: {
-            "type": "create_entry",
-            "title": title,
-            "data": data or {},
-        }
-
         with (
+            patch.object(
+                flow,
+                "async_create_entry",
+                return_value={"type": "create_entry", "title": "", "data": {}},
+            ),
             patch.object(hass.config_entries, "async_update_entry") as update_entry,
             patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as reload,
         ):
             result = await flow.async_step_profiles({"slave_2": "ii_f"})
 
-        assert result["type"] == "create_entry"
+        assert result.get("type") == "create_entry"
         room = update_entry.call_args.kwargs["data"][CONF_ROOMS][0]
         assert room["profile"] == "ii_f"
         assert "supported_entity_keys" not in room

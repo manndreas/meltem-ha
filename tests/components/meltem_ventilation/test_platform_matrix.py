@@ -227,7 +227,9 @@ async def test_unit_devices_hang_off_the_gateway_device(
     assert len(units) == 2
     assert all(device.via_device_id == gateway.id for device in units)
     # The entry was created as 1.1 and migrated on setup.
-    assert hass.config_entries.async_get_entry(entry_id).minor_version == 3
+    migrated_entry = hass.config_entries.async_get_entry(entry_id)
+    assert migrated_entry is not None
+    assert migrated_entry.minor_version == 3
 
 
 async def test_device_path_sensor_keeps_its_registry_entry_across_reloads(
@@ -250,5 +252,7 @@ async def test_device_path_sensor_keeps_its_registry_entry_across_reloads(
     assert reloaded is not None
     assert reloaded.id == path_entity.id
     assert reloaded.name == "Gateway port"
+    assert reloaded.device_id is not None
     device = dr.async_get(hass).async_get(reloaded.device_id)
+    assert device is not None
     assert (DOMAIN, entry_id) in device.identifiers

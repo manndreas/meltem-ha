@@ -517,4 +517,4 @@ Current status after the latest keypad and intensive runs:
 - the 2026-10-09 run-on-time A-B-A test still found no direct setting field;
   only shadow/meta drift was observed
 - further effort should return to normal integration work unless materially new
-  evidence appears
+  evidence appears.

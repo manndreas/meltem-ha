@@ -13,12 +13,12 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Protocol
 
 from modbus_connection import (
     ModbusConnectionError,
     ModbusError,
     ModbusSerialParams,
-    ModbusUnit,
 )
 from modbus_connection.tmodbus import ModbusConnection
 
@@ -34,6 +34,14 @@ REGISTER_GATEWAY_NODE_ADDRESS_1 = 43902
 
 class LinkOpenError(Exception):
     """The serial port could not be opened, usually because it is in use."""
+
+
+class ModbusReader(Protocol):
+    """The holding-register read interface shared by the gateway tools."""
+
+    def read_holding_registers(self, address: int, count: int) -> Awaitable[list[int]]: ...
+
+    def read_input_registers(self, address: int, count: int) -> Awaitable[list[int]]: ...
 
 
 @dataclass(frozen=True)
@@ -72,7 +80,7 @@ async def open_link(
         await link.close()
 
 
-async def read_or_none(unit: ModbusUnit, address: int, count: int) -> list[int] | None:
+async def read_or_none(unit: ModbusReader, address: int, count: int) -> list[int] | None:
     """Read holding registers, or return None when the unit refuses or stays silent.
 
     A lost link still raises, so a dead port does not pass for a silent unit.
@@ -86,7 +94,7 @@ async def read_or_none(unit: ModbusUnit, address: int, count: int) -> list[int] 
         return None
 
 
-async def discover_units(gateway: ModbusUnit, *, gap: float = 0.0) -> list[int]:
+async def discover_units(gateway: ModbusReader, *, gap: float = 0.0) -> list[int]:
     """Return the unit addresses configured in the gateway's bridge registers."""
 
     (node_count,) = await gateway.read_holding_registers(REGISTER_GATEWAY_NUMBER_OF_NODES, 1)

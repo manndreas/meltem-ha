@@ -6,11 +6,12 @@ import argparse
 import asyncio
 import time
 
-from modbus_connection import ModbusError, ModbusUnit
+from modbus_connection import ModbusError
 from modbus_connection.tmodbus import ModbusConnection
 
 from tools._link import (
     GATEWAY_DEVICE_ID,
+    ModbusReader,
     Sample,
     discover_units,
     elapsed_ms,
@@ -55,7 +56,7 @@ SCENARIOS: dict[str, tuple[tuple[int, int, str], ...]] = {
 }
 
 
-async def read_block(unit: ModbusUnit, address: int, count: int) -> Sample:
+async def read_block(unit: ModbusReader, address: int, count: int) -> Sample:
     """Read one register block and measure its latency."""
 
     start = time.perf_counter()

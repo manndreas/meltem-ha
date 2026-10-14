@@ -22,7 +22,7 @@ is already `on` when the automation is loaded.
 ## Trigger options
 
 | Option | Meaning |
-|---|---|
+| --- | --- |
 | `behavior` | How to handle the selected filter sensors. `each` (default) fires for every selected sensor that transitions to `on`. `first` fires on the transition that results in exactly one selected sensor being `on`. `all` fires when all selected sensors are `on`. |
 | `for` | How long to wait after the trigger condition is met before firing. The default `00:00:00` fires immediately. If the matching target state is no longer valid during the wait, the pending trigger is cancelled. |
 

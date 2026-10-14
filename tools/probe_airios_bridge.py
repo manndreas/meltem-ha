@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import argparse
 
-from modbus_connection import ModbusUnit
-
 from tools._link import (
     GATEWAY_DEVICE_ID,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
+    ModbusReader,
     open_link,
     read_or_none,
     run,
@@ -17,14 +16,14 @@ from tools._link import (
 )
 
 
-async def read_u16(unit: ModbusUnit, address: int) -> int | None:
+async def read_u16(unit: ModbusReader, address: int) -> int | None:
     """Read one uint16 register."""
 
     registers = await read_or_none(unit, address, 1)
     return None if registers is None else registers[0]
 
 
-async def read_u32_word_swap(unit: ModbusUnit, address: int) -> int | None:
+async def read_u32_word_swap(unit: ModbusReader, address: int) -> int | None:
     """Read one uint32 register pair, low word first."""
 
     registers = await read_or_none(unit, address, 2)

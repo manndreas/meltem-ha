@@ -224,7 +224,7 @@ async def main() -> int:
     csv_context = args.csv.open("a", newline="", encoding="utf-8") if args.csv else nullcontext()
     with csv_context as csv_file:
         writer = csv.writer(csv_file) if csv_file is not None else None
-        if writer is not None and csv_file.tell() == 0:
+        if writer is not None and csv_file is not None and csv_file.tell() == 0:
             writer.writerow(CSV_HEADER)
 
         link = bil.open_connection(args.port)

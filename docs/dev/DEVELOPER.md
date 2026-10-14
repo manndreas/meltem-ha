@@ -142,7 +142,7 @@ The retry rules live in `device/transport.py` (`TransportPolicy`, one shared
 instance per gateway link):
 
 | Error | Behavior |
-|---|---|
+| --- | --- |
 | `ModbusTimeoutError`, `ModbusProtocolError` | retry once; counts toward the timeout counter |
 | `GatewayTargetError`, `GatewayPathUnavailableError` | retry once; resets the counter, the gateway answered |
 | `ModbusConnectionError` | wait `TRANSPORT_RETRY_DELAY_SECONDS`, retry once; the library reconnects |
@@ -196,7 +196,7 @@ and check the breaking changes of every Home Assistant release.
 How the hardware findings are implemented now:
 
 | Finding | Implementation |
-|---|---|
+| --- | --- |
 | The gateway needs a pause between requests | `REQUEST_GAP_SECONDS` via `set_message_spacing` in `prepare_unit` |
 | 0.8 s is enough for the gateway to answer | `FIXED_TIMEOUT` via `require_timeout` in `prepare_unit` |
 | pymodbus' default resend turned one unanswered register into about eight timeouts | `TransportPolicy` retries once, without disconnecting |
@@ -232,7 +232,7 @@ and write sequences. The parts without Home Assistant state live in their
 own modules:
 
 | Module | Content |
-|---|---|
+| --- | --- |
 | `polling.py` | job groups, their intervals, job planning and selection |
 | `read_health.py` | freshness, availability, and staleness of a read group |
 | `levels.py` | supply/extract targets of a unit and their tolerances |
@@ -705,10 +705,10 @@ If something breaks:
 ha core logs | grep meltem_ventilation
 ```
 
-3. Confirm scan results.
-4. Confirm the correct serial port is used.
-5. Confirm the correct model profiles were chosen.
-6. Only then investigate individual register behavior.
+1. Confirm scan results.
+2. Confirm the correct serial port is used.
+3. Confirm the correct model profiles were chosen.
+4. Only then investigate individual register behavior.
 
 Useful local tools in this repo (async, on `modbus-connection` with tmodbus
 since `4.0.0`; any earlier commit has the pymodbus versions):

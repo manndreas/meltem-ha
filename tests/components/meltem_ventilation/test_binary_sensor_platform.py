@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from homeassistant.const import EntityCategory
 
 from custom_components.meltem_ventilation.binary_sensor import (
     BINARY_SENSOR_DESCRIPTIONS,
@@ -64,10 +65,10 @@ class TestBinarySensorEntityCreation:
     def test_device_info(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=7)})
         info = _entity(coordinator, "error_status").device_info
-        assert (DOMAIN, "unit_1") in info["identifiers"]
-        assert info["manufacturer"] == "Meltem"
-        assert info["sw_version"] == "7"
-        assert info["hw_version"] == "116852"
+        assert (DOMAIN, "unit_1") in (info.get("identifiers") or set())
+        assert info.get("manufacturer") == "Meltem"
+        assert info.get("sw_version") == "7"
+        assert info.get("hw_version") == "116852"
 
     def test_data_health_entity_reports_group_details(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState()})
@@ -86,8 +87,10 @@ class TestBinarySensorEntityCreation:
         assert entity.unique_id == f"{DOMAIN}_unit_1_data_health"
         assert entity.is_on is True
         assert entity.available is True
-        assert entity.extra_state_attributes["flow"]["consecutive_failures"] == 3
-        assert entity.entity_category.value == "diagnostic"
+        flow = entity.extra_state_attributes["flow"]
+        assert isinstance(flow, dict)
+        assert flow["consecutive_failures"] == 3
+        assert entity.entity_category == EntityCategory.DIAGNOSTIC
 
     def test_data_health_details_stay_out_of_the_recorder(self) -> None:
         """The timestamps change on every poll."""
@@ -105,7 +108,7 @@ class TestBinarySensorIsOn:
     @pytest.mark.parametrize("key", list(_DESCRIPTIONS))
     @pytest.mark.parametrize("value", [True, False, None])
     def test_is_on_reflects_state(self, key: str, value: bool | None) -> None:
-        coordinator = _fake_coordinator(data={"unit_1": RoomState(**{key: value})})
+        coordinator = _fake_coordinator(data={"unit_1": _state_for_sensor(key, value)})
         assert _entity(coordinator, key).is_on is value
 
     def test_value_changes_when_coordinator_data_changes(self) -> None:
@@ -114,7 +117,21 @@ class TestBinarySensorIsOn:
         assert entity.is_on is False
 
         coordinator.data = {"unit_1": RoomState(error_status=True)}
+        with patch.object(entity, "async_write_ha_state"):
+            entity._handle_coordinator_update()
         assert entity.is_on is True
+
+
+def _state_for_sensor(key: str, value: bool | None) -> RoomState:
+    if key == "error_status":
+        return RoomState(error_status=value)
+    if key == "frost_protection_active":
+        return RoomState(frost_protection_active=value)
+    if key == "filter_change_due":
+        return RoomState(filter_change_due=value)
+    if key == "rf_comm_status":
+        return RoomState(rf_comm_status=value)
+    raise AssertionError(f"Unexpected binary sensor key: {key}")
 
     def test_missing_room_returns_none(self) -> None:
         assert _entity(_fake_coordinator(data={}), "error_status").is_on is None

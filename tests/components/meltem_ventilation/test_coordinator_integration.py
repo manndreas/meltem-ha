@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -64,6 +64,16 @@ class _FakeClient:
         self.read_calls: list[tuple[str, RefreshPlan]] = []
         self.next_read_state = RoomState(target_level=42)
         self.fail_rooms: set[str] = set()
+        self.last_request_rate: float | None = None
+
+    def transport_diagnostics(self) -> dict[str, float | int | None]:
+        raise AssertionError("Transport diagnostics are not expected in coordinator polling tests")
+
+    async def discover_gateway_units(self, start: int, end: int) -> list[int]:
+        raise AssertionError("Gateway discovery is not expected in coordinator polling tests")
+
+    async def probe_slave_details(self, slave: int) -> tuple[str, str | None]:
+        raise AssertionError("Gateway probing is not expected in coordinator polling tests")
 
     async def read_room_state(
         self,
@@ -78,6 +88,34 @@ class _FakeClient:
 
     def seconds_since_successful_read(self, slave: int) -> float | None:
         return None
+
+    async def write_level(self, room: RoomConfig, level: int) -> None:
+        raise AssertionError("Writes are not expected in coordinator polling tests")
+
+    async def write_unbalanced_levels(
+        self, room: RoomConfig, supply_level: int, extract_level: int
+    ) -> None:
+        raise AssertionError("Writes are not expected in coordinator polling tests")
+
+    async def write_operating_mode(
+        self, room: RoomConfig, operation_mode: str, balanced_level: int, extract_level: int
+    ) -> None:
+        raise AssertionError("Writes are not expected in coordinator polling tests")
+
+    async def write_preset_mode(self, room: RoomConfig, preset_mode: str) -> None:
+        raise AssertionError("Writes are not expected in coordinator polling tests")
+
+    async def clear_intensive(self, room: RoomConfig) -> None:
+        raise AssertionError("Writes are not expected in coordinator polling tests")
+
+    async def write_control_setting(self, room: RoomConfig, setting_key: str, value: int) -> int:
+        raise AssertionError("Writes are not expected in coordinator polling tests")
+
+    def update_request_rate(self, max_requests_per_second: float) -> None:
+        self.last_request_rate = max_requests_per_second
+
+    def shutdown(self) -> None:
+        pass
 
 
 @pytest.fixture(autouse=True)
@@ -102,6 +140,18 @@ def _build(
         max_requests_per_second=max_requests_per_second,
     )
     return coordinator, client
+
+
+def _update_interval_seconds(coordinator: MeltemDataUpdateCoordinator) -> float:
+    interval = coordinator.update_interval
+    assert interval is not None
+    return interval.total_seconds()
+
+
+def _startup_job_count(coordinator: MeltemDataUpdateCoordinator) -> int:
+    startup_jobs = coordinator._startup_jobs
+    assert startup_jobs is not None
+    return len(startup_jobs)
 
 
 def _set_jobs_due(coordinator: MeltemDataUpdateCoordinator, next_due: float) -> None:
@@ -153,7 +203,7 @@ class TestFirstRefresh:
         assert client.read_calls == [("unit_1", AIRFLOW_REFRESH_PLAN)]
         assert coordinator.data_health_stale("unit_2") is None
         assert not coordinator.room_available("unit_2")
-        clock.now += coordinator.update_interval.total_seconds()
+        clock.now += _update_interval_seconds(coordinator)
 
         await coordinator.async_refresh()
 
@@ -176,7 +226,7 @@ class TestFirstRefresh:
         await coordinator.async_refresh()
         attempts = 1
         while coordinator._startup_jobs:
-            clock.now += coordinator.update_interval.total_seconds()
+            clock.now += _update_interval_seconds(coordinator)
             await coordinator.async_refresh()
             attempts += 1
             assert attempts <= len(expected) * 2
@@ -196,8 +246,8 @@ class TestFirstRefresh:
         await coordinator.async_refresh()
 
         assert not coordinator.last_update_success
-        assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_START_SECONDS
-        clock.now += coordinator.update_interval.total_seconds()
+        assert _update_interval_seconds(coordinator) == TRANSPORT_BACKOFF_START_SECONDS
+        clock.now += _update_interval_seconds(coordinator)
 
         await coordinator.async_refresh()
 
@@ -265,7 +315,7 @@ class TestFirstRefresh:
         working = RoomState(target_level=42)
         with patch.object(client, "read_room_state", side_effect=[unanswered, working]):
             await coordinator.async_refresh()
-            clock.now += coordinator.update_interval.total_seconds()
+            clock.now += _update_interval_seconds(coordinator)
             await coordinator.async_refresh()
 
         assert coordinator.data == {"unit_1": unanswered, "unit_2": working}
@@ -278,11 +328,11 @@ class TestFirstRefresh:
     ) -> None:
         coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
         await coordinator.async_refresh()
-        pending_count = len(coordinator._startup_jobs)
+        pending_count = _startup_job_count(coordinator)
         clock.now += 11.0
 
         await coordinator.async_refresh()
-        clock.now += coordinator.update_interval.total_seconds()
+        clock.now += _update_interval_seconds(coordinator)
         await coordinator.async_refresh()
 
         assert client.read_calls == [
@@ -290,7 +340,7 @@ class TestFirstRefresh:
             ("unit_1", AIRFLOW_REFRESH_PLAN),
             ("unit_2", AIRFLOW_REFRESH_PLAN),
         ]
-        assert len(coordinator._startup_jobs) == pending_count - 1
+        assert _startup_job_count(coordinator) == pending_count - 1
 
     async def test_startup_job_is_rescheduled_from_completion(
         self,
@@ -319,8 +369,8 @@ class TestFirstRefresh:
         for _ in range(20):
             await coordinator.async_refresh()
             assert not coordinator.last_update_success
-            assert coordinator.update_interval.total_seconds() >= TRANSPORT_BACKOFF_START_SECONDS
-            clock.now += coordinator.update_interval.total_seconds()
+            assert _update_interval_seconds(coordinator) >= TRANSPORT_BACKOFF_START_SECONDS
+            clock.now += _update_interval_seconds(coordinator)
         assert not coordinator._startup_jobs
         assert (
             coordinator._startup_states["unit_1"].read_health_for("flow").consecutive_failures >= 3
@@ -340,7 +390,7 @@ class TestFirstRefresh:
             await coordinator.async_refresh()
             if ("unit_1", hours.refresh_plan) in client.read_calls:
                 break
-            clock.now += coordinator.update_interval.total_seconds()
+            clock.now += _update_interval_seconds(coordinator)
 
         retry = max(UNREAD_GROUP_RETRY_SECONDS, clock.now - started)
         assert retry < hours.interval_seconds
@@ -357,7 +407,7 @@ class TestFirstRefresh:
             for _ in range(200):
                 if client.read_calls.count(("unit_1", hours.refresh_plan)) >= 2:
                     break
-                clock.now += coordinator.update_interval.total_seconds()
+                clock.now += _update_interval_seconds(coordinator)
                 await coordinator.async_refresh()
 
         assert client.read_calls.count(("unit_1", hours.refresh_plan)) == 2
@@ -393,7 +443,7 @@ class TestStartupWithRealClient:
                 name=f"Unit {slave}",
                 profile="ii_plain",
                 slave=slave,
-                supported_entity_keys=supported_entity_keys_for_profile("ii_plain"),
+                supported_entity_keys=frozenset(supported_entity_keys_for_profile("ii_plain")),
             )
             for slave in range(2, 8)
         ]
@@ -461,16 +511,20 @@ class TestStartupWithRealClient:
             assert not status_sensor.available
             health_sensor = MeltemDataHealthBinarySensor(coordinator, rooms[0])
             assert health_sensor.is_on is False
-            assert health_sensor.extra_state_attributes["status"]["stale"] is None
+            status_attributes = health_sensor.extra_state_attributes["status"]
+            assert isinstance(status_attributes, Mapping)
+            assert status_attributes["stale"] is None
 
             steps = 0
             while coordinator._startup_jobs:
-                clock.now += coordinator.update_interval.total_seconds()
+                clock.now += _update_interval_seconds(coordinator)
                 await coordinator.async_refresh()
                 steps += 1
                 assert steps < 100
 
             assert coordinator.state_room_count == 6
+            with patch.object(status_sensor, "async_write_ha_state"):
+                status_sensor._handle_coordinator_update()
             assert status_sensor.available
             assert all(
                 state.error_status is False and state.operating_hours == 0
@@ -616,7 +670,7 @@ class TestSchedulerWakeups:
 
         assert coordinator.update_interval is not None
         # Up to one extra second compensates HA's whole-second alignment.
-        assert 25.0 < coordinator.update_interval.total_seconds() <= 31.0
+        assert 25.0 < _update_interval_seconds(coordinator) <= 31.0
 
     async def test_next_tick_never_undercuts_the_request_rate(
         self,
@@ -630,7 +684,7 @@ class TestSchedulerWakeups:
 
         assert coordinator.update_interval is not None
         tick = coordinator._tick_seconds
-        assert tick <= coordinator.update_interval.total_seconds() < tick + 1.0
+        assert tick <= _update_interval_seconds(coordinator) < tick + 1.0
 
     def test_next_tick_compensates_for_whole_second_alignment(self, hass: HomeAssistant) -> None:
         """HA fires at int(loop.time()) + jitter + interval, never before the due time."""
@@ -641,7 +695,7 @@ class TestSchedulerWakeups:
         with patch.object(hass.loop, "time", return_value=1000.75):
             coordinator._schedule_next_tick()
 
-        assert due_in + 0.7 < coordinator.update_interval.total_seconds() <= due_in + 0.75
+        assert due_in + 0.7 < _update_interval_seconds(coordinator) <= due_in + 0.75
 
     async def test_jobs_respect_the_request_rate_cap(
         self,
@@ -676,7 +730,7 @@ class TestSchedulerWakeups:
 
         coordinator._schedule_next_tick()
 
-        assert coordinator.update_interval.total_seconds() == TRANSPORT_BACKOFF_MAX_SECONDS
+        assert _update_interval_seconds(coordinator) == TRANSPORT_BACKOFF_MAX_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -746,7 +800,9 @@ class TestPostWriteRefresh:
             await coordinator._async_refresh_room_after_write(_ROOM_1)
 
         sleep.assert_awaited_once()
-        assert 0 < sleep.await_args.args[0] <= 2.0
+        sleep_await = sleep.await_args
+        assert sleep_await is not None
+        assert 0 < sleep_await.args[0] <= 2.0
         assert len(client.read_calls) == 1
 
     async def test_refresh_after_write_honors_minimum_attempt_count(
@@ -944,11 +1000,15 @@ class TestReadOneJob:
         sensor = MeltemDataHealthBinarySensor(coordinator, _ROOM_1)
 
         assert sensor.is_on is None
-        assert sensor.extra_state_attributes["flow"]["stale"] is None
+        flow_attributes = sensor.extra_state_attributes["flow"]
+        assert isinstance(flow_attributes, Mapping)
+        assert flow_attributes["stale"] is None
 
         coordinator.data = {
             "unit_1": RoomState().with_read_health("flow", replace(health, consecutive_failures=3))
         }
+        with patch.object(sensor, "async_write_ha_state"):
+            sensor._handle_coordinator_update()
         assert sensor.is_on is True
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import cached_property
 
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
@@ -93,8 +94,6 @@ async def async_setup_entry(
 class MeltemBinarySensorEntity(MeltemEntity, BinarySensorEntity):
     """Representation of one Meltem binary sensor."""
 
-    entity_description: MeltemBinarySensorDescription
-
     def __init__(
         self,
         coordinator: MeltemDataUpdateCoordinator,
@@ -102,11 +101,12 @@ class MeltemBinarySensorEntity(MeltemEntity, BinarySensorEntity):
         description: MeltemBinarySensorDescription,
     ) -> None:
         super().__init__(coordinator, room, description.key, description.key)
+        self._description = description
         self.entity_description = description
 
-    @property
+    @cached_property
     def is_on(self) -> bool | None:
-        return self.entity_description.value_fn(self.room_state)
+        return self._description.value_fn(self.room_state)
 
 
 class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
@@ -120,14 +120,14 @@ class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
     def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "data_health", "data_health")
 
-    @property
+    @cached_property
     def available(self) -> bool:
         return self.coordinator.last_update_success and self.room.key in self.coordinator.safe_data
 
-    @property
+    @cached_property
     def is_on(self) -> bool | None:
         return self.coordinator.data_health_stale(self.room.key)
 
-    @property
+    @cached_property
     def extra_state_attributes(self) -> Mapping[str, object]:
         return self.coordinator.data_health_attributes(self.room.key)

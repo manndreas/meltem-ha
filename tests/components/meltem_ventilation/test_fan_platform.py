@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -84,6 +84,8 @@ class TestReadState:
         assert fan.available is True
 
         coordinator.room_available.return_value = False
+        with patch.object(fan, "async_write_ha_state"):
+            fan._handle_coordinator_update()
         assert fan.available is False
 
     def test_available_when_flow_control_is_stale(self) -> None:
@@ -137,8 +139,8 @@ class TestTurnOn:
     async def test_turn_on_restores_the_last_running_speed(self) -> None:
         coordinator = _coordinator((70, 30))
         fan = _fan(coordinator)
-        fan.async_write_ha_state = MagicMock()
-        fan._handle_coordinator_update()
+        with patch.object(fan, "async_write_ha_state"):
+            fan._handle_coordinator_update()
         coordinator.effective_levels.return_value = (0, 30)
 
         await fan.async_turn_on()

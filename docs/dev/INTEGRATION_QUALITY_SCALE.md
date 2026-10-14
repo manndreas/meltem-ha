@@ -45,13 +45,13 @@ reviewed locations in the repository.
 ## Bronze
 
 | Status | Rule | Assessment and evidence |
-|---|---|---|
+| --- | --- | --- |
 | ➖ | [`action-setup`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/action-setup) | No service actions are provided that would need to be registered in `async_setup`. |
 | ✅ | [`appropriate-polling`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/appropriate-polling) | The coordinator limits the request rate, staggers read jobs, and uses backoff on transport failures. [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [polling.py](../../custom_components/meltem_ventilation/polling.py) |
 | ❌ | [`brands`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/brands) | Local [brand assets](../../custom_components/meltem_ventilation/brand/icon.png) and [logo files](../../custom_components/meltem_ventilation/brand/logo.png) are present for the HACS custom integration. A Core candidate still needs an entry under [`core_integrations/meltem_ventilation`](https://github.com/home-assistant/brands/tree/master/core_integrations) in the central [brands repository](https://github.com/home-assistant/brands). |
 | ✅ | [`common-modules`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/common-modules) | Shared responsibilities are split across modules such as [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [polling.py](../../custom_components/meltem_ventilation/polling.py), and [read_health.py](../../custom_components/meltem_ventilation/read_health.py). |
 | ✅ | [`config-flow-test-coverage`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-flow-test-coverage) | The full test suite covers [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py) at 100%. [test_config_flow.py](../../tests/components/meltem_ventilation/test_config_flow.py) tests recovery from errors in the user, USB, options, and reconfigure flows, as well as preventing the same gateway from being configured twice. |
-| ✅ | [`config-flow`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-flow) | UI setup, field-level `data_description` text for every config and options form field, and English and German translations are provided. Connection and device-profile settings are stored in `ConfigEntry.data`; the request rate is stored in `ConfigEntry.options`. The migration moves the existing rate from `data` to `options` without overwriting an existing options value. [strings.json](../../custom_components/meltem_ventilation/strings.json), [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py), [__init__.py](../../custom_components/meltem_ventilation/__init__.py) |
+| ✅ | [`config-flow`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-flow) | UI setup, field-level `data_description` text for every config and options form field, and English and German translations are provided. Connection and device-profile settings are stored in `ConfigEntry.data`; the request rate is stored in `ConfigEntry.options`. The migration moves the existing rate from `data` to `options` without overwriting an existing options value. [strings.json](../../custom_components/meltem_ventilation/strings.json), [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py), [`__init__.py`](../../custom_components/meltem_ventilation/__init__.py) |
 | ✅ | [`dependency-transparency`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/dependency-transparency) | Dependencies are declared in [manifest.json](../../custom_components/meltem_ventilation/manifest.json). The reviewed runtime dependency `modbus-connection` is available on PyPI and in a public repository with an OSI license, release tag, and CI. |
 | ➖ | [`docs-actions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-actions) | No service actions are provided. |
 | ✅ | [`docs-triggers`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-triggers) | The [trigger guide](../TRIGGER_FILTER_CHANGE_DUE.md) explains its purpose and target selection, describes `behavior` and `for`, and includes UI steps and a usable YAML example. The [README.md](../../README.md) links to it. |
@@ -62,9 +62,9 @@ reviewed locations in the repository.
 | ➖ | [`entity-event-setup`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/entity-event-setup) | The integration does not subscribe to entity events that require lifecycle registration. |
 | ✅ | [`entity-unique-id`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/entity-unique-id) | Room entities receive stable IDs through the shared [entity.py](../../custom_components/meltem_ventilation/entity.py) base class. |
 | ✅ | [`has-entity-name`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/has-entity-name) | The shared entity base class sets `has_entity_name`; the additional sensor sets it as well. [entity.py](../../custom_components/meltem_ventilation/entity.py), [sensor.py](../../custom_components/meltem_ventilation/sensor.py) |
-| ✅ | [`runtime-data`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/runtime-data) | The coordinator and runtime data are managed through `ConfigEntry.runtime_data`. [__init__.py](../../custom_components/meltem_ventilation/__init__.py), [models.py](../../custom_components/meltem_ventilation/models.py) |
+| ✅ | [`runtime-data`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/runtime-data) | The coordinator and runtime data are managed through `ConfigEntry.runtime_data`. [`__init__.py`](../../custom_components/meltem_ventilation/__init__.py), [models.py](../../custom_components/meltem_ventilation/models.py) |
 | ✅ | [`test-before-configure`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/test-before-configure) | The config flow validates the port and scans and probes the gateway before creating the entry. [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py) |
-| ✅ | [`test-before-setup`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/test-before-setup) | The gateway is validated during setup, and the initial reads are started. [__init__.py](../../custom_components/meltem_ventilation/__init__.py) |
+| ✅ | [`test-before-setup`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/test-before-setup) | The gateway is validated during setup, and the initial reads are started. [`__init__.py`](../../custom_components/meltem_ventilation/__init__.py) |
 | ✅ | [`unique-config-entry`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/unique-config-entry) | The port is used as the unique ID, and `single_config_entry` is set in [manifest.json](../../custom_components/meltem_ventilation/manifest.json). |
 
 The `config-flow` rule also includes the requirements to provide context for
@@ -76,9 +76,9 @@ checks the descriptions for every config and options flow field.
 ## Silver
 
 | Status | Rule | Assessment and evidence |
-|---|---|---|
+| --- | --- | --- |
 | ➖ | [`action-exceptions`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/action-exceptions) | No service actions are provided. |
-| ✅ | [`config-entry-unloading`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-entry-unloading) | Platforms are unloaded and the coordinator and client are shut down when the entry is unloaded. [__init__.py](../../custom_components/meltem_ventilation/__init__.py) |
+| ✅ | [`config-entry-unloading`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-entry-unloading) | Platforms are unloaded and the coordinator and client are shut down when the entry is unloaded. [`__init__.py`](../../custom_components/meltem_ventilation/__init__.py) |
 | ✅ | [`docs-configuration-parameters`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-configuration-parameters) | The [README.md](../../README.md) explains how to change the port, edit profiles, change the request rate, and rescan the gateway. |
 | ✅ | [`docs-installation-parameters`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/docs-installation-parameters) | The [README.md](../../README.md) explains the gateway, USB connection, requirements, port, and profile selection. |
 | ✅ | [`entity-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/entity-unavailable) | Entities are marked unavailable when rooms are unavailable or read groups are stale. [entity.py](../../custom_components/meltem_ventilation/entity.py) |
@@ -91,7 +91,7 @@ checks the descriptions for every config and options flow field.
 ## Gold
 
 | Status | Rule | Assessment and evidence |
-|---|---|---|
+| --- | --- | --- |
 | ✅ | [`devices`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/devices) | The gateway and configured ventilation units are registered as devices. [entity.py](../../custom_components/meltem_ventilation/entity.py) |
 | ✅ | [`diagnostics`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/diagnostics) | Diagnostics are implemented; the serial port is redacted from the output. [diagnostics.py](../../custom_components/meltem_ventilation/diagnostics.py) |
 | ➖ | [`discovery-update-info`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/discovery-update-info) | The connection is local over USB/serial, so there is no dynamic IP or network address to update. |
@@ -112,13 +112,13 @@ checks the descriptions for every config and options flow field.
 | ✅ | [`icon-translations`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/icon-translations) | All integration-specific icons are defined in [icons.json](../../custom_components/meltem_ventilation/icons.json) using the entity translation keys; device-class icons are left to Home Assistant defaults. |
 | ✅ | [`reconfiguration-flow`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/reconfiguration-flow) | The serial port can be changed through the reconfigure flow; profiles and new units can be managed through the options flow. [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py) |
 | ➖ | [`repair-issues`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/repair-issues) | The review found no concrete case requiring a persistent repair issue for a user-fixable problem. Connection problems are reported during setup or in the options flow and through Read health. |
-| ✅ | [`stale-devices`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/stale-devices) | Devices for units that are no longer configured are removed during setup. [__init__.py](../../custom_components/meltem_ventilation/__init__.py) |
+| ✅ | [`stale-devices`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/stale-devices) | Devices for units that are no longer configured are removed during setup. [`__init__.py`](../../custom_components/meltem_ventilation/__init__.py) |
 
 ## Platinum
 
 | Status | Rule | Assessment and evidence |
-|---|---|---|
-| ✅ | [`async-dependency`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/async-dependency) | Modbus communication uses asynchronous APIs; blocking path resolution is moved to an executor. [modbus_client.py](../../custom_components/meltem_ventilation/modbus_client.py), [__init__.py](../../custom_components/meltem_ventilation/__init__.py) |
+| --- | --- | --- |
+| ✅ | [`async-dependency`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/async-dependency) | Modbus communication uses asynchronous APIs; blocking path resolution is moved to an executor. [modbus_client.py](../../custom_components/meltem_ventilation/modbus_client.py), [`__init__.py`](../../custom_components/meltem_ventilation/__init__.py) |
 | ➖ | [`inject-websession`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/inject-websession) | The integration does not use an HTTP dependency or web session. |
 | ✅ | [`strict-typing`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/strict-typing) | [pyproject.toml](../../pyproject.toml) enables mypy strict mode; the integration uses the runtime-data-typed `MeltemIntegrationConfigEntry`. Unneeded `type: ignore[override]` directives were removed; the executor return value is narrowed to `str` at the Home Assistant boundary based on the typed worker. [models.py](../../custom_components/meltem_ventilation/models.py) |
 

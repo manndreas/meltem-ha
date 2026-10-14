@@ -364,8 +364,12 @@ class TestAsyncMigrateEntry:
         assert await async_migrate_entry(hass, entry) is True
 
         registry = er.async_get(hass)
-        assert registry.async_get(legacy.entity_id).unique_id == legacy.unique_id
-        assert registry.async_get(current.entity_id).unique_id == current.unique_id
+        migrated_legacy = registry.async_get(legacy.entity_id)
+        migrated_current = registry.async_get(current.entity_id)
+        assert migrated_legacy is not None
+        assert migrated_current is not None
+        assert migrated_legacy.unique_id == legacy.unique_id
+        assert migrated_current.unique_id == current.unique_id
         assert entry.minor_version == 3
 
     async def test_migration_preserves_an_existing_request_rate_option(

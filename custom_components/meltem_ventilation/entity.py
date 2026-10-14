@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+from functools import cached_property
 
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.update_coordinator import BaseCoordinatorEntity
 
 from .const import DOMAIN, GATEWAY_NAME, INTEGRATION_NAME, profile_label
 from .coordinator import MeltemDataUpdateCoordinator
@@ -15,11 +16,17 @@ from .models import EMPTY_ROOM_STATE, RoomConfig, RoomState
 _PREVIEW_PRODUCT_ID_RE = re.compile(r"\bID\s+(\d+)\b")
 
 
+def gateway_identifiers(entry_id: str) -> set[tuple[str, str]]:
+    """Return the stable identifier set for one gateway."""
+
+    return {(DOMAIN, entry_id)}
+
+
 def gateway_device_info(entry_id: str) -> DeviceInfo:
     """Return the device of the gateway that all units of one entry hang off."""
 
     return DeviceInfo(
-        identifiers={(DOMAIN, entry_id)},
+        identifiers=gateway_identifiers(entry_id),
         manufacturer="Meltem",
         model="M-WRG-GW",
         name=GATEWAY_NAME,
@@ -42,7 +49,7 @@ def room_supports_entity(
     return room.supports(entity_key)
 
 
-class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
+class MeltemEntity(BaseCoordinatorEntity[MeltemDataUpdateCoordinator]):
     """Base entity for all Meltem room entities.
 
     Every room discovered during setup becomes one HA device, and every entity
@@ -67,7 +74,7 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
         self._hw_version = _product_id_from_preview(room.preview)
         self._exported_versions: tuple[str | None, str | None] = (None, None)
 
-    @property
+    @cached_property
     def device_info(self) -> DeviceInfo:
         info = DeviceInfo(
             identifiers={(DOMAIN, self.room.key)},
@@ -90,9 +97,11 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
         sw_version = self.room_state.software_version
         return str(sw_version) if sw_version is not None else None
 
-    @property
+    @cached_property
     def available(self) -> bool:
-        if not (super().available and self.coordinator.room_available(self.room.key)):
+        if not (
+            self.coordinator.last_update_success and self.coordinator.room_available(self.room.key)
+        ):
             return False
         if not self._requires_fresh_read_group:
             return True
@@ -103,7 +112,20 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
 
     def _handle_coordinator_update(self) -> None:
         self._async_update_device_registry_versions()
+        for property_name in (
+            "available",
+            "extra_state_attributes",
+            "is_on",
+            "native_value",
+            "percentage",
+            "current_option",
+        ):
+            vars(self).pop(property_name, None)
         super()._handle_coordinator_update()
+
+    async def async_update(self) -> None:
+        if self.enabled:
+            await self.coordinator.async_request_refresh()
 
     def _async_update_device_registry_versions(self) -> None:
         """Push late-discovered version fields into the device registry."""

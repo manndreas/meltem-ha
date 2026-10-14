@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import cached_property
+
 from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -62,7 +64,7 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
             options.extend(["co2_control", "automatic"])
         self._attr_options = options
 
-    @property
+    @cached_property
     def current_option(self) -> str | None:
         if not self.coordinator.read_group_fresh(self.room.key, "flow_control"):
             return None
@@ -85,7 +87,7 @@ class MeltemPresetModeSelect(MeltemEntity, SelectEntity):
     def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "preset_mode", "preset_mode")
 
-    @property
+    @cached_property
     def current_option(self) -> str | None:
         optimistic = self.coordinator.optimistic_preset_mode(self.room.key)
         if optimistic is not None:
