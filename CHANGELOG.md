@@ -11,7 +11,10 @@
 - Document data updates, automation examples, the filter-change trigger and
   condition, and integration removal; move developer documentation under
   `docs/dev/`.
-- Enable strict type checking and use a runtime-data-typed config entry.
+- Clarify fan feedback, quick-mode state, and unavailable-unit behavior in the
+  README; clean up Markdown formatting throughout the documentation.
+- Enable strict type checking, resolve Pylance diagnostics across the
+  integration, tests, and tools, and use a runtime-data-typed config entry.
 
 ## 4.1.0
 
