@@ -30,11 +30,11 @@ def _install_homeassistant_stub() -> None:
     util_module = ModuleType("homeassistant.util")
     dt_module = ModuleType("homeassistant.util.dt")
 
-    const_module.Platform = _StubPlatform
-    dt_module.utcnow = lambda: datetime.now(UTC)
-    util_module.dt = dt_module
-    homeassistant_module.const = const_module
-    homeassistant_module.util = util_module
+    setattr(const_module, "Platform", _StubPlatform)
+    setattr(dt_module, "utcnow", lambda: datetime.now(UTC))
+    setattr(util_module, "dt", dt_module)
+    setattr(homeassistant_module, "const", const_module)
+    setattr(homeassistant_module, "util", util_module)
     sys.modules.update(
         {
             "homeassistant": homeassistant_module,

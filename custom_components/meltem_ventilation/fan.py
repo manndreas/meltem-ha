@@ -8,6 +8,7 @@ mode with separate supply and extract targets.
 from __future__ import annotations
 
 import math
+from functools import cached_property
 from typing import Any
 
 from homeassistant.components.fan import FanEntity
@@ -75,7 +76,7 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         # One step per m3/h, so the slider cannot land between device values.
         self._attr_speed_count = int_states_in_range(self._level_range)
 
-    @property
+    @cached_property
     def extra_state_attributes(self) -> dict[str, str | bool | int | None]:
         """Expose where the level comes from and when a write needs a fallback."""
 
@@ -96,6 +97,7 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         return attributes
 
     def _handle_coordinator_update(self) -> None:
+        vars(self).pop("percentage", None)
         if percentage := self.percentage:
             self._last_on_percentage = percentage
         super()._handle_coordinator_update()
@@ -113,7 +115,7 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         percentage = self.percentage
         return None if percentage is None else percentage > 0
 
-    @property
+    @cached_property
     def percentage(self) -> int | None:
         level, _other_level = self._directional_levels()
         if level is None:

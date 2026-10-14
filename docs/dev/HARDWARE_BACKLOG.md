@@ -119,7 +119,7 @@ Affected code: `coordinator.async_set_operation_mode`,
 `coordinator.async_set_preset_mode`, `coordinator.async_activate_intensive`,
 `coordinator.async_deactivate_intensive`
 
-### Observation
+### Observation (HW-2)
 
 ```python
 async with self._gateway_lock:                    # lock held from here
@@ -138,13 +138,13 @@ gateway can be up to six seconds stale right after a button press.
 
 The obvious improvement is to release the lock during the pure settle sleep.
 
-### Manufacturer documentation
+### Manufacturer documentation (HW-2)
 
 The gateway reaches the units over 868.3 MHz radio. The Modbus manuals give
 no timing guidance beyond the RTU frame rules. See
 `docs/dev/reference/gateway.md` and `docs/dev/reference/modbus.md`.
 
-### Why this cannot be fixed blind
+### Why this cannot be fixed blind (HW-2)
 
 1. The settle delay is probably not a pure wait. The gateway reaches the units
    over RF, which is why `rf_comm_status` exists at all. Letting another room's
@@ -161,7 +161,7 @@ no timing guidance beyond the RTU frame rules. See
    deterministically. A test can prove that the lock was released, which says
    nothing about how the gateway reacts.
 
-### What to measure
+### What to measure (HW-2)
 
 1. Use `tools/benchmark_gateway.py` and `tools/benchmark_integration_like.py`
    to find the shortest settle delay that still yields a correct readback.
@@ -225,7 +225,7 @@ commit returned measured airflow to `20/20` by the next approximately
 two-second sample after it remained at 40 at one second. Status/error flags
 stayed `0`.
 
-### Candidate solutions
+### Candidate solutions (HW-2)
 
 - **A — shorten `WRITE_SETTLE_SECONDS`.** If the measurement shows the unit
   settles in, say, 0.5 s, this alone removes most of the delay with no change
@@ -248,7 +248,7 @@ Priority: low
 Status: parked
 Affected code: `modbus_client._decode_unbalanced_target_readback`
 
-### Observation
+### Observation (HW-3)
 
 `41121` / `41122` carry two different meanings in the same numeric range:
 
@@ -271,7 +271,7 @@ Whether `228` is the LOW code applied to the extract direction, another app
 encoding, or something else is unknown; the measured airflow and app state at
 that time were not recorded.
 
-### Manufacturer documentation
+### Manufacturer documentation (HW-3)
 
 Supply-only and extract-only airflows are stored device parameters
 (IDs 42-47; `M-WRG-II` defaults 50 / 0 m3/h). No raw encoding is documented.
@@ -285,7 +285,7 @@ really `200 + airflow / 10` for the whole range or whether the observed values
 (`203`, `205`, `207`) are just three samples of something else. Only three
 data points exist.
 
-### What to measure
+### What to measure (HW-3)
 
 Configure the app `Abluft` / `Zuluft` shortcut to several airflows across the
 full range (10, 20, 40, 60, 80, 90, 100 m3/h) and record `41121` / `41122` for
@@ -296,7 +296,7 @@ an unbalanced status slot reports a value above `210`, such as `228`.
 Tests: [W-11](LIVE_GATEWAY_TESTS.md#w-11--shortcut-encoding-200--n-on-the-unit),
 [H-4](LIVE_GATEWAY_TESTS.md#h-4--app-shortcut-encoding).
 
-### Candidate solutions
+### Candidate solutions (HW-3)
 
 - **A — keep the current heuristic.** Correct for every value the tested
   profiles can produce.
@@ -330,14 +330,14 @@ user's explicit assumption; direct live evidence is currently from M-WRG-II
 only. Home Assistant deployment and M-WRG-S hardware validation remain
 pending.
 
-### Manufacturer documentation
+### Manufacturer documentation (HW-4)
 
 Reading back `41120..41132` is not documented; the manuals only describe
 writing these registers. The `41100..41102` status map is community/live
 evidence, not a manufacturer guarantee. See `docs/dev/reference/modbus.md` and
 the observations below.
 
-### What to measure
+### What to measure (HW-4)
 
 1. On a freshly powered unit, attempt the five-register read at `41120` and
    record the exception.
@@ -506,7 +506,7 @@ Priority: informational
 Status: parked
 Affected code: `coordinator.async_set_direction_level`
 
-### Observation
+### Observation (HW-5)
 
 Turning on a single fan while `operation_mode == "off"` writes a balanced
 level, so both directions start. This is deliberate and documented in the
@@ -519,14 +519,14 @@ Writing an unbalanced mode from a stopped unit was never traced. It is unknown
 whether the unit accepts `41120 = 4` with one side at zero directly out of the
 off state, or whether it needs to be running first.
 
-### What to measure
+### What to measure (HW-5)
 
 From a stopped unit, write `41120 = 4`, `41121 = 0`, `41122 = <raw>`,
 `41132 = 0` and check whether only the extract fan starts.
 
 Tests: [W-12](LIVE_GATEWAY_TESTS.md#w-12--single-direction-start-from-off).
 
-### Candidate solutions
+### Candidate solutions (HW-5)
 
 - **A — keep the current behaviour.** Safe and documented.
 - **B — allow direct single-direction start** if the measurement shows the unit
@@ -541,7 +541,7 @@ Status: open
 Affected code: `modbus_client._read_mode_group`, `device/transport.py`,
 `coordinator._job_interval`
 
-### Observation
+### Observation (HW-6)
 
 Three changes reduce bus time but were made without a live gateway:
 
@@ -554,7 +554,7 @@ Three changes reduce bus time but were made without a live gateway:
 3. A unit that has been silent for `ROOM_SILENT_AFTER_SECONDS` is polled at
    most every `SILENT_ROOM_POLL_SECONDS`.
 
-### What to measure
+### What to measure (HW-6)
 
 1. Validate that the status block and its single-register reads agree after
    balanced, unbalanced, and preset changes; do not treat set-register
@@ -571,7 +571,7 @@ measurement 2 in [T-10](LIVE_GATEWAY_TESTS.md#t-10--24-hour-soak) and
 measurement 3 in [T-5](LIVE_GATEWAY_TESTS.md#t-5--silent-address-in-the-integration-client)
 and [H-1](LIVE_GATEWAY_TESTS.md#h-1--powered-off-unit).
 
-### Candidate solutions
+### Candidate solutions (HW-6)
 
 - **A — keep the changes** if all three measurements are clean.
 - **B — a second retry** in `TransportPolicy` if step 2 shows more transient
@@ -588,7 +588,7 @@ Affected code: `device/transport.py`, `device/components.py`,
 `modbus_helpers.prepare_unit`, `modbus_client._poll`,
 `modbus_client._read_mode_status`
 
-### Observation
+### Observation (HW-7)
 
 `4.0.0` replaces the own pymodbus client with Home Assistant's shared Modbus
 connection (tmodbus via `modbus-connection`). The request shapes and their
@@ -623,7 +623,7 @@ as they are until measured:
    working link always gets an answer from some unit in that time, short
    enough that a wedged link is recycled quickly.
 
-### What to measure
+### What to measure (HW-7)
 
 Each measurement is compared with a baseline taken with the pymodbus tools
 from before `4.0.0`
@@ -647,7 +647,7 @@ tmodbus transport introduced in `4.0.0`. They are no longer a release gate for
 `4.0.0`; the tests per measurement are listed under
 [HW-7 post-release validation](LIVE_GATEWAY_TESTS.md#hw-7--post-release-tmodbus-validation).
 
-### Partial measurement on 2026-10-02
+### Partial measurement: HW-7 on 2026-10-02
 
 - **Measurement 1:** The six read-only benchmark scenarios completed 1,440
   requests per transport with no failures. tmodbus was not slower than the
@@ -829,7 +829,7 @@ not close HW-7 or justify changing retry, timeout, or locking behavior. Keep
 the item open until the remaining observations are recorded with comparable
 success criteria.
 
-### Candidate solutions
+### Candidate solutions (HW-7)
 
 - **A — leave the transport unchanged** if the remaining measurements show no
   consequential regression; document the evidence and close HW-7.

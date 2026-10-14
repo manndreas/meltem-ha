@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -50,20 +50,20 @@ def test_is_on_reports_the_override(
 
 def test_available_when_intensive_status_is_stale() -> None:
     switch = _switch(RoomState(intensive_active=True))
-    switch.coordinator.read_group_available.return_value = False
-    switch.coordinator.read_group_fresh.return_value = False
-
-    assert switch.available is True
-    assert switch.is_on is None
-    switch.coordinator.read_group_available.assert_not_called()
+    with (
+        patch.object(switch.coordinator, "read_group_available", return_value=False) as available,
+        patch.object(switch.coordinator, "read_group_fresh", return_value=False),
+    ):
+        assert switch.available is True
+        assert switch.is_on is None
+        available.assert_not_called()
 
 
 @pytest.mark.parametrize("pending", [True, False])
 def test_pending_override_is_visible_with_stale_readback(pending: bool) -> None:
     switch = _switch(RoomState(intensive_active=pending), optimistic=pending)
-    switch.coordinator.read_group_fresh.return_value = False
-
-    assert switch.is_on is pending
+    with patch.object(switch.coordinator, "read_group_fresh", return_value=False):
+        assert switch.is_on is pending
 
 
 def test_intensive_status_has_its_own_read_health_group() -> None:
@@ -73,17 +73,23 @@ def test_intensive_status_has_its_own_read_health_group() -> None:
 async def test_turning_on_starts_the_override() -> None:
     switch = _switch()
 
-    await switch.async_turn_on()
+    with patch.object(
+        switch.coordinator, "async_activate_intensive", new_callable=AsyncMock
+    ) as activate:
+        await switch.async_turn_on()
 
-    switch.coordinator.async_activate_intensive.assert_awaited_once_with("unit_1")
+    activate.assert_awaited_once_with("unit_1")
 
 
 async def test_turning_off_cancels_the_override() -> None:
     switch = _switch(RoomState(intensive_active=True))
 
-    await switch.async_turn_off()
+    with patch.object(
+        switch.coordinator, "async_deactivate_intensive", new_callable=AsyncMock
+    ) as deactivate:
+        await switch.async_turn_off()
 
-    switch.coordinator.async_deactivate_intensive.assert_awaited_once_with("unit_1")
+    deactivate.assert_awaited_once_with("unit_1")
 
 
 def test_unique_id_uses_the_intensive_key() -> None:

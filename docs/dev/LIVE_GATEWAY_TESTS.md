@@ -100,6 +100,7 @@ Stop all writes, restore every touched unit, and report when:
 ### P-1 — Find the serial port
 
 On Windows:
+
 ```powershell
 Get-CimInstance Win32_PnPEntity |
     Where-Object { $_.PNPDeviceID -match 'VID_10AC&PID_010A' } |
@@ -1075,7 +1076,7 @@ a reason for every result other than `pass`.
 
 Afterwards, move the findings into the documentation:
 
-- **HW items:** add a "Measured on <date>" paragraph with the numbers to the
+- **HW items:** add a "Measured on `<date>`" paragraph with the numbers to the
   item in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md), update its status, and
   name the candidate the numbers support. For resolved items the decision
   moves to [DEVELOPER.md](DEVELOPER.md) and the measured behavior to

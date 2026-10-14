@@ -12,19 +12,30 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
-from modbus_connection import ModbusError, ModbusUnit
+from modbus_connection import ModbusError
 
-from tools._link import elapsed_ms, open_link, parse_register_range, run, tool_parser
+from tools._link import ModbusReader, elapsed_ms, open_link, parse_register_range, run, tool_parser
 
 DEFAULT_READS = ("41100:3", "41120:5", "41120:2", "41121:1", "41122:1")
 INPUT_PREFIX = "input:"
 
 
+class ModbusRequestUnit(ModbusReader, Protocol):
+    """The optional request methods supported by the raw-request CLI."""
+
+    def diagnostics(self, sub_function: int, data: int) -> Awaitable[object]: ...
+
+    def report_server_id(self) -> Awaitable[object]: ...
+
+    def read_device_identification(self) -> Awaitable[object]: ...
+
+
 @dataclass(frozen=True)
 class Request:
     label: str
-    send: Callable[[ModbusUnit], Awaitable[object]]
+    send: Callable[[ModbusRequestUnit], Awaitable[object]]
 
 
 @dataclass

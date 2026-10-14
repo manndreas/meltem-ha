@@ -23,7 +23,7 @@ device error sensor.
 ## Condition options
 
 | Option | Meaning |
-|---|---|
+| --- | --- |
 | `behavior` | How results are combined when multiple filter sensors are targeted. `any` (default) passes if at least one selected sensor is `on`; `all` passes only if every selected sensor is `on`. |
 | `for` | The minimum time a selected sensor must have been `on` for it to count. The default `00:00:00` checks the current state without an additional wait. |
 

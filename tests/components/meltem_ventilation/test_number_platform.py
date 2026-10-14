@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
 from custom_components.meltem_ventilation.number import (
@@ -34,10 +34,14 @@ class TestControlSettingNumber:
         number = _number(RoomState(humidity_min_level=30))
         assert number.available is True
 
-        number.coordinator.read_group_available.return_value = False
+        with patch.object(
+            number.coordinator, "read_group_available", return_value=False
+        ) as read_group:
+            with patch.object(number, "async_write_ha_state"):
+                number._handle_coordinator_update()
 
-        assert number.available is False
-        number.coordinator.read_group_available.assert_called_with("unit_1", "control_settings")
+            assert number.available is False
+            read_group.assert_called_with("unit_1", "control_settings")
 
     def test_reads_the_setting(self) -> None:
         assert _number(RoomState(humidity_min_level=30)).native_value == 30.0
@@ -45,8 +49,9 @@ class TestControlSettingNumber:
     async def test_writes_the_rounded_setting(self) -> None:
         number = _number()
 
-        await number.async_set_native_value(44.6)
+        with patch.object(
+            number.coordinator, "async_set_control_setting", new_callable=AsyncMock
+        ) as async_set_control_setting:
+            await number.async_set_native_value(44.6)
 
-        number.coordinator.async_set_control_setting.assert_awaited_once_with(
-            "unit_1", "humidity_min_level", 45
-        )
+        async_set_control_setting.assert_awaited_once_with("unit_1", "humidity_min_level", 45)

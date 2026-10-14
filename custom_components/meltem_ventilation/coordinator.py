@@ -18,7 +18,7 @@ import operator
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -61,7 +61,7 @@ from .levels import (
     levels_reached,
     reported_levels,
 )
-from .modbus_client import MeltemModbusClient, normalize_control_setting
+from .modbus_client import normalize_control_setting
 from .modbus_helpers import MeltemModbusError
 from .models import (
     EMPTY_ROOM_STATE,
@@ -119,6 +119,42 @@ def _mode_read_since(state: RoomState, written_at: datetime) -> bool:
     )
 
 
+class _CoordinatorClient(Protocol):
+    def seconds_since_successful_read(self, slave: int) -> float | None: ...
+
+    def transport_diagnostics(self) -> dict[str, float | int | None]: ...
+
+    async def discover_gateway_units(self, start: int, end: int) -> list[int]: ...
+
+    async def probe_slave_details(self, slave: int) -> tuple[str, str | None]: ...
+
+    async def read_room_state(
+        self, room: RoomConfig, previous_state: RoomState, refresh_plan: RefreshPlan
+    ) -> RoomState: ...
+
+    async def write_level(self, room: RoomConfig, level: int) -> None: ...
+
+    async def write_unbalanced_levels(
+        self, room: RoomConfig, supply_level: int, extract_level: int
+    ) -> None: ...
+
+    async def write_operating_mode(
+        self, room: RoomConfig, operation_mode: str, balanced_level: int, extract_level: int
+    ) -> None: ...
+
+    async def write_preset_mode(self, room: RoomConfig, preset_mode: str) -> None: ...
+
+    async def clear_intensive(self, room: RoomConfig) -> None: ...
+
+    async def write_control_setting(
+        self, room: RoomConfig, setting_key: str, value: int
+    ) -> int: ...
+
+    def update_request_rate(self, max_requests_per_second: float) -> None: ...
+
+    def shutdown(self) -> None: ...
+
+
 class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     """Coordinate polling and writes for all configured rooms."""
 
@@ -127,7 +163,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         hass: HomeAssistant,
         *,
         config_entry: MeltemIntegrationConfigEntry,
-        client: MeltemModbusClient,
+        client: _CoordinatorClient,
         rooms: list[RoomConfig],
         max_requests_per_second: float,
     ) -> None:

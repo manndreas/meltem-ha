@@ -8,7 +8,7 @@ The heavier runtime reads happen only after the config entry is created.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, cast
 
@@ -256,7 +256,7 @@ class _PortInUseError(MeltemConnectionError):
 @asynccontextmanager
 async def _temporary_units(
     hass: HomeAssistant, port: str
-) -> AsyncIterator[Callable[[int], Awaitable[ModbusUnit]]]:
+) -> AsyncGenerator[Callable[[int], Awaitable[ModbusUnit]], None]:
     """Hold units on the gateway link for one flow step.
 
     The link closes again on exit unless a loaded entry also holds it.
@@ -275,7 +275,8 @@ async def _temporary_units(
                     )
                 except HomeAssistantError as err:
                     raise _PortInUseError(str(err)) from err
-                units[slave] = prepare_unit(unit, slave, policy)
+                # PolicyUnit delegates the remaining ModbusUnit methods dynamically.
+                units[slave] = cast(ModbusUnit, prepare_unit(unit, slave, policy))
             return units[slave]
 
         yield unit_for
@@ -658,9 +659,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
 
         probed: dict[int, str] = {}
         if (coordinator := self._coordinator) is not None:
-            probed, _profiles = await _async_probe_units(
-                slaves, coordinator.async_probe_slave_details
-            )
+            probed, _ = await _async_probe_units(slaves, coordinator.async_probe_slave_details)
         self._preview_by_slave = {
             slave: str(preview)
             for slave in slaves

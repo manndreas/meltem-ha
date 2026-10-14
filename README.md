@@ -38,21 +38,21 @@ runs the unit extract-only or supply-only, like the `Abluft` / `Zuluft`
 shortcuts of the Meltem app but with the airflow you set. When both are zero,
 the unit is switched off; turning it back on starts both directions again.
 
-A new fan value is shown immediately and confirmed by the next airflow poll a
-few seconds later; the `level_source` attribute tells whether a fan currently
-shows a `pending` write, a confirmed `target`, or `measured` airflow. Turning on
-a fan that is already running changes nothing, so it does not end a running
-sensor mode; turning on a stopped direction restores its last speed. If the
-opposite direction cannot be read at the moment, a non-zero value is applied to
-both directions, and switching off a single direction is refused instead of
-stopping the whole unit.
+A new fan value is shown immediately; the `level_source` attribute identifies
+whether the displayed airflow is a `pending` write, a confirmed `target`, or
+`measured` airflow. Turning on a fan that is already running changes nothing,
+so it does not end a running sensor mode; turning on a stopped direction
+restores its last speed. If the opposite direction cannot be read at the
+moment, a non-zero value is applied to both directions, and switching off a
+single direction is refused instead of stopping the whole unit.
 
 Two further controls complement the fans:
 
 - **Quick mode** — the app shortcuts `Low`, `Medium` and `High`. The airflow
   behind these is configured in the Meltem app and cannot be read over Modbus.
-  `Individual` means no shortcut is active, which also covers the extract-only
-  and supply-only states set from the Meltem app.
+  `Individual` means no selectable `Low`, `Medium` or `High` quick mode is
+  active. Extract-only and supply-only operation appears as `Individual` in
+  this selector and is shown through the two fan values.
 - **Sensor control** — humidity, CO2 or automatic regulation, where supported.
   Selecting `Off` ends a running sensor mode and returns the unit to manual
   airflow; it does nothing when no sensor mode is active. While a sensor mode
@@ -211,7 +211,7 @@ sequences retain their separate hardware timing.
 Each unit's values are refreshed in groups:
 
 | Data group | Normal refresh interval |
-|---|---:|
+| --- | ---: |
 | Airflow and operating mode | 10 seconds |
 | Status, temperatures, and environment sensors | 60 seconds |
 | Filter status and days until filter change | 1 hour |
@@ -237,9 +237,10 @@ Some diagnostic entities such as operating hours remain disabled by default.
 Firmware and hardware details are shown on the device card instead of as
 separate version sensors.
 
-**Read health** turns on when a group of values of a unit could not be read
-recently, or when a command failed or was not confirmed by the unit. Its
-attributes show the details per group and for the last commands.
+**Read health** turns on when a read group is stale (three consecutive failed
+read jobs or its stale interval has elapsed), or while a recent command has
+failed, mismatched, or remained unconfirmed. Its attributes show the details
+per group and for recent commands.
 
 ## Troubleshooting
 
@@ -253,11 +254,13 @@ Check that:
 
 ### A single unit is unavailable
 
-A unit that stops answering is marked unavailable after a few failed polls,
-while the other units keep working. It is then polled less often, so it does
-not slow down the others, and comes back on its own once it answers again.
-Check its power supply and the radio link to the gateway; the **Read health**
-attributes and the diagnostics download show which reads failed.
+A unit is marked unavailable after three consecutive failed read jobs or more
+than 120 seconds without a successful read. After 120 seconds of silence, its
+airflow polling is spaced to 60 seconds to reduce its load on the shared link;
+the other units continue to be polled. It becomes available automatically
+after a successful read. Check its power supply and radio link to the gateway;
+the **Read health** attributes and diagnostics download show which reads
+failed.
 
 ### Serial port shared with another integration
 

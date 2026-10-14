@@ -14,10 +14,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from modbus_connection import ModbusUnit
-
 from tools._link import (
     MAX_REGISTERS_PER_READ,
+    ModbusReader,
     open_link,
     parse_register_range,
     read_or_none,
@@ -109,7 +108,7 @@ FAMILY_SPECS: dict[str, FamilySpec] = {
 }
 
 
-async def read_range(unit: ModbusUnit, register_range: RegisterRange) -> dict[int, int | None]:
+async def read_range(unit: ModbusReader, register_range: RegisterRange) -> dict[int, int | None]:
     """Read one range in chunks; a refused chunk falls back to single reads."""
 
     values: dict[int, int | None] = dict.fromkeys(
@@ -128,7 +127,7 @@ async def read_range(unit: ModbusUnit, register_range: RegisterRange) -> dict[in
     return values
 
 
-async def capture_snapshot(unit: ModbusUnit, family: FamilySpec) -> dict[str, int | None]:
+async def capture_snapshot(unit: ModbusReader, family: FamilySpec) -> dict[str, int | None]:
     """Capture all ranges for one family into a string-keyed map."""
 
     values: dict[int, int | None] = {}

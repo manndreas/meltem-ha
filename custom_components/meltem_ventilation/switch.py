@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import cached_property
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -45,7 +46,7 @@ class MeltemIntensiveSwitch(MeltemEntity, SwitchEntity):
     def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, "intensive", "intensive")
 
-    @property
+    @cached_property
     def is_on(self) -> bool | None:
         optimistic = self.coordinator.optimistic_intensive(self.room.key)
         if optimistic is not None:

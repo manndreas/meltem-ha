@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import EntityCategory, UnitOfVolumeFlowRate
+from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import CONF_PORT, DOMAIN
@@ -39,7 +40,10 @@ def _coordinator(state: RoomState | None = None) -> MagicMock:
         MeltemDataUpdateCoordinator.read_group_for_entity
     )
     coordinator.read_group_available.return_value = True
-    coordinator.safe_data = {} if state is None else {"unit_1": state}
+    coordinator.data = {} if state is None else {"unit_1": state}
+    type(coordinator).safe_data = property(
+        lambda self: self.data if isinstance(self.data, dict) else {}
+    )
     return coordinator
 
 
@@ -82,16 +86,18 @@ class TestSensorEntityCreation:
 
     def test_device_info(self) -> None:
         sensor = _sensor("exhaust_temperature", RoomState(software_version=42))
-        sensor.coordinator.gateway_device_id = "gateway-device"
+        setattr(sensor.coordinator, "gateway_device_id", "gateway-device")
 
         info = sensor.device_info
 
-        assert (DOMAIN, "unit_1") in info["identifiers"]
-        assert info["manufacturer"] == "Meltem"
-        assert "Living Room" in info["name"]
-        assert info["sw_version"] == "42"
-        assert info["hw_version"] == "116852"
-        assert info["via_device_id"] == "gateway-device"
+        assert (DOMAIN, "unit_1") in (info.get("identifiers") or set())
+        assert info.get("manufacturer") == "Meltem"
+        name = info.get("name")
+        assert name is not None
+        assert "Living Room" in name
+        assert info.get("sw_version") == "42"
+        assert info.get("hw_version") == "116852"
+        assert info.get("via_device_id") == "gateway-device"
 
     @pytest.mark.parametrize(
         ("key", "device_class", "unit"),
@@ -117,9 +123,11 @@ class TestSensorEntityCreation:
         assert sensor.device_class == device_class
         assert sensor.native_unit_of_measurement == unit
 
-    def test_coordinator_update_pushes_versions_to_the_device_registry(self) -> None:
+    def test_coordinator_update_pushes_versions_to_the_device_registry(
+        self, hass: HomeAssistant
+    ) -> None:
         sensor = _sensor("exhaust_temperature", RoomState(software_version=42))
-        sensor.hass = object()
+        sensor.hass = hass
         registry = MagicMock()
 
         with (
@@ -134,7 +142,7 @@ class TestSensorEntityCreation:
                 return_value=registry,
             ),
             patch(
-                "homeassistant.helpers.update_coordinator.CoordinatorEntity"
+                "homeassistant.helpers.update_coordinator.BaseCoordinatorEntity"
                 "._handle_coordinator_update"
             ),
         ):
@@ -176,7 +184,9 @@ class TestSensorNativeValue:
         sensor = _sensor("extract_air_flow", RoomState(extract_air_flow=10))
         assert sensor.native_value == 10
 
-        sensor.coordinator.safe_data = {"unit_1": RoomState(extract_air_flow=80)}
+        sensor.coordinator.data = {"unit_1": RoomState(extract_air_flow=80)}
+        with patch.object(sensor, "async_write_ha_state"):
+            sensor._handle_coordinator_update()
 
         assert sensor.native_value == 80
 
@@ -200,10 +210,11 @@ class TestSensorAvailability:
     ) -> None:
         state = RoomState(supply_air_flow=30, exhaust_temperature=22.5)
         sensor = _sensor(key, state)
-        sensor.coordinator.read_group_available.side_effect = lambda _room_key, group: (
-            group != stale_group
-        )
-
-        assert sensor.available is available
+        with patch.object(
+            sensor.coordinator,
+            "read_group_available",
+            side_effect=lambda _room_key, group: group != stale_group,
+        ):
+            assert sensor.available is available
         # A stale value stays readable; only its availability changes.
         assert sensor.native_value == getattr(state, key)

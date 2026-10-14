@@ -15,7 +15,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.util import dt as dt_util
 from modbus_connection import (
@@ -207,11 +207,11 @@ class MeltemModbusClient:
         self._shut_down = True
         self._policy.shutdown()
 
-    def _unit(self, slave: int) -> PolicyUnit:
+    def _unit(self, slave: int) -> ModbusUnit:
         unit = self._units.get(slave)
         if unit is None:
             unit = self._units[slave] = prepare_unit(self._unit_factory(slave), slave, self._policy)
-        return unit
+        return cast(ModbusUnit, unit)
 
     def _room_device(self, room: RoomConfig) -> MeltemRoomDevice:
         device = self._devices.get(room.slave)

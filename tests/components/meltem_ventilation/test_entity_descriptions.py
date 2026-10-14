@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.components.binary_sensor.const import BinarySensorDeviceClass
 from homeassistant.const import STATE_OFF, STATE_ON, UnitOfRatio
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
@@ -203,9 +203,9 @@ class TestDescriptionMetadata:
     ) -> None:
         description = _DESCRIPTIONS[key]
 
-        assert description.native_min_value == minimum
-        assert description.native_max_value == maximum
-        assert description.native_step == step
+        assert getattr(description, "native_min_value", None) == minimum
+        assert getattr(description, "native_max_value", None) == maximum
+        assert getattr(description, "native_step", None) == step
 
     @pytest.mark.parametrize(
         ("key", "device_class", "state_class"),
@@ -232,14 +232,20 @@ class TestDescriptionMetadata:
         description = _DESCRIPTIONS[key]
 
         assert description.device_class == device_class
-        assert description.state_class == state_class
+        assert getattr(description, "state_class", None) == state_class
 
     def test_days_until_filter_change_counts_days(self) -> None:
-        assert _DESCRIPTIONS["days_until_filter_change"].native_unit_of_measurement == "d"
+        assert (
+            getattr(_DESCRIPTIONS["days_until_filter_change"], "native_unit_of_measurement", None)
+            == "d"
+        )
 
     def test_concentration_entities_use_ratio_unit(self) -> None:
         for key in ("co2_extract_air", "voc_supply_air", "co2_starting_point"):
-            assert _DESCRIPTIONS[key].native_unit_of_measurement == UnitOfRatio.PARTS_PER_MILLION
+            assert (
+                getattr(_DESCRIPTIONS[key], "native_unit_of_measurement", None)
+                == UnitOfRatio.PARTS_PER_MILLION
+            )
 
     @pytest.mark.parametrize(
         ("key", "entity_category"),
@@ -317,7 +323,7 @@ class TestPurposeSpecificAutomation:
         assert trigger.entity_filter(entities) == {filter_due}
         assert condition.entity_filter(entities) == {filter_due}
 
-    def test_filter_target_excludes_other_problem_sensors(self) -> None:
+    def test_filter_target_excludes_other_problem_sensors(self, hass: HomeAssistant) -> None:
         entries = {
             "binary_sensor.filter_due": SimpleNamespace(
                 platform=DOMAIN, unique_id=f"{DOMAIN}_unit_1_filter_change_due"
@@ -336,7 +342,7 @@ class TestPurposeSpecificAutomation:
             "custom_components.meltem_ventilation.automation.er.async_get",
             return_value=registry,
         ):
-            entities = filter_change_due_entities(object(), set(entries))
+            entities = filter_change_due_entities(hass, set(entries))
 
         assert entities == {"binary_sensor.filter_due"}
 

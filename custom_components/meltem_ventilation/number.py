@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import cached_property
 from operator import attrgetter
 
 from homeassistant.components.number import (
@@ -96,7 +97,6 @@ async def async_setup_entry(
 class MeltemControlSettingNumber(MeltemEntity, NumberEntity):
     """Writable config number for humidity/CO2 automation thresholds."""
 
-    entity_description: MeltemControlSettingNumberDescription
     _attr_entity_category = EntityCategory.CONFIG
     _attr_mode = NumberMode.BOX
 
@@ -107,14 +107,15 @@ class MeltemControlSettingNumber(MeltemEntity, NumberEntity):
         description: MeltemControlSettingNumberDescription,
     ) -> None:
         super().__init__(coordinator, room, description.key, description.key)
+        self._description = description
         self.entity_description = description
 
-    @property
+    @cached_property
     def native_value(self) -> float | None:
-        value = self.entity_description.value_fn(self.room_state)
+        value = self._description.value_fn(self.room_state)
         return float(value) if value is not None else None
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_set_control_setting(
-            self.room.key, self.entity_description.key, round(value)
+            self.room.key, self._description.key, round(value)
         )

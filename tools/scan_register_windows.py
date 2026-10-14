@@ -15,10 +15,9 @@ from modbus_connection import (
     ModbusConnectionError,
     ModbusError,
     ModbusTimeoutError,
-    ModbusUnit,
 )
 
-from tools._link import MAX_REGISTERS_PER_READ, open_link, run, tool_parser
+from tools._link import MAX_REGISTERS_PER_READ, ModbusReader, open_link, run, tool_parser
 
 STATUSES = ("ok", "partial", "error", "none", "empty")
 
@@ -77,7 +76,7 @@ def parse_args() -> argparse.Namespace:
 
 
 async def read_window(
-    unit: ModbusUnit,
+    unit: ModbusReader,
     *,
     start: int,
     end: int,
