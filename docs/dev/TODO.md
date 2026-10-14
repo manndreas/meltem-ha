@@ -54,28 +54,7 @@ Next step:
 - The manufacturer documents contain neither `116852` nor `VMD-22RPS44`; the
   article numbers do not match, see `docs/dev/reference/models.md`.
 
-## 3. Move the test harness to the final Home Assistant 2026.10
-
-Priority: low
-Status: open, waiting for the stable release
-
-Finding:
-
-- `pytest-homeassistant-custom-component==0.13.368` ships Home Assistant
-  `2026.10.0b0`, the first harness with the `modbus` integration users run
-  against; the whole suite, including
-  `tests/components/meltem_ventilation/test_init.py::TestSharedModbusConnection`, passes with it.
-- The harness does not install the requirements of the `modbus` integration,
-  so `requirements-test.txt` pins them in line with its manifest.
-- `2026.10` moved Home Assistant's own flows from `voluptuous` to `probatio`;
-  the config flow follows, so mypy accepts its form schemas.
-
-Next step:
-
-- Once a harness for the stable `2026.10.x` exists, raise the pin and compare
-  the extra pins with `homeassistant/components/modbus/manifest.json` again.
-
-## 4. Wider block reads
+## 3. Wider block reads
 
 Priority: low
 Status: open, after the HW-7 post-release validation
@@ -92,7 +71,7 @@ Next step:
   `docs/dev/LIVE_GATEWAY_TESTS.md`. Update the parity test in
   `tests/components/meltem_ventilation/test_modbus_client.py` together with the ranges.
 
-## 5. Raw register diagnostics
+## 4. Raw register diagnostics
 
 Priority: low
 Status: open
