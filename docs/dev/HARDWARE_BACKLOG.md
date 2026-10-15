@@ -637,6 +637,71 @@ evidence that a wall-button action unlocked the block or caused the intensive
 state. Repeat this observation under controlled conditions before changing
 HW-4 behavior.
 
+### H-2 read-only follow-up on 2026-10-15
+
+On slave `4`, the pre-cycle `41100×3` read returned `[3, 230, 0]`; the
+`41120×5`, `41120×2`, `41121`, and `41122` reads returned exception `0x05`.
+The airflow read `41020×2` returned `[60, 60]`. After the user-reported
+power-off/on at 00:45/00:46 CEST (minute precision), a read-only observer ran
+120 R-9 rounds at five-second intervals. `41100×3` succeeded in all 120
+rounds with `[3, 230, 0]`; every five-register, two-register, and
+single-register set-side read returned `0x05`. The post-cycle airflow read
+remained `[60, 60]`.
+
+The power cycle alone did not make the set-side mode block readable. At the
+end of this read-only phase, no writes had been made: the pre-test set-side
+mode was unreadable and an explicit restore target and sequence had not yet
+been established. W-5 and the second post-write power cycle were subsequently
+performed as described below.
+See the [H-2 result](LIVE_GATEWAY_TESTS.md#h-2--freshly-powered-unit).
+
+### H-2 W-5 follow-up on 2026-10-15
+
+The fresh pre-write snapshot at 00:59 CEST still had the set-side mode
+registers unreadable. The independent status read was `[3, 230, 0]`, airflow
+was `[60, 60]`, and error register `41016` was `0`. With the approved
+balanced target, the sequence `41120=3`, `41121=120`, `41132=0` was written
+at 00:59:51 CEST. The first R-9 follow-up landed at 01:00:13, about 21 s
+after the write: status was `[3, 206, 0]`, `41120×2` returned `[3, 120]`,
+and `41121` returned `120`. The five-register read and `41122` still
+returned exception `0x05`. The 60 s sample at 01:00:52 repeated those
+results. The planned 1 s and 10 s samples were not captured, so this run
+does not establish the unlock's exact onset time. Airflow remained
+`[60, 60]` and `41016` remained `0`.
+
+Slave `4` was restored to its prior HIGH state with
+`41120=3`, `41121=230`, `41132=0`. The post-restore status was `[3, 230, 0]`,
+the short read `[3, 230]`, and `41121=230`; `41120×5` and `41122` remained
+unreadable. After the two-minute settling interval, airflow was still
+`[60, 60]` and the error register was `0`. The after-snapshot showed
+`41120=3`, `41121=230`, and `41132=0` where the before-snapshot had `null`;
+the documented-config registers were unchanged.
+
+The all-known comparison also recorded these shadow/meta changes:
+`51113: 4365->4352`; `51120`, `51121`, and `51132`: `31->24832`;
+`51122..51131`, `51133`, `51150`, `51151`, and `52010`: `31->32`;
+`52008: 5381->4352`; `52009: 5381->5377`. They are recorded as observed
+write-associated changes, not assigned a semantic meaning here. W-5 showed
+that the write enables the two-register and single-target reads on this unit,
+but not the five-register block or `41122`. The second post-write power cycle
+to check whether the short-read availability is sticky is described below.
+
+The first follow-up observer ran 120 read-only R-9 rounds from 01:08:15 to
+01:18:11 CEST, but no power cycle occurred in that window. A repeat observer
+ran 120 rounds at five-second intervals from 01:23:20 to 01:33:16 CEST; the
+user reported Slave `4` off/on at 01:25/01:26 CEST (minute precision). In all
+120 rounds, `41100×3` returned `[3, 230, 0]`, `41120×2` returned `[3, 230]`,
+and `41121` returned `230`; `41120×5` and `41122` returned exception `0x05`.
+The immediate post-observer read at 01:33:31 showed the same values, with
+airflow `[60, 60]` and error `0`.
+
+At the gateway-observed level, the short-read availability survived the
+reported power cycle, while the five-register block and `41122` remained
+unreadable. The unchanged replies while the unit was off are compatible with
+gateway caching, so this does not prove the unit itself served every read.
+The cycle therefore supports, but does not conclusively establish, sticky
+short-read availability after power loss.
+
 ### Remaining validation
 
 - **HA deployment/read health:** verified on 2026-10-14 with isolated HA Core
@@ -739,6 +804,17 @@ measurement 2 in [T-10](LIVE_GATEWAY_TESTS.md#t-10--24-hour-soak) and
 [H-9](LIVE_GATEWAY_TESTS.md#h-9--real-home-assistant-instance),
 measurement 3 in [T-5](LIVE_GATEWAY_TESTS.md#t-5--silent-address-in-the-integration-client)
 and [H-1](LIVE_GATEWAY_TESTS.md#h-1--powered-off-unit).
+
+### H-1 measurement on 2026-10-14
+
+The controlled H-1 repeat completed 60 airflow rounds and 10 temperature and
+status rounds per unit while slave `4` was physically powered off. All 480
+jobs for all six units succeeded; slave `4` continued returning `60/60 m3/h`
+in two requests per airflow job, with zero transport timeouts or link
+recycles. The other five units were not observably affected. Because the
+powered-off unit's unchanged values were still reported as successful reads,
+the gateway's retained-value behavior and the actual recovery time remain
+unknown. See [MELTEM.md](MELTEM.md#reads-while-a-unit-is-powered-off).
 
 ### Candidate solutions (HW-6)
 
@@ -963,6 +1039,12 @@ logs and snapshots were local-only and are not part of the repository.
 
 ### Follow-up measurements on 2026-10-14
 
+- **2 — Powered-off unit:** the controlled H-1 repeat recorded successful
+  replies and unchanged `60/60 m3/h` values from physically powered-off
+  slave `4`; all other units' jobs also succeeded. This gives the per-job
+  cost but does not establish whether values are retained by the gateway or
+  how quickly the unit becomes observable again. See the HW-6 H-1 measurement
+  and [MELTEM.md](MELTEM.md#reads-while-a-unit-is-powered-off).
 - **3 — Mode status map:** A read-only comparison of `41100×3` with reads of
   `41100`, `41101`, and `41102` singly matched on all six connected nodes.
   Slave `4` was confirmed as M-WRG-II; M-WRG-S validation remains open.
@@ -976,6 +1058,247 @@ logs and snapshots were local-only and are not part of the repository.
   [Follow-up W-1 on 2026-10-14](#follow-up-w-1-on-2026-10-14) under HW-2.
   The real Home Assistant coordinator confirmed balanced writes in W-17 after
   a fix, see [W-17](#w-17-home-assistant-write-confirmation-on-2026-10-14).
+- **6 — USB replug (H-3):** on 2026-10-14, kernel events recorded USB
+  disconnect at 19:49:13 CEST and re-enumeration at 19:50:39; the adapter
+  serial `480782E24` returned as `/dev/ttyACM0`. The actual cable gap was
+  about 86 seconds, not the planned 30. The running HA integration resumed
+  airflow reads, but not within one airflow round: unit `3` was fresh by
+  about 19:51:35, unit `1` by about 19:52:45, units `4` and `5` by 19:54:10,
+  and unit `6` by 19:55:47. At the 19:55:52 snapshot, unit `2` alone remained
+  stale, with three failures on `41020×2` returning exception `0x05`; its last
+  successful airflow read was at 19:49:07, before the disconnect. A follow-up
+  state check at about 20:01:46 found all six units fresh; unit `2` had zero
+  failures and its latest successful airflow read was at 20:01:43. Its first
+  recovery time was not captured. Thus the client recovered the link and all
+  units eventually, but H-3's one-round criterion failed. `link_recycles` was
+  not captured. See the
+  [H-3 result](LIVE_GATEWAY_TESTS.md#h-3--usb-unplug-and-replug) and
+  [MELTEM.md](MELTEM.md#usb-disconnect-and-port-recovery-on-2026-10-09).
+
+### H-3 USB reconnect retest on 2026-10-15
+
+With the Home Assistant coordinator left running, the kernel recorded USB
+disconnect at `01:44:07 CEST` and re-enumerated adapter serial `480782E24` as
+`/dev/ttyACM0` at `01:45:08`, a 61-second gap. Home Assistant logged the serial
+connection loss at `01:44:07.909`. The first post-replug health capture showed
+all six `flow` groups stale with three failures on `41020×2` (exception
+`0x05`).
+
+The 12-minute state observer started at `01:43:13` and completed at `01:55:14`.
+Its first captured successful `flow.last_successful_read` timestamps after
+re-enumeration were:
+
+| Unit | First captured success (CEST) | Delay after re-enumeration |
+|------|-------------------------------|----------------------------|
+| 3    | 01:46:56                       | 1 min 49 s                 |
+| 2    | 01:48:06                       | 2 min 59 s                 |
+| 1    | 01:52:45                       | 7 min 38 s                 |
+| 5    | 01:54:05                       | 8 min 57 s                 |
+| 4    | 01:54:34                       | 9 min 27 s                 |
+| 6    | 01:54:58                       | 9 min 51 s                 |
+
+The UI observer reported 206 parse errors, so these are first captured
+successes, not guaranteed exact first-recovery times. Direct state snapshots
+showed units `2` and `3` fresh while `1`, `4`, `5`, and `6` remained stale at
+`01:48:30` and `01:50:51`; at `01:53:25`, units `1` through `3` were fresh and
+`4` through `6` were still stale. A final `01:55:51` snapshot showed every
+read-health group fresh with zero failures and all six device-error entities
+off. The port number and adapter serial were unchanged. Thus automatic
+recovery completed for every unit, but the one-airflow-round criterion failed.
+`link_recycles` was not captured.
+
+### H-3 USB reconnect follow-up on 2026-10-15 at 11:19 CEST
+
+The kernel recorded USB disconnect at `11:19:19 CEST` and re-enumerated the
+same adapter (serial `480782E24`) on `/dev/ttyACM0` at `11:21:49`, a
+2-minute-30-second gap. Home Assistant logged serial loss at `11:19:19.459`.
+The port name and adapter serial were unchanged.
+
+At the `11:27:01` state snapshot, units `1`, `4`, `5`, and `6` had fresh flow
+data; units `2` and `3` were still stale. Unit `3` had a successful flow read
+by `11:28:24.425`. Unit `2` was still stale at `11:28:32`, with its last
+successful flow read at `11:19:12.523` and three `0x05` failures on
+`41020×2`; it had a successful flow read stamped `11:29:10.866` and was
+fresh with zero failures at the `11:29:17` observer baseline. Thus the one-
+airflow-round recovery criterion failed; two rooms' flow groups remained
+unrecovered for more than five minutes after re-enumeration.
+
+The coordinator logged units `2` and `3` as reachable at `11:22:46` and
+`11:22:47`, respectively, before their flow groups recovered. Those
+room-level messages reflect a successful read of some group, not necessarily
+the airflow group. The direct state observer ran from `11:29:17` to `11:34:18`;
+its browser WebSocket disconnected at `11:32:10`, so the final state was
+rechecked after a page reload. At `11:35:06`, all six read-health entities
+and device-error entities were clear, with every flow group fresh and at zero
+failures. The earlier long observer result had expired before retrieval, so
+the exact first-success times for units `1`, `4`, `5`, and `6` were not
+captured.
+
+After the final state check, the integration diagnostics reported
+`coordinator.transport` as `consecutive_timeouts=0`, `link_recycles=0`, and
+`seconds_since_any_answer=0`, with `last_update_success=true`. No
+`Recycling the Meltem gateway link` message appeared in the HA log after this
+HA process started at `11:06:52`. The diagnostics request includes a gateway
+discovery read and was made only after the observation was complete.
+
+#### Passive read-health observation after reconnect
+
+From `11:42:18` to `11:52:19 CEST`, a direct state observer watched the normal
+Home Assistant scheduler at `4 req/s` without issuing manual Modbus reads. Its
+frontend connection stayed live throughout the interval. Each unit recorded
+`56–57` successful `flow` refreshes and `9–10` each for `status` and
+`temperature`; none of the 459 observed group updates had a failure or stale
+flag. The HA log capture was empty. A diagnostics request after the window
+reported `consecutive_timeouts=0`, `link_recycles=0`, and
+`last_update_success=true`; that request included a gateway discovery read.
+
+This supports that the earlier `0x05` failures were not recurring during
+steady polling after recovery. It does not establish why they occurred during
+the reconnect period.
+
+### H-3 raw reconnect trace on 2026-10-15 at 12:41 CEST
+
+Kernel events recorded USB disconnect at `12:41:34.176 CEST` and
+re-enumeration at `12:42:05.099 CEST`, a `30.923 s` gap. The same adapter
+(serial `480782E24`) returned on `/dev/ttyACM0`. This was a read-only
+reconnect; no writes or competing serial client were used.
+
+Initial airflow reads from all room RTU slaves `2–7` returned Modbus
+exception `0x05` on `41020×2`. The first successful `41020×2` responses were:
+slave `3` at `12:43:30.842`, slave `5` at `12:45:29.861`, slave `7` at
+`12:45:32.551`, slave `6` at `12:46:16.644`, slave `4` at `12:48:04.082`,
+and slave `2` at `12:49:21.336 CEST`. The observer ended at `12:49:34.562`
+after all six flow groups had been fresh with zero failures for 12 seconds.
+The one-airflow-round criterion (about 10 seconds) failed; the slowest first
+success was 7 minutes 16 seconds after re-enumeration.
+
+#### RTU request and response correlation
+
+The raw logger split some `RTU recv` frames across adjacent lines. After
+reassembling those chunks, all `1,676` request/response pairs in the capture
+passed CRC, byte-count, function, and slave checks; there were no incomplete
+pairs or orphan chunks.
+
+From re-enumeration through the `12:49:34.562` airflow checkpoint, `627`
+transactions comprised `434` normal responses and `193` Modbus exception
+`0x05` responses, with no other exception code. The exceptions affected more
+than the airflow block:
+
+- `41020×2` (extract/supply airflow): `137` exceptions; counts by slaves
+  `2–7` were `40, 7, 32, 18, 22, 18`. These all preceded each slave's first
+  successful airflow response listed above.
+- `41004×2` (exhaust temperature): `25` exceptions, with counts by slaves
+  `2–7` of `7, 2, 6, 3, 4, 3`. First successful responses were slave `2` at
+  `12:49:36.895`, `3` at `12:44:30.264`, `4` at `12:48:38.551`, `5` at
+  `12:45:37.095`, `6` at `12:46:15.926`, and `7` at `12:45:45.705`.
+- `41016×3` (error, filter-due, and frost status): `26` exceptions, with
+  counts by slaves `2–7` of `7, 2, 6, 3, 4, 4`. First successful responses
+  were at `12:49:22.770`, `12:44:16.320`, `12:48:24.459`, `12:45:25.923`,
+  `12:46:31.296`, and `12:46:28.344`, respectively.
+- `41100×3` (current mode status): five exceptions, one each on slaves
+  `2–5` and `7`, none on `6`. First successful responses were at
+  `12:42:48.233`, `12:42:47.251`, `12:42:56.986`, `12:42:49.216`,
+  `12:42:20.642`, and `12:42:50.198`, respectively.
+- `40101×1` (RF communication status): no exceptions. First successful
+  responses for slaves `2–7` were between `12:42:14.737` and `12:42:23.590`.
+
+The temperature read for slave `2` first succeeded at `12:49:36.895`, just
+after the airflow checkpoint; that checkpoint establishes recovery of the
+airflow groups, not every read group. No further `0x05` response occurred for
+a block/slave after its first success. From `12:49:34.562` to the end of the
+raw capture at `12:58:04.200`, all `730` transactions were exception-free.
+
+Three diagnostics endpoint fetches were made after the observation window
+while inspecting the response shape; each includes a gateway-discovery read.
+The final response at `13:01:44 CEST` reported `consecutive_timeouts=0`,
+`link_recycles=0`, `last_update_success=true`, and no gateway-probe or
+last-job error. Thus `seconds_since_any_answer=0` reflects a post-window
+probe, not reconnect-only activity. Gateway discovery found
+`[3, 2, 4, 5, 7, 6]`.
+
+The `tmodbus.raw_traffic` logger was restored to `WARNING` after the
+measurement. The main HA log's last raw-traffic line was at `12:58:04.169`;
+no later raw frames appeared through `13:02:09`, while polling and diagnostics
+remained successful.
+
+#### Passive read-health observation after 12:41 raw trace
+
+An initial event-subscription attempt was discarded after the frontend
+WebSocket stopped receiving updates. The valid observer then sampled Home
+Assistant's `/api/states` every 5 seconds from `13:29:16` to `13:39:16 CEST`
+(`601 s`; `122` snapshots). These snapshots did not query the gateway. The
+observer tracked `flow`, `status`, and `temperature` groups for all six units.
+Units `1–5` each had
+`57` successful flow updates and unit `6` had `56`; status had `10` updates
+per unit, and temperature had `9–10`. Across all `458` observed group updates
+there were no failures or stale transitions. All snapshots succeeded, and the
+frontend WebSocket was connected at the start and end.
+
+### H-3 `v4.1.1` tag comparison on 2026-10-15 at 14:38 CEST
+
+The isolated Home Assistant configuration loaded the archived `v4.1.1` tag
+instead of `HEAD 09ac937`; both sources report integration version `4.1.1`.
+This was a read-only run with one Home Assistant process on `/dev/ttyACM0`.
+
+The kernel recorded USB disconnect at `14:38:22 CEST` and re-enumeration of
+the same adapter (serial `480782E24`) at `14:38:54`, a `32 s` gap. At
+`14:39:11`, all six units had failing/stale airflow reads.
+
+After reassembling fragmented `RTU recv` log entries, `1,239` complete
+request/response pairs passed CRC, length, function, and slave checks;
+`1,201` of these were after re-enumeration. One request at the time-capped
+capture's end had no response in the captured file. No exception code other
+than `0x05` appeared.
+
+| Block | `HEAD 09ac937` `0x05` counts by slaves 2–7 | Tag `v4.1.1` `0x05` counts by slaves 2–7 |
+| --- | --- | --- |
+| `41020×2` airflow | `40, 7, 32, 18, 22, 18` (`137`) | `3, 27, 53, 38, 43, 40` (`204`) |
+| `41004×2` exhaust temperature | `7, 2, 6, 3, 4, 3` (`25`) | `1, 5, 9, 7, 7, 7` (`36`) |
+| `41016×3` status | `7, 2, 6, 3, 4, 4` (`26`) | `1, 5, 9, 7, 8, 7` (`37`) |
+| `41100×3` current mode | `1, 1, 1, 1, 0, 1` (`5`) | `1, 1, 1, 1, 1, 1` (`6`) |
+| `40101×1` RF status | `0` | `0` |
+
+For each block/slave in the tag trace, every `0x05` preceded its first normal
+response; there were no later `0x05` responses for that pair. First
+successful responses, in slave order `2–7`, were:
+
+| Block | First successful response times (CEST) |
+| --- | --- |
+| `41020×2` airflow | `14:39:36.754, 14:43:44.425, 14:48:14.860, 14:45:42.118, 14:46:27.566, 14:45:55.025` |
+| `41004×2` exhaust temperature | `14:40:14.433, 14:44:17.702, 14:48:20.182, 14:46:20.243, 14:46:22.652, 14:46:21.447` |
+| `41016×3` status | `14:40:08.091, 14:44:07.428, 14:48:12.655, 14:46:13.719, 14:47:16.835, 14:46:15.161` |
+
+The slowest first airflow response was `9 min 21 s` after re-enumeration.
+Current-mode reads each returned one `0x05` before succeeding within
+`41–45 s`; RF-status reads had no exceptions and first succeeded within
+`13–17 s`.
+
+A passive `/api/states` observer ran from `14:40:15` to `14:50:20 CEST`
+(`605 s`; `103` snapshots) and did not query the gateway. At the end, all six
+read-health entities were healthy, with no current stale flags or errors;
+all `writes` attributes remained empty. A final state check at `14:55:21`
+confirmed the same.
+
+The tag capture contained `283` `0x05` responses in `1,201` post-reconnect
+transactions, versus `193` in the earlier HEAD trace through its airflow
+recovery checkpoint (`627` transactions). These windows are not equal, and
+there was only one reconnect per source, so the count difference does not
+establish a code regression or improvement. The observed recovery pattern
+was otherwise the same: register-specific `0x05` responses, staggered first
+successes, and no further exception after each block/slave recovered.
+
+The raw capture continued for at least `13 min 52 s` after re-enumeration,
+exceeding the `10 min` recovery-capture limit in
+[LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md#h-3--usb-unplug-and-replug).
+Keep future H-3 captures within that documented limit unless the procedure
+is explicitly revised.
+
+After the tag run, the logger was restored to `WARNING`, the tag process was
+stopped, and the isolated configuration was switched back to `HEAD 09ac937`.
+The port was released before restart. A `131 s` HEAD baseline from
+`14:56:36` to `14:58:47 CEST` recorded `249` successful group updates across
+`flow`, `flow_control`, `intensive`, `status`, and `temperature`, with no
+failures, stale transitions, or writes.
 
 ### Current disposition
 
@@ -983,24 +1306,26 @@ logs and snapshots were local-only and are not part of the repository.
   but the later `0x05` results after USB reconnect and the baseline runner's
   zero-request failure prevent a comparable full result.
 - **2 — Powered-off unit:** partial. The 2026-10-09 H-1 run exceeded its
-  five-minute limit and did not record values; it is inconclusive, not a pass.
+  five-minute limit. The controlled 2026-10-14 repeat stayed within the limit
+  and logged values, but slave `4` kept returning unchanged successful
+  `60/60` reads while physically off. Retained-value behavior and recovery
+  time remain unresolved.
 - **3 — Mode status map:** partial. Block/single parity succeeded on all six
   connected nodes on 2026-10-14, and the HA deployment read the status map
   with fresh read-health groups; M-WRG-S validation remains open (HW-4 /
   R-12).
-- **4 — Writes:** partial. W-1 measured the airflow response, but `41101`
-  returned app-encoded values rather than the raw `41121` target. The client
-  decodes this encoding for displayed targets, while balanced write
-  confirmation reads the exact set-side `41121` value only while a write is
-  pending. W-17 confirmed this path with the real Home Assistant coordinator
-  on M-WRG-II. The settle time after writes varies widely (HW-2), and the lock
-  duration in the live coordinator has not been measured.
+- **4 — Writes:** partial. W-17 confirmed the exact Home Assistant coordinator
+  readback on M-WRG-II, and five HA repetitions recorded variable airflow
+  settle times. W-18 then ran the six-slave scheduler under load without
+  timeouts or link recycles; it did not reproduce the long HIGH-return
+  outlier. The lock/settle behavior is not characterized enough to justify a
+  timing change.
 - **5 — Busy:** inconclusive. No Busy response appeared in passive runs, and
   the active stimulus was not run under the current pacing safety rules.
 - **6 — Link lifecycle:** partial. Port locking and new-process reopening
   passed. H-9 confirmed startup pacing and initial room progress at `3 req/s`,
   plus clean connection release and reacquisition on reload, unload, and
-  re-enable. The HA H-3 follow-up reopened the serial link automatically after
+  re-enable. The 2026-10-09 HA H-3 follow-up reopened the serial link automatically after
   USB loss, and all six units eventually returned successful airflow reads.
   The later HA-host return again showed airflow reads succeeding on all six by
   log end, but the old set-register mode reads remained `0x05` on all six and
@@ -1011,8 +1336,41 @@ logs and snapshots were local-only and are not part of the repository.
   reopened, while the mode failures kept several `Datenlesestatus` entities in
   `Problem`. The exact replug time and diagnostics are unavailable, so the
   one-airflow-round criterion and `link_recycles` counter cannot be confirmed.
-  The competing-hub port-conflict check and comparison with the previous
-  release remain untested.
+  The controlled 2026-10-14 H-3 run recovered five of six units but did not
+  meet the one-airflow-round criterion; unit `2` remained stale at the
+  19:55:52 snapshot, but all six units were fresh by the follow-up check at
+  about 20:01:46. See the detailed measurement above.
+  The 2026-10-15 01:44 CEST retest again failed the one-round criterion,
+  although all six units eventually recovered within about ten minutes after
+  re-enumeration; see the [H-3 retest](#h-3-usb-reconnect-retest-on-2026-10-15).
+  The 11:19 CEST follow-up also failed: units `2` and `3` had delayed flow
+  recovery, and `link_recycles` was `0`; see the
+  [11:19 H-3 follow-up](#h-3-usb-reconnect-follow-up-on-2026-10-15-at-1119-cest).
+  A subsequent 10-minute passive read-health window found no repeated `0x05`
+  errors or stale groups; see the
+  [passive observation](#passive-read-health-observation-after-reconnect).
+  The 12:41 CEST raw-trace retest also failed the one-round criterion: first
+  successful airflow reads came 1 minute 26 seconds to 7 minutes 16 seconds
+  after re-enumeration, while `link_recycles` and `consecutive_timeouts` stayed
+  at zero. See the
+  [12:41 H-3 raw trace](#h-3-raw-reconnect-trace-on-2026-10-15-at-1241-cest).
+  Offline RTU correlation found `0x05` on the temperature and status blocks
+  as well as airflow; mode-status exceptions were brief, and RF status reads
+  succeeded early. No exception responses appeared after recovery. See the
+  [RTU correlation](#rtu-request-and-response-correlation).
+  A subsequent 10-minute passive window recorded no read failures or stale
+  transitions; see the
+  [passive observation after the 12:41 trace](#passive-read-health-observation-after-1241-raw-trace).
+  A read-only comparison against the archived `v4.1.1` tag also failed the
+  one-round criterion: first airflow responses ranged from `43 s` to
+  `9 min 21 s` after re-enumeration. The single-run comparison did not isolate
+  a code effect; see the
+  [tag comparison](#h-3-v411-tag-comparison-on-2026-10-15-at-1438-cest).
+  The H-3 unplug-test campaign is closed for this round. The observed delay is
+  accepted operationally for the rare manual USB unplug/replug scenario; the
+  one-airflow-round criterion remains unmet and the cause is unresolved. This
+  does not establish behavior for other transport faults. The competing-hub
+  port-conflict check remains untested.
 - **7 — Soak:** partial. The 24-hour run showed no transport timeouts or link
   recycles, but did not meet the proposed whole-job success threshold because
   of mode-register exceptions; no new 24-hour run was authorized. Do not

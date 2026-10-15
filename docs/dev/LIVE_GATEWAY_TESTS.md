@@ -969,6 +969,18 @@ repeats if needed.
   switch it on again and wait 5 more minutes.
 - **Pass:** as in T-5, with the real unit as the silent one. Also record how
   long the unit takes to answer again after power-up.
+- **Result on 2026-10-14 — partial/inconclusive:** the T-5 scheduler ran for
+  60 airflow rounds, with temperature and status plans every sixth round.
+  The user-reported off/on confirmations were 19:17:34 and 19:20:56 CEST,
+  about 3 min 22 s apart and below the five-minute limit. All 480 jobs across
+  the six units succeeded, with 150 requests per slave and zero transport
+  timeouts or link recycles. While powered off, slave `4` continued returning
+  `60/60 m³/h`, manual/HIGH, in two requests per airflow job (231.7-232.2 ms);
+  the other five units also continued to answer. The same values were returned
+  after power-up, so recovery time was not measurable. The user confirmed the
+  unit was disconnected and its fans had stopped; whether the gateway retained
+  those values is unresolved. See
+  [MELTEM.md](MELTEM.md#reads-while-a-unit-is-powered-off).
 
 ### H-2 — Freshly powered unit
 
@@ -978,6 +990,28 @@ repeats if needed.
   W-5. Ask for a second power cycle and run R-9 again.
 - **Pass:** informational, decides HW-4 (A: unlocked by the first write;
   B: never readable on this unit).
+- **Result on 2026-10-15 — cycle observed; persistence attribution
+  inconclusive:** on
+  slave `4`, the reported first power-off/on times were 00:45/00:46 CEST
+  (minute precision). Across 120 read-only R-9 rounds at five-second
+  intervals, `41100×3` stayed `[3, 230, 0]`, while all `41120`/`41121`/
+  `41122` reads returned `0x05`; airflow stayed `[60, 60]`.
+  The approved W-5 write (`41120=3`, `41121=120`, `41132=0`) made the
+  two-register read and `41121` readable as `[3, 120]` / `120`, but
+  `41120×5` and `41122` still returned `0x05`. The first follow-up was at
+  about 21 s; the planned 1 s and 10 s samples were missed, while the 60 s
+  sample repeated the same result. Slave `4` was restored to HIGH
+  (`41120=3`, `41121=230`, `41132=0`) and verified at `[3, 230, 0]`,
+  `60/60 m³/h`, error `0`. The first follow-up observer window
+  (01:08:15–01:18:11 CEST) had no power cycle. In the repeat window
+  (01:23:20–01:33:16), the reported off/on times were 01:25/01:26 CEST
+  (minute precision). All 120 rounds kept `41100×3=[3, 230, 0]`,
+  `41120×2=[3, 230]`, and `41121=230`; `41120×5` and `41122` remained at
+  `0x05` in every round. The post-cycle airflow was `60/60 m³/h`, error `0`.
+  This supports persistence of short-read availability at the gateway, but
+  unchanged replies during power-off cannot exclude gateway caching. Details
+  and the snapshot diff are under
+  [HW-4](HARDWARE_BACKLOG.md#hw-4--units-that-reject-the-five-register-mode-block).
 
 ### H-3 — USB unplug and replug
 
@@ -992,6 +1026,18 @@ repeats if needed.
   is lost. It can confirm link-loss reporting, but cannot pass the automatic
   recovery criterion; use a client that remains alive and schedules another
   job after replug, ideally the Home Assistant coordinator in H-9.
+- **Raw-traffic follow-up:** after confirming a fresh baseline, start kernel
+  and Home Assistant log capture before the unplug. Enable
+  `tmodbus.raw_traffic` at `debug` with `logger.set_level`, then unplug the
+  USB cable for 30 s and replug it. Keep the capture to this reconnect and at
+  most 10 minutes of recovery; do not run another serial client or test writes.
+  Record the first successful airflow read for each unit from the raw frames
+  and state observer. After the window, restore `tmodbus.raw_traffic` to
+  `warning` and only then request diagnostics, since the diagnostics read adds
+  gateway traffic.
+- **Results:** record outcomes under HW-7 in
+  [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md#hw-7--validate-the-tmodbus-transport-on-the-real-gateway);
+  keep this file focused on test procedures.
 
 ### H-4 — App shortcut encoding
 
@@ -1057,6 +1103,16 @@ repeats if needed.
   `coordinator.transport` in the diagnostics; 24 hours of logs without
   "Recycling the Meltem gateway link", compared with logs of the previous
   release.
+- **Port-conflict safety:** the built-in `modbus:` YAML integration is not a
+  suitable competing hub for this check. It creates and connects its own
+  PyModbus serial client instead of using Home Assistant's shared
+  `modbus-connection` registry; even a hub with no entities opens the port
+  during setup. Do not configure it on the live Meltem port. Use only a second
+  integration that acquires the endpoint through `async_get_unit` or
+  `async_get_temporary_unit`, so the shared registry can reject incompatible
+  link settings before another serial client opens. A duplicate Meltem entry
+  is also not a port-conflict test because its configured-port unique ID
+  aborts the flow first.
 - **Startup follow-up:** for the progressive startup and telegram-level read
   limit, keep a fixed request rate (for example `3 req/s`) and capture three
   Core restarts with startup debug logging, including `tmodbus.raw_traffic`.

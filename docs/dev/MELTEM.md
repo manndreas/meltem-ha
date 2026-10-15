@@ -388,6 +388,15 @@ current state from `41100..41102` and uses the set registers for writes only:
 - after a USB reconnect, Home Assistant's five-register read failed on all six
   units and its two-register fallback succeeded only on slave `5`, see
   [HA-host reconnect at 12:33 CEST](#ha-host-reconnect-at-1233-cest)
+- in H-2 on 2026-10-15, a power cycle alone left all set-side reads at
+  `0x05`; the approved `41120=3`, `41121=120`, `41132=0` write then made
+  `41120×2` / `41121` readable as `[3, 120]` / `120`, but `41120×5` and
+  `41122` stayed at `0x05`. Restoring HIGH returned the status to
+  `[3, 230, 0]` with airflow still `60/60 m³/h`. After a reported second
+  power cycle, the short reads remained available through 120 rounds, while
+  `41120×5` and `41122` stayed at `0x05`; unchanged replies during power-off
+  could still be gateway-cached. Details are recorded under
+  [HW-4](HARDWARE_BACKLOG.md#hw-4--units-that-reject-the-five-register-mode-block).
 
 The individual runs, including the restore steps and the shadow-register side
 effects, are written up under
@@ -630,12 +639,33 @@ transport validation is summarised under
 
 ### Reads while a unit is powered off
 
-In two H-1 runs, slave `4` was switched off while the integration client
-polled all units. Its airflow jobs kept completing in 2-3 requests (35 jobs in
-the first run), without transport timeouts or link recycles. Neither run
-logged the returned values, so whether the gateway served cached data is
-unknown. The 2026-10-09 run also exceeded the five-minute limit (6 min 5 s)
-and is not a valid pass; it must not be repeated that way.
+In two earlier H-1 runs, slave `4` was switched off while the integration
+client polled all units. Its airflow jobs kept completing in 2-3 requests
+(35 jobs in the first run), without transport timeouts or link recycles.
+Neither run logged the returned values. The 2026-10-09 run also exceeded the
+five-minute limit (6 min 5 s) and is not a valid pass; it must not be repeated
+that way.
+
+An initial 2026-10-14 attempt was excluded because the actual off duration
+could not be confirmed. The subsequent controlled repeat used the T-5
+scheduler without a ghost room. The user confirmed that slave `4` was
+physically disconnected and its fans had stopped. The off/on confirmations
+were timestamped at 19:17:34 and 19:20:56 CEST, about 3 min 22 s apart; the
+physical switch actions were not independently timestamped. Across 60 airflow
+rounds, plus 10 temperature and 10 status rounds per unit, all 480 jobs for
+the six units returned successfully. Each slave used 150 requests. The ten
+periodic transport diagnostics showed zero consecutive timeouts and zero link
+recycles. Slave `4`'s airflow job used two requests and took 231.7-232.2 ms;
+every response still reported `60/60 m3/h`, manual mode, HIGH, and no error.
+The other five units continued to return successful airflow, temperature,
+and status jobs. The same `60/60` state was reported after power was restored.
+
+This establishes the request cost and lack of observed impact on the other
+units for this run, but not how the gateway obtains the powered-off unit's
+unchanged values. They may be retained or cached; the client marked the reads
+successful, so it could not measure a recovery time after power-up. Treat H-1
+as partial/inconclusive for detecting a silent powered-off unit, not as proof
+that the reported airflow was physically present.
 
 After power-up in the first run, `41020..41021` read `[80, 0]`, matching the
 Meltem app and the physical airflow, while the then-used set-register read
@@ -803,3 +833,77 @@ has no attempt because the short-read fallback marks that optional group
 skipped. The bathroom's `writes.preset_mode` outcome is confirmed with both
 expected and actual value `low`. A single earlier filter-block `0x05` on each
 room has only one consecutive failure and is not stale.
+
+### H-3 repeat on 2026-10-14
+
+The kernel recorded USB loss at `19:49:13 CEST` and re-enumerated the same
+adapter (serial `480782E24`) as `/dev/ttyACM0` at `19:50:39`, an 86-second
+gap. The action log separately records the user's unplug confirmation at
+`19:49:24`, the reconnect prompt at `19:49:54`, and the user's replug
+confirmation at `19:50:45`; these are not physical USB event timestamps.
+Home Assistant reported the serial transport loss, then resumed airflow
+reads. By the `19:55:52` state snapshot, units `1`, `3`, `4`, `5`, and `6`
+were fresh; unit `2` remained stale with exception `0x05` on `41020×2` and
+had no successful airflow read after the disconnect. The H-3 recovery
+criterion was not met. A follow-up state check at about `20:01:46 CEST`
+showed all six units fresh; unit `2` had zero failures and its latest
+successful airflow read was at `20:01:43`. The first recovery time was not
+captured. See the detailed HW-7 result in
+[HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md#hw-7--validate-the-tmodbus-transport-on-the-real-gateway).
+
+### H-3 retest on 2026-10-15
+
+The same adapter returned on `/dev/ttyACM0` 61 seconds after USB disconnect.
+All six units eventually had fresh read-health groups, but captured airflow
+recovery ranged from about 1 minute 49 seconds to 9 minutes 51 seconds after
+re-enumeration, missing the one-airflow-round criterion. The detailed timings
+and observer caveat are recorded under
+[HW-7](HARDWARE_BACKLOG.md#h-3-usb-reconnect-retest-on-2026-10-15).
+
+### Second H-3 retest on 2026-10-15 at 11:19 CEST
+
+The same adapter returned on `/dev/ttyACM0` after a 2-minute-30-second USB
+gap. Units `2` and `3` logged as reachable before their airflow groups
+recovered; unit `2` remained stale until more than seven minutes after
+re-enumeration. All six flow groups were fresh in a later state check, but the
+one-airflow-round criterion failed again. No link recycle was observed.
+Detailed timings and observation limits are recorded under
+[HW-7](HARDWARE_BACKLOG.md#h-3-usb-reconnect-follow-up-on-2026-10-15-at-1119-cest).
+
+A later 10-minute passive window recorded 56–57 successful airflow refreshes
+and 9–10 status and temperature refreshes per unit, with no read failures or
+stale groups. Diagnostics still reported `link_recycles=0`; see the passive
+observation under
+[HW-7](HARDWARE_BACKLOG.md#passive-read-health-observation-after-reconnect).
+
+A third H-3 raw-trace run on 2026-10-15 followed a 31-second USB gap.
+All six airflow slaves initially returned `0x05`, then recovered over
+1 minute 26 seconds to 7 minutes 16 seconds after re-enumeration, again
+missing the one-airflow-round criterion. Post-window diagnostics showed zero
+timeouts and link recycles. Detailed per-slave timings and logger cleanup are
+recorded under
+[HW-7](HARDWARE_BACKLOG.md#h-3-raw-reconnect-trace-on-2026-10-15-at-1241-cest).
+
+Offline RTU correlation found `0x05` on the exhaust-temperature and status
+blocks as well as airflow; current-mode exceptions were brief, and RF status
+reads succeeded within 19 seconds. All captured frames passed CRC and length
+checks, and no exception responses appeared after recovery. See the
+[RTU correlation](HARDWARE_BACKLOG.md#rtu-request-and-response-correlation).
+
+A 10-minute passive window after that trace recorded 56–57 successful flow
+updates per unit, 10 status updates per unit, and 9–10 temperature updates per
+unit, with no read failures or stale transitions across 458 updates. See
+[HW-7](HARDWARE_BACKLOG.md#passive-read-health-observation-after-1241-raw-trace).
+
+A read-only comparison of the archived `v4.1.1` tag with `HEAD 09ac937`
+followed. It showed the same staggered `0x05` recovery across airflow, status,
+and temperature; first airflow responses ranged from `43 s` to `9 min 21 s`
+after re-enumeration. One reconnect per source and unequal capture windows do
+not isolate a code effect. Detailed counts, timings, and the procedure-limit
+deviation are recorded in the
+[tag comparison](HARDWARE_BACKLOG.md#h-3-v411-tag-comparison-on-2026-10-15-at-1438-cest).
+
+The H-3 unplug-test series is closed for this round. The observed delay is
+accepted operationally for the rare manual USB unplug/replug scenario; the
+one-airflow-round criterion was not met and the cause remains unresolved.
+This does not establish behavior for other transport faults.
