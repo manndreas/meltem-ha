@@ -225,6 +225,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:
+        await coordinator.async_shutdown()
         client.shutdown()
         # Home Assistant only drops runtime_data on unload, not after a failed setup.
         del entry.runtime_data

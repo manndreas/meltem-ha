@@ -42,7 +42,14 @@ def _only[C: Component](component: C, *fields: str) -> C:
 class MeltemRoomDevice(Device):
     """One ventilation unit behind the gateway."""
 
-    def __init__(self, unit: ModbusUnit, *, exhaust_temperature_only: bool) -> None:
+    def __init__(
+        self,
+        unit: ModbusUnit,
+        *,
+        exhaust_temperature_only: bool,
+        has_co2: bool = True,
+        has_voc: bool = True,
+    ) -> None:
         super().__init__(unit)
         self.airflow = Airflow(unit)
         self.temperatures = Temperatures(unit)
@@ -51,7 +58,11 @@ class MeltemRoomDevice(Device):
             _only(self.temperatures, "exhaust_temperature")
         self.supply_temperature = SupplyTemperature(unit)
         self.extract_air_quality = ExtractAirQuality(unit)
+        if not has_co2:
+            _only(self.extract_air_quality, "humidity_extract_air")
         self.supply_air_quality = SupplyAirQuality(unit)
+        if not has_voc:
+            _only(self.supply_air_quality, "humidity_supply_air")
         self.status = Status(unit)
         self.days_until_filter_change = Register(
             unit, base_offset=REGISTER_DAYS_UNTIL_FILTER_CHANGE
@@ -59,6 +70,13 @@ class MeltemRoomDevice(Device):
         self.operating_hours = OperatingHours(unit)
         self.software_version = Register(unit, base_offset=REGISTER_SOFTWARE_VERSION)
         self.control_settings = ControlSettings(unit)
+        if not has_co2:
+            _only(
+                self.control_settings,
+                "humidity_starting_point",
+                "humidity_min_level",
+                "humidity_max_level",
+            )
         self.rf_comm_status = Register(unit, base_offset=REGISTER_RF_COMM_STATUS)
         self.mode = ModeBlock(unit)
         # Single-register read of the set-side balanced target, only used to

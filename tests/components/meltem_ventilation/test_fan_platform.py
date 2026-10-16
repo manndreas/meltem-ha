@@ -163,6 +163,13 @@ class TestTurnOn:
 
         _assert_written(coordinator, DIRECTION_SUPPLY, 80)
 
+    async def test_turn_on_with_a_zero_percentage_uses_the_default_speed(self) -> None:
+        coordinator = _coordinator((0, 30))
+
+        await _fan(coordinator).async_turn_on(percentage=0)
+
+        _assert_written(coordinator, DIRECTION_SUPPLY, 50)
+
 
 class TestAttributes:
     def test_level_source_and_opposite_airflow_are_exposed(self) -> None:

@@ -66,13 +66,13 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
         coordinator: MeltemDataUpdateCoordinator,
         room: RoomConfig,
         object_key: str,
-        translation_key: str,
+        translation_key: str | None = None,
     ) -> None:
         super().__init__(coordinator)
         self.room = room
         self._entity_key = object_key
         self._attr_unique_id = f"{DOMAIN}_{room.key}_{object_key}"
-        self._attr_translation_key = translation_key
+        self._attr_translation_key = translation_key or object_key
         self._hw_version = _product_id_from_preview(room.preview)
         self._exported_versions: tuple[str | None, str | None] = (None, None)
 
@@ -121,14 +121,15 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
         if self.hass is None or device is None:
             return
 
-        versions = (self._sw_version, self._hw_version)
+        sw_version, hw_version = versions = (self._sw_version, self._hw_version)
         if versions == self._exported_versions:
             return
 
-        dr.async_get(self.hass).async_update_device(
-            device.id, sw_version=versions[0], hw_version=versions[1]
-        )
         self._exported_versions = versions
+        if versions != (getattr(device, "sw_version", None), getattr(device, "hw_version", None)):
+            dr.async_get(self.hass).async_update_device(
+                device.id, sw_version=sw_version, hw_version=hw_version
+            )
 
 
 def _product_id_from_preview(preview: str | None) -> str | None:

@@ -152,6 +152,33 @@ class TestSensorEntityCreation:
             "device-1", sw_version="42", hw_version="116852"
         )
 
+    def test_coordinator_update_skips_device_registry_when_versions_match(
+        self, hass: HomeAssistant
+    ) -> None:
+        sensor = _sensor("exhaust_temperature", RoomState(software_version=42))
+        sensor.hass = hass
+        registry = MagicMock()
+
+        with (
+            patch.object(
+                MeltemEntity,
+                "device_entry",
+                new_callable=PropertyMock,
+                return_value=SimpleNamespace(id="device-1", sw_version="42", hw_version="116852"),
+            ),
+            patch(
+                "custom_components.meltem_ventilation.entity.dr.async_get",
+                return_value=registry,
+            ),
+            patch(
+                "homeassistant.helpers.update_coordinator.BaseCoordinatorEntity"
+                "._handle_coordinator_update"
+            ),
+        ):
+            sensor._handle_coordinator_update()
+
+        registry.async_update_device.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 #  Native value from room state

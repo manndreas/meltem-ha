@@ -29,11 +29,11 @@ from custom_components.meltem_ventilation.device import PolicyUnit
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
-    _is_plausible,
     build_serial_params,
     derive_balanced_airflow,
     detect_slave_details,
     discover_gateway_nodes,
+    is_plausible,
     new_transport_policy,
     prepare_unit,
     read_gateway_node_count,
@@ -330,11 +330,11 @@ class TestPlausibilityChecks:
     def test_only_values_in_the_sensor_range_are_plausible(
         self, key: str, minimum: int, maximum: int
     ) -> None:
-        assert not _is_plausible(key, None)
-        assert not _is_plausible(key, minimum - 1)
-        assert _is_plausible(key, minimum)
-        assert _is_plausible(key, maximum)
-        assert not _is_plausible(key, maximum + 1)
+        assert not is_plausible(key, None)
+        assert not is_plausible(key, minimum - 1)
+        assert is_plausible(key, minimum)
+        assert is_plausible(key, maximum)
+        assert not is_plausible(key, maximum + 1)
 
 
 class TestSupportedEntityKeysForProfile:

@@ -26,7 +26,6 @@ from .coordinator import MeltemDataUpdateCoordinator
 from .entity import MeltemEntity, room_supports_entity
 from .models import (
     MeltemIntegrationConfigEntry,
-    MeltemRuntimeData,
     RoomConfig,
     RoomState,
 )
@@ -76,8 +75,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Meltem binary sensor entities."""
 
-    runtime_data: MeltemRuntimeData = entry.runtime_data
-    coordinator = runtime_data.coordinator
+    coordinator = entry.runtime_data.coordinator
 
     entities: list[BinarySensorEntity] = [
         MeltemBinarySensorEntity(coordinator, room, description)
@@ -88,7 +86,7 @@ async def async_setup_entry(
     entities.extend(
         MeltemDataHealthBinarySensor(coordinator, room)
         for room in coordinator.rooms
-        if any(room_supports_entity(room, key) for key in ("supply_air_flow", "extract_air_flow"))
+        if room.supports_any(("supply_air_flow", "extract_air_flow"))
     )
     async_add_entities(entities)
 

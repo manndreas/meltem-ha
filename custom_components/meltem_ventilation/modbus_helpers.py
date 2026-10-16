@@ -28,6 +28,8 @@ from modbus_connection import (
 
 from .const import (
     BASE_SUPPORTED_ENTITY_KEYS,
+    CONTROL_SETTING_LIMITS,
+    CONTROL_SETTING_REGISTERS,
     DEFAULT_GATEWAY_DEVICE_ID,
     FIXED_BAUDRATE,
     FIXED_BYTESIZE,
@@ -43,50 +45,6 @@ from .const import (
 from .device import MeltemGateway, MeltemProbe, PolicyUnit, TransportPolicy
 
 _LOGGER = logging.getLogger(__name__)
-
-_MAX_NODE_ADDRESSES = 32
-
-# Read in this order by the setup probe; the product ID only feeds the preview.
-_PROBE_COMPONENTS = (
-    "product_id",
-    "humidity_extract_air",
-    "humidity_supply_air",
-    "co2_extract_air",
-    "voc_supply_air",
-)
-
-# Value range in which a probed register counts as a fitted sensor.
-_PLAUSIBLE_RANGES: dict[str, tuple[int, int]] = {
-    "humidity_extract_air": (0, 100),
-    "humidity_supply_air": (0, 100),
-    "co2_extract_air": (250, 10000),
-    "voc_supply_air": (0, 10000),
-}
-
-# Richest suffix first: the first one with a detected sensor wins.
-_SUFFIXES: tuple[tuple[str, str, frozenset[str]], ...] = (
-    ("fc_voc", "VOC", frozenset({"voc_supply_air"})),
-    ("fc", "CO2", frozenset({"co2_extract_air"})),
-    ("f", "humidity", frozenset({"humidity_extract_air", "humidity_supply_air"})),
-)
-
-# Units with any sensor suffix also report these temperatures.
-_SUFFIX_ENTITY_KEYS = frozenset({"outdoor_air_temperature", "extract_air_temperature"})
-
-_CAPABILITY_ENTITY_KEYS: dict[str, frozenset[str]] = {
-    "humidity": frozenset(
-        {
-            "supply_air_temperature",
-            "humidity_extract_air",
-            "humidity_supply_air",
-            "humidity_starting_point",
-            "humidity_min_level",
-            "humidity_max_level",
-        }
-    ),
-    "co2": frozenset({"co2_extract_air", "co2_starting_point", "co2_min_level", "co2_max_level"}),
-    "voc": frozenset({"voc_supply_air"}),
-}
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +137,8 @@ def prepare_unit(unit: ModbusUnit, unit_id: int, policy: TransportPolicy) -> Mod
 #  Gateway node discovery
 # ---------------------------------------------------------------------------
 
+_MAX_NODE_ADDRESSES = 32
+
 
 async def read_gateway_node_count(unit: ModbusUnit) -> int:
     """Read how many units the gateway is configured for.
@@ -256,6 +216,30 @@ def _discovery_failed(err: ModbusError, port: str, what: str) -> list[int]:
 #  Setup-time profile detection
 # ---------------------------------------------------------------------------
 
+# Read in this order by the setup probe; the product ID only feeds the preview.
+_PROBE_COMPONENTS = (
+    "product_id",
+    "humidity_extract_air",
+    "humidity_supply_air",
+    "co2_extract_air",
+    "voc_supply_air",
+)
+
+# Value range in which a probed or polled register counts as a fitted sensor.
+PLAUSIBLE_RANGES: dict[str, tuple[int, int]] = {
+    "humidity_extract_air": (0, 100),
+    "humidity_supply_air": (0, 100),
+    "co2_extract_air": (250, 10000),
+    "voc_supply_air": (0, 10000),
+}
+
+# Richest suffix first: the first one with a detected sensor wins.
+_SUFFIXES: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("fc_voc", "VOC", frozenset({"voc_supply_air"})),
+    ("fc", "CO2", frozenset({"co2_extract_air"})),
+    ("f", "humidity", frozenset({"humidity_extract_air", "humidity_supply_air"})),
+)
+
 
 async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None]:
     """Run the minimal setup-time probe on one unit.
@@ -282,7 +266,7 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None]:
             continue
         values[name] = component.product_id if name == "product_id" else component.value
 
-    detected = {key for key in _PLAUSIBLE_RANGES if _is_plausible(key, values.get(key))}
+    detected = {key for key in PLAUSIBLE_RANGES if is_plausible(key, values.get(key))}
     detected_profile, capability_preview = next(
         ((suffix, preview) for suffix, preview, keys in _SUFFIXES if keys & detected),
         ("plain", "basic"),
@@ -298,6 +282,24 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None]:
 #  Entity-key / plausibility helpers
 # ---------------------------------------------------------------------------
 
+# Units with any sensor suffix also report these temperatures.
+_SUFFIX_ENTITY_KEYS = frozenset({"outdoor_air_temperature", "extract_air_temperature"})
+
+_CAPABILITY_ENTITY_KEYS: dict[str, frozenset[str]] = {
+    "humidity": frozenset(
+        {
+            "supply_air_temperature",
+            "humidity_extract_air",
+            "humidity_supply_air",
+            "humidity_starting_point",
+            "humidity_min_level",
+            "humidity_max_level",
+        }
+    ),
+    "co2": frozenset({"co2_extract_air", "co2_starting_point", "co2_min_level", "co2_max_level"}),
+    "voc": frozenset({"voc_supply_air"}),
+}
+
 
 def supported_entity_keys_for_profile(profile: str) -> list[str]:
     """Return the supported entity keys implied by one selected profile."""
@@ -305,18 +307,30 @@ def supported_entity_keys_for_profile(profile: str) -> list[str]:
     metadata = PROFILE_METADATA.get(profile)
     capabilities = metadata.capabilities if metadata is not None else frozenset()
 
-    supported_entity_keys = set(BASE_SUPPORTED_ENTITY_KEYS)
+    entity_keys = set(BASE_SUPPORTED_ENTITY_KEYS)
     if capabilities:
-        supported_entity_keys |= _SUFFIX_ENTITY_KEYS
-    for capability, entity_keys in _CAPABILITY_ENTITY_KEYS.items():
-        if capability in capabilities:
-            supported_entity_keys |= entity_keys
-    return sorted(supported_entity_keys)
+        entity_keys |= _SUFFIX_ENTITY_KEYS
+    for capability in capabilities:
+        entity_keys |= _CAPABILITY_ENTITY_KEYS.get(capability, frozenset())
+    return sorted(entity_keys)
 
 
-def _is_plausible(key: str, value: int | None) -> bool:
-    low, high = _PLAUSIBLE_RANGES[key]
+def is_plausible(key: str, value: int | None) -> bool:
+    """Return whether a sensor register holds a value inside its plausible range."""
+
+    low, high = PLAUSIBLE_RANGES[key]
     return value is not None and low <= value <= high
+
+
+def normalize_control_setting(setting_key: str, value: int) -> int:
+    """Clamp one control setting to its limits and round it to the register step."""
+
+    limits = CONTROL_SETTING_LIMITS.get(setting_key)
+    if setting_key not in CONTROL_SETTING_REGISTERS or limits is None:
+        raise MeltemModbusError(f"Unsupported control setting {setting_key!r}")
+    min_val, max_val, step = limits
+    clamped = max(min_val, min(max_val, value))
+    return min_val + ((clamped - min_val + step // 2) // step) * step
 
 
 def derive_balanced_airflow(
@@ -325,8 +339,6 @@ def derive_balanced_airflow(
 ) -> int | None:
     """Return one shared airflow value when supply and extract match closely."""
 
-    if extract_air_flow is None and supply_air_flow is None:
-        return None
     if extract_air_flow is None:
         return supply_air_flow
     if supply_air_flow is None:

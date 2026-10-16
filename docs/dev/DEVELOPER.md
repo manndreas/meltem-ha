@@ -203,7 +203,7 @@ How the hardware findings are implemented now:
 | 32-bit values are word-swapped | `word_order="little"` on `float32` and `uint32` fields |
 | Mode writes only take effect after `41132` | `Command` component, written last in every mode and preset sequence |
 | Discovery runs on the gateway's own unit 1 | `MeltemGateway` in `device/device.py` |
-| A silent unit must not drag down the others | per-job skip in `MeltemModbusClient._poll` and `_read_mode_status`, quiet window in `TransportPolicy`, `SILENT_ROOM_POLL_SECONDS` in the coordinator |
+| A silent unit must not drag down the others | per-job skip in `MeltemModbusClient._poll` and `_read_mode_block`, quiet window in `TransportPolicy`, `SILENT_ROOM_POLL_SECONDS` in the coordinator |
 
 ## Discovery model
 
@@ -314,9 +314,12 @@ the revised behavior is part of H-9 in [LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TEST
 Each supported read group tracks its own last attempt, last successful read,
 consecutive failures, and most recent error. Optional Modbus failures preserve
 the last cached value, but only affect the health of the group that performed
-the read. Invalid decoded values also preserve the last cached value but mark
-their read group as failed. A successful read in another group does not clear
-that failure.
+the read. Non-finite decoded values (`NaN`/`Inf` floats) also preserve the last
+cached value and mark their read group as failed. A successful read in another
+group does not clear that failure. Out-of-range hardware sentinels such as
+`239` or `32767` on humidity, CO2, and VOC registers (`PLAUSIBLE_RANGES`) only
+mean that one sensor reports nothing: that field keeps its last value and is
+logged at debug level, while the rest of the group stays healthy.
 Expected groups are derived from each room's supported entities, so a register
 that a device profile does not expose is not reported as a failed read. The
 group-to-entity mapping lives in `const.READ_GROUP_ENTITY_KEYS` and
@@ -359,9 +362,9 @@ setting writes remain independent.
 Pending values are dropped when a readback confirms them
 (`_confirm_pending_writes`), never as a side effect of reading an entity
 state. A pending value that is not confirmed expires through a timer, which
-also updates the entities. Preset and intensive overlays only settle against
-a fresh read of their own group; a matching stale cache value leaves them
-pending.
+also updates the entities. All overlays (airflow levels, quick mode, and
+intensive) only settle against a read of their own group that succeeded after
+the write; a matching cached value from before the write leaves them pending.
 
 Selecting inactive sensor control is decided under the gateway lock. It is a
 no-op only when a fresh mode read already reports off, manual, or unbalanced
@@ -505,13 +508,17 @@ maximum, for display only. It does not use this coarse status value or measured
 airflow to confirm a balanced write. While a write is pending, unconfirmed,
 mismatched, or unverifiable, and at most for `WRITE_HEALTH_RETENTION_SECONDS`
 after it started, the coordinator reads `41121` separately on airflow polls
-and scales its exact raw value with the profile range. Keeping mismatches
-eligible lets a later exact read recover from a transient stale mode/target
-read; the time limit stops the extra request once the write could no longer
-flag `data_health`. While intensive ventilation hides the base mode, the read
-is skipped, and an `unverifiable` write is judged by the first exact read after
-the override ends, provided that happens within the same window; otherwise it
-stays `unverifiable`, which does not flag `data_health`. A value outside
+and scales its exact raw value with the profile range. Keeping mismatches eligible lets a later exact read recover from a transient
+stale mode/target read; the time limit stops the extra request once the write
+could no longer flag `data_health`. Once `41121` has been read, its exact
+value is carried forward across subsequent airflow polls as long as the unit
+remains in the same manual or off mode without an active preset and the coarse
+status target `41101` does not change, so the displayed fan target does not
+jump back to a 10 m³/h step after the confirmation window ends. While
+intensive ventilation hides the base mode, the read is skipped, and an
+`unverifiable` write is judged by the first exact read after the override
+ends, provided that happens within the same window; otherwise it stays
+`unverifiable`, which does not flag `data_health`. A value outside
 `0..200`, such as a quick-mode code written by the app or keypad, is no
 airflow target and leaves the write unconfirmed.
 If the set-side read fails, the write is not confirmed and a later airflow
@@ -537,14 +544,20 @@ unavailable rather than showing frozen values:
   successful read, even if the gateway itself still answers
 - silent units are polled less often so they do not starve the others
 - units that still respond keep working independently
-- polling backs off progressively while the gateway stays unreachable
+- polling backs off progressively while the gateway stays unreachable, that is
+  after timeouts or lost connections; a unit that refuses reads with Modbus
+  exception responses still proves the link works and does not start a backoff
 - writes fail until communication is restored
 
 A unit's change to unavailable and its recovery are each logged once at info
 level. The check runs after every read job of that unit, so availability
 queries from entities, diagnostics, or system health have no side effects. A
-job whose optional reads swallowed their errors does not count as a recovery
-while the unit stays silent.
+job whose primary read groups swallowed their Modbus errors still counts as a
+failed job (`read_health.job_read_failure`), and only when every failed group
+timed out (`ReadHealth.last_error_timed_out`) does it count towards the gateway
+backoff. Bridge-local `40101` (`REGISTER_RF_COMM_STATUS`) responses do not
+count as a unit read answer in `TransportPolicy`, so a silent unit cannot
+appear reachable through gateway status reads.
 
 ### Temperatures are not identical conceptually
 
@@ -702,7 +715,7 @@ and every entity platform, including:
 - minimal setup-time capability probing
 - balanced airflow derivation and per-profile scaling
 - target-level scaling during room-state reads
-- `NaN` filtering for float temperature reads
+- `NaN` and out-of-range sentinel filtering for temperature and air-quality reads
 - scheduler job construction and due-job selection
 - coordinator write-then-refresh behavior, optimistic state, transport backoff
 - setup metadata repair, profile-aware entity cleanup, and serial unload

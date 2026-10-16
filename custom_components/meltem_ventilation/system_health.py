@@ -34,18 +34,19 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     if not entries:
         return {"loaded_entries": 0}
 
-    runtime_data: MeltemRuntimeData = entries[0].runtime_data
+    entry = entries[0]
+    runtime_data: MeltemRuntimeData = entry.runtime_data
     coordinator = runtime_data.coordinator
     last_job_error = coordinator.last_job_error
 
     return {
-        "loaded_entries": 1,
+        "loaded_entries": len(entries),
         "configured_units": len(coordinator.rooms),
         "state_units": coordinator.state_room_count,
         "last_update_success": coordinator.last_update_success,
         # The page is often pasted into issues, and by-id paths carry serial numbers.
         "last_job_error": (
-            redact_port(str(last_job_error), str(entries[0].data[CONF_PORT]))
+            redact_port(str(last_job_error), str(entry.data[CONF_PORT]))
             if last_job_error is not None
             else "none"
         ),

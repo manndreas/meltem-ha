@@ -15,7 +15,7 @@ is already `on` when the automation is loaded.
 1. Go to **Settings** > **Automations & scenes**.
 2. Open an automation or create one.
 3. Under **When**, select **Add trigger**.
-4. Select a Meltem device or its **Filter change due** entity as the target.
+4. Select a Meltem device as the target.
 5. Choose **Filter change due**.
 6. Set **Trigger when** and **For at least** as needed, then save the automation.
 

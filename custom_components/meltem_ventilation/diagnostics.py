@@ -68,6 +68,7 @@ async def async_get_config_entry_diagnostics(
 
     coordinator = runtime_data.coordinator
     port = str(entry.data[CONF_PORT])
+    transport = coordinator.client.transport_diagnostics()
     gateway_units: list[int] | None = None
     gateway_probe_error: str | None = None
     try:
@@ -90,7 +91,7 @@ async def async_get_config_entry_diagnostics(
             "state_room_count": coordinator.state_room_count,
             "gateway_units": gateway_units,
             "gateway_probe_error": gateway_probe_error,
-            "transport": coordinator.client.transport_diagnostics(),
+            "transport": transport,
             "last_job_error": (
                 redact_port(str(last_job_error), port) if last_job_error is not None else None
             ),

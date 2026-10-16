@@ -10,12 +10,13 @@ scans, profile probes, and pure utility functions) live in ``modbus_helpers.py``
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.util import dt as dt_util
 from modbus_connection import (
@@ -29,7 +30,6 @@ from modbus_connection import (
 from .const import (
     APP_UNBALANCED_PRESET_BASE,
     CO2_PROFILES,
-    CONTROL_SETTING_LIMITS,
     CONTROL_SETTING_REGISTERS,
     DEFAULT_GATEWAY_DEVICE_ID,
     HUMIDITY_PROFILES,
@@ -56,26 +56,40 @@ from .const import (
     profile_max_airflow,
 )
 from .device import MeltemRoomDevice
-from .device.components import ModeStatus
 from .modbus_helpers import (
+    PLAUSIBLE_RANGES,
     MeltemConnectionError,
     MeltemModbusError,
     derive_balanced_airflow,
     detect_slave_details,
     discover_gateway_nodes,
+    is_plausible,
     new_transport_policy,
+    normalize_control_setting,
     prepare_unit,
     read_gateway_node_count,
 )
 from .models import ReadHealth, RefreshPlan, RoomConfig, RoomState
 
+_LOGGER = logging.getLogger(__name__)
+
 _OPTIONAL_READ_BACKOFF_START_SECONDS = 30.0
 _OPTIONAL_READ_BACKOFF_MAX_SECONDS = 300.0
 _OPTIONAL_READ_BACKOFF_MAX_FAILURES = 5
 
+_MODE_GROUPS: tuple[str, ...] = ("flow_control", "intensive")
+_MODE_ENTITY_KEYS: tuple[str, ...] = ("operation_mode", "preset_mode", "intensive")
+
 # Fields of 0/1 registers that ``RoomState`` holds as bool.
 _FLAG_FIELDS = frozenset(
     {"error_status", "filter_change_due", "frost_protection_active", "rf_comm_status"}
+)
+
+_AIR_QUALITY_FIELDS: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("humidity_extract_air", "extract_air_quality", HUMIDITY_PROFILES),
+    ("co2_extract_air", "extract_air_quality", CO2_PROFILES),
+    ("humidity_supply_air", "supply_air_quality", HUMIDITY_PROFILES),
+    ("voc_supply_air", "supply_air_quality", VOC_PROFILES),
 )
 
 # Zero in both intensive shadow registers ends a running override.
@@ -98,6 +112,8 @@ class _ReadJob:
     """Read errors of one room read, per read-health group."""
 
     errors: dict[str, str] = field(default_factory=dict)
+    # Groups that failed with a timeout rather than an answer from the unit.
+    timeouts: set[str] = field(default_factory=set)
     # Set once the unit timed out; the rest of the job is skipped then.
     silent_error: ModbusError | None = None
 
@@ -106,6 +122,8 @@ class _ReadJob:
 
         for group in groups:
             self.errors.setdefault(group, str(error))
+            if isinstance(error, ModbusTimeoutError):
+                self.timeouts.add(group)
 
 
 @dataclass(slots=True)
@@ -178,7 +196,7 @@ class MeltemModbusClient:
         if max_requests_per_second is not None:
             self.update_request_rate(max_requests_per_second)
         self._units: dict[int, ModbusUnit] = {}
-        self._devices: dict[int, MeltemRoomDevice] = {}
+        self._devices: dict[tuple[int, str], MeltemRoomDevice] = {}
         # Avoid repeatedly polling a status block that a unit refuses.
         self._mode_backoff = _ReadBackoff()
         self._shut_down = False
@@ -215,11 +233,14 @@ class MeltemModbusClient:
         return unit
 
     def _room_device(self, room: RoomConfig) -> MeltemRoomDevice:
-        device = self._devices.get(room.slave)
+        key = (room.slave, room.profile)
+        device = self._devices.get(key)
         if device is None:
-            device = self._devices[room.slave] = MeltemRoomDevice(
+            device = self._devices[key] = MeltemRoomDevice(
                 self._unit(room.slave),
                 exhaust_temperature_only=room.profile in PLAIN_PROFILES,
+                has_co2=room.profile in CO2_PROFILES,
+                has_voc=room.profile in VOC_PROFILES,
             )
         return device
 
@@ -295,7 +316,8 @@ class MeltemModbusClient:
             updated = await self._poll(device, _due_reads(due), job)
             state = replace(previous_state, **_fresh_values(device, due, updated, job))
             if refresh_plan.refresh_airflow:
-                state = await self._read_mode_group(room, device, job, state)
+                block = await self._read_mode_block(room, device, job)
+                state = _apply_mode_read(room, state, block)
             return replace(
                 state,
                 group_read_health=_updated_read_health(room, previous_state, refresh_plan, job),
@@ -386,26 +408,11 @@ class MeltemModbusClient:
     ) -> None:
         """Write one operating mode using the documented control registers."""
 
-        balanced = ("current_level", _scale_airflow_to_raw(room, balanced_level))
-        writes: tuple[tuple[str, int], ...]
-        if operation_mode == OPERATION_MODE_OFF:
-            writes = (("mode", MODE_OFF), ("current_level", 0))
-        elif operation_mode == OPERATION_MODE_MANUAL:
-            writes = (("mode", MODE_MANUAL), balanced)
-        elif operation_mode == OPERATION_MODE_UNBALANCED:
-            writes = (
-                ("mode", MODE_UNBALANCED),
-                balanced,
-                ("extract_target_level", _scale_airflow_to_raw(room, extract_level)),
-            )
-        else:
-            sensor_control_value = SENSOR_MODE_TO_RAW_VALUE.get(operation_mode)
-            if sensor_control_value is None:
-                raise MeltemModbusError(
-                    f"Unsupported operating mode {operation_mode!r} for room {room.key}"
-                )
-            writes = (("mode", MODE_SENSOR_CONTROL), ("current_level", sensor_control_value))
-        await self._write_mode_registers(room, "writing operating mode", *writes)
+        await self._write_mode_registers(
+            room,
+            "writing operating mode",
+            *_operating_mode_writes(room, operation_mode, balanced_level, extract_level),
+        )
 
     async def write_preset_mode(
         self,
@@ -414,16 +421,11 @@ class MeltemModbusClient:
     ) -> None:
         """Write one confirmed app-style preset mode."""
 
-        raw_code = PRESET_MODE_TO_RAW_CODE.get(preset_mode)
-        if raw_code is None:
-            raise MeltemModbusError(f"Unsupported preset mode {preset_mode!r} for room {room.key}")
-
-        writes: tuple[tuple[str, int], ...]
-        if preset_mode == PRESET_MODE_INTENSIVE:
-            writes = (("preset_mode", MODE_MANUAL), ("preset_value", raw_code))
-        else:
-            writes = (*_CLEAR_INTENSIVE, ("mode", MODE_MANUAL), ("current_level", raw_code))
-        await self._write_mode_registers(room, "writing preset mode", *writes)
+        await self._write_mode_registers(
+            room,
+            "writing preset mode",
+            *_preset_mode_writes(room, preset_mode),
+        )
 
     async def clear_intensive(self, room: RoomConfig) -> None:
         """Cancel a running intensive override.
@@ -464,142 +466,51 @@ class MeltemModbusClient:
     #  Mode family (optional reads with backoff)
     # ------------------------------------------------------------------
 
-    async def _read_mode_status(
-        self,
-        room: RoomConfig,
-        device: MeltemRoomDevice,
-        job: _ReadJob,
-    ) -> ModeStatus | None:
-        """Read the current-state map, backing off only on exception responses.
+    async def _read_mode_block(
+        self, room: RoomConfig, device: MeltemRoomDevice, job: _ReadJob
+    ) -> _ModeRead | None:
+        """Read the read-only current-state map, backing off on exception responses.
 
-        A timeout means the unit went silent, so the rest of the job is skipped.
+        The set registers at 41120..41124 remain the write interface. A timeout
+        means the unit went silent, so the rest of the job is skipped.
         """
 
+        if not room.supports_any(_MODE_ENTITY_KEYS):
+            return None
         if job.silent_error is not None:
-            job.record_error(("flow_control", "intensive"), job.silent_error)
+            job.record_error(_MODE_GROUPS, job.silent_error)
             return None
 
         key = (room.slave, "mode_status")
         if self._mode_backoff.is_active(key):
             job.record_error(
-                ("flow_control", "intensive"),
+                _MODE_GROUPS,
                 self._mode_backoff.errors.get(key, "Read is temporarily backed off"),
             )
             return None
 
-        component = device.mode_status
+        status = device.mode_status
         try:
-            await component.async_update()
+            await status.async_update()
         except ModbusConnectionError:
             raise
-        except ModbusTimeoutError as err:
-            job.silent_error = err
-            job.record_error(("flow_control", "intensive"), err)
-            return None
-        except ModbusExceptionError as err:
-            self._mode_backoff.mark_failure(key, err)
-            job.record_error(("flow_control", "intensive"), err)
-            return None
         except ModbusError as err:
-            job.record_error(("flow_control", "intensive"), err)
+            if isinstance(err, ModbusTimeoutError):
+                job.silent_error = err
+            elif isinstance(err, ModbusExceptionError):
+                self._mode_backoff.mark_failure(key, err)
+            job.record_error(_MODE_GROUPS, err)
             return None
 
         self._mode_backoff.clear(key)
-        return component
-
-    async def _read_mode_block(
-        self, room: RoomConfig, device: MeltemRoomDevice, job: _ReadJob
-    ) -> _ModeRead | None:
-        """Read the read-only current-state map shared by supported profiles.
-
-        The set registers at 41120..41124 remain the write interface.
-        """
-
-        reports_mode = room.supports("operation_mode") or room.supports("preset_mode")
-        if not reports_mode and not room.supports("intensive"):
-            return None
-
-        status = await self._read_mode_status(room, device, job)
-        if status is None:
-            return None
-
-        mode = status.mode
-        current_level = status.current_level
-        extract_target_level = status.extract_target_level
-        if mode is None or current_level is None or extract_target_level is None:
-            job.record_error(
-                ("flow_control", "intensive"),
-                MeltemModbusError("Incomplete current-mode status read at 41100..41102"),
-            )
-            return None
+        mode = cast(int, status.mode)
+        current_level = cast(int, status.current_level)
         if mode == MODE_SENSOR_CONTROL:
             current_level = MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE.get(current_level, current_level)
         return _ModeRead(
-            mode=int(mode),
-            current_level=int(current_level),
-            extract_target_level=int(extract_target_level),
-        )
-
-    async def _read_mode_group(
-        self,
-        room: RoomConfig,
-        device: MeltemRoomDevice,
-        job: _ReadJob,
-        state: RoomState,
-    ) -> RoomState:
-        """Read and decode operating mode, airflow targets, and preset state.
-
-        ``state`` carries the fresh airflow and the previous mode values.
-        """
-
-        block = await self._read_mode_block(room, device, job)
-        raw_current_level: int | None
-        if block is not None and _mode_status_reports_intensive(block):
-            # The intensive status hides the base mode, so the last known one stays.
-            return replace(state, intensive_active=True)
-
-        if block is not None:
-            operation_mode = _decode_operation_mode(block.mode, block.current_level)
-            raw_current_level = block.current_level
-        else:
-            operation_mode = state.operation_mode
-            raw_current_level = None
-
-        raw_extract_target: int | None = None
-        extract_target_level: int | None = None
-        if operation_mode == OPERATION_MODE_UNBALANCED:
-            target_level = (
-                _decode_unbalanced_target_readback(room, raw_current_level)
-                if raw_current_level is not None
-                else state.target_level
-            )
-            raw_extract_target = block.extract_target_level if block is not None else None
-            extract_target_level = (
-                _decode_unbalanced_target_readback(room, raw_extract_target)
-                if raw_extract_target is not None
-                else state.extract_target_level
-            )
-        elif block is not None and block.mode == MODE_SENSOR_CONTROL:
-            # Here the current-level field carries a selector, not an airflow.
-            target_level = derive_balanced_airflow(state.extract_air_flow, state.supply_air_flow)
-        else:
-            # Measured airflow can lag after writes, so prefer the current
-            # target in the status map when it is plausible.
-            target_level = _decode_balanced_target_readback(
-                room,
-                raw_current_level,
-                state.extract_air_flow,
-                state.supply_air_flow,
-            )
-
-        return replace(
-            state,
-            operation_mode=operation_mode,
-            target_level=target_level,
-            balanced_target_readback=None,
-            extract_target_level=extract_target_level,
-            preset_mode=_decode_preset_mode(block, raw_extract_target, state.preset_mode),
-            intensive_active=state.intensive_active if block is None else False,
+            mode=mode,
+            current_level=current_level,
+            extract_target_level=cast(int, status.extract_target_level),
         )
 
 
@@ -639,12 +550,7 @@ def _due_fields(room: RoomConfig, plan: RefreshPlan) -> dict[str, _FieldRead]:
     add("outdoor_air_temperature", "temperatures", "temperature", extended and environment)
     add("extract_air_temperature", "temperatures", "temperature", extended and temperatures)
     add("supply_air_temperature", "supply_temperature", "temperature", extended and temperatures)
-    for name, component, profiles in (
-        ("humidity_extract_air", "extract_air_quality", HUMIDITY_PROFILES),
-        ("co2_extract_air", "extract_air_quality", CO2_PROFILES),
-        ("humidity_supply_air", "supply_air_quality", HUMIDITY_PROFILES),
-        ("voc_supply_air", "supply_air_quality", VOC_PROFILES),
-    ):
+    for name, component, profiles in _AIR_QUALITY_FIELDS:
         add(name, component, "temperature", environment and room.profile in profiles)
     add("error_status", "status", "status", plan.refresh_status)
     add("frost_protection_active", "status", "status", plan.refresh_status)
@@ -667,7 +573,13 @@ def _due_fields(room: RoomConfig, plan: RefreshPlan) -> dict[str, _FieldRead]:
         gated=False,
     )
     for key in CONTROL_SETTING_REGISTERS:
-        add(key, "control_settings", "control_settings", plan.refresh_control_settings)
+        profiles = HUMIDITY_PROFILES if key.startswith("humidity_") else CO2_PROFILES
+        add(
+            key,
+            "control_settings",
+            "control_settings",
+            plan.refresh_control_settings and room.profile in profiles,
+        )
     add("rf_comm_status", "rf_comm_status", "status", plan.refresh_status, attribute="value")
     return due
 
@@ -686,7 +598,12 @@ def _due_reads(due: dict[str, _FieldRead]) -> dict[str, tuple[str, ...]]:
 def _fresh_values(
     device: MeltemRoomDevice, due: dict[str, _FieldRead], updated: set[str], job: _ReadJob
 ) -> dict[str, Any]:
-    """Return the due fields whose component answered with a usable value."""
+    """Return the due fields whose component answered with a usable value.
+
+    A non-finite value fails the read group. A hardware sentinel such as 239 or
+    32767 only means one sensor reports nothing, so that field alone keeps its
+    last value and the rest of the group stays healthy.
+    """
 
     values: dict[str, Any] = {}
     for name, source in due.items():
@@ -695,6 +612,9 @@ def _fresh_values(
         value = getattr(getattr(device, source.component), source.attribute)
         if value is None or (isinstance(value, float) and not math.isfinite(value)):
             job.record_error((source.group,), f"Invalid {name} readback: {value!r}")
+            continue
+        if name in PLAUSIBLE_RANGES and not is_plausible(name, int(value)):
+            _LOGGER.debug("Ignoring implausible %s readback %r", name, value)
             continue
         values[name] = bool(value) if name in _FLAG_FIELDS else value
     return values
@@ -718,24 +638,15 @@ def _updated_read_health(
         if error is None:
             group_health[group_key] = ReadHealth(last_attempt=now, last_successful_read=now)
             continue
-        group_health[group_key] = previous_state.read_health_for(group_key).failed(now, error)
+        group_health[group_key] = previous_state.read_health_for(group_key).failed(
+            now, error, timed_out=group_key in job.timeouts
+        )
     return tuple(sorted(group_health.items()))
 
 
 # ----------------------------------------------------------------------
 #  Scaling and decoding
 # ----------------------------------------------------------------------
-
-
-def normalize_control_setting(setting_key: str, value: int) -> int:
-    """Clamp one control setting to its limits and round it to the register step."""
-
-    limits = CONTROL_SETTING_LIMITS.get(setting_key)
-    if setting_key not in CONTROL_SETTING_REGISTERS or limits is None:
-        raise MeltemModbusError(f"Unsupported control setting {setting_key!r}")
-    min_val, max_val, step = limits
-    clamped = max(min_val, min(max_val, value))
-    return min_val + ((clamped - min_val + step // 2) // step) * step
 
 
 def _scale_airflow_to_raw(room: RoomConfig, level: int) -> int:
@@ -747,75 +658,127 @@ def _scale_raw_level_to_airflow(room: RoomConfig, raw_level: int) -> int:
     return round(raw_level * profile_max_airflow(room.profile) / 200)
 
 
-def _decode_balanced_target_readback(
+def _operating_mode_writes(
     room: RoomConfig,
-    raw_level: int | None,
-    extract_air_flow: int | None,
-    supply_air_flow: int | None,
-) -> int | None:
-    """Return a balanced target for display, falling back to measured airflow."""
+    operation_mode: str,
+    balanced_level: int,
+    extract_level: int,
+) -> tuple[tuple[str, int], ...]:
+    """Build the mode-block register writes for ``operation_mode``."""
 
-    target = _decode_balanced_target_value(room, raw_level)
-    if target is not None:
-        return target
+    balanced = ("current_level", _scale_airflow_to_raw(room, balanced_level))
+    if operation_mode == OPERATION_MODE_OFF:
+        return (("mode", MODE_OFF), ("current_level", 0))
+    if operation_mode == OPERATION_MODE_MANUAL:
+        return (("mode", MODE_MANUAL), balanced)
+    if operation_mode == OPERATION_MODE_UNBALANCED:
+        return (
+            ("mode", MODE_UNBALANCED),
+            balanced,
+            ("extract_target_level", _scale_airflow_to_raw(room, extract_level)),
+        )
+    sensor_control_value = SENSOR_MODE_TO_RAW_VALUE.get(operation_mode)
+    if sensor_control_value is None:
+        raise MeltemModbusError(
+            f"Unsupported operating mode {operation_mode!r} for room {room.key}"
+        )
+    return (("mode", MODE_SENSOR_CONTROL), ("current_level", sensor_control_value))
 
-    # A shared "current level" only makes sense when both airflow
-    # directions are effectively balanced.
-    return derive_balanced_airflow(extract_air_flow, supply_air_flow)
+
+def _preset_mode_writes(room: RoomConfig, preset_mode: str) -> tuple[tuple[str, int], ...]:
+    """Build the mode-block register writes for ``preset_mode``."""
+
+    raw_code = PRESET_MODE_TO_RAW_CODE.get(preset_mode)
+    if raw_code is None:
+        raise MeltemModbusError(f"Unsupported preset mode {preset_mode!r} for room {room.key}")
+    if preset_mode == PRESET_MODE_INTENSIVE:
+        return (("preset_mode", MODE_MANUAL), ("preset_value", raw_code))
+    return (*_CLEAR_INTENSIVE, ("mode", MODE_MANUAL), ("current_level", raw_code))
 
 
-def _decode_balanced_target_value(room: RoomConfig, raw_level: int | None) -> int | None:
-    """Decode a readable balanced target without substituting measured airflow."""
+def _apply_mode_read(room: RoomConfig, state: RoomState, block: _ModeRead | None) -> RoomState:
+    """Apply a decoded mode-status read (or its absence) to ``state``."""
+
+    if block is not None and _mode_status_reports_intensive(block):
+        # The intensive status hides the base mode, so the last known one stays.
+        return replace(state, intensive_active=True)
+
+    operation_mode = (
+        _decode_operation_mode(block.mode, block.current_level)
+        if block is not None
+        else state.operation_mode
+    )
+    raw_current_level = block.current_level if block is not None else None
+    extract_target_level: int | None = None
+
+    if operation_mode == OPERATION_MODE_UNBALANCED:
+        target_level = (
+            _decode_target_level(room, raw_current_level)
+            if raw_current_level is not None
+            else state.target_level
+        )
+        extract_target_level = (
+            _decode_target_level(room, block.extract_target_level)
+            if block is not None
+            else state.extract_target_level
+        )
+    elif operation_mode in (OPERATION_MODE_OFF, OPERATION_MODE_MANUAL):
+        # Measured airflow can lag after writes, so prefer the current
+        # target in the status map when it is plausible.
+        target_level = _decode_target_level(room, raw_current_level)
+        if target_level is None:
+            target_level = derive_balanced_airflow(state.extract_air_flow, state.supply_air_flow)
+    else:
+        # Sensor control or an unknown mode carries no balanced target register.
+        target_level = derive_balanced_airflow(state.extract_air_flow, state.supply_air_flow)
+
+    return replace(
+        state,
+        operation_mode=operation_mode,
+        target_level=target_level,
+        balanced_target_readback=None,
+        extract_target_level=extract_target_level,
+        preset_mode=_decode_preset_mode(block, state.preset_mode),
+        intensive_active=state.intensive_active if block is None else False,
+    )
+
+
+def _decode_target_level(room: RoomConfig, raw_level: int | None) -> int | None:
+    """Decode a raw 0..200 target or app ``200 + airflow / 10`` preset value."""
 
     if raw_level is None:
         return None
     if 0 <= raw_level <= 200:
         return _scale_raw_level_to_airflow(room, raw_level)
-    return _decode_app_encoded_airflow(room, raw_level)
-
-
-def _decode_app_encoded_airflow(room: RoomConfig, raw_level: int) -> int | None:
-    """Decode the app's ``200 + airflow / 10`` encoding within the profile limit."""
-
-    if raw_level <= APP_UNBALANCED_PRESET_BASE:
-        return None
     airflow = (raw_level - APP_UNBALANCED_PRESET_BASE) * 10
     return airflow if airflow <= profile_max_airflow(room.profile) else None
 
 
-def _decode_unbalanced_target_readback(room: RoomConfig, raw_level: int) -> int | None:
-    """Decode one unbalanced target, including app-side preset encodings."""
-
-    if 0 <= raw_level <= 200:
-        return _scale_raw_level_to_airflow(room, raw_level)
-    return _decode_app_encoded_airflow(room, raw_level)
+_DIRECT_OPERATION_MODES: dict[int, str] = {
+    MODE_OFF: OPERATION_MODE_OFF,
+    MODE_MANUAL: OPERATION_MODE_MANUAL,
+    MODE_UNBALANCED: OPERATION_MODE_UNBALANCED,
+}
 
 
 def _decode_operation_mode(mode_value: int, current_value: int) -> str | None:
-    if mode_value == MODE_OFF:
-        return OPERATION_MODE_OFF
-    if mode_value == MODE_MANUAL:
-        return OPERATION_MODE_MANUAL
-    if mode_value == MODE_UNBALANCED:
-        return OPERATION_MODE_UNBALANCED
-    if mode_value != MODE_SENSOR_CONTROL:
-        return None
-    return RAW_VALUE_TO_SENSOR_MODE.get(current_value)
+    if mode_value == MODE_SENSOR_CONTROL:
+        return RAW_VALUE_TO_SENSOR_MODE.get(current_value)
+    return _DIRECT_OPERATION_MODES.get(mode_value)
 
 
 def _decode_preset_mode(
     block: _ModeRead | None,
-    raw_extract_target: int | None,
     previous_preset_mode: str | None,
 ) -> str | None:
     """Return the base quick mode from a status read that does not report intensive."""
 
     if block is None:
         return previous_preset_mode
-    if block.mode == MODE_UNBALANCED and raw_extract_target is not None:
-        if block.current_level == 0 and raw_extract_target > APP_UNBALANCED_PRESET_BASE:
+    if block.mode == MODE_UNBALANCED:
+        if block.current_level == 0 and block.extract_target_level > APP_UNBALANCED_PRESET_BASE:
             return PRESET_MODE_EXTRACT_ONLY
-        if raw_extract_target == 0 and block.current_level > APP_UNBALANCED_PRESET_BASE:
+        if block.extract_target_level == 0 and block.current_level > APP_UNBALANCED_PRESET_BASE:
             return PRESET_MODE_SUPPLY_ONLY
     if block.mode != MODE_MANUAL:
         return None

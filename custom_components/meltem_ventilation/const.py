@@ -37,6 +37,10 @@ DEFAULT_MAX_REQUESTS_PER_SECOND = 4.0
 MIN_MAX_REQUESTS_PER_SECOND = 0.5
 MAX_MAX_REQUESTS_PER_SECOND = 10.0
 
+# ---------------------------------------------------------------------------
+#  Serial link, polling, and write timing
+# ---------------------------------------------------------------------------
+
 FIXED_BAUDRATE = 19200
 FIXED_BYTESIZE: Final = 8
 FIXED_PARITY: Final = "E"
@@ -48,6 +52,7 @@ REQUEST_GAP_SECONDS = 0.1
 TRANSPORT_DISCONNECT_AFTER_TIMEOUTS = 3
 TRANSPORT_LINK_QUIET_SECONDS = 10.0
 TRANSPORT_RETRY_DELAY_SECONDS = 0.5
+
 FLOW_REFRESH_SECONDS = 10
 STATUS_REFRESH_SECONDS = 60
 TEMPERATURE_REFRESH_SECONDS = 60
@@ -64,6 +69,10 @@ WRITE_HEALTH_RETENTION_SECONDS = 600.0
 TARGET_OPTIMISTIC_SECONDS = 15.0
 POST_WRITE_REFRESH_RETRIES = 2
 POST_WRITE_REFRESH_INTERVAL_SECONDS = 2.5
+
+# ---------------------------------------------------------------------------
+#  Unit profiles
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,9 +113,7 @@ CO2_PROFILES: frozenset[str] = _profiles_with("co2")
 VOC_PROFILES: frozenset[str] = _profiles_with("voc")
 # Units that can run a sensor-driven control mode at all.
 SENSOR_CONTROL_PROFILES: frozenset[str] = HUMIDITY_PROFILES | CO2_PROFILES
-PLAIN_PROFILES: frozenset[str] = frozenset(
-    key for key, metadata in PROFILE_METADATA.items() if not metadata.capabilities
-)
+PLAIN_PROFILES: frozenset[str] = ALL_PROFILES - SENSOR_CONTROL_PROFILES
 
 
 def profile_label(profile: str) -> str:
@@ -122,9 +129,10 @@ def profile_max_airflow(profile: str) -> int:
     return metadata.max_airflow if metadata is not None else 100
 
 
-PRESET_MODE_LOW = "low"
-PRESET_MODE_MEDIUM = "medium"
-PRESET_MODE_HIGH = "high"
+# ---------------------------------------------------------------------------
+#  Operating and preset modes
+# ---------------------------------------------------------------------------
+
 PRESET_MODE_INTENSIVE = "intensive"
 PRESET_MODE_INACTIVE = "inactive"
 # Still decoded from the device, but no longer selectable: the separate supply
@@ -133,9 +141,9 @@ PRESET_MODE_EXTRACT_ONLY = "extract_only"
 PRESET_MODE_SUPPLY_ONLY = "supply_only"
 PRESET_MODE_OPTIONS: tuple[str, ...] = (
     PRESET_MODE_INACTIVE,
-    PRESET_MODE_LOW,
-    PRESET_MODE_MEDIUM,
-    PRESET_MODE_HIGH,
+    "low",
+    "medium",
+    "high",
 )
 
 PRESET_MODE_CODE_LOW = 228
@@ -143,9 +151,9 @@ PRESET_MODE_CODE_MEDIUM = 229
 PRESET_MODE_CODE_HIGH = 230
 PRESET_MODE_CODE_INTENSIVE = 227
 PRESET_MODE_TO_RAW_CODE: dict[str, int] = {
-    PRESET_MODE_LOW: PRESET_MODE_CODE_LOW,
-    PRESET_MODE_MEDIUM: PRESET_MODE_CODE_MEDIUM,
-    PRESET_MODE_HIGH: PRESET_MODE_CODE_HIGH,
+    "low": PRESET_MODE_CODE_LOW,
+    "medium": PRESET_MODE_CODE_MEDIUM,
+    "high": PRESET_MODE_CODE_HIGH,
     PRESET_MODE_INTENSIVE: PRESET_MODE_CODE_INTENSIVE,
 }
 RAW_CODE_TO_PRESET_MODE: dict[int, str] = {
@@ -202,6 +210,10 @@ LEVEL_SOURCE_MEASURED = "measured"
 
 LEVEL_WRITE_FALLBACK_BALANCED = "both_directions_balanced_manual"
 LEVEL_WRITE_FALLBACK_UNKNOWN_MODE = "unknown_mode_overridden"
+
+# ---------------------------------------------------------------------------
+#  Modbus registers
+# ---------------------------------------------------------------------------
 
 REGISTER_PRODUCT_ID = 40002
 REGISTER_SOFTWARE_VERSION = 40004
@@ -275,6 +287,10 @@ CONTROL_LEVEL_RANGES: tuple[tuple[str, str], ...] = (
     ("co2_min_level", "co2_max_level"),
 )
 
+# ---------------------------------------------------------------------------
+#  Entity groups and platforms
+# ---------------------------------------------------------------------------
+
 # Entities whose values one read-health group delivers; shared by the client
 # (health bookkeeping) and the coordinator (scheduling and availability).
 READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
@@ -321,7 +337,7 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
 
 ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
     **dict.fromkeys(
-        {
+        (
             "exhaust_temperature",
             "outdoor_air_temperature",
             "extract_air_temperature",
@@ -335,23 +351,21 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "days_until_filter_change",
             "operating_hours",
             "modbus_slave_id",
-        },
+        ),
         Platform.SENSOR,
     ),
     **dict.fromkeys(
-        {
+        (
             "error_status",
             "frost_protection_active",
             "filter_change_due",
             "rf_comm_status",
-        },
+            "data_health",
+        ),
         Platform.BINARY_SENSOR,
     ),
-    "data_health": Platform.BINARY_SENSOR,
-    "supply_level": Platform.FAN,
-    "extract_level": Platform.FAN,
+    **dict.fromkeys(("supply_level", "extract_level"), Platform.FAN),
     **dict.fromkeys(CONTROL_SETTING_REGISTERS, Platform.NUMBER),
-    "operation_mode": Platform.SELECT,
-    "preset_mode": Platform.SELECT,
+    **dict.fromkeys(("operation_mode", "preset_mode"), Platform.SELECT),
     "intensive": Platform.SWITCH,
 }

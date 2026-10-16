@@ -1,6 +1,6 @@
 # Home Assistant Integration Quality Scale
 
-Repository review date: **October 13, 2026**.
+Repository review date: **October 16, 2026**.
 
 This document records an internal assessment against the official
 [Quality Scale](https://developers.home-assistant.io/docs/core/integration-quality-scale/),
@@ -86,7 +86,7 @@ checks the descriptions for every config and options flow field.
 | ✅ | [`log-when-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/log-when-unavailable) | Each room is logged once at Info level when it reaches the failure threshold or has been silent too long, and once when it recovers. The check runs after every read job of the room, so availability queries from entities, diagnostics, and system health have no side effects. Single failed read jobs and gateway backoff changes are logged at Debug level. [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [test_coordinator_and_config_helpers.py](../../tests/components/meltem_ventilation/test_coordinator_and_config_helpers.py) |
 | ✅ | [`parallel-updates`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/parallel-updates) | Entity platforms set `PARALLEL_UPDATES = 0`; serialization is handled centrally by the coordinator. Examples: [fan.py](../../custom_components/meltem_ventilation/fan.py), [sensor.py](../../custom_components/meltem_ventilation/sensor.py). |
 | ➖ | [`reauthentication-flow`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/reauthentication-flow) | There are no credentials or authentication to renew. |
-| ✅ | [`test-coverage`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/test-coverage) | In the full coverage run, every integration module is above 95%: 99% overall, 96% for the lowest-coverage module (`modbus_helpers.py`), and 100% for [write_confirmation.py](../../custom_components/meltem_ventilation/write_confirmation.py). One platform test was excluded because its teardown attempts to open `/dev/ttyACM0`: [test_platform_matrix.py](../../tests/components/meltem_ventilation/test_platform_matrix.py). The added branch tests are in [test_write_confirmation.py](../../tests/components/meltem_ventilation/test_write_confirmation.py). |
+| ✅ | [`test-coverage`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/test-coverage) | In the full coverage run, overall coverage is 99%: every integration module except `modbus_helpers.py` (86% on Windows where the POSIX `/dev/serial/by-id` symlink test is skipped; 96% on Linux) is at 98% or above, and [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py), [write_confirmation.py](../../custom_components/meltem_ventilation/write_confirmation.py), and [device/transport.py](../../custom_components/meltem_ventilation/device/transport.py) are at 100% statement and branch coverage. |
 
 ## Gold
 
@@ -124,18 +124,18 @@ checks the descriptions for every config and options flow field.
 
 ## Verification
 
-Tests and static checks were last run on October 14, 2026, on Windows with
+Tests and static checks were last run on October 16, 2026, on Windows with
 Python 3.14.7 and the test dependencies pinned by the repository:
 
-- **Coverage run:** 698 passed and one skipped; one platform test was
-  excluded because its teardown attempts to open `/dev/ttyACM0`. The skipped
+- **Coverage run:** 712 passed and one skipped. The skipped
   test resolves a `/dev/serial/by-id` symlink, which Windows cannot create
   without elevated rights; it runs on Linux.
 - **Overall test coverage:** 99%. Every integration module except
-  `modbus_helpers.py` is at 97% or above; that module reaches 91% only on
+  `modbus_helpers.py` is at 98% or above; that module reaches 86% only on
   Windows, where the skipped symlink test leaves the by-id resolution
-  uncovered. The October 13 run reported 96% for it.
-- **`config_flow.py` and `write_confirmation.py`:** 100% each.
+  uncovered. The October 13 Linux run reported 96% for it.
+- **`config_flow.py`, `write_confirmation.py`, and `device/transport.py`:**
+  100% statement and 100% branch coverage.
 - **Ruff:** `ruff format --check` and `ruff check` passed for
   `custom_components`, `tests`, and `tools`.
 - **mypy --strict:** no findings in 28 source files; the Home Assistant
@@ -150,8 +150,7 @@ Python 3.14.7 and the test dependencies pinned by the repository:
   are configured in [ci.yml](../../.github/workflows/ci.yml).
 
 The coverage figures come from
-`pytest --cov=custom_components.meltem_ventilation --cov-report=term-missing
---deselect=tests/components/meltem_ventilation/test_platform_matrix.py::test_device_path_sensor_keeps_its_registry_entry_across_reloads`.
+`pytest --cov=custom_components.meltem_ventilation --cov-report=term-missing`.
 
 ## Recommended next steps
 
