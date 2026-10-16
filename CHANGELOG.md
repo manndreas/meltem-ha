@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.3.0
 
 - Keep the other temperature and air-quality values of a unit available when
   one sensor reports a hardware sentinel such as `239` or `32767`: only that
