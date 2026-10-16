@@ -1090,12 +1090,12 @@ re-enumeration were:
 
 | Unit | First captured success (CEST) | Delay after re-enumeration |
 |------|-------------------------------|----------------------------|
-| 3    | 01:46:56                       | 1 min 49 s                 |
-| 2    | 01:48:06                       | 2 min 59 s                 |
-| 1    | 01:52:45                       | 7 min 38 s                 |
-| 5    | 01:54:05                       | 8 min 57 s                 |
-| 4    | 01:54:34                       | 9 min 27 s                 |
-| 6    | 01:54:58                       | 9 min 51 s                 |
+| 3    | 01:46:56                      | 1 min 49 s                 |
+| 2    | 01:48:06                      | 2 min 59 s                 |
+| 1    | 01:52:45                      | 7 min 38 s                 |
+| 5    | 01:54:05                      | 8 min 57 s                 |
+| 4    | 01:54:34                      | 9 min 27 s                 |
+| 6    | 01:54:58                      | 9 min 51 s                 |
 
 The UI observer reported 206 parse errors, so these are first captured
 successes, not guaranteed exact first-recovery times. Direct state snapshots
