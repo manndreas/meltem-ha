@@ -918,6 +918,7 @@ class TestEffectiveLevels:
             await coordinator.async_set_unbalanced_levels("unit_1", 10, 90)
 
         assert err.value.translation_key == "write_failed"
+        assert err.value.translation_placeholders == {"unit": _UNIT_1.name}
         assert coordinator.effective_levels("unit_1") == (40, 40)
         assert client.read_calls[-1][1] == RefreshPlan.only(refresh_airflow=True)
         assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "failed"
