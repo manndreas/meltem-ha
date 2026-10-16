@@ -181,10 +181,18 @@ class TestAsyncSetupEntry:
         client.async_validate_gateway.side_effect = error
         entry = _entry(hass)
 
-        with pytest.raises(raised):
+        with pytest.raises(raised) as err:
             await async_setup_entry(hass, entry)
 
         client.shutdown.assert_called_once()
+        if raised is ConfigEntryNotReady:
+            assert err.value.translation_domain == DOMAIN
+            assert err.value.translation_key == "gateway_unavailable"
+            assert err.value.translation_placeholders == {"port": _PORT}
+        else:
+            assert err.value.translation_domain == DOMAIN
+            assert err.value.translation_key == "port_in_use"
+            assert not err.value.translation_placeholders
 
     async def test_client_takes_its_units_from_the_modbus_integration(
         self,

@@ -345,7 +345,7 @@
   },
   "exceptions": {
     "write_failed": {
-      "message": "Could not send the command to {unit}: {error}"
+      "message": "Could not send the command to {unit}. Check the Home Assistant log for details."
     },
     "opposite_airflow_unknown": {
       "message": "The opposite airflow of {unit} is currently unknown, so a single direction cannot be switched off. Try again once the unit reports its airflow."
@@ -355,6 +355,15 @@
     },
     "control_level_range": {
       "message": "The minimum level ({minimum} %) of {unit} must not be above its maximum level ({maximum} %)."
+    },
+    "gateway_unavailable": {
+      "message": "Could not connect to the Meltem gateway via serial port {port}. Check its USB connection and access permissions."
+    },
+    "port_in_use": {
+      "message": "The serial port is already in use with different serial settings."
+    },
+    "gateway_communication_failed": {
+      "message": "Communication with the Meltem gateway failed. Check the USB connection and serial port."
     }
   }
 }

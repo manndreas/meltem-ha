@@ -651,8 +651,11 @@ class TestAsyncUpdateData:
         coordinator.data = {}
         client.fail_rooms = {"unit_1", "unit_2"}
 
-        with pytest.raises(UpdateFailed):
+        with pytest.raises(UpdateFailed) as err:
             await coordinator._async_update_data()
+
+        assert err.value.translation_domain == DOMAIN
+        assert err.value.translation_key == "gateway_communication_failed"
 
     async def test_incremental_transport_failure_keeps_cached_state(
         self,
