@@ -208,11 +208,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
         await client.async_validate_gateway()
     except MeltemModbusError as err:
         client.shutdown()
-        raise ConfigEntryNotReady(str(err)) from err
+        _LOGGER.warning("Unable to connect to the Meltem gateway via %s: %s", port, err)
+        raise ConfigEntryNotReady(
+            translation_domain=DOMAIN,
+            translation_key="gateway_unavailable",
+            translation_placeholders={"port": port},
+        ) from err
     except HomeAssistantError as err:
         # Another integration already uses this port with other link settings.
         client.shutdown()
-        raise ConfigEntryError(str(err)) from err
+        _LOGGER.warning("Serial port %s cannot be used by the Meltem gateway: %s", port, err)
+        raise ConfigEntryError(
+            translation_domain=DOMAIN,
+            translation_key="port_in_use",
+        ) from err
 
     coordinator = MeltemDataUpdateCoordinator(
         hass,
