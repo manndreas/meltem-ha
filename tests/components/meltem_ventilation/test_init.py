@@ -186,11 +186,12 @@ class TestAsyncSetupEntry:
             await async_setup_entry(hass, entry)
 
         client.shutdown.assert_called_once()
-        if raised is ConfigEntryNotReady:
+        if isinstance(err.value, ConfigEntryNotReady):
             assert err.value.translation_domain == DOMAIN
             assert err.value.translation_key == "gateway_unavailable"
             assert err.value.translation_placeholders == {"port": _PORT}
         else:
+            assert isinstance(err.value, ConfigEntryError)
             assert err.value.translation_domain == DOMAIN
             assert err.value.translation_key == "port_in_use"
             assert not err.value.translation_placeholders

@@ -1189,7 +1189,13 @@ class TestDirectionalWrites:
         ):
             await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
 
-        warning.assert_not_called()
+        warning.assert_called_once()
+        assert warning.call_args is not None
+        assert warning.call_args.args[:2] == (
+            "Failed to send the command to %s: %s",
+            _UNIT_1.name,
+        )
+        assert isinstance(warning.call_args.args[2], MeltemModbusError)
         assert coordinator.level_write_fallback("unit_1") is None
         assert "unit_1" not in coordinator._level_fallbacks
 
