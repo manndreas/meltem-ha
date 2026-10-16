@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.2.0
 
 - Confirm balanced airflow writes with a single read of the set register
   `41121`, because the status value `41101` reports balanced targets as
