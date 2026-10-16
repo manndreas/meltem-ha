@@ -265,12 +265,66 @@ already measured above, these changes do not establish a duration-related
 field or a reversible A-B-A signature. The app setting was restored, but its
 stored value remains unreadable through the captured ranges.
 
+### 2026-10-16 — local keypad readback on slave 4
+
+A controlled app-side LOW A-B-A changed the saved airflow on unit `slave 4`
+from 10 to 20 m³/h and restored it to 10. Focused read-only Modbus requests
+returned holding register `40901` as `10`, `20`, then `10`. During these
+focused reads, current mode was `[3, 229, 0]` and measured airflow was
+`[30, 30]`.
+
+Further app-side checks found that `40901` is not a stable, dedicated
+LOW/MED/HIGH register:
+
+- Before the MED test, it returned `1` while the app showed LOW `10`, MED `30`,
+  and the unit was running MED at `30/30`; HIGH `60` was confirmed later.
+- Changing MED `30 -> 40` changed measured airflow `30/30 -> 40/40` while the
+  runtime mode stayed `[3, 229, 0]`. Register `40901` returned `20`, not `40`.
+  Restoring MED to `30` returned the airflow to `30/30` and `40901` to `30`.
+- Before the HIGH test, `40901` again returned `1`. Changing HIGH
+  `60 -> 70` made `40901` return `70`; restoring HIGH to `60` made it return
+  `60`. The unit remained in MED at `30/30` throughout.
+
+The official Modbus manual's register table documents configuration
+`42000..42009` and runtime control `41120..41132`; it does not list `409xx` or
+map the persistent keypad defaults to local Modbus registers
+([reference](reference/modbus.md)).
+
+On the same unit, reads of `40911` and `40949` returned Modbus exception
+`0x02` (`Illegal Data Address`); reading `13..15` did as well. Gateway address
+`1` also rejected those candidate addresses while its discovery register
+`43901` reported six units. These are read results only: they do not establish
+whether any candidate address is write-only.
+
+A broader keypad capture around the same session showed `51120..51133`,
+`51150..51151`, and `52010` changing from `43` to `53` after the app edit;
+`52009` changed from `4352` to `5386`. On restoring LOW, those values did not
+return to their original state. That capture also included a runtime transition
+from MED/30 to HIGH/60, followed by an explicit restore to MED/30, so its
+shadow-range changes are not a clean setting-only diff.
+
+Interpretation:
+
+- `40901` is locally readable and sometimes reflects a setting just changed
+  through the app, but the idle value `1` and the MED mismatch show that it is
+  likely shared, selected, or otherwise overwritten. Do not treat it as a
+  stable per-setting address.
+- App changes to MED and HIGH did affect the device as expected, but this does
+  not establish a local Modbus write sequence.
+- The cloud API uses `40911` to select a field and `40949` to write it. Neither
+  has been proven as a local Modbus write target; the official Modbus manual
+  does not document them.
+- No `40xxx` register was written. The local live-test safety rules prohibit
+  such writes; a local write path remains unverified.
+
 ## Confirmed local evidence
 
 - documented configuration writes exist for `42000..42009`
   - humidity control thresholds and airflow bounds
   - CO2 control thresholds and airflow bounds
   - external control input airflow and delays
+- on slave `4`, `40901` was locally readable and sometimes tracked an app-edited
+  keypad value, but not consistently enough to treat it as a per-setting value
 - runtime preset writes exist in `41120..41124` plus commit register `41132`
 - additional local shadow/meta ranges exist and do move when settings or panel
   actions change:
@@ -511,10 +565,13 @@ on speculative search.
 
 Current status after the latest keypad and intensive runs:
 
-- the stop criteria have effectively been met for now
-- local persistence is well supported, but a directly usable local register
-  model for app-side defaults is still missing
+- local persistence is well supported, but a directly usable local write
+  sequence for app-side defaults is still missing
 - the 2026-10-09 run-on-time A-B-A test still found no direct setting field;
   only shadow/meta drift was observed
-- further effort should return to normal integration work unless materially new
-  evidence appears.
+- the 2026-10-16 LOW/HIGH reads sometimes tracked app values through `40901`,
+  while MED did not; treat `40901` as a likely shared/overwritten readback
+- the vendor Modbus table does not document keypad-default writes; no
+  `40xxx` write was attempted
+- further progress needs a documented local write sequence or a separately
+  reviewed change to the live-test safety rules, not an unverified blind write

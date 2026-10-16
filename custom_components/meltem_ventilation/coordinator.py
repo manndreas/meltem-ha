@@ -403,7 +403,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             if self._backoff_seconds is None:
                 # Retrying at the request rate would hammer a gateway that is down.
                 self.update_interval = timedelta(seconds=TRANSPORT_BACKOFF_START_SECONDS)
-            raise UpdateFailed(str(err)) from err
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="gateway_communication_failed",
+            ) from err
 
     def _select_poll_job(self, now: float) -> tuple[PollJob | None, bool]:
         """Warm up all groups while allowing already-read groups to refresh."""
@@ -888,10 +891,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 room,
                 refresh_plan=readback_plan,
             )
+            _LOGGER.warning("Failed to send the command to %s: %s", room.name, err)
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="write_failed",
-                translation_placeholders={"unit": room.name, "error": str(err)},
+                translation_placeholders={"unit": room.name},
             ) from err
 
         confirmed_expected = (
