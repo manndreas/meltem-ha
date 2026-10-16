@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Keep the other temperature and air-quality values of a unit available when
+  one sensor reports a hardware sentinel such as `239` or `32767`: only that
+  value keeps its last reading instead of failing the whole read group.
+- Start the gateway polling backoff only after timeouts or lost connections,
+  not when a unit answers a read with a Modbus exception response.
+- Record the fallback of a fan command only after the gateway accepted the
+  write, so a failed write leaves no `last_write_fallback` or log warning behind.
+- Settle optimistic airflow, quick-mode, and intensive values only against a
+  read that succeeded after the write, and keep the exact balanced airflow
+  target across coarse status polls.
+- Count a read job whose groups all failed without raising as a failed job, so
+  units that stay silent or refuse reads become unavailable and show their last
+  job error in diagnostics.
+- Read only the registers a unit's profile has, so humidity-only units no
+  longer read CO2 and VOC registers.
+- Shut the coordinator down when a platform fails to set up.
+
 ## 4.2.0
 
 - Confirm balanced airflow writes with a single read of the set register

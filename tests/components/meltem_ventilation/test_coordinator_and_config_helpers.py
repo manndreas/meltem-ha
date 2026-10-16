@@ -430,6 +430,31 @@ class TestCoordinatorResilience:
         assert _update_interval_seconds(coordinator) == TRANSPORT_BACKOFF_START_SECONDS
         assert client.max_requests_per_second == 1.0
 
+    def test_request_rate_change_retunes_the_next_wake_up_when_not_backed_off(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator._startup_jobs = []
+        for job in coordinator._jobs:
+            job.next_due = 0.0
+
+        coordinator.update_request_rate(4.0)
+
+        assert client.max_requests_per_second == 4.0
+        assert coordinator._tick_seconds == 0.25
+        assert 0.25 <= _update_interval_seconds(coordinator) < 1.25
+
+    def test_idle_tick_when_no_jobs_are_configured(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [])
+
+        coordinator._schedule_next_tick()
+
+        assert _update_interval_seconds(coordinator) == 60.0
+
     def test_room_becomes_unavailable_after_repeated_read_failures(
         self,
         hass: HomeAssistant,
@@ -690,6 +715,86 @@ class TestEffectiveLevels:
         coordinator._optimistic_levels.set("unit_1", (80, 20))
 
         assert coordinator.effective_levels("unit_1") == (80, 20)
+
+    async def test_small_step_and_aba_writes_are_not_settled_by_pre_write_cache(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 62)
+
+        assert coordinator.effective_levels("unit_1") == (62, 60)
+        assert coordinator.level_source("unit_1") == "pending"
+
+        await coordinator.async_set_level("unit_1", 40)
+        await coordinator.async_set_level("unit_1", 60)
+        coordinator._confirm_pending_writes(coordinator.safe_data)
+
+        assert coordinator.effective_levels("unit_1") == (60, 60)
+        assert coordinator.level_source("unit_1") == "pending"
+        assert "unit_1" in coordinator._optimistic_levels._pending
+
+    def test_diverging_airflows_in_manual_mode_preserve_both_directions(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    operation_mode="manual",
+                    preset_mode="medium",
+                    target_level=None,
+                    supply_air_flow=0,
+                    extract_air_flow=40,
+                ),
+                "flow",
+                "flow_control",
+            )
+        }
+
+        assert coordinator.effective_levels("unit_1") == (0, 40)
+        assert coordinator.level_source("unit_1") == "measured"
+
+    def test_quick_mode_reports_measured_level_source_and_requires_fresh_flow(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    operation_mode="manual",
+                    preset_mode="medium",
+                    target_level=30,
+                    supply_air_flow=30,
+                    extract_air_flow=30,
+                ),
+                "flow",
+                "flow_control",
+            )
+        }
+
+        assert coordinator.effective_levels("unit_1") == (30, 30)
+        assert coordinator.level_source("unit_1") == "measured"
+
+        coordinator.data = {
+            "unit_1": _with_fresh_read_groups(
+                RoomState(
+                    operation_mode="manual",
+                    preset_mode="medium",
+                    target_level=30,
+                    supply_air_flow=30,
+                    extract_air_flow=30,
+                ),
+                "flow_control",
+            )
+        }
+
+        assert coordinator.effective_levels("unit_1") == (None, None)
+        assert coordinator.level_source("unit_1") is None
 
     def test_overlay_is_dropped_once_the_gateway_confirms(
         self,
@@ -1051,8 +1156,41 @@ class TestDirectionalWrites:
         assert coordinator.level_write_fallback("unit_1") is not None
 
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
+        coordinator._confirm_pending_writes(coordinator.data)
 
         assert coordinator.level_write_fallback("unit_1") is None
+        assert "unit_1" not in coordinator._level_fallbacks
+
+    async def test_fallback_is_cleared_by_a_subsequent_non_fallback_write(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        coordinator, _ = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {"unit_1": RoomState(operation_mode="manual")}
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
+        assert coordinator.level_write_fallback("unit_1") == "both_directions_balanced_manual"
+
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_EXTRACT, 40)
+
+        assert coordinator.level_write_fallback("unit_1") is None
+
+    async def test_failed_write_records_no_fallback(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {"unit_1": RoomState(operation_mode="manual")}
+
+        with (
+            patch.object(client, "write_level", new=AsyncMock(side_effect=MeltemModbusError("x"))),
+            patch("custom_components.meltem_ventilation.coordinator._LOGGER.warning") as warning,
+            pytest.raises(HomeAssistantError),
+        ):
+            await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 60)
+
+        warning.assert_not_called()
+        assert coordinator.level_write_fallback("unit_1") is None
+        assert "unit_1" not in coordinator._level_fallbacks
 
     async def test_fan_shows_the_pending_level_right_after_a_write(
         self,
@@ -1630,6 +1768,19 @@ class TestOptimisticPresetOverlay:
         await coordinator.async_clear_preset_mode("unit_1")
 
         assert client.write_operating_mode_calls == [("unit_1", "manual")]
+
+    async def test_clear_preset_is_noop_when_inactive(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {
+            "unit_1": RoomState(operation_mode="manual", preset_mode=None, target_level=30)
+        }
+
+        await coordinator.async_clear_preset_mode("unit_1")
+
+        assert client.write_operating_mode_calls == []
 
 
 class TestOptimisticIntensiveOverlay:

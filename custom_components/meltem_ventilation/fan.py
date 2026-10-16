@@ -31,7 +31,7 @@ from .const import (
 )
 from .coordinator import MeltemDataUpdateCoordinator
 from .entity import MeltemEntity, room_supports_entity
-from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, RoomConfig
+from .models import MeltemIntegrationConfigEntry, RoomConfig
 
 DEFAULT_TURN_ON_PERCENTAGE = 50
 
@@ -46,8 +46,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Meltem fan entities."""
 
-    runtime_data: MeltemRuntimeData = entry.runtime_data
-    coordinator = runtime_data.coordinator
+    coordinator = entry.runtime_data.coordinator
     async_add_entities(
         MeltemDirectionalFanEntity(coordinator, room, direction)
         for room in coordinator.rooms
@@ -79,46 +78,13 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         self._attr_speed_count = int_states_in_range(self._level_range)
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | bool | int | None]:
-        """Expose where the level comes from and when a write needs a fallback."""
-
-        _own_level, other_level = self._directional_levels()
-        attributes: dict[str, str | bool | int | None] = {
-            "opposite_airflow": other_level,
-            "opposite_airflow_known": other_level is not None,
-            "level_source": self.coordinator.level_source(self.room.key),
-        }
-        fallback = self.coordinator.level_write_fallback(self.room.key)
-        if fallback is not None:
-            attributes["last_write_fallback"] = fallback
-        elif other_level is None:
-            attributes["next_write_fallback"] = LEVEL_WRITE_FALLBACK_BALANCED
-        if self.room_state.operation_mode is None:
-            attributes["operating_mode_known"] = False
-            attributes["fan_write_may_override_mode"] = True
-        return attributes
-
-    def _handle_coordinator_update(self) -> None:
-        if percentage := self.percentage:
-            self._last_on_percentage = percentage
-        super()._handle_coordinator_update()
-
-    def _directional_levels(self) -> tuple[int | None, int | None]:
-        """Return this fan's level and the one of the opposite direction."""
-
-        supply, extract = self.coordinator.effective_levels(self.room.key)
-        if self._direction == DIRECTION_SUPPLY:
-            return supply, extract
-        return extract, supply
-
-    @property
     def is_on(self) -> bool | None:
         percentage = self.percentage
         return None if percentage is None else percentage > 0
 
     @property
     def percentage(self) -> int | None:
-        level, _other_level = self._directional_levels()
+        level, _ = self._directional_levels()
         if level is None:
             return None
         if level <= 0:
@@ -126,6 +92,25 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         # Measured airflow can exceed the rated maximum, e.g. during intensive
         # ventilation or when the configured profile understates the unit.
         return min(100, ranged_value_to_percentage(self._level_range, level))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | bool | int | None]:
+        """Expose where the level comes from and when a write needs a fallback."""
+
+        _, other_level = self._directional_levels()
+        attributes: dict[str, str | bool | int | None] = {
+            "opposite_airflow": other_level,
+            "opposite_airflow_known": other_level is not None,
+            "level_source": self.coordinator.level_source(self.room.key),
+        }
+        if (fallback := self.coordinator.level_write_fallback(self.room.key)) is not None:
+            attributes["last_write_fallback"] = fallback
+        elif other_level is None:
+            attributes["next_write_fallback"] = LEVEL_WRITE_FALLBACK_BALANCED
+        if self.room_state.operation_mode is None:
+            attributes["operating_mode_known"] = False
+            attributes["fan_write_may_override_mode"] = True
+        return attributes
 
     async def async_turn_on(
         self,
@@ -152,3 +137,16 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
             else 0
         )
         await self.coordinator.async_set_direction_level(self.room.key, self._direction, level)
+
+    def _handle_coordinator_update(self) -> None:
+        if percentage := self.percentage:
+            self._last_on_percentage = percentage
+        super()._handle_coordinator_update()
+
+    def _directional_levels(self) -> tuple[int | None, int | None]:
+        """Return this fan's level and the one of the opposite direction."""
+
+        supply, extract = self.coordinator.effective_levels(self.room.key)
+        if self._direction == DIRECTION_SUPPLY:
+            return supply, extract
+        return extract, supply

@@ -80,6 +80,13 @@ def test_airflow_readback_waits_for_a_supported_mode_and_available_targets() -> 
     )
     assert _checked_confirmation(unbalanced_without_targets, "airflow_levels", confirmation) is None
 
+    unverifiable = replace(confirmation, status="unverifiable")
+    during_intensive = RoomState(
+        intensive_active=True,
+        group_read_health=(("flow_control", health),),
+    )
+    assert _checked_confirmation(during_intensive, "airflow_levels", unverifiable) is None
+
 
 @pytest.mark.parametrize("target_level", [40, 60])
 def test_app_encoded_balanced_readback_confirms_a_level_write(target_level: int) -> None:

@@ -62,18 +62,26 @@ _SUFFIX_DEFAULT_PROFILES: dict[str, str] = {
     "fc_voc": "ii_fc_voc",
 }
 
+_PROFILE_SELECTOR = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        mode=selector.SelectSelectorMode.DROPDOWN,
+        options=[
+            selector.SelectOptionDict(value=key, label=label)
+            for key, label in MODEL_PROFILE_LABELS.items()
+        ],
+    )
+)
+
+_MAX_REQUEST_RATE_SELECTOR = selector.NumberSelector(
+    selector.NumberSelectorConfig(
+        min=MIN_MAX_REQUESTS_PER_SECOND,
+        max=MAX_MAX_REQUESTS_PER_SECOND,
+        step=0.5,
+        mode=selector.NumberSelectorMode.BOX,
+    )
+)
+
 type _Probe = Callable[[int], Awaitable[tuple[str, str | None]]]
-
-
-def _build_options_result_data(
-    config_entry: MeltemIntegrationConfigEntry, request_rate: float
-) -> dict[str, object]:
-    """Return the persisted options payload for finishing an options flow."""
-
-    return {
-        **config_entry.options,
-        CONF_MAX_REQUESTS_PER_SECOND: request_rate,
-    }
 
 
 def _port_schema(default: str) -> vol.Schema:
@@ -88,13 +96,11 @@ def _profiles_form(
 ) -> tuple[vol.Schema, dict[str, str]]:
     """Build the schema and description placeholders for one profile step."""
 
-    profile_selector = _build_profile_selector()
     data_schema = vol.Schema(
         {
-            vol.Required(
-                _profile_field_key(slave),
-                default=defaults_by_slave[slave],
-            ): profile_selector
+            vol.Required(_profile_field_key(slave), default=defaults_by_slave[slave]): (
+                _PROFILE_SELECTOR
+            )
             for slave in slaves
         }
     )
@@ -103,33 +109,6 @@ def _profiles_form(
         "unit_details": _unit_details(slaves, previews_by_slave, names_by_slave),
     }
     return data_schema, placeholders
-
-
-def _build_profile_selector() -> selector.SelectSelector:
-    """Build the selector used for per-device profile selection."""
-
-    return selector.SelectSelector(
-        selector.SelectSelectorConfig(
-            mode=selector.SelectSelectorMode.DROPDOWN,
-            options=[
-                selector.SelectOptionDict(value=key, label=label)
-                for key, label in MODEL_PROFILE_LABELS.items()
-            ],
-        )
-    )
-
-
-def _build_max_request_rate_selector() -> selector.NumberSelector:
-    """Build the selector used for the maximum scheduler request rate."""
-
-    return selector.NumberSelector(
-        selector.NumberSelectorConfig(
-            min=MIN_MAX_REQUESTS_PER_SECOND,
-            max=MAX_MAX_REQUESTS_PER_SECOND,
-            step=0.5,
-            mode=selector.NumberSelectorMode.BOX,
-        )
-    )
 
 
 def _profile_field_key(slave: int) -> str:
@@ -201,6 +180,23 @@ def _detected_profile_default(slave: int, detected_profiles_by_slave: Mapping[in
     return _SUFFIX_DEFAULT_PROFILES.get(detected_profile, "ii_plain")
 
 
+def _profile_defaults(
+    slaves: list[int],
+    detected_profiles_by_slave: Mapping[int, str] | None = None,
+    existing_rooms_by_slave: Mapping[int, Mapping[str, Any]] | None = None,
+) -> dict[int, str]:
+    """Return the default profile per unit, preferring an already stored selection."""
+
+    detected = detected_profiles_by_slave or {}
+    existing = existing_rooms_by_slave or {}
+    return {
+        slave: str(
+            existing.get(slave, {}).get("profile") or _detected_profile_default(slave, detected)
+        )
+        for slave in slaves
+    }
+
+
 def _build_rooms_from_profiles(
     slaves: list[int],
     selected_profiles: Mapping[str, Any],
@@ -265,18 +261,15 @@ async def _temporary_units(
     params = build_serial_params(port)
     policy = new_transport_policy()
     async with AsyncExitStack() as stack:
-        units: dict[int, ModbusUnit] = {}
 
         async def unit_for(slave: int) -> ModbusUnit:
-            if slave not in units:
-                try:
-                    unit = await stack.enter_async_context(
-                        async_get_temporary_unit(hass, params, slave)
-                    )
-                except HomeAssistantError as err:
-                    raise _PortInUseError(str(err)) from err
-                units[slave] = prepare_unit(unit, slave, policy)
-            return units[slave]
+            try:
+                unit = await stack.enter_async_context(
+                    async_get_temporary_unit(hass, params, slave)
+                )
+            except HomeAssistantError as err:
+                raise _PortInUseError(str(err)) from err
+            return prepare_unit(unit, slave, policy)
 
         yield unit_for
 
@@ -504,10 +497,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         data_schema, placeholders = _profiles_form(
             self._discovered_slaves,
-            {
-                slave: _detected_profile_default(slave, self._detected_profile_by_slave)
-                for slave in self._discovered_slaves
-            },
+            _profile_defaults(self._discovered_slaves, self._detected_profile_by_slave),
             self._preview_by_slave,
         )
         return self.async_show_form(
@@ -573,6 +563,16 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             )
         )
 
+    def _options_payload(self, request_rate: float | None = None) -> dict[str, object]:
+        """Return the persisted options payload for finishing an options flow."""
+
+        return {
+            **self.config_entry.options,
+            CONF_MAX_REQUESTS_PER_SECOND: (
+                self._max_requests_per_second if request_rate is None else request_rate
+            ),
+        }
+
     @property
     def _existing_rooms(self) -> dict[int, Mapping[str, Any]]:
         return {int(room["slave"]): room for room in self.config_entry.data[CONF_ROOMS]}
@@ -607,7 +607,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             request_rate = float(user_input[CONF_MAX_REQUESTS_PER_SECOND])
-            options = _build_options_result_data(self.config_entry, request_rate)
+            options = self._options_payload(request_rate)
             self.hass.config_entries.async_update_entry(self.config_entry, options=options)
             if (coordinator := self._coordinator) is not None:
                 coordinator.update_request_rate(request_rate)
@@ -623,7 +623,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                     vol.Required(
                         CONF_MAX_REQUESTS_PER_SECOND,
                         default=self._max_requests_per_second,
-                    ): _build_max_request_rate_selector(),
+                    ): _MAX_REQUEST_RATE_SELECTOR,
                 }
             ),
         )
@@ -639,17 +639,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             return await self.async_step_rescan_units()
 
         if user_input is not None:
-            return await self._async_apply_profiles(
-                {
-                    **self.config_entry.data,
-                    CONF_ROOMS: _build_rooms_from_profiles(
-                        slaves,
-                        user_input,
-                        self._preview_by_slave,
-                        existing_rooms,
-                    ),
-                }
-            )
+            return await self._async_save_profiles(slaves, user_input, existing_rooms)
 
         probed: dict[int, str] = {}
         if (coordinator := self._coordinator) is not None:
@@ -662,7 +652,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         return self._show_profiles_form(
             "edit_profiles",
             slaves,
-            {slave: str(existing_rooms[slave]["profile"]) for slave in slaves},
+            _profile_defaults(slaves, existing_rooms_by_slave=existing_rooms),
         )
 
     def _show_profiles_form(
@@ -684,10 +674,30 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             description_placeholders=placeholders,
         )
 
-    async def _async_apply_profiles(self, updated_data: dict[str, Any]) -> ConfigFlowResult:
+    async def _async_save_profiles(
+        self,
+        slaves: list[int],
+        user_input: Mapping[str, Any],
+        existing_rooms: Mapping[int, Mapping[str, Any]],
+        *,
+        resolve_port: bool = False,
+    ) -> ConfigFlowResult:
         """Persist changed room profiles and reload the entry."""
 
-        options = _build_options_result_data(self.config_entry, self._max_requests_per_second)
+        updated_data: dict[str, Any] = {
+            **self.config_entry.data,
+            CONF_ROOMS: _build_rooms_from_profiles(
+                slaves,
+                user_input,
+                self._preview_by_slave,
+                existing_rooms,
+            ),
+        }
+        if resolve_port:
+            updated_data[CONF_PORT] = await _async_resolve_port(
+                self.hass, self.config_entry.data[CONF_PORT]
+            )
+        options = self._options_payload()
         self.hass.config_entries.async_update_entry(
             self.config_entry, data=updated_data, options=options
         )
@@ -747,31 +757,19 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
 
         existing_rooms = self._existing_rooms
         if user_input is not None:
-            return await self._async_apply_profiles(
-                {
-                    **self.config_entry.data,
-                    CONF_PORT: await _async_resolve_port(
-                        self.hass, self.config_entry.data[CONF_PORT]
-                    ),
-                    CONF_ROOMS: _build_rooms_from_profiles(
-                        self._discovered_slaves,
-                        user_input,
-                        self._preview_by_slave,
-                        existing_rooms,
-                    ),
-                }
+            return await self._async_save_profiles(
+                self._discovered_slaves,
+                user_input,
+                existing_rooms,
+                resolve_port=True,
             )
 
         return self._show_profiles_form(
             "profiles",
             self._discovered_slaves,
-            {
-                slave: str(
-                    existing_rooms.get(slave, {}).get(
-                        "profile",
-                        _detected_profile_default(slave, self._detected_profile_by_slave),
-                    )
-                )
-                for slave in self._discovered_slaves
-            },
+            _profile_defaults(
+                self._discovered_slaves,
+                self._detected_profile_by_slave,
+                existing_rooms,
+            ),
         )

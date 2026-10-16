@@ -157,6 +157,7 @@ class TestAsyncSetupEntry:
             await async_setup_entry(hass, entry)
 
         assert not hasattr(entry, "runtime_data")
+        setup_mocks.coordinator_cls.return_value.async_shutdown.assert_awaited_once()
         setup_mocks.client_cls.return_value.shutdown.assert_called_once()
 
     @pytest.mark.parametrize(

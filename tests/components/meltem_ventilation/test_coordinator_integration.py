@@ -14,7 +14,7 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
-from modbus_connection import IllegalDataAddressError
+from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit, WriteEvent
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -597,6 +597,83 @@ class TestStartupWithRealClient:
         assert coordinator.read_group_available("unit_1", "flow")
         assert coordinator.read_group_stale("unit_1", "flow_control") is True
         assert MeltemDataHealthBinarySensor(coordinator, _ROOM_1).is_on is True
+        client.shutdown()
+
+    @pytest.mark.parametrize(
+        ("error", "backoff_seconds"),
+        [
+            (ModbusTimeoutError("silent"), TRANSPORT_BACKOFF_START_SECONDS),
+            # A unit that refuses reads still answers, so the link is healthy.
+            (IllegalDataAddressError(), None),
+        ],
+    )
+    async def test_real_client_failures_mark_room_unavailable_and_back_off_only_on_timeouts(
+        self,
+        hass: HomeAssistant,
+        clock: SimpleNamespace,
+        error: Exception,
+        backoff_seconds: float | None,
+    ) -> None:
+        link = MockModbusConnection()
+        unit = link.for_unit(_ROOM_1.slave)
+        unit.holding.update({41020: [30, 30], 41100: [3, 60, 0]})
+        client = MeltemModbusClient(link.for_unit, port="/dev/test")
+        entry = MockConfigEntry(domain=DOMAIN, title="Meltem", source="user")
+        entry.add_to_hass(hass)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass,
+            config_entry=entry,
+            client=client,
+            rooms=[_ROOM_1],
+            max_requests_per_second=10.0,
+        )
+
+        await coordinator.async_refresh()
+        assert coordinator.room_available("unit_1") is True
+
+        unit.fail_requests(error)
+        for _ in range(3):
+            for job in coordinator._jobs:
+                job.next_due = 0.0
+            coordinator._last_read_started = None
+            await coordinator._async_update_data()
+
+        assert coordinator.room_available("unit_1") is False
+        assert coordinator.last_job_error is not None
+        assert coordinator._backoff_seconds == backoff_seconds
+        client.shutdown()
+
+    async def test_balanced_target_readback_persists_across_coarse_status_polls(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        link = MockModbusConnection()
+        unit = link.for_unit(_ROOM_1.slave)
+        unit.holding.update({41020: [65, 65], 41100: [3, 206, 0], 41121: [130]})
+        client = MeltemModbusClient(link.for_unit, port="/dev/test")
+        entry = MockConfigEntry(domain=DOMAIN, title="Meltem", source="user")
+        entry.add_to_hass(hass)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass,
+            config_entry=entry,
+            client=client,
+            rooms=[_ROOM_1],
+            max_requests_per_second=10.0,
+        )
+        coordinator._writes.record_pending("unit_1", "airflow_levels", (65, 65))
+
+        await coordinator.async_refresh()
+        assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
+        assert coordinator.effective_levels("unit_1") == (65, 65)
+
+        clock.now += 11.0
+        coordinator._startup_jobs = []
+        for job in coordinator._jobs:
+            if job.key == "flow":
+                job.next_due = 0.0
+        coordinator._last_read_started = None
+        await coordinator._async_update_data()
+
+        assert coordinator.effective_levels("unit_1") == (65, 65)
         client.shutdown()
 
 

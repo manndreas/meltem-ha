@@ -5,9 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONTROL_LEVEL_RANGES,
+    DOMAIN,
     OPERATION_MODE_MANUAL,
     OPERATION_MODE_OFF,
     OPERATION_MODE_UNBALANCED,
@@ -15,7 +18,9 @@ from .const import (
     WRITE_HEALTH_RETENTION_SECONDS,
 )
 from .levels import levels_reached, target_levels
-from .models import RoomState, WriteConfirmation, WriteValue
+from .modbus_helpers import normalize_control_setting
+from .models import RoomConfig, RoomState, WriteConfirmation, WriteValue
+from .read_health import group_fresh
 
 CONTROL_SETTING_WRITE_PREFIX = "control_setting:"
 
@@ -98,6 +103,71 @@ class WriteConfirmations:
         ):
             return confirmation.expected_value
         return None
+
+    def check_control_level_range(
+        self, room: RoomConfig, state: RoomState, setting_key: str, value: int
+    ) -> None:
+        """Refuse a minimum level above the maximum level of the same sensor control."""
+
+        for min_key, max_key in CONTROL_LEVEL_RANGES:
+            if setting_key not in (min_key, max_key):
+                continue
+            minimum = self.unconfirmed_control_setting(room.key, min_key)
+            if minimum is None:
+                minimum = getattr(state, min_key)
+            maximum = self.unconfirmed_control_setting(room.key, max_key)
+            if maximum is None:
+                maximum = getattr(state, max_key)
+            if setting_key == min_key:
+                minimum = normalize_control_setting(min_key, value)
+            else:
+                maximum = normalize_control_setting(max_key, value)
+            if minimum is not None and maximum is not None and minimum > maximum:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="control_level_range",
+                    translation_placeholders={
+                        "unit": room.name,
+                        "minimum": str(minimum),
+                        "maximum": str(maximum),
+                    },
+                )
+
+    def is_confirmed(self, room_key: str, write_key: str) -> bool:
+        """Return whether a write has been confirmed by a readback."""
+
+        confirmation = self.by_room.get(room_key, {}).get(write_key)
+        return confirmation is not None and confirmation.status == "confirmed"
+
+    def prepare_balanced_target_readback(
+        self, room_key: str, state: RoomState, previous_state: RoomState
+    ) -> tuple[RoomState, bool]:
+        """Return the state and whether register 41121 must be read to confirm a write."""
+
+        if (
+            not group_fresh(state, "flow_control")
+            or state.intensive_active
+            or state.operation_mode not in (OPERATION_MODE_MANUAL, OPERATION_MODE_OFF)
+        ):
+            return state, False
+
+        if not self.needs_confirmation(room_key, "airflow_levels"):
+            if (
+                previous_state.balanced_target_readback is not None
+                and state.operation_mode == previous_state.operation_mode
+                and state.preset_mode is None
+                and state.target_level == previous_state.target_level
+            ):
+                return (
+                    replace(
+                        state,
+                        balanced_target_readback=previous_state.balanced_target_readback,
+                    ),
+                    False,
+                )
+            return state, False
+
+        return state, True
 
     def set_status(
         self,

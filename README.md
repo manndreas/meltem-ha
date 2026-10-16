@@ -81,8 +81,9 @@ UI instructions, options, and a YAML example.
 ### Run intensive ventilation while a room is occupied
 
 Replace both example entity IDs with the IDs from your Home Assistant
-instance. This starts the Meltem **Intensive** switch when occupancy is
-detected and turns it off after the room has been clear for 10 minutes.
+instance. This starts the Meltem **Intensive ventilation** switch when
+occupancy is detected and turns it off after the room has been clear for
+10 minutes.
 
 ```yaml
 alias: Ventilate while the bathroom is occupied
@@ -213,9 +214,10 @@ Each unit's values are refreshed in groups:
 | Data group | Normal refresh interval |
 | --- | ---: |
 | Airflow and operating mode | 10 seconds |
-| Status, temperatures, and environment sensors | 60 seconds |
+| Status flags (error, frost protection, RF communication) | 60 seconds |
+| Temperatures and environment sensors | 60 seconds |
 | Filter status and days until filter change | 1 hour |
-| Operating hours | 1 hour |
+| Operating hours and firmware version | 1 hour |
 | Humidity and CO2 control settings | 1 hour |
 
 The scheduler staggers jobs across units and processes due jobs sequentially.
@@ -224,21 +226,28 @@ configured units, a lower request-rate cap, or transport retries can delay the
 initial scan and later refreshes; the intervals above are targets, not
 guaranteed delivery times.
 
-After three consecutive transport failures, polling backs off from 5 seconds
-and increases up to 60 seconds. A successful read resumes the normal schedule.
+After three consecutive transport failures (timeouts or lost connections),
+polling backs off from 5 seconds and increases up to 60 seconds. A successful
+read resumes the normal schedule.
 Airflow data is considered stale after 30 seconds without a successful read;
-other groups become stale after three times their normal interval. A unit is
-marked unavailable after three consecutive failed read jobs or more than
-120 seconds without a successful response.
+other groups become stale after three times their normal interval. Read-only
+sensors and control-threshold numbers become unavailable when their own read
+group is stale or has failed three times in a row, while the fans, mode
+selectors, and intensive switch stay available as long as the unit itself
+answers so commands can still be sent. A unit as a whole is marked unavailable
+after three consecutive failed read jobs or more than 120 seconds without a
+successful unit response.
 
 ## Diagnostic entities
 
-Some diagnostic entities such as operating hours remain disabled by default.
-Firmware and hardware details are shown on the device card instead of as
-separate version sensors.
+**Days until filter change** and **Read health** are enabled by default;
+**Operating hours**, **RF communication status**, **Modbus slave ID**, and
+**Modbus device path** remain disabled by default. Firmware and hardware
+details are shown on the device card instead of as separate version sensors.
 
-**Read health** turns on when a read group is stale (three consecutive failed
-read jobs or its stale interval has elapsed), or while a recent command has
+**Read health** stays available even when a unit or individual read group is
+unavailable, and turns on when a read group is stale (three consecutive failed
+read jobs or its stale interval has elapsed) or while a recent command has
 failed, mismatched, or remained unconfirmed. Its attributes show the details
 per group and for recent commands.
 

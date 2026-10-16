@@ -47,9 +47,10 @@ never touch it:
 | Manual airflow | `41120 = 3`, `41121 = <raw>`, `41132 = 0` |
 
 If the unit does not clear `41123` / `41124` on its own, `41124 = 227` remains
-set after switching off. `_decode_intensive_active` then reports
-`intensive_active = True` for a unit that is not running, and the intensive
-switch in Home Assistant stays on.
+set after switching off. When the status registers `41100..41102` reflect that
+override, `_mode_status_reports_intensive` (formerly `_decode_intensive_active`
+on the set registers) reports `intensive_active = True` for a unit that is not
+running, and the intensive switch in Home Assistant stays on.
 
 ### Manufacturer documentation
 
@@ -422,7 +423,7 @@ Preference before measurement: **A**, then **C**, and only then consider **B**.
 
 Priority: low
 Status: parked
-Affected code: `modbus_client._decode_unbalanced_target_readback`
+Affected code: `modbus_client._decode_target_level`
 
 ### Observation (HW-3)
 
@@ -831,7 +832,7 @@ Priority: high (post-release validation)
 Status: open
 Affected code: `device/transport.py`, `device/components.py`,
 `modbus_helpers.prepare_unit`, `modbus_client._poll`,
-`modbus_client._read_mode_status`
+`modbus_client._read_mode_block`
 
 ### Observation (HW-7)
 
@@ -1391,7 +1392,7 @@ success criteria.
   `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS`, or `TRANSPORT_LINK_QUIET_SECONDS`
   from the measurements.
 - **C — skip the rest of a job on code 10/11** like on a timeout, in
-  `MeltemModbusClient._poll` and `_read_mode_status`, and keep code 10/11
+  `MeltemModbusClient._poll` and `_read_mode_block`, and keep code 10/11
   out of the mode backoff, if a powered-off unit answers that way.
 - **D — cap jobs and writes** with `asyncio.timeout` in the coordinator if the
   gateway sends code 6 and the 60 s retry blocks the UI.

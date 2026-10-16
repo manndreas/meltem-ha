@@ -53,8 +53,10 @@ class ReadHealth:
     last_successful_read: datetime | None = None
     consecutive_failures: int = 0
     last_error: str | None = None
+    # A timeout says nothing about the unit's answer, unlike an exception response.
+    last_error_timed_out: bool = False
 
-    def failed(self, attempted_at: datetime, error: str) -> ReadHealth:
+    def failed(self, attempted_at: datetime, error: str, *, timed_out: bool = False) -> ReadHealth:
         """Return this health after one more failed read."""
 
         return ReadHealth(
@@ -62,6 +64,7 @@ class ReadHealth:
             last_successful_read=self.last_successful_read,
             consecutive_failures=min(self.consecutive_failures + 1, READ_FAILURE_THRESHOLD),
             last_error=error,
+            last_error_timed_out=timed_out,
         )
 
 
@@ -123,11 +126,7 @@ class RoomState:
     def has_data(self) -> bool:
         """Return whether any value has been read yet."""
 
-        return any(
-            getattr(self, field.name) is not None
-            for field in fields(self)
-            if field.name != "group_read_health"
-        )
+        return any(getattr(self, name) is not None for name in _ROOM_VALUE_FIELDS)
 
     def read_health_for(self, group_key: str) -> ReadHealth:
         """Return the last recorded health for one read group."""
@@ -137,11 +136,13 @@ class RoomState:
     def with_read_health(self, group_key: str, health: ReadHealth) -> RoomState:
         """Return a copy with one group's health replaced."""
 
-        group_health = dict(self.group_read_health)
-        group_health[group_key] = health
+        group_health = {**dict(self.group_read_health), group_key: health}
         return replace(self, group_read_health=tuple(sorted(group_health.items())))
 
 
+_ROOM_VALUE_FIELDS: tuple[str, ...] = tuple(
+    field.name for field in fields(RoomState) if field.name != "group_read_health"
+)
 EMPTY_ROOM_STATE = RoomState()
 
 
@@ -166,8 +167,7 @@ class RefreshPlan:
 
             RefreshPlan.only(refresh_airflow=True)
         """
-        flags = dict.fromkeys((field.name for field in fields(cls)), False)
-        return cls(**(flags | kwargs))
+        return replace(_EMPTY_REFRESH_PLAN, **kwargs)
 
     def read_groups(self) -> tuple[str, ...]:
         """Return the read-health groups this plan refreshes."""
@@ -186,6 +186,11 @@ class RefreshPlan:
         if self.refresh_control_settings:
             groups.append("control_settings")
         return tuple(groups)
+
+
+_EMPTY_REFRESH_PLAN = RefreshPlan(
+    **dict.fromkeys((field.name for field in fields(RefreshPlan)), False)
+)
 
 
 @dataclass(slots=True)

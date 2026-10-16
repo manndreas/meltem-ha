@@ -20,6 +20,8 @@ from modbus_connection import (
     ModbusUnit,
 )
 
+from ..const import REGISTER_RF_COMM_STATUS
+
 _LOGGER = logging.getLogger(__name__)
 
 async_sleep = asyncio.sleep
@@ -27,6 +29,7 @@ async_sleep = asyncio.sleep
 # The gateway answered for a unit behind it that did not.
 _GATEWAY_TARGET_ERRORS = (GatewayTargetError, GatewayPathUnavailableError)
 _NO_ANSWER_ERRORS = (ModbusTimeoutError, ModbusProtocolError)
+_RETRYABLE_ERRORS = (*_GATEWAY_TARGET_ERRORS, *_NO_ANSWER_ERRORS)
 
 
 class TransportPolicy:
@@ -106,45 +109,52 @@ class TransportPolicy:
         *args: Any,
         is_read: bool,
     ) -> T:
-        """Run one request with the gateway's retry policy."""
+        """Run one request, retrying once on a lost link, timeout, or silent target."""
 
-        for last_attempt in (False, True):
-            try:
-                async with self._request_lock:
-                    if is_read:
-                        await self._wait_for_read_slot()
-                    if self._closed:
-                        raise ClientClosedError("The Meltem gateway client was shut down")
-                    try:
-                        result = await operation(*args)
-                    finally:
-                        if is_read:
-                            # Completion-based spacing also covers a slow connect
-                            # or time spent waiting inside the underlying link.
-                            self._last_read_finished = time.monotonic()
-            except ClientClosedError:
-                raise
-            except ModbusConnectionError:
-                if last_attempt:
-                    raise
-                await async_sleep(self._connection_retry_delay)
-            except _GATEWAY_TARGET_ERRORS:
-                self._link_answered()
-                if last_attempt:
-                    raise
-            except _NO_ANSWER_ERRORS:
-                await self._count_timeout(unit)
-                if last_attempt:
-                    raise
-            except ModbusExceptionError:
-                self._link_answered()
-                raise
-            else:
-                self._link_answered()
+        try:
+            return await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
+        except ClientClosedError:
+            raise
+        except ModbusConnectionError:
+            await async_sleep(self._connection_retry_delay)
+        except _RETRYABLE_ERRORS:
+            pass
+        return await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
+
+    async def _attempt[T](
+        self,
+        unit: ModbusUnit,
+        unit_id: int,
+        operation: Callable[..., Awaitable[T]],
+        *args: Any,
+        is_read: bool,
+    ) -> T:
+        """Run one serialized request and update link health."""
+
+        try:
+            async with self._request_lock:
                 if is_read:
-                    self._last_read_answer[unit_id] = time.monotonic()
-                return result
-        raise AssertionError("unreachable")
+                    await self._wait_for_read_slot()
+                if self._closed:
+                    raise ClientClosedError("The Meltem gateway client was shut down")
+                try:
+                    result = await operation(*args)
+                finally:
+                    if is_read:
+                        # Completion-based spacing also covers a slow connect
+                        # or time spent waiting inside the underlying link.
+                        self._last_read_finished = time.monotonic()
+        except ModbusExceptionError:
+            self._link_answered()
+            raise
+        except _NO_ANSWER_ERRORS:
+            await self._count_timeout(unit)
+            raise
+
+        self._link_answered()
+        if is_read and (not args or args[0] != REGISTER_RF_COMM_STATUS):
+            self._last_read_answer[unit_id] = time.monotonic()
+        return result
 
     def _link_answered(self) -> None:
         self._consecutive_timeouts = 0

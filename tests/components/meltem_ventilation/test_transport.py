@@ -414,6 +414,10 @@ class TestReadAnswerAge:
         assert policy.seconds_since_read_answer(2) is None
         assert policy.diagnostics()["seconds_since_any_answer"] is not None
 
+        await policy.run(unit, 2, AsyncMock(return_value=[0]), 40101, 1, is_read=True)
+        assert policy.seconds_since_read_answer(2) is None
+        assert policy.diagnostics()["seconds_since_any_answer"] is not None
+
         await _run(policy, unit, AsyncMock(return_value=[1, 2]))
         age = policy.seconds_since_read_answer(2)
         assert age is not None

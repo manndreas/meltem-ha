@@ -15,7 +15,7 @@ device error sensor.
 1. Go to **Settings** > **Automations & scenes**.
 2. Open an automation or create one.
 3. Under **And if**, select **Add condition**.
-4. Select a Meltem device or its **Filter change due** entity as the target.
+4. Select a Meltem device as the target.
 5. Choose **Filter change due**.
 6. Set **Condition passes if** and **For at least** as needed, then save the
    automation.

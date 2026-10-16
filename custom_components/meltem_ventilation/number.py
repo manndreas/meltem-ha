@@ -31,7 +31,6 @@ from .coordinator import MeltemDataUpdateCoordinator
 from .entity import MeltemEntity, room_supports_entity
 from .models import (
     MeltemIntegrationConfigEntry,
-    MeltemRuntimeData,
     RoomConfig,
     RoomState,
 )
@@ -86,8 +85,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Meltem number entities."""
 
-    runtime_data: MeltemRuntimeData = entry.runtime_data
-    coordinator = runtime_data.coordinator
+    coordinator = entry.runtime_data.coordinator
     async_add_entities(
         MeltemControlSettingNumber(coordinator, room, description)
         for room in coordinator.rooms
@@ -109,7 +107,7 @@ class MeltemControlSettingNumber(MeltemEntity, NumberEntity):
         room: RoomConfig,
         description: MeltemControlSettingNumberDescription,
     ) -> None:
-        super().__init__(coordinator, room, description.key, description.key)
+        super().__init__(coordinator, room, description.key)
         self.entity_description = description
 
     @property

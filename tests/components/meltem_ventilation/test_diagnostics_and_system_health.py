@@ -16,9 +16,11 @@ from homeassistant.helpers.json import ExtendedJSONEncoder
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import CONF_PORT, CONF_ROOMS, DOMAIN
+from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
 from custom_components.meltem_ventilation.diagnostics import (
     async_get_config_entry_diagnostics,
 )
+from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
 from custom_components.meltem_ventilation.models import ReadHealth, RoomConfig, RoomState
 from custom_components.meltem_ventilation.system_health import (
@@ -158,6 +160,32 @@ class TestDiagnostics:
         result = await async_get_config_entry_diagnostics(hass, entry)
 
         assert result["coordinator"]["unavailable_rooms"] == ["unit_1"]
+
+    async def test_captures_transport_counters_before_discovery_probe(
+        self, hass: HomeAssistant
+    ) -> None:
+        from modbus_connection.mock import MockModbusConnection
+
+        link = MockModbusConnection()
+        link.for_unit(1).holding.update({43901: 1, 43902: [2]})
+        client = MeltemModbusClient(link.for_unit, port=_PORT)
+        client._policy._consecutive_timeouts = 2
+        entry = _entry(hass, with_runtime=False)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass,
+            config_entry=entry,
+            client=client,
+            rooms=[_ROOM],
+            max_requests_per_second=10.0,
+        )
+        coordinator._last_job_error = MeltemModbusError(f"Job failed at {_PORT}")
+        entry.runtime_data = types.SimpleNamespace(coordinator=coordinator)
+
+        result = await async_get_config_entry_diagnostics(hass, entry)
+
+        assert result["coordinator"]["transport"]["consecutive_timeouts"] == 2
+        assert result["coordinator"]["last_job_error"] == f"Job failed at {REDACTED}"
+        client.shutdown()
 
     async def test_survives_an_entry_without_runtime_data(
         self,
