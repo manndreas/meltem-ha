@@ -11,7 +11,7 @@ If you open an issue, please include enough detail to reproduce the problem.
 - whether another integration, for example a Modbus hub in
   `configuration.yaml`, uses the same serial port
 - relevant Home Assistant logs, with debug logging enabled if possible (see
-  [Logs in the README](./README.md#logs))
+  the [diagnostics guide](./docs/DIAGNOSTICS.md#logs))
 - the integration diagnostics download when the entry is available; the serial
   port is redacted automatically
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.3.1
+
+- Simplify the README and move detailed control, polling, and availability
+  guidance into focused user documentation.
+- Add automation examples for scheduled quick modes and Read health alerts.
+
 ## 4.3.0
 
 - Keep the other temperature and air-quality values of a unit available when

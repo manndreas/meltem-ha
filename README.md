@@ -25,46 +25,12 @@ gateways, Home Assistant hosts, or other connected equipment.
 - automation triggers and conditions for a due filter change
 - USB discovery for the Meltem gateway
 
-## Controlling a unit
+## Controls
 
-Each unit is exposed as two `fan` entities:
-
-- **Supply air** — target airflow of the supply fan
-- **Extract air** — target airflow of the extract fan
-
-Setting both to the same value runs the unit balanced. Setting them to
-different values switches it to unbalanced operation, and setting one to zero
-runs the unit extract-only or supply-only, like the `Abluft` / `Zuluft`
-shortcuts of the Meltem app but with the airflow you set. When both are zero,
-the unit is switched off; turning it back on starts both directions again.
-
-A new fan value is shown immediately; the `level_source` attribute identifies
-whether the displayed airflow is a `pending` write, a confirmed `target`, or
-`measured` airflow. Turning on a fan that is already running changes nothing,
-so it does not end a running sensor mode; turning on a stopped direction
-restores its last speed. If the opposite direction cannot be read at the
-moment, a non-zero value is applied to both directions, and switching off a
-single direction is refused instead of stopping the whole unit.
-
-Two further controls complement the fans:
-
-- **Quick mode** — the app shortcuts `Low`, `Medium` and `High`. The airflow
-  behind these is configured in the Meltem app and cannot be read over Modbus.
-  `Individual` means no selectable `Low`, `Medium` or `High` quick mode is
-  active. Extract-only and supply-only operation appears as `Individual` in
-  this selector and is shown through the two fan values.
-- **Sensor control** — humidity, CO2 or automatic regulation, where supported.
-  Selecting `Off` ends a running sensor mode and returns the unit to manual
-  airflow; it does nothing when no sensor mode is active. While a sensor mode
-  is active the unit chooses the airflow itself, so the fans show measured
-  values instead of targets. Setting a non-zero fan speed leaves sensor control
-  with a balanced airflow; setting one direction to zero selects one-sided
-  operation without stopping the whole unit.
-
-Intensive ventilation stays a separate control because it is a temporary
-override that does not replace the active quick mode. It is exposed as a
-switch, so it can be cancelled before the runtime configured in the Meltem app
-has elapsed.
+Each unit has separate supply-air and extract-air `fan` entities. Quick mode,
+sensor control, and intensive ventilation controls complement the fans. See
+the [control guide](./docs/CONTROLS.md) for how these controls interact,
+including balanced and one-sided airflow and sensor modes.
 
 ## Automations
 
@@ -78,48 +44,8 @@ another trigger has fired. See the
 [filter change due condition guide](./docs/CONDITION_FILTER_CHANGE_DUE.md) for
 UI instructions, options, and a YAML example.
 
-### Run intensive ventilation while a room is occupied
-
-Replace both example entity IDs with the IDs from your Home Assistant
-instance. This starts the Meltem **Intensive ventilation** switch when
-occupancy is detected and turns it off after the room has been clear for
-10 minutes.
-
-```yaml
-alias: Ventilate while the bathroom is occupied
-description: Run Meltem intensive ventilation while occupancy is detected.
-triggers:
-  - trigger: state
-    entity_id: binary_sensor.bathroom_occupancy
-    to: "on"
-    id: occupied
-  - trigger: state
-    entity_id: binary_sensor.bathroom_occupancy
-    to: "off"
-    for: "00:10:00"
-    id: unoccupied
-conditions: []
-actions:
-  - choose:
-      - conditions:
-          - condition: trigger
-            id: occupied
-        sequence:
-          - action: switch.turn_on
-            target:
-              entity_id: switch.meltem_bathroom_intensive
-      - conditions:
-          - condition: trigger
-            id: unoccupied
-        sequence:
-          - action: switch.turn_off
-            target:
-              entity_id: switch.meltem_bathroom_intensive
-mode: single
-```
-
-The unit's intensive runtime configured in the Meltem app still applies, so it
-may end the override before the occupancy sensor has been clear for 10 minutes.
+See the [automation example](./docs/AUTOMATION_EXAMPLES.md) for a YAML
+automation that runs intensive ventilation while a room is occupied.
 
 ## Installation
 
@@ -145,10 +71,8 @@ may end the override before the occupancy sensor has been clear for 10 minutes.
 Copy `custom_components/meltem_ventilation/` into your Home Assistant config
 directory and restart Home Assistant.
 
-## Removing the integration
-
-To remove the config entry and uninstall the integration from HACS or a manual
-installation, follow the [removal instructions](./docs/REMOVE_INTEGRATION.md).
+To remove the config entry and uninstall the integration, follow the
+[removal instructions](./docs/REMOVE_INTEGRATION.md).
 
 ## Setup
 
@@ -186,11 +110,9 @@ different hardware is very welcome.
 Open the integration options via `Settings` -> `Devices & Services` -> `Meltem Modbus`
 -> `Configure`.
 
-- **Change request rate** — the maximum read-request rate shared by all units,
-  including retries and post-write readbacks. The scheduler also limits job
-  starts to this rate. Write sequences retain their separate hardware timing.
-  Startup values appear progressively, with airflow read before slower groups;
-  a lower rate makes the initial scan take longer.
+- **Change request rate** — adjust the shared read-request cap (default
+  **4 requests per second**, configurable from **0.5 to 10**). See
+  [polling and diagnostics](./docs/DIAGNOSTICS.md) for details.
 - **Change profiles for existing units** — reassign profiles without rescanning
   the gateway
 - **Scan for new units** — discover units that were added to the gateway after
@@ -199,57 +121,13 @@ Open the integration options via `Settings` -> `Devices & Services` -> `Meltem M
 To move the gateway to another serial port, choose `Reconfigure` in the menu
 of the integration entry. The new port is checked before it is saved.
 
-## Data updates
+## Polling and diagnostics
 
-The integration polls the gateway; it does not receive pushed updates. The
-request-rate setting is a shared cap on individual Modbus read requests across
-all configured units; retries and post-write readbacks count toward it.
-Poll-job starts are also spaced at the configured rate, so this is not an
-update interval for every entity. It defaults to **4 read requests per second**
-and can be set from **0.5 to 10 requests per second** in steps of 0.5. Write
-sequences retain their separate hardware timing.
-
-Each unit's values are refreshed in groups:
-
-| Data group | Normal refresh interval |
-| --- | ---: |
-| Airflow and operating mode | 10 seconds |
-| Status flags (error, frost protection, RF communication) | 60 seconds |
-| Temperatures and environment sensors | 60 seconds |
-| Filter status and days until filter change | 1 hour |
-| Operating hours and firmware version | 1 hour |
-| Humidity and CO2 control settings | 1 hour |
-
-The scheduler staggers jobs across units and processes due jobs sequentially.
-At startup, values appear progressively rather than in one snapshot. More
-configured units, a lower request-rate cap, or transport retries can delay the
-initial scan and later refreshes; the intervals above are targets, not
-guaranteed delivery times.
-
-After three consecutive transport failures (timeouts or lost connections),
-polling backs off from 5 seconds and increases up to 60 seconds. A successful
-read resumes the normal schedule.
-Airflow data is considered stale after 30 seconds without a successful read;
-other groups become stale after three times their normal interval. Read-only
-sensors and control-threshold numbers become unavailable when their own read
-group is stale or has failed three times in a row, while the fans, mode
-selectors, and intensive switch stay available as long as the unit itself
-answers so commands can still be sent. A unit as a whole is marked unavailable
-after three consecutive failed read jobs or more than 120 seconds without a
-successful unit response.
-
-## Diagnostic entities
-
-**Days until filter change** and **Read health** are enabled by default;
-**Operating hours**, **RF communication status**, **Modbus slave ID**, and
-**Modbus device path** remain disabled by default. Firmware and hardware
-details are shown on the device card instead of as separate version sensors.
-
-**Read health** stays available even when a unit or individual read group is
-unavailable, and turns on when a read group is stale (three consecutive failed
-read jobs or its stale interval has elapsed) or while a recent command has
-failed, mismatched, or remained unconfirmed. Its attributes show the details
-per group and for recent commands.
+The integration polls the gateway rather than receiving pushed updates.
+Values appear progressively at startup, depending on the request rate and
+number of configured units. See the
+[diagnostics guide](./docs/DIAGNOSTICS.md) for refresh intervals, read health,
+availability, and log collection.
 
 ## Troubleshooting
 
@@ -263,61 +141,24 @@ Check that:
 
 ### A single unit is unavailable
 
-A unit is marked unavailable after three consecutive failed read jobs or more
-than 120 seconds without a successful read. After 120 seconds of silence, its
-airflow polling is spaced to 60 seconds to reduce its load on the shared link;
-the other units continue to be polled. It becomes available automatically
-after a successful read. Check its power supply and radio link to the gateway;
-the **Read health** attributes and diagnostics download show which reads
-failed.
+Check the **Read health** attributes and download diagnostics. See
+[unit availability troubleshooting](./docs/DIAGNOSTICS.md#a-single-unit-is-unavailable)
+for details.
 
 ### Serial port shared with another integration
 
-The serial link is handled by Home Assistant's Modbus integration, so other
-integrations can use the same port. They must use the same serial settings
-(19200 baud, 8E1); otherwise setup reports that the port is already in use.
-The longest timeout any of them asks for applies to all requests on that
-port, so a long timeout elsewhere slows down this integration when a unit
-does not answer.
+See the
+[serial-port troubleshooting guide](./docs/DIAGNOSTICS.md#serial-port-shared-with-another-integration)
+for shared-port settings and timeout behavior.
 
 ### Logs
 
-In Home Assistant:
-
-1. Open `Settings`
-2. Open `System`
-3. Open `Logs`
-
-With the `Terminal & SSH` add-on:
-
-```bash
-ha core logs | grep meltem_ventilation
-```
-
-The serial link itself is handled by Home Assistant's Modbus integration. To
-see its traffic, enable debug logging in `configuration.yaml`:
-
-```yaml
-logger:
-  logs:
-    custom_components.meltem_ventilation: debug
-    modbus_connection: debug
-    tmodbus: debug
-```
+Follow the [log collection steps](./docs/DIAGNOSTICS.md#logs).
 
 ## Support
 
 Please include Home Assistant logs and a short description of your unit/gateway
 setup when opening an issue; [SUPPORT.md](./SUPPORT.md) lists what helps.
 
-Additional project docs:
-
-- [CHANGELOG.md](./CHANGELOG.md): release history
-- [CONTRIBUTING.md](./CONTRIBUTING.md): development setup and guidelines
-- [docs/dev/reference/](./docs/dev/reference/README.md): manufacturer reference
-- [docs/dev/MELTEM.md](./docs/dev/MELTEM.md): observed hardware behavior
-- [docs/dev/DEVELOPER.md](./docs/dev/DEVELOPER.md): implementation notes
-- [docs/dev/HARDWARE_BACKLOG.md](./docs/dev/HARDWARE_BACKLOG.md): open hardware questions
-- [docs/dev/LIVE_GATEWAY_TESTS.md](./docs/dev/LIVE_GATEWAY_TESTS.md): test plan for a live gateway
-- [docs/dev/SETTING_RE_BACKLOG.md](./docs/dev/SETTING_RE_BACKLOG.md): parked reverse engineering of app settings
-- [docs/dev/TODO.md](./docs/dev/TODO.md): open non-hardware work
+For release notes and development guidance, see [CHANGELOG.md](./CHANGELOG.md)
+and [CONTRIBUTING.md](./CONTRIBUTING.md).
