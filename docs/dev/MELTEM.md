@@ -577,14 +577,17 @@ that code rather than by the shared product fields. The integration exposes
 this six-digit `R` code as the disabled-by-default per-unit **App setup code**
 diagnostic, reading `40000..40001` only when the entity is enabled.
 
-On slave `4`, additional reads of the already known readable islands returned
-zeros at `40024..40033`, `40050..40051`, and `40071`, plus `8` at `40041`.
-The single-register scan of `40000..40209` found 55 readable registers; no
-other value matched the printed Device No. or Part No. Modbus function
-`0x2B/0x0E` (Read Device Identification) returned exception `0x01`
-(`Illegal Function`) on slave `4`. No writes were made. These results do not
-establish that `40000/40001` encode the printed Device No.; they encode the
-DataMatrix `R` code, whose relation to the longer Device No. remains unknown.
+On 2026-10-21, slave `4` was scanned one register at a time across the entire
+safe `40000..49999` holding-register range using function `0x03` and at least
+100 ms between requests. There were 104 readable addresses and 9,896 Modbus
+exceptions. Function `0x04` was also tried at every address in that range and
+returned no readable input registers (10,000 exceptions). The holding-register
+hits were the identity/data islands listed above, `41000..41034`, `41100..41112`,
+and `49001=0`; the last value has no known identity meaning. No additional
+value matched the printed Device No. or Part No. Modbus function `0x2B/0x0E`
+(Read Device Identification) returned exception `0x01` (`Illegal Function`)
+on slave `4`. No writes were made. The `40000/40001` pair is the DataMatrix
+`R` code, not the printed Device No.; their relationship remains unknown.
 
 ## Temperature register quirk
 
