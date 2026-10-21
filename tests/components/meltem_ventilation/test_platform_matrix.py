@@ -9,20 +9,22 @@ docs/dev/reference/models.md.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from unittest.mock import AsyncMock
+from datetime import timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.const import Platform
+from homeassistant.const import EntityCategory, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.meltem_ventilation.const import (
     CONF_PORT,
     CONF_ROOMS,
     DOMAIN,
+    GATEWAY_ENTITY_PLATFORM_BY_KEY,
     MODEL_PROFILES,
     PLATFORMS,
     READ_GROUP_ENTITY_KEYS,
@@ -41,6 +43,9 @@ _BASE_SENSORS = {
     "days_until_filter_change",
     "operating_hours",
     "modbus_slave_id",
+    "airflow_balance",
+    "last_successful_update",
+    "last_write_status",
 }
 # The -F variant adds all remaining temperatures together with humidity.
 _HUMIDITY_SENSORS = {
@@ -59,6 +64,7 @@ _BASE_BINARY_SENSORS = {
     "filter_change_due",
     "rf_comm_status",
     "data_health",
+    "connectivity",
 }
 
 _HUMIDITY_NUMBERS = {
@@ -127,6 +133,10 @@ def setup_profile_fixture(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.MeltemModbusClient.async_validate_gateway",
         AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.MeltemModbusClient.async_read_gateway_uptime",
+        AsyncMock(return_value=123),
     )
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.coordinator."
@@ -273,27 +283,195 @@ async def test_entity_states_follow_every_coordinator_update(
         assert problem_state.state == ("on" if error else "off")
 
 
-async def test_device_path_sensor_keeps_its_registry_entry_across_reloads(
-    hass: HomeAssistant, setup_profile: SetupProfile
+@pytest.mark.parametrize("key", GATEWAY_ENTITY_PLATFORM_BY_KEY)
+async def test_gateway_sensor_keeps_its_registry_entry_across_reloads(
+    hass: HomeAssistant, setup_profile: SetupProfile, key: str
 ) -> None:
     """The registry cleanup must not recreate it, which would drop user settings."""
     entry_id = await setup_profile("ii_plain")
     registry = er.async_get(hass)
-    path_entity = next(
+    gateway_entity = next(
         entity
         for entity in _entries(hass, entry_id)
-        if entity.unique_id.endswith("_modbus_device_path")
+        if entity.unique_id == f"{DOMAIN}_{entry_id}_{key}"
     )
-    registry.async_update_entity(path_entity.entity_id, name="Gateway port")
+    registry.async_update_entity(gateway_entity.entity_id, name="My diagnostic", disabled_by=None)
 
     assert await hass.config_entries.async_reload(entry_id)
     await hass.async_block_till_done()
 
-    reloaded = registry.async_get(path_entity.entity_id)
+    reloaded = registry.async_get(gateway_entity.entity_id)
     assert reloaded is not None
-    assert reloaded.id == path_entity.id
-    assert reloaded.name == "Gateway port"
+    assert reloaded.id == gateway_entity.id
+    assert reloaded.name == "My diagnostic"
+    assert reloaded.disabled_by is None
     assert reloaded.device_id is not None
     device = dr.async_get(hass).async_get(reloaded.device_id)
     assert device is not None
     assert (DOMAIN, entry_id) in device.identifiers
+
+
+async def test_gateway_diagnostics_are_created_once_on_the_gateway(
+    hass: HomeAssistant, setup_profile: SetupProfile
+) -> None:
+    entry_id = await setup_profile("ii_plain", room_count=2)
+    prefix = f"{DOMAIN}_{entry_id}_"
+    entities = [
+        entity for entity in _entries(hass, entry_id) if entity.unique_id.startswith(prefix)
+    ]
+
+    assert {entity.unique_id.removeprefix(prefix) for entity in entities} == set(
+        GATEWAY_ENTITY_PLATFORM_BY_KEY
+    )
+    assert len(entities) == len(GATEWAY_ENTITY_PLATFORM_BY_KEY)
+    assert len({entity.device_id for entity in entities}) == 1
+    for entity in entities:
+        key = entity.unique_id.removeprefix(prefix)
+        assert entity.domain == GATEWAY_ENTITY_PLATFORM_BY_KEY[key].value
+        assert entity.entity_category is (
+            None
+            if key in {"gateway_supply_air_flow", "gateway_extract_air_flow"}
+            else EntityCategory.DIAGNOSTIC
+        )
+        assert entity.disabled_by is (
+            None
+            if key
+            in {
+                "gateway_connectivity",
+                "gateway_error_units",
+                "gateway_filter_due_units",
+                "gateway_supply_air_flow",
+                "gateway_extract_air_flow",
+            }
+            else er.RegistryEntryDisabler.INTEGRATION
+        )
+
+
+async def test_uptime_activation_and_unload(
+    hass: HomeAssistant, setup_profile: SetupProfile
+) -> None:
+    entry_id = await setup_profile("ii_plain")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    assert not entry.runtime_data.coordinator._gateway_uptime_enabled
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_gateway_uptime"
+    )
+    assert entity_id is not None
+    registry.async_update_entity(entity_id, disabled_by=None)
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinator
+    assert coordinator._gateway_uptime_enabled
+    assert await hass.config_entries.async_unload(entry_id)
+    assert not coordinator._gateway_uptime_enabled
+    assert coordinator._gateway_uptime_task is None
+
+
+async def test_room_clock_updates_without_reads_and_stops_after_unload(
+    hass: HomeAssistant, setup_profile: SetupProfile
+) -> None:
+    entry_id = await setup_profile("ii_plain")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    coordinator = entry.runtime_data.coordinator
+    await coordinator.async_shutdown()
+    coordinator.client.read_room_state.reset_mock()
+    registry = er.async_get(hass)
+    write_id = registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_unit_1_last_write_status"
+    )
+    connectivity_id = registry.async_get_entity_id(
+        Platform.BINARY_SENSOR, DOMAIN, f"{DOMAIN}_unit_1_connectivity"
+    )
+    assert write_id is not None
+    assert connectivity_id is not None
+    now = dt_util.utcnow()
+    state = RoomState(target_level=30).with_read_health(
+        "flow", ReadHealth(last_attempt=now, last_successful_read=now)
+    )
+    coordinator._writes.record_pending("unit_1", "preset_mode", "low")
+    coordinator.async_set_updated_data({"unit_1": state})
+    await hass.async_block_till_done()
+    write_state = hass.states.get(write_id)
+    connectivity_state = hass.states.get(connectivity_id)
+    assert write_state is not None
+    assert connectivity_state is not None
+    assert write_state.state == "pending"
+    assert connectivity_state.state == "on"
+
+    coordinator._room_failures["unit_1"] = 3
+    with patch(
+        "custom_components.meltem_ventilation.write_confirmation.dt_util.utcnow",
+        return_value=now + timedelta(seconds=31),
+    ):
+        async_fire_time_changed(hass, now + timedelta(seconds=31))
+        await hass.async_block_till_done()
+    write_state = hass.states.get(write_id)
+    connectivity_state = hass.states.get(connectivity_id)
+    assert write_state is not None
+    assert connectivity_state is not None
+    assert write_state.state == "unconfirmed"
+    assert connectivity_state.state == "off"
+    coordinator.client.read_room_state.assert_not_awaited()
+    assert await hass.config_entries.async_unload(entry_id)
+    with patch.object(coordinator, "latest_write") as latest:
+        async_fire_time_changed(hass, now + timedelta(seconds=42))
+        await hass.async_block_till_done()
+        latest.assert_not_called()
+
+
+async def test_gateway_clock_updates_without_reads_and_stops_after_unload(
+    hass: HomeAssistant, setup_profile: SetupProfile
+) -> None:
+    entry_id = await setup_profile("ii_plain")
+    registry = er.async_get(hass)
+    age_id = registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_gateway_last_answer_age"
+    )
+    connectivity_id = registry.async_get_entity_id(
+        Platform.BINARY_SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_gateway_connectivity"
+    )
+    assert age_id is not None
+    assert connectivity_id is not None
+    registry.async_update_entity(age_id, disabled_by=None)
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    coordinator = entry.runtime_data.coordinator
+    await coordinator.async_shutdown()
+    coordinator.client.read_room_state.reset_mock()
+    coordinator.last_update_success = False
+
+    now = dt_util.utcnow()
+    with patch.object(
+        coordinator.client, "transport_diagnostics", return_value={"seconds_since_any_answer": 0.0}
+    ) as diagnostics:
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        connectivity_state = hass.states.get(connectivity_id)
+        age_state = hass.states.get(age_id)
+        assert connectivity_state is not None
+        assert age_state is not None
+        assert connectivity_state.state == "on"
+        assert age_state.state == "0.0"
+
+        diagnostics.return_value = {"seconds_since_any_answer": 121.0}
+        async_fire_time_changed(hass, now + timedelta(seconds=11))
+        await hass.async_block_till_done()
+
+        connectivity_state = hass.states.get(connectivity_id)
+        age_state = hass.states.get(age_id)
+        assert connectivity_state is not None
+        assert age_state is not None
+        assert connectivity_state.state == "off"
+        assert age_state.state == "121.0"
+        coordinator.client.read_room_state.assert_not_awaited()
+
+        assert await hass.config_entries.async_unload(entry_id)
+        diagnostics.reset_mock()
+        async_fire_time_changed(hass, now + timedelta(seconds=22))
+        await hass.async_block_till_done()
+        diagnostics.assert_not_called()

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import math
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -30,6 +31,7 @@ async_sleep = asyncio.sleep
 _GATEWAY_TARGET_ERRORS = (GatewayTargetError, GatewayPathUnavailableError)
 _NO_ANSWER_ERRORS = (ModbusTimeoutError, ModbusProtocolError)
 _RETRYABLE_ERRORS = (*_GATEWAY_TARGET_ERRORS, *_NO_ANSWER_ERRORS)
+COMMUNICATION_WINDOW_SECONDS = 300.0
 
 
 class TransportPolicy:
@@ -60,6 +62,7 @@ class TransportPolicy:
         self._read_interval = 0.0
         self._last_read_finished: float | None = None
         self._closed = False
+        self._request_samples: deque[tuple[float, float | None]] = deque(maxlen=10000)
 
     def update_request_rate(self, max_requests_per_second: float) -> None:
         """Limit read attempts across every unit sharing this policy."""
@@ -91,6 +94,8 @@ class TransportPolicy:
     def diagnostics(self) -> dict[str, float | int | None]:
         """Return the link health counters."""
 
+        self._prune_samples(time.monotonic())
+        durations = [duration for _, duration in self._request_samples if duration is not None]
         return {
             "consecutive_timeouts": self._consecutive_timeouts,
             "link_recycles": self._link_recycles,
@@ -99,7 +104,29 @@ class TransportPolicy:
                 if self._last_answer_at is None
                 else round(time.monotonic() - self._last_answer_at, 1)
             ),
+            "request_sample_count": len(self._request_samples),
+            "request_window_seconds": COMMUNICATION_WINDOW_SECONDS,
+            "request_success_rate": (
+                100.0 * len(durations) / len(self._request_samples)
+                if self._request_samples
+                else None
+            ),
+            "mean_response_time_ms": sum(durations) / len(durations) if durations else None,
         }
+
+    def _prune_samples(self, now: float) -> None:
+        while (
+            self._request_samples
+            and self._request_samples[0][0] <= now - COMMUNICATION_WINDOW_SECONDS
+        ):
+            self._request_samples.popleft()
+
+    def _record_request(self, started_at: float, *, success: bool) -> None:
+        finished_at = time.monotonic()
+        self._prune_samples(finished_at)
+        self._request_samples.append(
+            (finished_at, (finished_at - started_at) * 1000.0 if success else None)
+        )
 
     async def run[T](
         self,
@@ -137,8 +164,16 @@ class TransportPolicy:
                     await self._wait_for_read_slot()
                 if self._closed:
                     raise ClientClosedError("The Meltem gateway client was shut down")
+                started_at = time.monotonic()
                 try:
                     result = await operation(*args)
+                except (asyncio.CancelledError, ClientClosedError):
+                    raise
+                except Exception:
+                    self._record_request(started_at, success=False)
+                    raise
+                else:
+                    self._record_request(started_at, success=True)
                 finally:
                     if is_read:
                         # Completion-based spacing also covers a slow connect

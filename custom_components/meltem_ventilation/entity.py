@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 
+from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, GATEWAY_NAME, INTEGRATION_NAME, profile_label
@@ -49,6 +52,38 @@ def room_supports_entity(
     if profiles is not None and room.profile not in profiles:
         return False
     return room.supports(entity_key)
+
+
+class MeltemLocalDiagnosticEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
+    """Refresh time-dependent diagnostics locally, including during outages."""
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_interval(
+                self.hass, self._async_refresh_diagnostics, timedelta(seconds=10)
+            )
+        )
+
+    @callback
+    def _async_refresh_diagnostics(self, now: datetime) -> None:
+        self.async_write_ha_state()
+
+
+class MeltemGatewayEntity(MeltemLocalDiagnosticEntity):
+    """Gateway diagnostics that remain visible when communication fails."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, entry_id: str, key: str) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_{entry_id}_{key}"
+        self._attr_translation_key = key
+        self._attr_device_info = gateway_device_info(entry_id)
 
 
 class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
@@ -130,6 +165,14 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
             dr.async_get(self.hass).async_update_device(
                 device.id, sw_version=sw_version, hw_version=hw_version
             )
+
+
+class MeltemRoomDiagnosticEntity(MeltemEntity, MeltemLocalDiagnosticEntity):
+    """Keep one room's local diagnostics visible when its data goes stale."""
+
+    @property
+    def available(self) -> bool:
+        return True
 
 
 def _product_id_from_preview(preview: str | None) -> str | None:

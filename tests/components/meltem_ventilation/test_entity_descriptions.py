@@ -19,6 +19,8 @@ from homeassistant.helpers.trigger import TriggerConfig
 from custom_components.meltem_ventilation.automation import filter_change_due_entities
 from custom_components.meltem_ventilation.binary_sensor import (
     BINARY_SENSOR_DESCRIPTIONS,
+    GATEWAY_CONNECTIVITY_DESCRIPTION,
+    ROOM_CONNECTIVITY_DESCRIPTION,
 )
 from custom_components.meltem_ventilation.condition import (
     FilterChangeDueCondition,
@@ -37,8 +39,11 @@ from custom_components.meltem_ventilation.number import (
     CONTROL_SETTING_DESCRIPTIONS,
 )
 from custom_components.meltem_ventilation.sensor import (
+    GATEWAY_SENSOR_DESCRIPTIONS,
+    GATEWAY_UPTIME_DESCRIPTION,
     MODBUS_DEVICE_PATH_DESCRIPTION,
     MODBUS_SLAVE_ID_DESCRIPTION,
+    ROOM_DIAGNOSTIC_DESCRIPTIONS,
     SENSOR_DESCRIPTIONS,
 )
 from custom_components.meltem_ventilation.trigger import (
@@ -374,11 +379,16 @@ class TestTranslations:
 
         assert set(strings["sensor"]) == {
             *_keys(SENSOR_DESCRIPTIONS),
+            *_keys(GATEWAY_SENSOR_DESCRIPTIONS),
+            *_keys(ROOM_DIAGNOSTIC_DESCRIPTIONS),
+            GATEWAY_UPTIME_DESCRIPTION.key,
             MODBUS_DEVICE_PATH_DESCRIPTION.key,
             MODBUS_SLAVE_ID_DESCRIPTION.key,
         }
         assert set(strings["binary_sensor"]) == {
             *_keys(BINARY_SENSOR_DESCRIPTIONS),
+            GATEWAY_CONNECTIVITY_DESCRIPTION.key,
+            ROOM_CONNECTIVITY_DESCRIPTION.key,
             "data_health",
         }
         assert set(strings["number"]) == _keys(CONTROL_SETTING_DESCRIPTIONS)
@@ -395,14 +405,26 @@ class TestTranslations:
             *SENSOR_OPERATION_MODES,
         }
 
+    @pytest.mark.parametrize("language", ["en", "de"])
+    def test_write_status_translations_match_options(self, language: str) -> None:
+        translations = _load_json(_COMPONENT_DIR / "translations" / f"{language}.json")
+        description = next(
+            item for item in ROOM_DIAGNOSTIC_DESCRIPTIONS if item.key == "last_write_status"
+        )
+        assert set(translations["entity"]["sensor"]["last_write_status"]["state"]) == set(
+            description.options or []
+        )
+
     def test_icon_translations_cover_custom_entity_icons(self) -> None:
         assert _load_json(_ICONS) == {
             "entity": {
                 "binary_sensor": {
+                    "connectivity": {"default": "mdi:connection"},
                     "data_health": {"default": "mdi:fan-alert"},
                     "error_status": {"default": "mdi:alert-circle-outline"},
                     "filter_change_due": {"default": "mdi:air-filter"},
                     "frost_protection_active": {"default": "mdi:snowflake-thermometer"},
+                    "gateway_connectivity": {"default": "mdi:connection"},
                     "rf_comm_status": {"default": "mdi:wifi-alert"},
                 },
                 "fan": {
@@ -422,8 +444,24 @@ class TestTranslations:
                     "preset_mode": {"default": "mdi:flash-outline"},
                 },
                 "sensor": {
+                    "airflow_balance": {"default": "mdi:scale-balance"},
                     "days_until_filter_change": {"default": "mdi:calendar-clock"},
                     "extract_air_flow": {"default": "mdi:home-export-outline"},
+                    "gateway_available_units": {"default": "mdi:check-network-outline"},
+                    "gateway_consecutive_timeouts": {"default": "mdi:counter"},
+                    "gateway_error_units": {"default": "mdi:alert-circle-outline"},
+                    "gateway_extract_air_flow": {"default": "mdi:home-export-outline"},
+                    "gateway_filter_due_units": {"default": "mdi:air-filter"},
+                    "gateway_last_answer_age": {"default": "mdi:timer-outline"},
+                    "gateway_link_recycles": {"default": "mdi:connection"},
+                    "gateway_response_time": {"default": "mdi:timer-outline"},
+                    "gateway_stale_read_groups": {"default": "mdi:clock-alert-outline"},
+                    "gateway_success_rate": {"default": "mdi:check-network-outline"},
+                    "gateway_supply_air_flow": {"default": "mdi:home-import-outline"},
+                    "gateway_unavailable_units": {"default": "mdi:close-network-outline"},
+                    "gateway_uptime": {"default": "mdi:timer-outline"},
+                    "last_successful_update": {"default": "mdi:clock-check-outline"},
+                    "last_write_status": {"default": "mdi:send-check-outline"},
                     "operating_hours": {"default": "mdi:fan-clock"},
                     "supply_air_flow": {"default": "mdi:home-import-outline"},
                 },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Iterable, Iterator, Mapping
@@ -69,6 +70,14 @@ class _FakeClient:
         self.target_read_error: MeltemModbusError | None = None
         self.fail_rooms: set[str] = set()
         self.last_request_rate: float | None = None
+        self.uptime_calls = 0
+        self.uptime_error: MeltemModbusError | None = None
+
+    async def async_read_gateway_uptime(self) -> int:
+        self.uptime_calls += 1
+        if self.uptime_error is not None:
+            raise self.uptime_error
+        return 123
 
     def transport_diagnostics(self) -> dict[str, float | int | None]:
         raise AssertionError("Transport diagnostics are not expected in coordinator polling tests")
@@ -203,6 +212,86 @@ def clock_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         SimpleNamespace(monotonic=lambda: clock.now),
     )
     return clock
+
+
+class TestGatewayUptime:
+    async def test_disable_cancels_pending_optional_read(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        coordinator, client = _build(hass)
+        started = asyncio.Event()
+
+        async def wait_for_response() -> int:
+            started.set()
+            await asyncio.Future()
+            return 123
+
+        read = AsyncMock(side_effect=wait_for_response)
+        monkeypatch.setattr(client, "async_read_gateway_uptime", read)
+        coordinator.set_gateway_uptime_enabled(True)
+        refresh = asyncio.create_task(coordinator._async_update_data())
+        await started.wait()
+        assert coordinator._gateway_lock.locked()
+        coordinator.set_gateway_uptime_enabled(False)
+        result = await refresh
+        assert result["unit_1"].target_level == 42
+        assert coordinator._gateway_uptime_task is None
+        assert coordinator.gateway_uptime is None
+        await coordinator.async_shutdown()
+
+    async def test_disabled_by_default(self, hass: HomeAssistant) -> None:
+        coordinator, client = _build(hass)
+        await coordinator.async_refresh()
+        assert client.uptime_calls == 0
+        assert coordinator.gateway_uptime is None
+
+    async def test_due_reads_and_failure_isolation(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator.set_gateway_uptime_enabled(True)
+        await coordinator.async_refresh()
+        assert coordinator.gateway_uptime == 123
+        assert client.uptime_calls == 1
+
+        clock.now += 1.0
+        await coordinator.async_refresh()
+        assert client.uptime_calls == 1
+        clock.now += 60.0
+        client.uptime_error = MeltemModbusError("unsupported uptime register")
+        await coordinator.async_refresh()
+        assert client.uptime_calls == 2
+        assert coordinator.last_update_success
+        assert coordinator.room_available("unit_1")
+        assert coordinator.gateway_uptime == 123
+
+        clock.now += 181.0
+        assert coordinator.gateway_uptime is None
+        coordinator.set_gateway_uptime_enabled(False)
+        await coordinator.async_refresh()
+        assert client.uptime_calls == 2
+
+
+async def test_room_diagnostic_values_are_isolated(hass: HomeAssistant) -> None:
+    coordinator, _ = _build(hass, _ROOM_1, _ROOM_2)
+    assert coordinator.room_connectivity("unit_1") is None
+    assert coordinator.last_successful_room_update("unit_1") is None
+    now = dt_util.utcnow()
+    failed = RoomState().with_read_health("flow", ReadHealth(last_attempt=now))
+    coordinator._startup_states = {"unit_1": failed}
+    assert coordinator.room_connectivity("unit_1") is False
+
+    first = RoomState(target_level=30).with_read_health("flow", _read_ok(now))
+    second = RoomState(target_level=40).with_read_health(
+        "flow", _read_ok(now + timedelta(seconds=1))
+    )
+    coordinator.async_set_updated_data({"unit_1": first, "unit_2": second})
+    assert coordinator.room_connectivity("unit_1") is True
+    assert coordinator.last_successful_room_update("unit_1") == now
+    assert coordinator.last_successful_room_update("unit_2") == now + timedelta(seconds=1)
+    coordinator._room_failures["unit_1"] = 3
+    assert coordinator.room_connectivity("unit_1") is False
+    assert coordinator.last_successful_room_update("unit_1") == now
 
 
 class TestFirstRefresh:

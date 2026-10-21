@@ -56,6 +56,47 @@ These are the most important practical findings from the latest hardware tests:
   tmodbus-vs-pymodbus results and remaining post-release validation are tracked
   in HW-7
 
+## Runtime overview entities
+
+Gateway and room diagnostics use cached coordinator state and local ten-second
+entity timers, removed on entity unload. Their availability does not follow a
+failed coordinator update: a disconnected state and the last read timestamp
+must remain visible. Room reachability is unknown until its first read attempt.
+The timestamp is the latest successful supported group for that room only.
+
+`WriteConfirmations.latest()` tracks the last recorded write key separately
+from the per-key outcomes. Confirming an older command must not replace the
+latest command. The enum sensor uses `confirmation_status()` so the pending
+deadline is visible without another poll; the most recent outcome stays visible
+beyond the Read health retention window. Raw transport errors are not entity
+attributes.
+
+Gateway error/filter counts and measured flow totals use room and read-group
+availability. Missing contributors make the native total unknown, with
+`complete`, `unknown_units`, and, for flags, `affected_units` attributes. They
+must not silently show partial totals or substitute optimistic fan values.
+Per-room balance belongs to the existing flow health group and adds no read.
+All new IDs belong in the platform maps in `const.py` so registry pruning keeps
+user customizations on reload.
+
+`TransportPolicy` keeps a bounded rolling 300-second deque of individual
+request attempts. Each retry is a separate sample. Response-time measurements
+start after locking and rate-limit waits; only successful operations enter the
+latency mean. Modbus exception responses are failed operations even though they
+reset the link timeout counter. Cancellation and closed-client refusals are
+excluded. Reading diagnostics also expires old samples without bus activity.
+
+The sole optional extra read is gateway uptime: enabling its disabled-by-default
+sensor opts into a 60-second read through the shared coordinator lock and
+transport policy. `MeltemGateway.uptime` is a separate one-word `Register` at
+`41019`, on gateway unit `1`; existing component ranges are unchanged. Its errors
+are isolated from room jobs and their availability/backoff counters. Disabling
+or unloading cancels an outstanding optional read. Cached uptime expires after
+180 seconds and uses `measurement`, never interpolation or `total_increasing`.
+The register observation is recorded in [MELTEM.md](MELTEM.md); wraparound and
+restart validation remain deferred to G3 in
+[LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md).
+
 ## Scope
 
 The integration currently targets Meltem M-WRG units behind an

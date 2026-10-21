@@ -52,6 +52,27 @@ REQUEST_GAP_SECONDS = 0.1
 TRANSPORT_DISCONNECT_AFTER_TIMEOUTS = 3
 TRANSPORT_LINK_QUIET_SECONDS = 10.0
 TRANSPORT_RETRY_DELAY_SECONDS = 0.5
+GATEWAY_SILENT_AFTER_SECONDS = 120.0
+GATEWAY_UPTIME_REFRESH_SECONDS = 60.0
+GATEWAY_UPTIME_STALE_SECONDS = 180.0
+
+GATEWAY_ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
+    "modbus_device_path": Platform.SENSOR,
+    "gateway_connectivity": Platform.BINARY_SENSOR,
+    "gateway_last_answer_age": Platform.SENSOR,
+    "gateway_consecutive_timeouts": Platform.SENSOR,
+    "gateway_link_recycles": Platform.SENSOR,
+    "gateway_available_units": Platform.SENSOR,
+    "gateway_unavailable_units": Platform.SENSOR,
+    "gateway_stale_read_groups": Platform.SENSOR,
+    "gateway_error_units": Platform.SENSOR,
+    "gateway_filter_due_units": Platform.SENSOR,
+    "gateway_response_time": Platform.SENSOR,
+    "gateway_success_rate": Platform.SENSOR,
+    "gateway_supply_air_flow": Platform.SENSOR,
+    "gateway_extract_air_flow": Platform.SENSOR,
+    "gateway_uptime": Platform.SENSOR,
+}
 
 FLOW_REFRESH_SECONDS = 10
 STATUS_REFRESH_SECONDS = 60
@@ -259,6 +280,7 @@ REGISTER_CO2_MIN_LEVEL = 42004
 REGISTER_CO2_MAX_LEVEL = 42005
 
 REGISTER_GATEWAY_NUMBER_OF_NODES = 43901
+REGISTER_GATEWAY_UPTIME = 41019
 REGISTER_GATEWAY_NODE_ADDRESS_1 = 43902
 
 # Contiguous 42000..42005 block, so the order also defines the block layout.
@@ -294,7 +316,7 @@ CONTROL_LEVEL_RANGES: tuple[tuple[str, str], ...] = (
 # Entities whose values one read-health group delivers; shared by the client
 # (health bookkeeping) and the coordinator (scheduling and availability).
 READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
-    "flow": frozenset({"extract_air_flow", "supply_air_flow"}),
+    "flow": frozenset({"extract_air_flow", "supply_air_flow", "airflow_balance"}),
     "flow_control": frozenset({"operation_mode", "preset_mode", "supply_level", "extract_level"}),
     "intensive": frozenset({"intensive"}),
     "status": frozenset({"error_status", "frost_protection_active", "rf_comm_status"}),
@@ -332,6 +354,10 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
         "preset_mode",
         "supply_level",
         "extract_level",
+        "airflow_balance",
+        "connectivity",
+        "last_successful_update",
+        "last_write_status",
     }
 )
 
@@ -351,6 +377,9 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "days_until_filter_change",
             "operating_hours",
             "modbus_slave_id",
+            "airflow_balance",
+            "last_successful_update",
+            "last_write_status",
         ),
         Platform.SENSOR,
     ),
@@ -361,6 +390,7 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "filter_change_due",
             "rf_comm_status",
             "data_health",
+            "connectivity",
         ),
         Platform.BINARY_SENSOR,
     ),

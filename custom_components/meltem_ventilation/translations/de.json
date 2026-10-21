@@ -259,6 +259,63 @@
       },
       "modbus_device_path": {
         "name": "Modbus-Gerätepfad"
+      },
+      "gateway_last_answer_age": {
+        "name": "Zeit seit letzter Antwort"
+      },
+      "gateway_consecutive_timeouts": {
+        "name": "Aufeinanderfolgende Timeouts"
+      },
+      "gateway_link_recycles": {
+        "name": "Link-Wiederverbindungen"
+      },
+      "gateway_available_units": {
+        "name": "Verfügbare Geräte"
+      },
+      "gateway_unavailable_units": {
+        "name": "Nicht verfügbare Geräte"
+      },
+      "gateway_stale_read_groups": {
+        "name": "Veraltete Lesegruppen"
+      },
+      "gateway_error_units": {
+        "name": "Geräte mit Störung"
+      },
+      "gateway_filter_due_units": {
+        "name": "Geräte mit fälligem Filterwechsel"
+      },
+      "gateway_response_time": {
+        "name": "Mittlere Antwortzeit"
+      },
+      "gateway_success_rate": {
+        "name": "Anfrage-Erfolgsquote"
+      },
+      "gateway_supply_air_flow": {
+        "name": "Gesamter Zuluftvolumenstrom"
+      },
+      "gateway_extract_air_flow": {
+        "name": "Gesamter Abluftvolumenstrom"
+      },
+      "gateway_uptime": {
+        "name": "Betriebszeit (experimentell)"
+      },
+      "airflow_balance": {
+        "name": "Luftmengenbilanz"
+      },
+      "last_successful_update": {
+        "name": "Letzte erfolgreiche Datenaktualisierung"
+      },
+      "last_write_status": {
+        "name": "Status des letzten Schreibauftrags",
+        "state": {
+          "pending": "Ausstehend",
+          "confirmed": "Bestätigt",
+          "mismatch": "Rücklesewert weicht ab",
+          "unconfirmed": "Nicht bestätigt",
+          "unverifiable": "Nicht überprüfbar",
+          "failed": "Fehlgeschlagen",
+          "superseded": "Ersetzt"
+        }
       }
     },
     "binary_sensor": {
@@ -276,6 +333,12 @@
       },
       "data_health": {
         "name": "Datenlesestatus"
+      },
+      "gateway_connectivity": {
+        "name": "Erreichbar"
+      },
+      "connectivity": {
+        "name": "Erreichbar"
       }
     },
     "switch": {

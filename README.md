@@ -22,6 +22,10 @@ gateways, Home Assistant hosts, or other connected equipment.
 - app-style quick modes, sensor-driven control modes and an intensive
   ventilation switch
 - writable humidity and CO2 control thresholds for supported profiles
+- gateway fault and filter-change overviews, measured airflow totals, connection
+  diagnostics and optional communication-quality sensors
+- per-unit reachability, last command status, last successful update and measured
+  airflow balance; optional experimental gateway uptime
 - automation triggers and conditions for a due filter change
 - USB discovery for the Meltem gateway
 
@@ -128,6 +132,13 @@ Values appear progressively at startup, depending on the request rate and
 number of configured units. See the
 [diagnostics guide](./docs/DIAGNOSTICS.md) for refresh intervals, read health,
 availability, and log collection.
+
+The gateway device groups fault and filter-change counts and total measured
+supply/extract airflow across configured units. Each unit also exposes its
+reachability, last command status, and airflow balance. Communication quality,
+the last successful update timestamp, and experimental gateway uptime can be
+enabled in the entity settings. Uptime adds optional register reads and is not
+yet suitable for restart detection; other new diagnostics reuse existing data.
 
 ## Troubleshooting
 

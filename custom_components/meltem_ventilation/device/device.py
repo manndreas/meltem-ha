@@ -11,6 +11,7 @@ from ..const import (
     REGISTER_DAYS_UNTIL_FILTER_CHANGE,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
+    REGISTER_GATEWAY_UPTIME,
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_RF_COMM_STATUS,
@@ -104,6 +105,15 @@ class MeltemGateway(Device):
     def __init__(self, unit: ModbusUnit) -> None:
         super().__init__(unit)
         self.node_count = Register(unit, base_offset=REGISTER_GATEWAY_NUMBER_OF_NODES)
+        self.uptime = Register(unit, base_offset=REGISTER_GATEWAY_UPTIME)
+
+    async def async_read_uptime(self) -> int:
+        """Read the experimental single-word gateway uptime counter."""
+
+        await self.uptime.async_update()
+        if self.uptime.value is None:
+            raise ValueError("The gateway uptime register returned no value")
+        return int(self.uptime.value)
 
     async def async_read_node_count(self) -> int:
         """Read how many units the gateway is configured for."""

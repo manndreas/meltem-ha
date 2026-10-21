@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.4.0
+
+- Add gateway reachability, last-response age, timeout and link-recovery
+  counters, available/unavailable unit counts, and stale read-group diagnostics.
+- Add gateway error and due-filter counts with affected-unit attributes, plus
+  measured supply/extract airflow totals. Incomplete totals stay unknown and
+  identify their missing contributors rather than silently reporting partial sums.
+- Add optional mean response time and request success rate over a rolling
+  five-minute window, counting retries individually without extra bus requests.
+- Add per-unit reachability, last successful update, latest command status and
+  measured supply-minus-extract airflow balance. Local diagnostic timers keep
+  outages and command timeouts visible without additional polling.
+- Add disabled-by-default experimental gateway uptime via a single-register
+  read every 60 seconds while enabled. Stale uptime becomes unavailable;
+  restart and counter-wrap behavior still need hardware verification.
+- Add English/German labels, status translations, icons, and documentation for
+  the gateway overviews and device diagnostics, and preserve their registry
+  settings across integration reloads.
+
 ## 4.3.1
 
 - Simplify the README and move detailed control, polling, and availability

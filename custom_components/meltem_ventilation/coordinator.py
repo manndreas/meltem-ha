@@ -32,6 +32,8 @@ from .const import (
     DEFAULT_SCAN_SLAVE_START,
     DIRECT_OPERATION_MODES,
     DOMAIN,
+    GATEWAY_UPTIME_REFRESH_SECONDS,
+    GATEWAY_UPTIME_STALE_SECONDS,
     LEVEL_SOURCE_PENDING,
     LEVEL_WRITE_FALLBACK_BALANCED,
     OPERATION_MODE_INACTIVE,
@@ -43,6 +45,7 @@ from .const import (
     PRESET_MODE_INACTIVE,
     PRESET_MODE_INTENSIVE,
     PRESET_MODE_SUPPLY_ONLY,
+    READ_GROUP_ENTITY_KEYS,
     REGISTER_CURRENT_LEVEL,
     TARGET_OPTIMISTIC_SECONDS,
     WRITE_SETTLE_SECONDS,
@@ -61,6 +64,7 @@ from .models import (
     RefreshPlan,
     RoomConfig,
     RoomState,
+    WriteConfirmation,
     WriteValue,
 )
 from .overlay import OptimisticOverlay
@@ -112,6 +116,8 @@ _READBACK_PLANS: dict[str, RefreshPlan] = {
 
 
 class _CoordinatorClient(Protocol):
+    async def async_read_gateway_uptime(self) -> int: ...
+
     def seconds_since_successful_read(self, slave: int) -> float | None: ...
 
     def transport_diagnostics(self) -> dict[str, float | int | None]: ...
@@ -214,6 +220,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._startup_jobs: list[PollJob] | None = None
         self._startup_states: dict[str, RoomState] = {}
         self._startup_turn = True
+        self._gateway_uptime_enabled = False
+        self._gateway_uptime_next_due = 0.0
+        self._gateway_uptime_value: int | None = None
+        self._gateway_uptime_read_at: float | None = None
+        self._gateway_uptime_task: asyncio.Task[int] | None = None
 
         super().__init__(
             hass,
@@ -252,9 +263,52 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         return device.id if device is not None else None
 
     async def async_shutdown(self) -> None:
+        self.set_gateway_uptime_enabled(False)
         for overlay in self._overlays.values():
             overlay.shutdown()
         await super().async_shutdown()
+
+    @property
+    def gateway_uptime(self) -> int | None:
+        """Return the last raw uptime only while its observation is recent."""
+
+        if self._gateway_uptime_read_at is None or (
+            time.monotonic() - self._gateway_uptime_read_at > GATEWAY_UPTIME_STALE_SECONDS
+        ):
+            return None
+        return self._gateway_uptime_value
+
+    def set_gateway_uptime_enabled(self, enabled: bool) -> None:
+        """Poll the experimental register only while its entity is enabled."""
+
+        if self._gateway_uptime_enabled == enabled:
+            return
+        self._gateway_uptime_enabled = enabled
+        if enabled:
+            self._gateway_uptime_next_due = 0.0
+        elif self._gateway_uptime_task is not None:
+            self._gateway_uptime_task.cancel()
+        self._schedule_next_tick()
+
+    async def _async_read_gateway_uptime_due(self) -> None:
+        """Perform one optional read while the caller holds the gateway lock."""
+
+        if not self._gateway_uptime_enabled or time.monotonic() < self._gateway_uptime_next_due:
+            return
+        self._gateway_uptime_task = self.hass.async_create_task(
+            self.client.async_read_gateway_uptime(), "Meltem gateway uptime"
+        )
+        try:
+            self._gateway_uptime_value = await self._gateway_uptime_task
+            self._gateway_uptime_read_at = time.monotonic()
+        except asyncio.CancelledError:
+            if self._gateway_uptime_enabled:
+                raise
+        except MeltemModbusError as err:
+            _LOGGER.debug("Optional gateway uptime read failed: %s", err)
+        finally:
+            self._gateway_uptime_task = None
+            self._gateway_uptime_next_due = time.monotonic() + GATEWAY_UPTIME_REFRESH_SECONDS
 
     def room_available(self, room_key: str) -> bool:
         """Return whether one room still delivers usable data.
@@ -281,6 +335,34 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             if silent_for is not None and silent_for > ROOM_SILENT_AFTER_SECONDS:
                 return f"no successful read for more than {ROOM_SILENT_AFTER_SECONDS:.0f} seconds"
         return None
+
+    def room_connectivity(self, room_key: str) -> bool | None:
+        """Return unknown until this unit has had a read attempt."""
+
+        state = self.safe_data.get(room_key) or self._startup_states.get(room_key)
+        if state is None or not any(health.last_attempt for _, health in state.group_read_health):
+            return None
+        return self.room_available(room_key)
+
+    def last_successful_room_update(self, room_key: str) -> datetime | None:
+        """Return this room's latest successful supported read group."""
+
+        room = self._rooms_by_key[room_key]
+        state = self.safe_data.get(room_key, EMPTY_ROOM_STATE)
+        return max(
+            (
+                health.last_successful_read
+                for group, health in state.group_read_health
+                if health.last_successful_read is not None
+                and room.supports_any(READ_GROUP_ENTITY_KEYS[group])
+            ),
+            default=None,
+        )
+
+    def latest_write(self, room_key: str) -> tuple[str, WriteConfirmation] | None:
+        """Return the latest recorded command and its current outcome."""
+
+        return self._writes.latest(room_key)
 
     def _log_room_availability(
         self, room_key: str, state: RoomState, error: MeltemModbusError | None
@@ -392,6 +474,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 now = time.monotonic()
                 job, startup = self._select_poll_job(now)
                 if job is None:
+                    await self._async_read_gateway_uptime_due()
                     self._schedule_next_tick()
                     return self.safe_data
 
@@ -402,6 +485,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 self._last_job_error = None
                 self._last_job_link_failure = False
                 updated_data = await self._read_one_job(self.safe_data or self._startup_states, job)
+                await self._async_read_gateway_uptime_due()
                 never_read = job.never_read(self._rooms_by_key[job.room_key], updated_data)
                 if startup or never_read:
                     job.next_due = time.monotonic() + self._job_interval(job, never_read=never_read)
@@ -487,6 +571,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             now=time.monotonic(),
             loop_time=self.hass.loop.time(),
         )
+        if self._gateway_uptime_enabled:
+            loop_time = self.hass.loop.time()
+            uptime_delay = max(self._tick_seconds, self._gateway_uptime_next_due - time.monotonic())
+            seconds = min(seconds, uptime_delay + loop_time - int(loop_time))
         self.update_interval = timedelta(seconds=seconds)
 
     def _on_transport_success(self) -> None:
