@@ -8,6 +8,7 @@ import math
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from modbus_connection import (
@@ -56,6 +57,7 @@ class TransportPolicy:
         # Creating the policy and recycling the link both start a quiet window.
         self._quiet_since = time.monotonic()
         self._last_answer_at: float | None = None
+        self._last_answer_timestamp: float | None = None
         self._last_read_answer: dict[int, float] = {}
         self._link_recycles = 0
         self._request_lock = asyncio.Lock()
@@ -99,6 +101,7 @@ class TransportPolicy:
         return {
             "consecutive_timeouts": self._consecutive_timeouts,
             "link_recycles": self._link_recycles,
+            "last_answer_timestamp": self._last_answer_timestamp,
             "seconds_since_any_answer": (
                 None
                 if self._last_answer_at is None
@@ -194,6 +197,7 @@ class TransportPolicy:
     def _link_answered(self) -> None:
         self._consecutive_timeouts = 0
         self._quiet_since = self._last_answer_at = time.monotonic()
+        self._last_answer_timestamp = datetime.now(UTC).timestamp()
 
     async def _count_timeout(self, unit: ModbusUnit) -> None:
         self._consecutive_timeouts += 1

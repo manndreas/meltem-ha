@@ -17,7 +17,7 @@ import operator
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from homeassistant.core import HomeAssistant
@@ -32,8 +32,14 @@ from .const import (
     DEFAULT_SCAN_SLAVE_START,
     DIRECT_OPERATION_MODES,
     DOMAIN,
+    GATEWAY_CONNECTED_DEVICES_REFRESH_SECONDS,
+    GATEWAY_CONNECTED_DEVICES_STALE_SECONDS,
+    GATEWAY_RF_STATISTICS_REFRESH_SECONDS,
+    GATEWAY_RF_STATISTICS_STALE_SECONDS,
     GATEWAY_UPTIME_REFRESH_SECONDS,
     GATEWAY_UPTIME_STALE_SECONDS,
+    GATEWAY_UTC_CLOCK_REFRESH_SECONDS,
+    GATEWAY_UTC_CLOCK_STALE_SECONDS,
     LEVEL_SOURCE_PENDING,
     LEVEL_WRITE_FALLBACK_BALANCED,
     OPERATION_MODE_INACTIVE,
@@ -60,11 +66,11 @@ from .levels import (
 from .modbus_helpers import MeltemModbusError
 from .models import (
     EMPTY_ROOM_STATE,
+    GatewayRfStatistics,
     MeltemIntegrationConfigEntry,
     RefreshPlan,
     RoomConfig,
     RoomState,
-    WriteConfirmation,
     WriteValue,
 )
 from .overlay import OptimisticOverlay
@@ -117,6 +123,12 @@ _READBACK_PLANS: dict[str, RefreshPlan] = {
 
 class _CoordinatorClient(Protocol):
     async def async_read_gateway_uptime(self) -> int: ...
+
+    async def async_read_gateway_utc_clock(self) -> int: ...
+
+    async def async_read_gateway_node_count(self) -> int: ...
+
+    async def async_read_gateway_rf_statistics(self) -> GatewayRfStatistics: ...
 
     def seconds_since_successful_read(self, slave: int) -> float | None: ...
 
@@ -225,6 +237,21 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._gateway_uptime_value: int | None = None
         self._gateway_uptime_read_at: float | None = None
         self._gateway_uptime_task: asyncio.Task[int] | None = None
+        self._gateway_utc_clock_enabled = False
+        self._gateway_utc_clock_next_due = 0.0
+        self._gateway_utc_clock_value: datetime | None = None
+        self._gateway_utc_clock_read_at: float | None = None
+        self._gateway_utc_clock_task: asyncio.Task[int] | None = None
+        self._gateway_connected_devices_enabled = False
+        self._gateway_connected_devices_next_due = 0.0
+        self._gateway_connected_devices_value: int | None = None
+        self._gateway_connected_devices_read_at: float | None = None
+        self._gateway_connected_devices_task: asyncio.Task[int] | None = None
+        self._gateway_rf_statistics_consumers: set[str] = set()
+        self._gateway_rf_statistics_next_due = 0.0
+        self._gateway_rf_statistics_value: GatewayRfStatistics | None = None
+        self._gateway_rf_statistics_read_at: float | None = None
+        self._gateway_rf_statistics_task: asyncio.Task[GatewayRfStatistics] | None = None
 
         super().__init__(
             hass,
@@ -264,6 +291,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
     async def async_shutdown(self) -> None:
         self.set_gateway_uptime_enabled(False)
+        self.set_gateway_utc_clock_enabled(False)
+        self.set_gateway_connected_devices_enabled(False)
+        for key in tuple(self._gateway_rf_statistics_consumers):
+            self.set_gateway_rf_statistics_enabled(key, False)
         for overlay in self._overlays.values():
             overlay.shutdown()
         await super().async_shutdown()
@@ -309,6 +340,153 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         finally:
             self._gateway_uptime_task = None
             self._gateway_uptime_next_due = time.monotonic() + GATEWAY_UPTIME_REFRESH_SECONDS
+
+    @property
+    def gateway_utc_clock(self) -> datetime | None:
+        """Return the gateway clock only while its observation is recent."""
+
+        if self._gateway_utc_clock_read_at is None or (
+            time.monotonic() - self._gateway_utc_clock_read_at > GATEWAY_UTC_CLOCK_STALE_SECONDS
+        ):
+            return None
+        return self._gateway_utc_clock_value
+
+    def set_gateway_utc_clock_enabled(self, enabled: bool) -> None:
+        """Poll the gateway clock only while its entity is enabled."""
+
+        if self._gateway_utc_clock_enabled == enabled:
+            return
+        self._gateway_utc_clock_enabled = enabled
+        if enabled:
+            self._gateway_utc_clock_next_due = 0.0
+        elif self._gateway_utc_clock_task is not None:
+            self._gateway_utc_clock_task.cancel()
+        self._schedule_next_tick()
+
+    async def _async_read_gateway_utc_clock_due(self) -> None:
+        """Read the optional clock while the caller holds the gateway lock."""
+
+        if (
+            not self._gateway_utc_clock_enabled
+            or time.monotonic() < self._gateway_utc_clock_next_due
+        ):
+            return
+        self._gateway_utc_clock_task = self.hass.async_create_task(
+            self.client.async_read_gateway_utc_clock(), "Meltem gateway UTC clock"
+        )
+        try:
+            seconds = await self._gateway_utc_clock_task
+            self._gateway_utc_clock_value = datetime.fromtimestamp(seconds, tz=UTC)
+            self._gateway_utc_clock_read_at = time.monotonic()
+        except asyncio.CancelledError:
+            if self._gateway_utc_clock_enabled:
+                raise
+        except MeltemModbusError as err:
+            _LOGGER.debug("Optional gateway UTC clock read failed: %s", err)
+        finally:
+            self._gateway_utc_clock_task = None
+            self._gateway_utc_clock_next_due = time.monotonic() + GATEWAY_UTC_CLOCK_REFRESH_SECONDS
+
+    @property
+    def gateway_connected_devices(self) -> int | None:
+        """Return the gateway's registered device count while it is recent."""
+
+        if self._gateway_connected_devices_read_at is None or (
+            time.monotonic() - self._gateway_connected_devices_read_at
+            > GATEWAY_CONNECTED_DEVICES_STALE_SECONDS
+        ):
+            return None
+        return self._gateway_connected_devices_value
+
+    def set_gateway_connected_devices_enabled(self, enabled: bool) -> None:
+        """Read the gateway's device count only while its entity is active."""
+
+        if self._gateway_connected_devices_enabled == enabled:
+            return
+        self._gateway_connected_devices_enabled = enabled
+        if enabled:
+            self._gateway_connected_devices_next_due = 0.0
+        elif self._gateway_connected_devices_task is not None:
+            self._gateway_connected_devices_task.cancel()
+        self._schedule_next_tick()
+
+    async def _async_read_gateway_connected_devices_due(self) -> None:
+        """Read registered devices while the caller holds the gateway lock."""
+
+        if (
+            not self._gateway_connected_devices_enabled
+            or time.monotonic() < self._gateway_connected_devices_next_due
+        ):
+            return
+        self._gateway_connected_devices_task = self.hass.async_create_task(
+            self.client.async_read_gateway_node_count(), "Meltem gateway device count"
+        )
+        try:
+            self._gateway_connected_devices_value = await self._gateway_connected_devices_task
+            self._gateway_connected_devices_read_at = time.monotonic()
+        except asyncio.CancelledError:
+            if self._gateway_connected_devices_enabled:
+                raise
+        except MeltemModbusError as err:
+            _LOGGER.debug("Optional gateway device count read failed: %s", err)
+        finally:
+            self._gateway_connected_devices_task = None
+            self._gateway_connected_devices_next_due = (
+                time.monotonic() + GATEWAY_CONNECTED_DEVICES_REFRESH_SECONDS
+            )
+
+    @property
+    def gateway_rf_statistics(self) -> GatewayRfStatistics | None:
+        """Return RF statistics only while the observation is recent."""
+
+        if self._gateway_rf_statistics_read_at is None or (
+            time.monotonic() - self._gateway_rf_statistics_read_at
+            > GATEWAY_RF_STATISTICS_STALE_SECONDS
+        ):
+            return None
+        return self._gateway_rf_statistics_value
+
+    def set_gateway_rf_statistics_enabled(self, key: str, enabled: bool) -> None:
+        """Share one optional read among the enabled RF entities."""
+
+        was_enabled = bool(self._gateway_rf_statistics_consumers)
+        if enabled:
+            self._gateway_rf_statistics_consumers.add(key)
+        else:
+            self._gateway_rf_statistics_consumers.discard(key)
+        is_enabled = bool(self._gateway_rf_statistics_consumers)
+        if was_enabled == is_enabled:
+            return
+        if is_enabled:
+            self._gateway_rf_statistics_next_due = 0.0
+        elif self._gateway_rf_statistics_task is not None:
+            self._gateway_rf_statistics_task.cancel()
+        self._schedule_next_tick()
+
+    async def _async_read_gateway_rf_statistics_due(self) -> None:
+        """Read RF statistics while the caller holds the gateway lock."""
+
+        if (
+            not self._gateway_rf_statistics_consumers
+            or time.monotonic() < self._gateway_rf_statistics_next_due
+        ):
+            return
+        self._gateway_rf_statistics_task = self.hass.async_create_task(
+            self.client.async_read_gateway_rf_statistics(), "Meltem gateway RF statistics"
+        )
+        try:
+            self._gateway_rf_statistics_value = await self._gateway_rf_statistics_task
+            self._gateway_rf_statistics_read_at = time.monotonic()
+        except asyncio.CancelledError:
+            if self._gateway_rf_statistics_consumers:
+                raise
+        except MeltemModbusError as err:
+            _LOGGER.debug("Optional gateway RF statistics read failed: %s", err)
+        finally:
+            self._gateway_rf_statistics_task = None
+            self._gateway_rf_statistics_next_due = (
+                time.monotonic() + GATEWAY_RF_STATISTICS_REFRESH_SECONDS
+            )
 
     def room_available(self, room_key: str) -> bool:
         """Return whether one room still delivers usable data.
@@ -358,11 +536,6 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             ),
             default=None,
         )
-
-    def latest_write(self, room_key: str) -> tuple[str, WriteConfirmation] | None:
-        """Return the latest recorded command and its current outcome."""
-
-        return self._writes.latest(room_key)
 
     def _log_room_availability(
         self, room_key: str, state: RoomState, error: MeltemModbusError | None
@@ -475,6 +648,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 job, startup = self._select_poll_job(now)
                 if job is None:
                     await self._async_read_gateway_uptime_due()
+                    await self._async_read_gateway_utc_clock_due()
+                    await self._async_read_gateway_connected_devices_due()
+                    await self._async_read_gateway_rf_statistics_due()
                     self._schedule_next_tick()
                     return self.safe_data
 
@@ -486,6 +662,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 self._last_job_link_failure = False
                 updated_data = await self._read_one_job(self.safe_data or self._startup_states, job)
                 await self._async_read_gateway_uptime_due()
+                await self._async_read_gateway_utc_clock_due()
+                await self._async_read_gateway_connected_devices_due()
+                await self._async_read_gateway_rf_statistics_due()
                 never_read = job.never_read(self._rooms_by_key[job.room_key], updated_data)
                 if startup or never_read:
                     job.next_due = time.monotonic() + self._job_interval(job, never_read=never_read)
@@ -575,6 +754,24 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             loop_time = self.hass.loop.time()
             uptime_delay = max(self._tick_seconds, self._gateway_uptime_next_due - time.monotonic())
             seconds = min(seconds, uptime_delay + loop_time - int(loop_time))
+        if self._gateway_utc_clock_enabled:
+            loop_time = self.hass.loop.time()
+            clock_delay = max(
+                self._tick_seconds, self._gateway_utc_clock_next_due - time.monotonic()
+            )
+            seconds = min(seconds, clock_delay + loop_time - int(loop_time))
+        if self._gateway_connected_devices_enabled:
+            loop_time = self.hass.loop.time()
+            count_delay = max(
+                self._tick_seconds, self._gateway_connected_devices_next_due - time.monotonic()
+            )
+            seconds = min(seconds, count_delay + loop_time - int(loop_time))
+        if self._gateway_rf_statistics_consumers:
+            loop_time = self.hass.loop.time()
+            rf_delay = max(
+                self._tick_seconds, self._gateway_rf_statistics_next_due - time.monotonic()
+            )
+            seconds = min(seconds, rf_delay + loop_time - int(loop_time))
         self.update_interval = timedelta(seconds=seconds)
 
     def _on_transport_success(self) -> None:
@@ -1130,7 +1327,13 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             self._last_job_link_failure = failure is not None and failure.link_failure
             if failure is not None:
                 _LOGGER.debug("Failed to read room %s for job %s: %s", room.key, job.key, error)
-                self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
+                optional_rejection = not failure.link_failure and all(
+                    group in {"rf_last_seen", "rf_signal", "rf_fault", "value_error", "fan_hours"}
+                    for group in job.refresh_plan.read_groups()
+                    if room.supports_any(READ_GROUP_ENTITY_KEYS[group])
+                )
+                if not optional_rejection:
+                    self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
             else:
                 self._room_failures.pop(room.key, None)
                 if job.refresh_plan.refresh_airflow:

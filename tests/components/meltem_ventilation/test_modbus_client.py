@@ -45,6 +45,7 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_SUPPLY_AIR_TEMPERATURE,
     REGISTER_VOC_SUPPLY_AIR,
 )
+from custom_components.meltem_ventilation.device.components import FanMotorHours, GatewayUtcClock
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
 from custom_components.meltem_ventilation.models import (
@@ -97,6 +98,161 @@ async def test_gateway_uptime_reads_two_words_on_bridge_only(
     assert await client.async_read_gateway_uptime() == 123
     assert _reads(gateway) == [(41019, 2)]
     assert _reads(unit) == []
+
+
+@pytest.mark.parametrize("count", [0, 6])
+async def test_gateway_node_count_reads_bridge_only(
+    client: MeltemModbusClient, link: MockModbusConnection, unit: MockModbusUnit, count: int
+) -> None:
+    gateway = link.for_unit(1)
+    gateway.holding[43901] = [count]
+    assert await client.async_read_gateway_node_count() == count
+    assert _reads(gateway) == [(43901, 1)]
+    assert _reads(unit) == []
+
+
+async def test_gateway_rf_statistics_decode_bridge_block(
+    client: MeltemModbusClient, link: MockModbusConnection, unit: MockModbusUnit
+) -> None:
+    gateway = link.for_unit(1)
+    gateway.holding[42100] = [75, 147, 36945, 16005, 23857, 15633]
+
+    statistics = await client.async_read_gateway_rf_statistics()
+
+    assert statistics.messages_current_hour == 75
+    assert statistics.messages_previous_hour == 147
+    assert statistics.load_current_hour == pytest.approx(0.260866672)
+    assert statistics.load_previous_hour == pytest.approx(0.035489265)
+    assert _reads(gateway) == [(42100, 6)]
+    assert _reads(unit) == []
+
+
+@pytest.mark.parametrize(
+    ("component_type", "address"),
+    [(FanMotorHours, 41032), (GatewayUtcClock, 41015)],
+)
+async def test_diagnostic_components_decode_both_words(
+    unit: MockModbusUnit, component_type: type[FanMotorHours | GatewayUtcClock], address: int
+) -> None:
+    unit.holding[address] = [0x007B, 2]
+    component = component_type(unit)
+
+    await component.async_update()
+
+    assert component.value == 131195
+    assert _reads(unit) == [(address, 2)]
+
+
+@pytest.mark.parametrize("load", [float("nan"), float("inf"), -1.0, 101.0])
+async def test_invalid_rf_load_keeps_other_statistics(
+    client: MeltemModbusClient, link: MockModbusConnection, load: float
+) -> None:
+    gateway = link.for_unit(1)
+    words = struct.unpack("<HH", struct.pack("<f", load))
+    gateway.holding[42100] = [0, 147, *words, 0, 0]
+
+    statistics = await client.async_read_gateway_rf_statistics()
+
+    assert statistics.messages_current_hour == 0
+    assert statistics.messages_previous_hour == 147
+    assert statistics.load_current_hour is None
+    assert statistics.load_previous_hour == 0.0
+
+
+@pytest.mark.parametrize(
+    ("raw_rssi", "expected"), [(0, 0), (32767, 32767), (32768, -32768), (65493, -43), (65535, -1)]
+)
+async def test_rf_diagnostics_read_separate_registers(
+    client: MeltemModbusClient, unit: MockModbusUnit, raw_rssi: int, expected: int
+) -> None:
+    unit.holding[40100] = [50]
+    unit.holding[40103] = [0]
+    unit.holding[40104] = [0]
+    unit.holding[40109] = [raw_rssi]
+
+    state = await client.read_room_state(
+        _PLAIN, EMPTY_ROOM_STATE, RefreshPlan.only(refresh_rf_diagnostics=True)
+    )
+
+    assert state.rf_last_seen_age_seconds == 50
+    assert state.rf_signal_strength == expected
+    assert sorted(_reads(unit)) == [(40100, 1), (40103, 1), (40104, 1), (40109, 1)]
+
+
+@pytest.mark.parametrize(
+    ("fault", "value_error", "expected_fault", "expected_value_error"),
+    [(0, 0, False, False), (1, 1, True, True), (2, 2, True, None), (65535, 65535, None, None)],
+)
+async def test_rf_fault_and_value_error_decoding(
+    client: MeltemModbusClient,
+    unit: MockModbusUnit,
+    fault: int,
+    value_error: int,
+    expected_fault: bool | None,
+    expected_value_error: bool | None,
+) -> None:
+    unit.holding[40103] = [fault]
+    unit.holding[40104] = [value_error]
+    previous = RoomState(rf_fault_status=True, value_error_status=True)
+
+    state = await client.read_room_state(
+        _PLAIN, previous, RefreshPlan.only(refresh_rf_diagnostics=True)
+    )
+
+    assert state.rf_fault_status is expected_fault
+    assert state.value_error_status is expected_value_error
+
+
+async def test_rejected_rf_diagnostic_does_not_fail_other_groups(
+    client: MeltemModbusClient, unit: MockModbusUnit
+) -> None:
+    unit.holding[40100] = [50]
+    unit.fail_read(40109, _REJECTED)
+
+    state = await client.read_room_state(
+        _PLAIN, EMPTY_ROOM_STATE, RefreshPlan.only(refresh_rf_diagnostics=True)
+    )
+
+    assert state.rf_last_seen_age_seconds == 50
+    assert state.read_health_for("rf_last_seen").last_error is None
+    assert state.read_health_for("rf_signal").last_error is not None
+    assert state.read_health_for("status").last_attempt is None
+
+
+async def test_fan_hours_have_independent_read_health(
+    client: MeltemModbusClient, unit: MockModbusUnit
+) -> None:
+    unit.holding[41030] = [123, 1]
+    unit.fail_read(41032, _REJECTED)
+
+    state = await client.read_room_state(
+        _PLAIN, EMPTY_ROOM_STATE, RefreshPlan.only(refresh_operating_hours=True)
+    )
+
+    assert state.operating_hours == 65659
+    assert state.read_health_for("hours").last_error is None
+    assert state.read_health_for("fan_hours").last_error is not None
+
+
+@pytest.mark.parametrize("seconds", [0, 1792580112, 0x12345678])
+async def test_gateway_utc_clock_reads_bridge_only(
+    client: MeltemModbusClient, link: MockModbusConnection, unit: MockModbusUnit, seconds: int
+) -> None:
+    gateway = link.for_unit(1)
+    gateway.holding[41015] = [seconds & 0xFFFF, seconds >> 16]
+
+    assert await client.async_read_gateway_utc_clock() == seconds
+    assert _reads(gateway) == [(41015, 2)]
+    assert _reads(unit) == []
+
+
+async def test_gateway_utc_clock_rejects_unknown_value(
+    client: MeltemModbusClient, link: MockModbusConnection
+) -> None:
+    link.for_unit(1).holding[41015] = [0xFFFF, 0xFFFF]
+
+    with pytest.raises(MeltemModbusError, match="no valid time"):
+        await client.async_read_gateway_utc_clock()
 
 
 def _seed(
@@ -178,9 +334,14 @@ class TestRequestShapes:
             (41016, 3),
             (41027, 1),
             (41030, 2),
+            (41032, 2),
             (40004, 1),
             (42000, 6),
             (40101, 1),
+            (40103, 1),
+            (40104, 1),
+            (40100, 1),
+            (40109, 1),
             (REGISTER_MODE_STATUS, 3),
         ]
 

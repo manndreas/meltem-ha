@@ -15,6 +15,14 @@ values are given. Behaviour observed on real hardware (for example the
 `511xx` / `520xx`) is **not** part of the manufacturer documentation. Those
 notes are in [../MELTEM.md](../MELTEM.md).
 
+The additional Airios register overview `AIRIOS-VMD` in
+[README.md](README.md#additional-model-specific-register-map) covers the
+different `VMD-02RPS66` / `VMD-02RPS78` controller. It describes `40101 = 1`
+as no RF communication for at least 30 minutes and `40103 = 1` as fan failure.
+These codes are useful for comparison, but the register map must not be
+transferred wholesale to the tested `VMD-22RPS44`; its local register meanings
+differ in other parts of the map.
+
 ## Physical layer and wiring
 
 | Topic | Manufacturer statement | Source |

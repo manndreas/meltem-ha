@@ -51,6 +51,7 @@ from custom_components.meltem_ventilation.coordinator import (
 from custom_components.meltem_ventilation.fan import MeltemDirectionalFanEntity
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
 from custom_components.meltem_ventilation.models import (
+    GatewayRfStatistics,
     ReadHealth,
     RefreshPlan,
     RoomConfig,
@@ -86,6 +87,15 @@ class _FakeClient:
 
     async def async_read_gateway_uptime(self) -> int:
         raise AssertionError("Optional gateway uptime is disabled in these tests")
+
+    async def async_read_gateway_utc_clock(self) -> int:
+        raise AssertionError("Optional gateway UTC clock is disabled in these tests")
+
+    async def async_read_gateway_node_count(self) -> int:
+        raise AssertionError("Optional gateway node count is disabled in these tests")
+
+    async def async_read_gateway_rf_statistics(self) -> GatewayRfStatistics:
+        raise AssertionError("Optional gateway RF statistics are disabled in these tests")
 
     async def probe_slave_details(self, slave: int) -> tuple[str, str | None]:
         self.probe_calls.append(slave)

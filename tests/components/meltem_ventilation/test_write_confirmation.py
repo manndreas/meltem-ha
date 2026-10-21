@@ -23,19 +23,6 @@ from custom_components.meltem_ventilation.write_confirmation import (
 )
 
 
-def test_latest_command_tracks_repeated_keys_not_confirmation_order() -> None:
-    confirmations = WriteConfirmations()
-    assert confirmations.latest("unit_1") is None
-    confirmations.record_pending("unit_1", "airflow_levels", (30, 30))
-    confirmations.record_pending("unit_1", "preset_mode", "low")
-    confirmations.record_pending("unit_1", "airflow_levels", (50, 50))
-    confirmations.set_status("unit_1", "preset_mode", "confirmed")
-    latest = confirmations.latest("unit_1")
-    assert latest is not None
-    assert latest[0] == "airflow_levels"
-    assert latest[1].expected_value == (50, 50)
-
-
 def test_write_group_rejects_unknown_write_key() -> None:
     with pytest.raises(ValueError, match="Unknown write confirmation key"):
         write_group("unknown")

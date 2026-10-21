@@ -60,6 +60,7 @@ class JobGroup:
 JOB_GROUPS: tuple[JobGroup, ...] = (
     JobGroup("flow", FLOW_REFRESH_SECONDS, AIRFLOW_REFRESH_PLAN),
     JobGroup("status", STATUS_REFRESH_SECONDS, RefreshPlan.only(refresh_status=True)),
+    JobGroup("rf", STATUS_REFRESH_SECONDS, RefreshPlan.only(refresh_rf_diagnostics=True)),
     JobGroup(
         "temperature",
         TEMPERATURE_REFRESH_SECONDS,

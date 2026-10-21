@@ -254,41 +254,44 @@
       "operating_hours": {
         "name": "Betriebsstunden"
       },
+      "fan_motor_hours": {
+        "name": "Lüfterbetriebsstunden"
+      },
+      "rf_last_seen_age_seconds": {
+        "name": "RF-Last-seen-Alter"
+      },
+      "rf_signal_strength": {
+        "name": "RF-RSSI"
+      },
       "modbus_slave_id": {
         "name": "Modbus-Slave-ID"
       },
       "modbus_device_path": {
         "name": "Modbus-Gerätepfad"
       },
-      "gateway_last_answer_age": {
-        "name": "Zeit seit letzter Antwort"
+      "gateway_last_answer": {
+        "name": "Letzte Modbus-Antwort"
       },
-      "gateway_consecutive_timeouts": {
-        "name": "Aufeinanderfolgende Timeouts"
+      "gateway_connected_devices": {
+        "name": "Anzahl verbundener Geräte"
       },
-      "gateway_link_recycles": {
-        "name": "Link-Wiederverbindungen"
+      "gateway_rf_messages_current_hour": {
+        "name": "Gesendete RF-Nachrichten laufende Stunde"
       },
-      "gateway_available_units": {
-        "name": "Verfügbare Geräte"
+      "gateway_rf_messages_previous_hour": {
+        "name": "Gesendete RF-Nachrichten vorherige Stunde"
       },
-      "gateway_unavailable_units": {
-        "name": "Nicht verfügbare Geräte"
+      "gateway_rf_load_current_hour": {
+        "name": "RF-Auslastung laufende Stunde"
       },
-      "gateway_stale_read_groups": {
-        "name": "Veraltete Lesegruppen"
-      },
-      "gateway_error_units": {
-        "name": "Geräte mit Störung"
-      },
-      "gateway_filter_due_units": {
-        "name": "Geräte mit fälligem Filterwechsel"
+      "gateway_rf_load_previous_hour": {
+        "name": "RF-Auslastung vorherige Stunde"
       },
       "gateway_response_time": {
         "name": "Mittlere Antwortzeit"
       },
       "gateway_success_rate": {
-        "name": "Anfrage-Erfolgsquote"
+        "name": "Erfolgreiche Modbus-Anfragen (5 Min.)"
       },
       "gateway_supply_air_flow": {
         "name": "Gesamter Zuluftvolumenstrom"
@@ -296,26 +299,20 @@
       "gateway_extract_air_flow": {
         "name": "Gesamter Abluftvolumenstrom"
       },
+      "gateway_airflow_delta": {
+        "name": "Gesamtvolumenstromdelta"
+      },
       "gateway_uptime": {
         "name": "Betriebszeit"
+      },
+      "gateway_utc_clock": {
+        "name": "UTC-Uhr"
       },
       "airflow_balance": {
         "name": "Luftmengenbilanz"
       },
       "last_successful_update": {
         "name": "Letzte erfolgreiche Datenaktualisierung"
-      },
-      "last_write_status": {
-        "name": "Status des letzten Schreibauftrags",
-        "state": {
-          "pending": "Ausstehend",
-          "confirmed": "Bestätigt",
-          "mismatch": "Rücklesewert weicht ab",
-          "unconfirmed": "Nicht bestätigt",
-          "unverifiable": "Nicht überprüfbar",
-          "failed": "Fehlgeschlagen",
-          "superseded": "Ersetzt"
-        }
       }
     },
     "binary_sensor": {
@@ -331,11 +328,17 @@
       "rf_comm_status": {
         "name": "RF-Kommunikationsstatus"
       },
+      "rf_fault_status": {
+        "name": "RF-Fehlerstatus"
+      },
+      "value_error_status": {
+        "name": "Messwertfehler"
+      },
       "data_health": {
         "name": "Datenlesestatus"
       },
       "gateway_connectivity": {
-        "name": "Erreichbar"
+        "name": "Modbus-Verbindung"
       },
       "connectivity": {
         "name": "Erreichbar"

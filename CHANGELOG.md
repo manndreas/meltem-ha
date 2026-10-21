@@ -1,5 +1,45 @@
 # Changelog
 
+## 4.5.0
+
+- **Breaking:** Remove the gateway available/unavailable unit counts, device-error
+  and due-filter counts, consecutive timeout count, stale read-group count, and
+  link-reconnection count. Replace the last-response-age entity with a new
+  **Last Modbus response** timestamp entity. Update automations and dashboards
+  that referenced these removed entities; their registry entries are cleaned up.
+- Remove the per-unit **Last command status** entity. Failed or unconfirmed
+  writes remain part of the internal confirmation logic and Read health diagnostics.
+- Rename gateway **Reachable** to **Modbus connection** and detect an unanswered
+  link after 30 seconds instead of 120 seconds. The optional response timestamp
+  stays fixed during an outage rather than counting elapsed seconds.
+- Add **Connected device count**, enabled by default, using gateway register
+  `43901`. It counts registered gateway devices, not currently reachable RF
+  devices or configured Home Assistant units. Reads stop when disabled.
+- Rename the optional success-rate diagnostic to **Successful Modbus requests
+  (5 min)** to make its transport scope and rolling window explicit.
+- Register the gateway MAC address as a Home Assistant device connection.
+  This best-effort background read does not block integration setup.
+- Decode gateway uptime as low-word-first 32-bit seconds and remove its
+  experimental label. The sensor remains disabled by default.
+- Add disabled-by-default per-unit RF last-seen age, signed RF RSSI, and fan
+  operating hours. The provisional RSSI unit is dBm; fan operating hours are
+  separate from the existing device operating-hours counter.
+- Add disabled-by-default per-unit **RF fault status** (`40103`) and **Value
+  error** (`40104`) diagnostics with independent read-health groups. Unknown
+  status values are not reported as healthy or faulty.
+- Add optional gateway RF sent-message counts (`42100/42101`) and RF load
+  percentages (`42102..42105`) for the current and previous hour. All four
+  entities share one rate-limited read while any is enabled; percentages use
+  the upstream scale without local rescaling.
+- Add the enabled-by-default gateway **Total airflow delta**, calculated as
+  total supply minus total extract airflow. Incomplete totals leave the delta
+  unknown and identify all affected units.
+- Add an optional gateway **UTC clock** timestamp with independent, rate-limited
+  reads. Stale clock and connected-device readings become unavailable without
+  affecting room entities.
+- Update English/German labels, icons, documentation, and regression tests for
+  the gateway and unit diagnostics.
+
 ## 4.4.0
 
 - Add gateway reachability, last-response age, timeout and link-recovery

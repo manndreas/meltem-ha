@@ -24,10 +24,16 @@ from ..const import (
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
     REGISTER_EXTRACT_AIR_TEMPERATURE,
     REGISTER_EXTRACT_MODE_STATUS,
+    REGISTER_FAN_MOTOR_HOURS,
     REGISTER_FILTER_CHANGE_DUE,
     REGISTER_FROST_PROTECTION_ACTIVE,
     REGISTER_GATEWAY_MAC_START,
+    REGISTER_GATEWAY_RF_LOAD_CURRENT_HOUR,
+    REGISTER_GATEWAY_RF_LOAD_PREVIOUS_HOUR,
+    REGISTER_GATEWAY_RF_MESSAGES_CURRENT_HOUR,
+    REGISTER_GATEWAY_RF_MESSAGES_PREVIOUS_HOUR,
     REGISTER_GATEWAY_UPTIME,
+    REGISTER_GATEWAY_UTC_CLOCK,
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_MAX_LEVEL,
     REGISTER_HUMIDITY_MIN_LEVEL,
@@ -75,6 +81,35 @@ class GatewayUptime(Component):
     register_ranges = ((REGISTER_GATEWAY_UPTIME, REGISTER_GATEWAY_UPTIME + 1),)
 
     uptime = _uint32(REGISTER_GATEWAY_UPTIME)
+
+
+class GatewayUtcClock(Component):
+    """UTC clock as low-word-first Unix epoch seconds."""
+
+    register_ranges = ((REGISTER_GATEWAY_UTC_CLOCK, REGISTER_GATEWAY_UTC_CLOCK + 1),)
+
+    value = _uint32(REGISTER_GATEWAY_UTC_CLOCK)
+
+
+class GatewayRfStatistics(Component):
+    """Hourly RF counters and low-word-first load percentages."""
+
+    register_ranges = (
+        (REGISTER_GATEWAY_RF_MESSAGES_CURRENT_HOUR, REGISTER_GATEWAY_RF_LOAD_PREVIOUS_HOUR + 1),
+    )
+
+    messages_current_hour = raw_register(REGISTER_GATEWAY_RF_MESSAGES_CURRENT_HOUR)
+    messages_previous_hour = raw_register(REGISTER_GATEWAY_RF_MESSAGES_PREVIOUS_HOUR)
+    load_current_hour = _float32(REGISTER_GATEWAY_RF_LOAD_CURRENT_HOUR)
+    load_previous_hour = _float32(REGISTER_GATEWAY_RF_LOAD_PREVIOUS_HOUR)
+
+
+class FanMotorHours(Component):
+    """Fan motor operating hours, separate from device operating hours."""
+
+    register_ranges = ((REGISTER_FAN_MOTOR_HOURS, REGISTER_FAN_MOTOR_HOURS + 1),)
+
+    value = _uint32(REGISTER_FAN_MOTOR_HOURS)
 
 
 class Airflow(Component):

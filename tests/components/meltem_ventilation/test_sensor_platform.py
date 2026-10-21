@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import pytest
-from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import EntityCategory, UnitOfVolumeFlowRate
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -17,10 +17,8 @@ from custom_components.meltem_ventilation.const import CONF_PORT, DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
 from custom_components.meltem_ventilation.entity import MeltemEntity
 from custom_components.meltem_ventilation.models import (
-    ReadHealth,
     RoomConfig,
     RoomState,
-    WriteConfirmation,
 )
 from custom_components.meltem_ventilation.sensor import (
     GATEWAY_SENSOR_DESCRIPTIONS,
@@ -69,17 +67,38 @@ def _sensor(key: str, state: RoomState | None = None) -> MeltemSensorEntity:
 
 
 class TestSensorEntityCreation:
+    @pytest.mark.parametrize(
+        ("key", "value", "unit", "state_class"),
+        [
+            ("rf_last_seen_age_seconds", 50, "s", SensorStateClass.MEASUREMENT),
+            ("rf_signal_strength", -43, "dBm", SensorStateClass.MEASUREMENT),
+            ("fan_motor_hours", 38423, "h", SensorStateClass.TOTAL_INCREASING),
+        ],
+    )
+    def test_optional_room_diagnostic_metadata_and_value(
+        self, key: str, value: int, unit: str, state_class: SensorStateClass
+    ) -> None:
+        state = RoomState(
+            fan_motor_hours=38423, rf_last_seen_age_seconds=50, rf_signal_strength=-43
+        )
+        entity = _sensor(key, state)
+        assert entity.native_value == value
+        assert entity.native_unit_of_measurement == unit
+        assert entity.state_class == state_class
+        assert entity.entity_category is EntityCategory.DIAGNOSTIC
+        assert entity.entity_registry_enabled_default is False
+
     def test_gateway_diagnostics_remain_visible_without_modbus_requests(self) -> None:
         coordinator = _coordinator()
         coordinator.last_update_success = False
         client = coordinator.client = MagicMock()
-        client.transport_diagnostics.return_value = {"seconds_since_any_answer": 125.5}
+        client.transport_diagnostics.return_value = {"last_answer_timestamp": 1792580112}
 
         entity = MeltemGatewayDiagnosticSensor(
-            coordinator, "gateway-entry", _GATEWAY_SENSORS["gateway_last_answer_age"]
+            coordinator, "gateway-entry", _GATEWAY_SENSORS["gateway_last_answer"]
         )
 
-        assert entity.unique_id == f"{DOMAIN}_gateway-entry_gateway_last_answer_age"
+        assert entity.unique_id == f"{DOMAIN}_gateway-entry_gateway_last_answer"
         assert entity.device_info == {
             "identifiers": {(DOMAIN, "gateway-entry")},
             "manufacturer": "Meltem",
@@ -87,7 +106,8 @@ class TestSensorEntityCreation:
             "name": "Meltem Gateway M-WRG-GW",
         }
         assert entity.available is True
-        assert entity.native_value == 125.5
+        assert entity.native_value == datetime.fromtimestamp(1792580112, tz=UTC)
+        assert entity.device_class is SensorDeviceClass.TIMESTAMP
         assert entity.entity_category is EntityCategory.DIAGNOSTIC
         assert entity.entity_registry_enabled_default is False
         assert client.mock_calls == [call.transport_diagnostics()]
@@ -224,10 +244,9 @@ class TestGatewayDiagnostics:
     @pytest.mark.parametrize(
         ("key", "expected"),
         [
-            ("gateway_error_units", 1),
-            ("gateway_filter_due_units", 0),
             ("gateway_supply_air_flow", 60),
             ("gateway_extract_air_flow", 45),
+            ("gateway_airflow_delta", 15),
         ],
     )
     def test_aggregates_and_incomplete_data(self, key: str, expected: int) -> None:
@@ -249,8 +268,6 @@ class TestGatewayDiagnostics:
         attributes = entity.extra_state_attributes
         assert attributes is not None
         assert attributes["complete"] is True
-        if key == "gateway_error_units":
-            assert attributes["affected_units"] == {"unit_1": "Living Room"}
 
         coordinator.read_group_available.side_effect = lambda room, group: room != "unit_2"
         assert entity.native_value is None
@@ -270,9 +287,14 @@ class TestGatewayDiagnostics:
         )
         assert supply.native_value == 0
         assert extract.native_value is None
+        delta = MeltemGatewayDiagnosticSensor(
+            coordinator, "entry", _GATEWAY_SENSORS["gateway_airflow_delta"]
+        )
+        assert delta.native_value is None
 
     @pytest.mark.parametrize(
-        "key", ["gateway_error_units", "gateway_filter_due_units", "gateway_supply_air_flow"]
+        "key",
+        ["gateway_supply_air_flow", "gateway_extract_air_flow", "gateway_airflow_delta"],
     )
     def test_no_rooms_is_unknown(self, key: str) -> None:
         coordinator = _coordinator()
@@ -280,14 +302,39 @@ class TestGatewayDiagnostics:
         entity = MeltemGatewayDiagnosticSensor(coordinator, "entry", _GATEWAY_SENSORS[key])
         assert entity.native_value is None
 
+    def test_airflow_delta_unions_unknown_units_from_both_directions(self) -> None:
+        coordinator = _coordinator()
+        coordinator.rooms = [
+            _ROOM,
+            RoomConfig(key="unit_2", name="Other", profile="ii_plain", slave=3),
+        ]
+        coordinator.data = {
+            "unit_1": RoomState(supply_air_flow=30, extract_air_flow=None),
+            "unit_2": RoomState(supply_air_flow=None, extract_air_flow=20),
+        }
+        entity = MeltemGatewayDiagnosticSensor(
+            coordinator, "entry", _GATEWAY_SENSORS["gateway_airflow_delta"]
+        )
+
+        assert entity.native_value is None
+        assert entity.extra_state_attributes == {
+            "complete": False,
+            "unknown_units": {"unit_1": "Living Room", "unit_2": "Other"},
+        }
+
+    def test_airflow_delta_metadata(self) -> None:
+        description = _GATEWAY_SENSORS["gateway_airflow_delta"]
+
+        assert description.native_unit_of_measurement == UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR
+        assert description.state_class == SensorStateClass.MEASUREMENT
+        assert description.entity_registry_enabled_default is True
+        assert description.entity_category is None
+
     @pytest.mark.parametrize(
         ("key", "transport_key", "value"),
         [
-            ("gateway_last_answer_age", "seconds_since_any_answer", None),
-            ("gateway_last_answer_age", "seconds_since_any_answer", 0.0),
-            ("gateway_consecutive_timeouts", "consecutive_timeouts", 0),
-            ("gateway_consecutive_timeouts", "consecutive_timeouts", 3),
-            ("gateway_link_recycles", "link_recycles", 2),
+            ("gateway_last_answer", "last_answer_timestamp", None),
+            ("gateway_last_answer", "last_answer_timestamp", 0.0),
         ],
     )
     def test_transport_values(self, key: str, transport_key: str, value: float | None) -> None:
@@ -296,115 +343,12 @@ class TestGatewayDiagnostics:
         coordinator.client.transport_diagnostics.return_value = {transport_key: value}
         entity = MeltemGatewayDiagnosticSensor(coordinator, "entry", _GATEWAY_SENSORS[key])
 
-        assert entity.native_value == value
+        expected = None if value is None else datetime.fromtimestamp(value, tz=UTC)
+        assert entity.native_value == expected
         assert entity.extra_state_attributes is None
-
-    @pytest.mark.parametrize("available", [[], [False, False], [True, False], [True, True]])
-    def test_unit_counts(self, available: list[bool]) -> None:
-        coordinator = _coordinator()
-        coordinator.rooms = [
-            RoomConfig(key=f"unit_{index}", name="Unit", profile="ii_plain", slave=index + 2)
-            for index in range(len(available))
-        ]
-        coordinator.room_available.side_effect = lambda key: available[int(key.split("_")[1])]
-
-        values = [
-            MeltemGatewayDiagnosticSensor(coordinator, "entry", _GATEWAY_SENSORS[key]).native_value
-            for key in ("gateway_available_units", "gateway_unavailable_units")
-        ]
-
-        assert values == [sum(available), len(available) - sum(available)]
-
-    @pytest.mark.parametrize("stale", [None, False, True])
-    def test_stale_groups_use_supported_reads_only(self, stale: bool | None) -> None:
-        coordinator = _coordinator()
-        coordinator.rooms = [
-            RoomConfig(
-                key="unit_1",
-                name="Unit",
-                profile="ii_plain",
-                slave=2,
-                supported_entity_keys=frozenset({"supply_air_flow"}),
-            )
-        ]
-        coordinator.read_group_stale.side_effect = lambda room, group: stale
-        entity = MeltemGatewayDiagnosticSensor(
-            coordinator, "entry", _GATEWAY_SENSORS["gateway_stale_read_groups"]
-        )
-
-        assert entity.native_value == (None if stale is None else int(stale))
-        assert entity.extra_state_attributes == {
-            "affected_units": {"unit_1": ["flow"]} if stale else {}
-        }
-        assert all(
-            request.args == ("unit_1", "flow")
-            for request in coordinator.read_group_stale.call_args_list
-        )
-        assert "affected_units" in entity._unrecorded_attributes
-
-    def test_stale_count_combines_expired_reads_and_failures_across_units(self) -> None:
-        now = dt_util.utcnow()
-        old = now - timedelta(seconds=31)
-        state_1 = (
-            RoomState()
-            .with_read_health("flow", ReadHealth(last_attempt=old, last_successful_read=old))
-            .with_read_health("status", ReadHealth(last_attempt=now, last_successful_read=now))
-        )
-        state_2 = (
-            RoomState()
-            .with_read_health("flow", ReadHealth(last_attempt=now, last_successful_read=now))
-            .with_read_health("status", ReadHealth(last_attempt=now, consecutive_failures=3))
-        )
-        coordinator = _coordinator()
-        coordinator.data = {"unit_1": state_1, "unit_2": state_2}
-        coordinator.rooms = [
-            RoomConfig(
-                key=key,
-                name=key,
-                profile="ii_plain",
-                slave=slave,
-                supported_entity_keys=frozenset({"supply_air_flow", "error_status"}),
-            )
-            for key, slave in (("unit_1", 2), ("unit_2", 3))
-        ]
-        coordinator.read_group_stale.side_effect = lambda room, group: (
-            MeltemDataUpdateCoordinator.read_group_stale(coordinator, room, group)
-        )
-        entity = MeltemGatewayDiagnosticSensor(
-            coordinator, "entry", _GATEWAY_SENSORS["gateway_stale_read_groups"]
-        )
-
-        assert entity.native_value == 2
-        assert entity.extra_state_attributes == {
-            "affected_units": {"unit_1": ["flow"], "unit_2": ["status"]}
-        }
 
 
 class TestRoomDiagnostics:
-    def test_pending_write_times_out_without_polling(self) -> None:
-        coordinator = _coordinator()
-        coordinator.last_update_success = False
-        now = dt_util.utcnow()
-        coordinator.latest_write.return_value = (
-            "preset_mode",
-            WriteConfirmation(expected_value="low", started_at=now),
-        )
-        description = next(
-            item for item in ROOM_DIAGNOSTIC_DESCRIPTIONS if item.key == "last_write_status"
-        )
-        entity = MeltemRoomDiagnosticSensor(coordinator, _ROOM, description)
-        assert entity.available is True
-        assert entity.native_value == "pending"
-        with patch(
-            "custom_components.meltem_ventilation.write_confirmation.dt_util.utcnow",
-            return_value=now + timedelta(seconds=31),
-        ):
-            assert entity.native_value == "unconfirmed"
-        attributes = entity.extra_state_attributes
-        assert attributes is not None
-        assert attributes["write_key"] == "preset_mode"
-        assert "last_error" not in attributes
-
     def test_timestamp_stays_visible_without_live_data(self) -> None:
         coordinator = _coordinator()
         coordinator.last_update_success = False
