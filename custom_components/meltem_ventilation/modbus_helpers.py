@@ -253,6 +253,7 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None]:
 
     probe = MeltemProbe(unit)
     values: dict[str, int] = {}
+    probe_timed_out = False
     for name in _PROBE_COMPONENTS:
         component = getattr(probe, name)
         try:
@@ -261,10 +262,20 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None]:
             raise MeltemConnectionError(str(err)) from err
         except ModbusTimeoutError:
             # A silent unit would only time out on every further probe.
+            probe_timed_out = True
             break
         except ModbusError:
             continue
         values[name] = component.product_id if name == "product_id" else component.value
+
+    app_setup_code = None
+    if not probe_timed_out:
+        try:
+            app_setup_code = await probe.async_read_app_setup_code()
+        except ModbusConnectionError as err:
+            raise MeltemConnectionError(str(err)) from err
+        except (ModbusTimeoutError, ModbusError):
+            pass
 
     detected = {key for key in PLAUSIBLE_RANGES if is_plausible(key, values.get(key))}
     detected_profile, capability_preview = next(
@@ -272,9 +283,11 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None]:
         ("plain", "basic"),
     )
     product_id = values.get("product_id")
-    preview = (
-        capability_preview if product_id is None else f"ID {product_id} | {capability_preview}"
-    )
+    preview_parts = [f"R-Code {app_setup_code}"] if app_setup_code is not None else []
+    if product_id is not None:
+        preview_parts.append(f"ID {product_id}")
+    preview_parts.append(capability_preview)
+    preview = " | ".join(preview_parts)
     return detected_profile, preview
 
 

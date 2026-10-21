@@ -52,6 +52,15 @@ def _only[C: Component](component: C, *fields: str) -> C:
     return component
 
 
+def _format_app_setup_code(low_word: int | None, high_word: int | None) -> str | None:
+    if low_word is None or high_word is None or high_word > 0xFF:
+        return None
+    code = (high_word << 16) | low_word
+    if code == 0:
+        return None
+    return f"R{code:06X}"
+
+
 class MeltemRoomDevice(Device):
     """One ventilation unit behind the gateway."""
 
@@ -108,12 +117,10 @@ class MeltemRoomDevice(Device):
         """Read the six-digit DataMatrix code from the two identity registers."""
 
         await self.app_setup_code.async_update()
-        low_word = self.app_setup_code.low_word
-        high_word = self.app_setup_code.high_word
-        if low_word is None or high_word is None or high_word > 0xFF:
-            return None
-        code = (high_word << 16) | low_word
-        return f"R{code:06X}"
+        return _format_app_setup_code(
+            self.app_setup_code.low_word,
+            self.app_setup_code.high_word,
+        )
 
 
 class MeltemProbe(Device):
@@ -126,6 +133,16 @@ class MeltemProbe(Device):
         self.humidity_supply_air = Register(unit, base_offset=REGISTER_HUMIDITY_SUPPLY_AIR)
         self.co2_extract_air = Register(unit, base_offset=REGISTER_CO2_EXTRACT_AIR)
         self.voc_supply_air = Register(unit, base_offset=REGISTER_VOC_SUPPLY_AIR)
+        self.app_setup_code = AppSetupCode(unit)
+
+    async def async_read_app_setup_code(self) -> str | None:
+        """Read the six-digit DataMatrix code during setup discovery."""
+
+        await self.app_setup_code.async_update()
+        return _format_app_setup_code(
+            self.app_setup_code.low_word,
+            self.app_setup_code.high_word,
+        )
 
 
 class MeltemGateway(Device):
