@@ -41,6 +41,7 @@ from custom_components.meltem_ventilation.modbus_helpers import (
     resolve_preferred_port_path,
     supported_entity_keys_for_profile,
 )
+from custom_components.meltem_ventilation.models import UnitProbeResult
 
 _PORT = "/dev/ttyACM0"
 # Product ID 116852 as a little-endian uint32.
@@ -230,7 +231,7 @@ class TestDetectSlaveDetails:
         unit.holding.update(
             {
                 REGISTER_PRODUCT_ID: _PRODUCT_ID_WORDS,
-                REGISTER_APP_SETUP_CODE: [0x1C31, 0x0097],
+                REGISTER_APP_SETUP_CODE: [0x0001, 0x0000],
                 REGISTER_HUMIDITY_EXTRACT_AIR: 45,
                 REGISTER_CO2_EXTRACT_AIR: 800,
                 REGISTER_HUMIDITY_SUPPLY_AIR: 48,
@@ -238,10 +239,14 @@ class TestDetectSlaveDetails:
             }
         )
 
-        profile, preview = await detect_slave_details(unit)
+        result = await detect_slave_details(unit)
 
-        assert profile == "fc_voc"
-        assert preview == "R-Code R971C31 | ID 116852 | VOC"
+        assert result == UnitProbeResult(
+            profile="fc_voc",
+            preview="R-Code R000001 | ID 116852 | VOC",
+            product_id=116852,
+            app_setup_code="R000001",
+        )
         assert _reads(unit) == [
             (REGISTER_PRODUCT_ID, 2),
             (REGISTER_HUMIDITY_EXTRACT_AIR, 1),
@@ -258,10 +263,9 @@ class TestDetectSlaveDetails:
         for register in _CAPABILITY_REGISTERS:
             unit.fail_read(register, IllegalDataAddressError())
 
-        profile, preview = await detect_slave_details(unit)
+        result = await detect_slave_details(unit)
 
-        assert profile == "plain"
-        assert preview == "ID 116852 | basic"
+        assert result == UnitProbeResult("plain", "ID 116852 | basic", 116852)
 
     async def test_an_unreadable_app_setup_code_does_not_fail_profile_detection(
         self, unit: MockModbusUnit
@@ -271,10 +275,9 @@ class TestDetectSlaveDetails:
         for register in _CAPABILITY_REGISTERS:
             unit.fail_read(register, IllegalDataAddressError())
 
-        profile, preview = await detect_slave_details(unit)
+        result = await detect_slave_details(unit)
 
-        assert profile == "plain"
-        assert preview == "ID 116852 | basic"
+        assert result == UnitProbeResult("plain", "ID 116852 | basic", 116852)
 
     async def test_app_setup_code_timeout_does_not_fail_profile_detection(
         self, unit: MockModbusUnit
@@ -284,10 +287,9 @@ class TestDetectSlaveDetails:
         for register in _CAPABILITY_REGISTERS:
             unit.fail_read(register, IllegalDataAddressError())
 
-        profile, preview = await detect_slave_details(unit)
+        result = await detect_slave_details(unit)
 
-        assert profile == "plain"
-        assert preview == "ID 116852 | basic"
+        assert result == UnitProbeResult("plain", "ID 116852 | basic", 116852)
 
     async def test_implausible_values_do_not_count_as_capabilities(
         self, unit: MockModbusUnit
@@ -302,18 +304,16 @@ class TestDetectSlaveDetails:
         )
         unit.fail_read(REGISTER_PRODUCT_ID, IllegalDataAddressError())
 
-        profile, preview = await detect_slave_details(unit)
+        result = await detect_slave_details(unit)
 
-        assert profile == "plain"
-        assert preview == "basic"
+        assert result == UnitProbeResult("plain", "basic")
 
     async def test_a_silent_unit_is_probed_as_plain(self, unit: MockModbusUnit) -> None:
         unit.fail_requests(ModbusTimeoutError("silent"))
 
-        profile, preview = await detect_slave_details(unit)
+        result = await detect_slave_details(unit)
 
-        assert profile == "plain"
-        assert preview == "basic"
+        assert result == UnitProbeResult("plain", "basic")
         # The remaining probes would only time out as well.
         assert _reads(unit) == [(REGISTER_PRODUCT_ID, 2)]
 

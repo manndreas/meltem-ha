@@ -1,8 +1,8 @@
 === R-2 slave 3 range 40000-40300 window 1 ===
 scanning slave 3 on /dev/ttyACM0 from 40000 to 40300 window=1 step=1 function=both
 
-holding 40000..40000 ok      values=1   sample=[7162]
-holding 40001..40001 ok      values=1   sample=[151]
+holding 40000..40000 ok      values=1   sample=[redacted]
+holding 40001..40001 ok      values=1   sample=[redacted]
 holding 40002..40002 ok      values=1   sample=[51316]
 holding 40003..40003 ok      values=1   sample=[1]
 holding 40004..40004 ok      values=1   sample=[2326]
@@ -135,8 +135,8 @@ summary:
 === R-2 slave 5 range 40000-40300 window 1 ===
 scanning slave 5 on /dev/ttyACM0 from 40000 to 40300 window=1 step=1 function=both
 
-holding 40000..40000 ok      values=1   sample=[3693]
-holding 40001..40001 ok      values=1   sample=[149]
+holding 40000..40000 ok      values=1   sample=[redacted]
+holding 40001..40001 ok      values=1   sample=[redacted]
 holding 40002..40002 ok      values=1   sample=[51316]
 holding 40003..40003 ok      values=1   sample=[1]
 holding 40004..40004 ok      values=1   sample=[2584]
@@ -269,7 +269,7 @@ summary:
 === R-2 slave 2 range 40000-40300 window 10 ===
 scanning slave 2 on /dev/ttyACM0 from 40000 to 40300 window=10 step=10 function=both
 
-holding 40000..40009 ok      values=10  sample=[7175, 151, 51316, 1, 2326, 107]
+holding 40000..40009 ok      values=10  sample=[redacted, redacted, 51316, 1, 2326, 107]
 holding 40010..40019 ok      values=10  sample=[3847, 22093, 17453, 12850, 21072, 21300]
 holding 40200..40209 ok      values=10  sample=[0, 0, 0, 0, 0, 0]
 
@@ -298,7 +298,7 @@ summary:
 === R-2 slave 4 range 40000-40300 window 10 ===
 scanning slave 4 on /dev/ttyACM0 from 40000 to 40300 window=10 step=10 function=both
 
-holding 40000..40009 ok      values=10  sample=[7217, 151, 51316, 1, 2326, 107]
+holding 40000..40009 ok      values=10  sample=[redacted, redacted, 51316, 1, 2326, 107]
 holding 40010..40019 ok      values=10  sample=[3847, 22093, 17453, 12850, 21072, 21300]
 holding 40200..40209 ok      values=10  sample=[0, 0, 0, 0, 0, 0]
 
@@ -327,7 +327,7 @@ summary:
 === R-2 slave 7 range 40000-40300 window 10 ===
 scanning slave 7 on /dev/ttyACM0 from 40000 to 40300 window=10 step=10 function=both
 
-holding 40000..40009 ok      values=10  sample=[7165, 151, 51316, 1, 2326, 107]
+holding 40000..40009 ok      values=10  sample=[redacted, redacted, 51316, 1, 2326, 107]
 holding 40010..40019 ok      values=10  sample=[3847, 22093, 17453, 12850, 21072, 21300]
 holding 40200..40209 ok      values=10  sample=[0, 0, 0, 0, 0, 0]
 
@@ -356,7 +356,7 @@ summary:
 === R-2 slave 6 range 40000-40300 window 10 ===
 scanning slave 6 on /dev/ttyACM0 from 40000 to 40300 window=10 step=10 function=both
 
-holding 40000..40009 ok      values=10  sample=[7166, 151, 51316, 1, 2326, 107]
+holding 40000..40009 ok      values=10  sample=[redacted, redacted, 51316, 1, 2326, 107]
 holding 40010..40019 ok      values=10  sample=[3847, 22093, 17453, 12850, 21072, 21300]
 holding 40200..40209 ok      values=10  sample=[0, 0, 0, 0, 0, 0]
 

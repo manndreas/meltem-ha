@@ -65,13 +65,13 @@ values on Modbus address `1`:
 - `41004:41003 = 0xFFFF:0xFF00` decodes to subnet mask `255.255.255.0`.
 - `41006:41005` and `41008:41007` both decode to `192.168.0.1`, matching the
   fallback router and DNS settings.
-- `41012..41014 = [22771, 34680, 11812]` decodes to
-  `58:f3:87:78:2e:24`, matching the MAC printed on this gateway.
+- `41012..41014` decode to the MAC printed on this gateway. The raw words and
+  address are omitted because they identify the tested hardware.
 
-The gateway was using DHCP at `10.0.2.1` during this test, while these registers
-continued to report the fallback configuration. They are therefore not a
-reliable source for the current DHCP lease. The active address was identified
-separately from the LAN's ARP mapping.
+The gateway was using a DHCP-assigned address during this test, while these
+registers continued to report the fallback configuration. They are therefore
+not a reliable source for the current DHCP lease. The active address was
+identified separately from the LAN's ARP mapping and is omitted.
 
 The Airios `BRDG-02EM23` implementation in
 [`pyairios`](https://github.com/scabrero/pyairios) identifies `41019` as uptime
@@ -156,8 +156,8 @@ Holding-register sweep on `2026-03-31` on unit `slave 2`:
 - a block read fails as a whole as soon as one register in it is unreadable,
   which is why coarse windows hide islands
 
-An expanded R-2 single-register scan on 2026-10-02 covered slaves `3` and `5`
-(the latter is the bathroom). Both reported the same readable islands:
+An expanded R-2 single-register scan on 2026-10-02 covered slaves `3` and `5`.
+Both reported the same readable islands:
 `40000..40022`, `40024..40033`, `40041`, `40050..40051`, `40071`,
 `40100..40104`, `40109..40110`, `40120`, `40200..40209`, `41000..41034`,
 `41100..41112`, and `42000..42009`. This adds readable addresses omitted from
@@ -484,10 +484,10 @@ an `O/VOC-AUL` column (all temperatures, both humidities, CO2 and VOC) in the
 sensor matrix. None of the documents collected in `docs/meltem/` contains the
 register or the option. Their origin is unknown; treat both as unverified.
 
-### Slave 5 (bathroom) compared with the other units
+### Slave 5 compared with the other units
 
-The user identified slave `5` as the bathroom unit and said it is the only
-unit without moisture recovery. In the saved R-1 capture from 2026-10-02, the
+The user identified slave `5` as the unit without moisture recovery. In the
+saved R-1 capture from 2026-10-02, the
 six units shared `PRODUCT_ID=116852`, `PRODUCT_NAME=VMD-22RPS44`,
 `RECEIVED_PRODUCT_ID=116852`, and identical `42000..42009` values. Slave `5`
 was the one difference in software version (`2584`; the other five were
@@ -501,20 +501,19 @@ slave `4` and one read of the same identity fields across all six showed:
 
 - The user confirms `40009` is the correct year value; stickers may not have
   been renewed after a board replacement. Do not use a sticker/register year
-  difference to infer a changed room mapping. `40010` was `1804` on slave `5`
-  and `3847` on the other five in the earlier sweep; its meaning remains
-  unknown and could be build or board metadata. Neither field proves the P/E
-  exchanger type. `40000/40001`, `40100`, and `40109` also differ, with no
-  confirmed semantics (the `40000/40001` identity is now resolved below).
+  difference to infer a changed room mapping. `40010` differs on slave `5`,
+  but its meaning remains unknown and could be build or board metadata. Neither
+  field proves the P/E exchanger type. `40000/40001`, `40100`, and `40109` also
+  differ, with no confirmed semantics (the `40000/40001` identity is now
+  resolved below).
 - `41106` is `3` on slaves `5`, `6`, and `7`, and `0` on `2`, `3`, and `4`.
   The same `0`/`3` split appeared for slaves `3`/`5` in R-2. The value is
-  repeatable per-unit across the captures, but is not unique to the bathroom,
+  repeatable per-unit across the captures, but is not unique to slave `5`,
   so it does not by itself identify moisture recovery.
-- `41113` returned `425` on slave `5` and `1449` on slave `4` in five repeat
-  reads each (difference `1024`); the other four slaves returned exception
-  `0x05` in the same sweep. It was also unavailable on slaves `3` and `5` in
-  the 2026-10-02 scan, so its availability is inconsistent and its meaning
-  remains unknown despite the repeatable pair values.
+- `41113` returned repeatable but differing values on slaves `4` and `5`, while
+  other units returned exception `0x05` in that sweep. It was also unavailable
+  on slaves `3` and `5` in the 2026-10-02 scan, so its availability is
+  inconsistent and its meaning remains unknown.
 - `52010` was `118` on both `4` and `5` in this latest comparison. Its earlier
   per-unit offset in the idle captures was not reproduced, so it is not a
   reliable model marker.
@@ -539,44 +538,25 @@ The wider identity reads are preserved for
 
 ### Type-plate and identity-register comparison (2026-10-21)
 
-The user supplied photographs for the commonly tested Andi unit, the Moni
-unit, and the bathroom unit. The visible labels identify Andi and Moni as
-`M-WRG-II E-T`, part `701010`; the bathroom is `M-WRG-II P-T`, part `700010`.
-The user identifies the bathroom as the unit without an enthalpy exchanger.
-The user notes that year stickers may be stale after a board replacement, so
-the year reported by `40009` remains authoritative. Printed Device No. and
-Part No. values are not repeated here.
+Type-plate photos for two `M-WRG-II E-T` units and one `M-WRG-II P-T` unit
+were compared with read-only identity-register scans. Personal room names,
+device numbers, literal R-codes, and raw identity words are omitted here.
 
-The gateway probe still listed six units `[3, 2, 4, 5, 7, 6]`. A fresh
-read-only holding-register read of `40000..40022` on every unit returned:
+The gateway listed six units. All six returned the same product ID and product
+name, so these shared fields do not distinguish E-T from P-T. Five units had
+one software version and the P-T test unit had another, but this alone is not
+a reliable variant marker. Year labels can be stale after a board replacement,
+so `40009` should not be used by itself to infer the exchanger type.
 
-| Slave | Room | `40000/40001` | DataMatrix `R` code | Product ID `40002/40003` | Firmware `40004` | `40009` | `40010` |
-| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2 | Unassigned | `7175/151` | `971C07` | `51316/1` | `2326` | `2021` | `3847` |
-| 3 | Moni | `7162/151` | `971BFA` | `51316/1` | `2326` | `2021` | `3847` |
-| 4 | Andi | `7217/151` | `971C31` | `51316/1` | `2326` | `2021` | `3847` |
-| 5 | Bathroom | `3693/149` | `950E6D` | `51316/1` | `2584` | `2022` | `1804` |
-| 6 | Unassigned | `7166/151` | `971BFE` | `51316/1` | `2326` | `2021` | `3847` |
-| 7 | Unassigned | `7165/151` | `971BFD` | `51316/1` | `2326` | `2021` | `3847` |
-
-Combining `40000/40001` as a low-word-first U32 (`40001 << 16 | 40000`) gives
-the exact six-hex-digit `R` code printed below each DataMatrix. The Andi,
-Moni, and bathroom codes therefore identify slaves `4`, `3`, and `5`
-respectively. The DataMatrix payload also contains `VMD-22RPS44` and variant
-fragments (`Vh06s22` on the two E-T examples, `Vh07s24` on the P-T example),
-but their full schema has not been decoded. The observed `97` versus `95`
-prefix correlates with these two variant groups in this small sample; it is
-not yet a general part-number mapping.
-
-`40002/40003` decode low-word-first to product ID `116852` on all six units;
-`40011..40016` spell `VMD-22RPS44`, and `40021/40022` repeat the product ID.
-These common product fields do not encode the type-plate part numbers or
-distinguish `E-T` from `P-T`. The printed Device No. and Part No. were not
-found as register values in the scanned identity range; `40000/40001` match
-the separate DataMatrix `R` code instead. Moni's mapping is now confirmed by
-that code rather than by the shared product fields. The integration exposes
-this six-digit `R` code as the disabled-by-default per-unit **App setup code**
-diagnostic, reading `40000..40001` only when the entity is enabled.
+On the three photographed units, combining `40000/40001` as a low-word-first
+U32 matched the R-code printed below the DataMatrix. This establishes the pair
+as a useful per-unit app-setup identifier, but the actual values and their
+room/address mapping are intentionally not retained. The DataMatrix payload
+also contains model/variant information, but its full schema is unknown; do not
+infer a general part-number mapping from this small sample. The integration
+shows the App setup code during discovery and keeps the optional diagnostic
+available for explicit inspection. It is stored as an additional Home
+Assistant device identifier, not as a manufacturer serial number.
 
 On 2026-10-21, slave `4` was scanned one register at a time across the entire
 safe `40000..49999` holding-register range using function `0x03` and at least
@@ -1164,8 +1144,8 @@ after this reconnect.
 At `12:44:38`, the HA core log records five acknowledged function-`0x06`
 writes to slave `5`: `41123=0`, `41124=0`, `41120=3`, `41121=228`, and
 `41132=0`. This exactly matches the integration's LOW-preset write sequence.
-The person identified the write as coming from the bathroom humidity-control
-automation and confirmed no manual bus write or button press. The write was
+The person identified the write as coming from a humidity-control automation
+on slave `5` and confirmed no manual bus write or button press. The write was
 followed by successful short mode reads on slave `5`, but the full
 five-register read remained unavailable.
 
@@ -1173,17 +1153,17 @@ Per-room state attributes captured at `13:01 CEST` show the current
 `Datenlesestatus` split: five rooms are `on`, each with three consecutive
 `flow_control` and `intensive` failures and `stale=true` from the
 `41120` count-5 exception. Their `flow`, `status`, `temperature`, `filter`,
-and `hours` groups are not stale. The bathroom is `off`: its `flow_control`
+and `hours` groups are not stale. Slave `5` is `off`: its `flow_control`
 read succeeded with zero failures after the LOW preset write, and `intensive`
 has no attempt because the short-read fallback marks that optional group
-skipped. The bathroom's `writes.preset_mode` outcome is confirmed with both
+skipped. Slave `5`'s `writes.preset_mode` outcome is confirmed with both
 expected and actual value `low`. A single earlier filter-block `0x05` on each
 room has only one consecutive failure and is not stale.
 
 ### H-3 repeat on 2026-10-14
 
 The kernel recorded USB loss at `19:49:13 CEST` and re-enumerated the same
-adapter (serial `480782E24`) as `/dev/ttyACM0` at `19:50:39`, an 86-second
+same adapter as `/dev/ttyACM0` at `19:50:39`, an 86-second
 gap. The action log separately records the user's unplug confirmation at
 `19:49:24`, the reconnect prompt at `19:49:54`, and the user's replug
 confirmation at `19:50:45`; these are not physical USB event timestamps.

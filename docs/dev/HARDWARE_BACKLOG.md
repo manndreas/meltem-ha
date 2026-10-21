@@ -1024,7 +1024,7 @@ logs and snapshots were local-only and are not part of the repository.
   `flow_control` and `intensive` stale on every room; that problem predated
   the disconnect and does not test the `41100..41102` path. A later return
   to the HA host showed the same pattern and one acknowledged LOW-preset write
-  from the bathroom automation. Timeline and snapshots:
+  from an automation on slave `5`. Timeline and snapshots:
   [MELTEM.md](MELTEM.md#usb-disconnect-and-port-recovery-on-2026-10-09).
 - **6 — H-9 startup and lifecycle checks:** with `4.0.1` at `3 req/s`, three
   Core restarts kept every function-`0x03` send at least `348 ms` apart,
@@ -1061,7 +1061,7 @@ logs and snapshots were local-only and are not part of the repository.
   a fix, see [W-17](#w-17-home-assistant-write-confirmation-on-2026-10-14).
 - **6 — USB replug (H-3):** on 2026-10-14, kernel events recorded USB
   disconnect at 19:49:13 CEST and re-enumeration at 19:50:39; the adapter
-  serial `480782E24` returned as `/dev/ttyACM0`. The actual cable gap was
+  same adapter returned as `/dev/ttyACM0`. The actual cable gap was
   about 86 seconds, not the planned 30. The running HA integration resumed
   airflow reads, but not within one airflow round: unit `3` was fresh by
   about 19:51:35, unit `1` by about 19:52:45, units `4` and `5` by 19:54:10,
@@ -1079,7 +1079,7 @@ logs and snapshots were local-only and are not part of the repository.
 ### H-3 USB reconnect retest on 2026-10-15
 
 With the Home Assistant coordinator left running, the kernel recorded USB
-disconnect at `01:44:07 CEST` and re-enumerated adapter serial `480782E24` as
+disconnect at `01:44:07 CEST` and re-enumerated the same adapter as
 `/dev/ttyACM0` at `01:45:08`, a 61-second gap. Home Assistant logged the serial
 connection loss at `01:44:07.909`. The first post-replug health capture showed
 all six `flow` groups stale with three failures on `41020×2` (exception
@@ -1104,16 +1104,16 @@ showed units `2` and `3` fresh while `1`, `4`, `5`, and `6` remained stale at
 `01:48:30` and `01:50:51`; at `01:53:25`, units `1` through `3` were fresh and
 `4` through `6` were still stale. A final `01:55:51` snapshot showed every
 read-health group fresh with zero failures and all six device-error entities
-off. The port number and adapter serial were unchanged. Thus automatic
+off. The port number was unchanged. Thus automatic
 recovery completed for every unit, but the one-airflow-round criterion failed.
 `link_recycles` was not captured.
 
 ### H-3 USB reconnect follow-up on 2026-10-15 at 11:19 CEST
 
 The kernel recorded USB disconnect at `11:19:19 CEST` and re-enumerated the
-same adapter (serial `480782E24`) on `/dev/ttyACM0` at `11:21:49`, a
+same adapter on `/dev/ttyACM0` at `11:21:49`, a
 2-minute-30-second gap. Home Assistant logged serial loss at `11:19:19.459`.
-The port name and adapter serial were unchanged.
+The port name was unchanged.
 
 At the `11:27:01` state snapshot, units `1`, `4`, `5`, and `6` had fresh flow
 data; units `2` and `3` were still stale. Unit `3` had a successful flow read
@@ -1161,7 +1161,7 @@ the reconnect period.
 
 Kernel events recorded USB disconnect at `12:41:34.176 CEST` and
 re-enumeration at `12:42:05.099 CEST`, a `30.923 s` gap. The same adapter
-(serial `480782E24`) returned on `/dev/ttyACM0`. This was a read-only
+same adapter returned on `/dev/ttyACM0`. This was a read-only
 reconnect; no writes or competing serial client were used.
 
 Initial airflow reads from all room RTU slaves `2–7` returned Modbus
@@ -1242,7 +1242,7 @@ instead of `HEAD 09ac937`; both sources report integration version `4.1.1`.
 This was a read-only run with one Home Assistant process on `/dev/ttyACM0`.
 
 The kernel recorded USB disconnect at `14:38:22 CEST` and re-enumeration of
-the same adapter (serial `480782E24`) at `14:38:54`, a `32 s` gap. At
+the same adapter at `14:38:54`, a `32 s` gap. At
 `14:39:11`, all six units had failing/stale airflow reads.
 
 After reassembling fragmented `RTU recv` log entries, `1,239` complete
@@ -1332,7 +1332,7 @@ failures, stale transitions, or writes.
   log end, but the old set-register mode reads remained `0x05` on all six and
   short fallback reads remained `0x05` on five. Those runs predate the
   `41100..41102` status-path change. An acknowledged LOW-preset write sequence
-  from the bathroom humidity-control automation appeared on slave `5`;
+  from a humidity-control automation appeared on slave `5`;
   there was no manual action. Recovery took up to about eight minutes after the transport
   reopened, while the mode failures kept several `Datenlesestatus` entities in
   `Problem`. The exact replug time and diagnostics are unavailable, so the

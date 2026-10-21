@@ -3,7 +3,7 @@
     "description": "Intensive ventilation airflow and run-on settings.",
     "family": "intensive",
     "label": "before-intensive-duration-slave2-20261009-1509",
-    "port": "/dev/serial/by-id/usb-Honeywell_Modbus_480782E24-if00",
+    "port": "/dev/serial/by-id/usb-Honeywell_Modbus_REDACTED-if00",
     "ranges": [
       {
         "end": 41124,

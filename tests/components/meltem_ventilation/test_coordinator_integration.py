@@ -42,6 +42,7 @@ from custom_components.meltem_ventilation.models import (
     RefreshPlan,
     RoomConfig,
     RoomState,
+    UnitProbeResult,
 )
 from custom_components.meltem_ventilation.polling import (
     AIRFLOW_REFRESH_PLAN,
@@ -120,7 +121,7 @@ class _FakeClient:
     async def discover_gateway_units(self, start: int, end: int) -> list[int]:
         raise AssertionError("Gateway discovery is not expected in coordinator polling tests")
 
-    async def probe_slave_details(self, slave: int) -> tuple[str, str | None]:
+    async def probe_slave_details(self, slave: int) -> UnitProbeResult:
         raise AssertionError("Gateway probing is not expected in coordinator polling tests")
 
     async def read_room_state(

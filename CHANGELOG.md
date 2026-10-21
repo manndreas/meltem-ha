@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.6.0
+
+- Show each unit's App setup code in the initial setup and rescan profile lists
+  so users can match Modbus addresses to the physical unit labels.
+- Store product ID and App setup code as structured room identity fields, use
+  the stable R-code as an additional Home Assistant device identifier, and
+  migrate existing config entries without losing their known values.
+
 ## 4.5.1
 
 - Display gateway uptime in days with one decimal place instead of raw seconds.

@@ -37,7 +37,12 @@ from custom_components.meltem_ventilation.sensor import (
 # ---------------------------------------------------------------------------
 
 _ROOM = RoomConfig(
-    key="unit_1", name="Living Room", profile="ii_fc_voc", slave=2, preview="ID 116852 | VOC"
+    key="unit_1",
+    name="Living Room",
+    profile="ii_fc_voc",
+    slave=2,
+    preview="VOC",
+    product_id=116852,
 )
 _SENSORS = {description.key: description for description in SENSOR_DESCRIPTIONS}
 _GATEWAY_SENSORS = {description.key: description for description in GATEWAY_SENSOR_DESCRIPTIONS}
@@ -175,17 +180,23 @@ class TestSensorEntityCreation:
         assert info.get("serial_number") is None
         assert info.get("via_device_id") == "gateway-device"
 
-    def test_device_info_uses_app_setup_code_as_serial_number(self) -> None:
+    def test_device_info_uses_structured_unit_identity(self) -> None:
         room = RoomConfig(
             key="unit_1",
             name="Living Room",
             profile="ii_fc_voc",
             slave=2,
-            preview="R-Code R971C31 | ID 116852 | VOC",
+            preview="VOC",
+            product_id=116852,
+            app_setup_code="R000001",
         )
         sensor = MeltemSensorEntity(_coordinator(), room, _SENSORS["exhaust_temperature"])
 
-        assert sensor.device_info.get("serial_number") == "R971C31"
+        assert sensor.device_info.get("hw_version") == "116852"
+        assert (DOMAIN, "app_setup_code:R000001") in (
+            sensor.device_info.get("identifiers") or set()
+        )
+        assert sensor.device_info.get("serial_number") is None
 
     @pytest.mark.parametrize(
         ("key", "device_class", "unit"),

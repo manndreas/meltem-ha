@@ -43,6 +43,7 @@ from .const import (
     TRANSPORT_RETRY_DELAY_SECONDS,
 )
 from .device import MeltemGateway, MeltemProbe, PolicyUnit, TransportPolicy
+from .models import UnitProbeResult
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -241,7 +242,7 @@ _SUFFIXES: tuple[tuple[str, str, frozenset[str]], ...] = (
 )
 
 
-async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None]:
+async def detect_slave_details(unit: ModbusUnit) -> UnitProbeResult:
     """Run the minimal setup-time probe on one unit.
 
     Returns the detected sensor suffix and a short preview for the setup form.
@@ -288,7 +289,12 @@ async def detect_slave_details(unit: ModbusUnit) -> tuple[str, str | None]:
         preview_parts.append(f"ID {product_id}")
     preview_parts.append(capability_preview)
     preview = " | ".join(preview_parts)
-    return detected_profile, preview
+    return UnitProbeResult(
+        profile=detected_profile,
+        preview=preview,
+        product_id=product_id,
+        app_setup_code=app_setup_code,
+    )
 
 
 # ---------------------------------------------------------------------------

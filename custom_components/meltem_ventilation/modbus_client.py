@@ -69,7 +69,14 @@ from .modbus_helpers import (
     prepare_unit,
     read_gateway_node_count,
 )
-from .models import GatewayRfStatistics, ReadHealth, RefreshPlan, RoomConfig, RoomState
+from .models import (
+    GatewayRfStatistics,
+    ReadHealth,
+    RefreshPlan,
+    RoomConfig,
+    RoomState,
+    UnitProbeResult,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -328,7 +335,7 @@ class MeltemModbusClient:
     async def probe_slave_details(
         self,
         slave: int,
-    ) -> tuple[str, str | None]:
+    ) -> UnitProbeResult:
         """Probe one configured unit using the current gateway link."""
 
         async with self._gateway_operation(f"probing unit {slave}"):

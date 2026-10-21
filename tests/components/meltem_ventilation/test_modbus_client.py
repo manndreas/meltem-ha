@@ -129,7 +129,7 @@ async def test_gateway_rf_statistics_decode_bridge_block(
 
 @pytest.mark.parametrize(
     ("low_word", "high_word", "expected"),
-    [(7217, 151, "R971C31"), (7162, 151, "R971BFA"), (3693, 149, "R950E6D")],
+    [(1, 0, "R000001"), (2, 0, "R000002"), (3, 0, "R000003")],
 )
 async def test_room_app_setup_code_decodes_data_matrix_suffix(
     client: MeltemModbusClient,
