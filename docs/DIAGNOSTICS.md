@@ -90,7 +90,7 @@ The gateway device provides these overview and diagnostic entities:
 
 | Entity | Meaning | Enabled by default |
 | --- | --- | --- |
-| Reachable | The gateway replied within the last 120 seconds | Yes |
+| Reachable | The gateway replied within the last 30 seconds | Yes |
 | Time since last response | Seconds since any valid Modbus response | No |
 | Consecutive timeouts | Consecutive unanswered or invalid requests | No |
 | Link reconnections | Automatic link recoveries since this integration entry was loaded | No |
@@ -115,7 +115,7 @@ visible when communication fails; uptime becomes unavailable when stale.
 it is reachable. A valid Modbus error response also proves that the link
 answered. Before the first response, this entity and **Time since last
 response** are unknown. Once a response has been received, **Reachable** turns
-off after more than 120 seconds without another response, with up to 10 seconds
+off after more than 30 seconds without another response, with up to 10 seconds
 of local refresh delay.
 
 The unit counts follow the same availability rules as the unit entities and

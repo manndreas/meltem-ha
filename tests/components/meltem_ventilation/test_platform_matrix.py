@@ -458,7 +458,7 @@ async def test_gateway_clock_updates_without_reads_and_stops_after_unload(
         assert connectivity_state.state == "on"
         assert age_state.state == "0.0"
 
-        diagnostics.return_value = {"seconds_since_any_answer": 121.0}
+        diagnostics.return_value = {"seconds_since_any_answer": 31.0}
         async_fire_time_changed(hass, now + timedelta(seconds=11))
         await hass.async_block_till_done()
 
@@ -467,7 +467,7 @@ async def test_gateway_clock_updates_without_reads_and_stops_after_unload(
         assert connectivity_state is not None
         assert age_state is not None
         assert connectivity_state.state == "off"
-        assert age_state.state == "121.0"
+        assert age_state.state == "31.0"
         coordinator.client.read_room_state.assert_not_awaited()
 
         assert await hass.config_entries.async_unload(entry_id)
