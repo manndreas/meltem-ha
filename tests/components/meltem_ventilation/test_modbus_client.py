@@ -89,13 +89,13 @@ def unit_fixture(link: MockModbusConnection) -> MockModbusUnit:
     return link.for_unit(2)
 
 
-async def test_gateway_uptime_reads_one_word_on_bridge_only(
+async def test_gateway_uptime_reads_two_words_on_bridge_only(
     client: MeltemModbusClient, link: MockModbusConnection, unit: MockModbusUnit
 ) -> None:
     gateway = link.for_unit(1)
-    gateway.holding[41019] = [123]
+    gateway.holding[41019] = [0x007B, 0]
     assert await client.async_read_gateway_uptime() == 123
-    assert _reads(gateway) == [(41019, 1)]
+    assert _reads(gateway) == [(41019, 2)]
     assert _reads(unit) == []
 
 

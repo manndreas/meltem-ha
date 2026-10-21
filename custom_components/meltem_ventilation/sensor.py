@@ -453,7 +453,7 @@ class MeltemSensorEntity(MeltemEntity, SensorEntity):
 
 
 class MeltemGatewayUptimeSensor(MeltemGatewayEntity, SensorEntity):
-    """Opt into the experimental uptime read only while this entity is active."""
+    """Enable the optional uptime read only while this entity is active."""
 
     entity_description = GATEWAY_UPTIME_DESCRIPTION
 

@@ -27,15 +27,18 @@ def gateway_identifiers(entry_id: str) -> set[tuple[str, str]]:
     return {(DOMAIN, entry_id)}
 
 
-def gateway_device_info(entry_id: str) -> DeviceInfo:
+def gateway_device_info(entry_id: str, gateway_mac: str | None = None) -> DeviceInfo:
     """Return the device of the gateway that all units of one entry hang off."""
 
-    return DeviceInfo(
+    info = DeviceInfo(
         identifiers=gateway_identifiers(entry_id),
         manufacturer="Meltem",
         model="M-WRG-GW",
         name=GATEWAY_NAME,
     )
+    if gateway_mac is not None:
+        info["connections"] = {(dr.CONNECTION_NETWORK_MAC, gateway_mac)}
+    return info
 
 
 def room_supports_entity(

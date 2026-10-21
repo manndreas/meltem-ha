@@ -31,8 +31,10 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_EXHAUST_AIR_TEMPERATURE,
     REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+    REGISTER_GATEWAY_MAC_START,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
+    REGISTER_GATEWAY_UPTIME,
     REGISTER_HUMIDITY_MAX_LEVEL,
     REGISTER_HUMIDITY_MIN_LEVEL,
     REGISTER_HUMIDITY_STARTING_POINT,
@@ -165,6 +167,24 @@ class TestGatewayOperations:
             await client.async_validate_gateway()
 
         assert not isinstance(err.value, MeltemModbusError)
+
+    async def test_read_gateway_mac_decodes_three_registers(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        gateway = link.for_unit(DEFAULT_GATEWAY_DEVICE_ID)
+        gateway.holding[REGISTER_GATEWAY_MAC_START] = [0x58F3, 0x8778, 0x2E24]
+
+        assert await client.async_read_gateway_mac() == "58:f3:87:78:2e:24"
+        assert _reads(gateway) == [(REGISTER_GATEWAY_MAC_START, 3)]
+
+    async def test_read_gateway_uptime_decodes_low_word_first(
+        self, client: MeltemModbusClient, link: MockModbusConnection
+    ) -> None:
+        gateway = link.for_unit(DEFAULT_GATEWAY_DEVICE_ID)
+        gateway.holding[REGISTER_GATEWAY_UPTIME] = [0x5678, 0x1234]
+
+        assert await client.async_read_gateway_uptime() == 0x12345678
+        assert _reads(gateway) == [(REGISTER_GATEWAY_UPTIME, 2)]
 
     async def test_discovery_uses_the_gateway_unit(
         self, client: MeltemModbusClient, link: MockModbusConnection
