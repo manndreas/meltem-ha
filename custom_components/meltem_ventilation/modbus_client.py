@@ -56,6 +56,7 @@ from .const import (
     profile_max_airflow,
 )
 from .device import MeltemGateway, MeltemRoomDevice
+from .device.transport import RequestOutcome
 from .modbus_helpers import (
     PLAUSIBLE_RANGES,
     MeltemConnectionError,
@@ -196,10 +197,15 @@ class MeltemModbusClient:
         *,
         port: str,
         max_requests_per_second: float | None = None,
+        on_request: Callable[[RequestOutcome], None] | None = None,
+        on_link_recycle: Callable[[], None] | None = None,
     ) -> None:
         self._unit_factory = unit_factory
         self._port = port
-        self._policy = new_transport_policy()
+        self._policy = new_transport_policy(
+            on_request=on_request,
+            on_link_recycle=on_link_recycle,
+        )
         if max_requests_per_second is not None:
             self.update_request_rate(max_requests_per_second)
         self._units: dict[int, ModbusUnit] = {}

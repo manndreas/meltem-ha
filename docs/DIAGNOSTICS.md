@@ -236,6 +236,40 @@ reads. A failed read preserves the last observation until it becomes unavailable
 after more than 180 seconds without a successful clock read. It cannot make
 room entities unavailable. The upstream unknown value `0xFFFFFFFF` is rejected.
 
+### Cumulative communication counters
+
+Five disabled-by-default gateway diagnostic sensors expose cumulative Modbus
+request attempts, failed attempts, link recycles, failed read groups, and write
+command issues. They use `total_increasing` and do not cause additional Modbus
+requests. Their state is refreshed locally once a minute; detailed breakdowns
+are available as attributes and in the diagnostics download, even if the
+entities remain disabled.
+
+**Modbus request attempts** counts each request that reaches the transport,
+including retries, config-entry setup validation, writes, and runtime
+discovery probes. Config-flow scans before an entry is created are not
+included. **Failed Modbus requests** counts failed attempts, not failed reads;
+its attributes split failures into no-answer errors, valid Modbus exception
+responses, and other errors. A retry that succeeds therefore still leaves one
+failed attempt in the counter. A valid gateway target/path exception is a
+Modbus response, not a timeout.
+
+**Failed read groups** counts each room/read-group outcome that remains failed
+after the transport retry policy. If one group fails while another group in the
+same scheduled job succeeds, only the failed group is counted. **Write command
+issues** counts a command once if it fails to send, has a mismatching readback,
+or remains unconfirmed; later status changes for the same command do not count
+it again. Attributes identify affected rooms, groups, issue types, and command
+keys.
+
+Counters are stored per config entry and include `period_started_at`. They are
+saved periodically and flushed when the entry unloads or Home Assistant stops.
+A hard power loss can lose changes since the latest save. Removing the config
+entry and adding it again starts a new counter period. **Modbus link recycles**
+counts forced connection disconnects after at least three consecutive
+no-answer errors and at least ten seconds without any valid link response; it
+does not mean the physical gateway rebooted.
+
 ## A single unit is unavailable
 
 After 120 seconds without a successful read, airflow polling for that unit is

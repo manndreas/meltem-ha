@@ -15,15 +15,18 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import CONF_PORT, DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
+from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
 from custom_components.meltem_ventilation.entity import MeltemEntity
 from custom_components.meltem_ventilation.models import (
     RoomConfig,
     RoomState,
 )
 from custom_components.meltem_ventilation.sensor import (
+    CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS,
     GATEWAY_SENSOR_DESCRIPTIONS,
     ROOM_DIAGNOSTIC_DESCRIPTIONS,
     SENSOR_DESCRIPTIONS,
+    MeltemCumulativeGatewayDiagnosticSensor,
     MeltemGatewayDiagnosticSensor,
     MeltemGatewayUptimeSensor,
     MeltemModbusDevicePathSensor,
@@ -73,6 +76,40 @@ def _sensor(key: str, state: RoomState | None = None) -> MeltemSensorEntity:
 
 
 class TestSensorEntityCreation:
+    async def test_cumulative_gateway_counter_metadata_value_and_attributes(
+        self, hass: HomeAssistant
+    ) -> None:
+        diagnostics = await CumulativeDiagnostics.async_create(hass, "sensor-entry")
+        diagnostics.record_request("success")
+        diagnostics.record_request("no_answer")
+        coordinator = _coordinator()
+        coordinator.cumulative_diagnostics = diagnostics
+        description = next(
+            item
+            for item in CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS
+            if item.key == "gateway_modbus_failures_total"
+        )
+        entity = MeltemCumulativeGatewayDiagnosticSensor(
+            coordinator,
+            "sensor-entry",
+            description,
+        )
+
+        assert entity.unique_id == f"{DOMAIN}_sensor-entry_gateway_modbus_failures_total"
+        assert entity.native_value == 1
+        assert entity.state_class is SensorStateClass.TOTAL_INCREASING
+        assert entity.entity_category is EntityCategory.DIAGNOSTIC
+        assert entity.entity_registry_enabled_default is False
+        assert entity.extra_state_attributes == {
+            "period_started_at": diagnostics.period_started_at,
+            "failures_by_category": {
+                "no_answer": 1,
+                "modbus_exception": 0,
+                "other": 0,
+            },
+            "successful_attempts": 1,
+        }
+
     @pytest.mark.parametrize(
         ("key", "value", "unit", "state_class"),
         [

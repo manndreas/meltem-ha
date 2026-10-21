@@ -102,6 +102,7 @@ class WriteConfirmation:
     status: str = "pending"
     actual_value: WriteValue | None = None
     last_error: str | None = None
+    issue_counted: bool = False
 
 
 @dataclass(slots=True, frozen=True)

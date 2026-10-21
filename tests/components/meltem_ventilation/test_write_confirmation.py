@@ -11,6 +11,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.meltem_ventilation.const import (
     OPERATION_MODE_MANUAL,
     OPERATION_MODE_UNBALANCED,
+    WRITE_CONFIRMATION_TIMEOUT_SECONDS,
     WRITE_HEALTH_RETENTION_SECONDS,
 )
 from custom_components.meltem_ventilation.models import ReadHealth, RoomState, WriteConfirmation
@@ -32,6 +33,74 @@ def test_set_status_returns_false_for_missing_confirmation() -> None:
     confirmations = WriteConfirmations()
 
     assert confirmations.set_status("unit_1", "preset_mode", "confirmed") is False
+
+
+def test_problematic_write_command_is_counted_once_across_status_changes() -> None:
+    issues: list[tuple[str, str, str]] = []
+    confirmations = WriteConfirmations(on_issue=lambda *issue: issues.append(issue))
+    confirmations.record_pending("unit_1", "airflow_levels", (60, 60))
+
+    assert confirmations.mark_unconfirmed("unit_1", "airflow_levels", "no readback")
+    assert confirmations.set_status("unit_1", "airflow_levels", "mismatch")
+
+    assert issues == [("unit_1", "airflow_levels", "unconfirmed")]
+    assert confirmations.by_room["unit_1"]["airflow_levels"].issue_counted
+
+
+def test_timed_out_pending_write_is_counted_once_before_readback() -> None:
+    issues: list[tuple[str, str, str]] = []
+    confirmations = WriteConfirmations(on_issue=lambda *issue: issues.append(issue))
+    write_key = f"{CONTROL_SETTING_WRITE_PREFIX}humidity_starting_point"
+    started_at = dt_util.utcnow() - timedelta(seconds=WRITE_CONFIRMATION_TIMEOUT_SECONDS + 1)
+    confirmations.record_pending("unit_1", write_key, 70)
+    confirmations.by_room["unit_1"][write_key] = replace(
+        confirmations.by_room["unit_1"][write_key],
+        started_at=started_at,
+    )
+
+    assert confirmations.confirm({"unit_1": RoomState()})
+    assert issues == [("unit_1", write_key, "unconfirmed")]
+
+    read_at = dt_util.utcnow() + timedelta(seconds=1)
+    mismatched_state = RoomState(
+        humidity_starting_point=60,
+        group_read_health=(
+            (
+                "control_settings",
+                ReadHealth(last_attempt=read_at, last_successful_read=read_at),
+            ),
+        ),
+    )
+    assert confirmations.confirm({"unit_1": mismatched_state})
+    assert confirmations.by_room["unit_1"][write_key].status == "mismatch"
+    assert issues == [("unit_1", write_key, "unconfirmed")]
+
+
+def test_late_mismatch_is_not_misclassified_as_unconfirmed() -> None:
+    issues: list[tuple[str, str, str]] = []
+    confirmations = WriteConfirmations(on_issue=lambda *issue: issues.append(issue))
+    write_key = f"{CONTROL_SETTING_WRITE_PREFIX}humidity_starting_point"
+    started_at = dt_util.utcnow() - timedelta(seconds=WRITE_CONFIRMATION_TIMEOUT_SECONDS + 1)
+    confirmations.record_pending("unit_1", write_key, 70)
+    confirmations.by_room["unit_1"][write_key] = replace(
+        confirmations.by_room["unit_1"][write_key],
+        started_at=started_at,
+    )
+    read_at = dt_util.utcnow()
+    state = RoomState(
+        humidity_starting_point=60,
+        group_read_health=(
+            (
+                "control_settings",
+                ReadHealth(last_attempt=read_at, last_successful_read=read_at),
+            ),
+        ),
+    )
+
+    assert confirmations.confirm({"unit_1": state})
+
+    assert confirmations.by_room["unit_1"][write_key].status == "mismatch"
+    assert issues == [("unit_1", write_key, "mismatch")]
 
 
 def test_confirm_skips_rooms_without_state() -> None:

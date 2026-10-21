@@ -17,6 +17,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import CONF_PORT, CONF_ROOMS, DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
+from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
 from custom_components.meltem_ventilation.diagnostics import (
     async_get_config_entry_diagnostics,
 )
@@ -140,6 +141,20 @@ class TestDiagnostics:
         assert diagnostics["gateway_probe_error"] is None
         assert diagnostics["update_interval_seconds"] is None
         assert diagnostics["transport"]["link_recycles"] == 1
+
+    async def test_reports_cumulative_diagnostics(self, hass: HomeAssistant) -> None:
+        entry = _entry(hass)
+        coordinator = entry.runtime_data.coordinator
+        cumulative = await CumulativeDiagnostics.async_create(hass, entry.entry_id)
+        cumulative.record_request("no_answer")
+        cumulative.record_link_recycle()
+        cumulative.record_read_failure("unit_1", "flow")
+        cumulative.record_write_issue("unit_1", "airflow_levels", "mismatch")
+        coordinator.cumulative_diagnostics = cumulative
+
+        result = await async_get_config_entry_diagnostics(hass, entry)
+
+        assert result["coordinator"]["cumulative_diagnostics"] == cumulative.diagnostics()
 
     async def test_reports_a_failing_gateway_probe(self, hass: HomeAssistant) -> None:
         entry = _entry(hass)

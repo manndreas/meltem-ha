@@ -37,11 +37,18 @@ def sleeps_fixture(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return sleeps
 
 
-def _policy(link_quiet_seconds: float) -> TransportPolicy:
+def _policy(
+    link_quiet_seconds: float,
+    *,
+    on_request: Callable[[str], None] | None = None,
+    on_link_recycle: Callable[[], None] | None = None,
+) -> TransportPolicy:
     return TransportPolicy(
         disconnect_after_timeouts=3,
         link_quiet_seconds=link_quiet_seconds,
         connection_retry_delay=_RETRY_DELAY,
+        on_request=on_request,
+        on_link_recycle=on_link_recycle,
     )
 
 
@@ -199,6 +206,63 @@ class TestCommunicationMetrics:
         assert diagnostics["request_sample_count"] == 2
         assert diagnostics["request_success_rate"] == 50.0
         assert diagnostics["mean_response_time_ms"] == pytest.approx(200.0)
+
+    async def test_request_observer_sees_each_retry_outcome(self, unit: AsyncMock) -> None:
+        outcomes: list[str] = []
+        policy = _policy(0, on_request=outcomes.append)
+        operation = AsyncMock(side_effect=[_SILENT, [1]])
+
+        assert await _run(policy, unit, operation) == [1]
+
+        assert outcomes == ["no_answer", "success"]
+        assert operation.await_count == 2
+
+    async def test_request_observer_distinguishes_modbus_exceptions(self, unit: AsyncMock) -> None:
+        outcomes: list[str] = []
+        policy = _policy(0, on_request=outcomes.append)
+
+        await _run_failing(
+            policy,
+            unit,
+            AsyncMock(side_effect=IllegalDataAddressError()),
+            expected=IllegalDataAddressError,
+        )
+
+        assert outcomes == ["modbus_exception"]
+
+    async def test_gateway_exception_retry_is_not_classified_as_timeout(
+        self, unit: AsyncMock
+    ) -> None:
+        outcomes: list[str] = []
+        policy = _policy(0, on_request=outcomes.append)
+        operation = AsyncMock(side_effect=[GatewayTargetError(), [1]])
+
+        assert await _run(policy, unit, operation) == [1]
+
+        assert outcomes == ["modbus_exception", "success"]
+
+    async def test_request_observer_failure_does_not_change_transport_result(
+        self, unit: AsyncMock
+    ) -> None:
+        def fail_observer(_outcome: str) -> None:
+            raise RuntimeError("diagnostics unavailable")
+
+        policy = _policy(0, on_request=fail_observer)
+
+        assert await _run(policy, unit, AsyncMock(return_value=[1])) == [1]
+
+    async def test_other_request_errors_have_their_own_category(self, unit: AsyncMock) -> None:
+        outcomes: list[str] = []
+        policy = _policy(0, on_request=outcomes.append)
+
+        await _run_failing(
+            policy,
+            unit,
+            AsyncMock(side_effect=ValueError("unexpected")),
+            expected=ValueError,
+        )
+
+        assert outcomes == ["other"]
 
     async def test_exception_reply_proves_connectivity_but_is_not_success(
         self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
@@ -468,6 +532,16 @@ class TestQuietWindow:
         # Recycling starts a new quiet window, so the next timeouts wait for it.
         unit.disconnect.assert_awaited_once()
         assert quiet_policy.diagnostics()["link_recycles"] == 1
+
+    async def test_link_recycle_observer_is_notified_once(self, unit: AsyncMock) -> None:
+        recycles: list[int] = []
+        policy = _policy(10, on_link_recycle=lambda: recycles.append(1))
+        policy._quiet_since -= 11
+
+        await _run_failing(policy, unit, AsyncMock(side_effect=_SILENT), times=3)
+
+        assert recycles == [1]
+        assert policy.diagnostics()["link_recycles"] == 1
 
     async def test_an_exception_response_proves_the_link_is_alive(
         self, quiet_policy: TransportPolicy, unit: AsyncMock
