@@ -1,9 +1,6 @@
 {
   "domain": "meltem_ventilation",
   "name": "Meltem Modbus",
-  "categories": [
-    "climate.fans_ventilation"
-  ],
   "codeowners": [
     "@manndreas"
   ],
