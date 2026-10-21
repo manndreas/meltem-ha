@@ -123,12 +123,12 @@ class TestSensorEntityCreation:
     def test_modbus_device_path_sensor_metadata_and_value(self) -> None:
         entry = MockConfigEntry(
             domain=DOMAIN,
-            data={CONF_PORT: "/dev/serial/by-id/meltem-gateway"},
+            data={CONF_PORT: "/dev/serial/by-id/test-gateway"},
         )
         entity = MeltemModbusDevicePathSensor(entry)
 
         assert entity.unique_id == f"{DOMAIN}_{entry.entry_id}_modbus_device_path"
-        assert entity.native_value == "/dev/serial/by-id/meltem-gateway"
+        assert entity.native_value == "/dev/serial/by-id/test-gateway"
         assert entity.entity_category is EntityCategory.DIAGNOSTIC
         assert entity.entity_registry_enabled_default is False
 

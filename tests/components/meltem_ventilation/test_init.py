@@ -53,6 +53,7 @@ from custom_components.meltem_ventilation.models import (
 
 _INIT = "custom_components.meltem_ventilation"
 _PORT = "/dev/serial/by-id/test-device"
+_TEST_GATEWAY_MAC = "02:00:00:00:00:01"
 _ROOM = {
     "key": "unit_1",
     "name": "Unit 1",
@@ -117,6 +118,11 @@ def setup_mocks(hass: HomeAssistant) -> Iterator[_SetupMocks]:
         patch.object(hass.config_entries, "async_forward_entry_setups", new=AsyncMock()) as forward,
     ):
         client_cls.return_value.async_read_gateway_mac.return_value = None
+
+        async def _read_gateway_mac() -> str | None:
+            return await client_cls.return_value.async_read_gateway_mac()
+
+        coordinator_cls.return_value.async_read_gateway_mac.side_effect = _read_gateway_mac
         yield _SetupMocks(resolve, client_cls, coordinator_cls, forward)
 
 
@@ -416,9 +422,7 @@ class TestDeviceRegistrySync:
         self, hass: HomeAssistant, setup_mocks: _SetupMocks
     ) -> None:
         entry = _entry(hass)
-        setup_mocks.client_cls.return_value.async_read_gateway_mac.return_value = (
-            "58:f3:87:78:2e:24"
-        )
+        setup_mocks.client_cls.return_value.async_read_gateway_mac.return_value = _TEST_GATEWAY_MAC
 
         await async_setup_entry(hass, entry)
         await hass.async_block_till_done(wait_background_tasks=True)
@@ -428,14 +432,14 @@ class TestDeviceRegistrySync:
         )
         assert gateway is not None
         assert gateway.model == "M-WRG-GW"
-        assert (dr.CONNECTION_NETWORK_MAC, "58:f3:87:78:2e:24") in gateway.connections
+        assert (dr.CONNECTION_NETWORK_MAC, _TEST_GATEWAY_MAC) in gateway.connections
 
     async def test_failed_optional_mac_read_keeps_existing_connection(
         self, hass: HomeAssistant, setup_mocks: _SetupMocks
     ) -> None:
         entry = _entry(hass)
         registry = dr.async_get(hass)
-        mac_connection = (dr.CONNECTION_NETWORK_MAC, "58:f3:87:78:2e:24")
+        mac_connection = (dr.CONNECTION_NETWORK_MAC, _TEST_GATEWAY_MAC)
         registry.async_get_or_create(
             config_entry_id=entry.entry_id,
             identifiers={(DOMAIN, entry.entry_id)},

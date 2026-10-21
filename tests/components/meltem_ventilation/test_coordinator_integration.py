@@ -58,6 +58,7 @@ from custom_components.meltem_ventilation.polling import (
 
 _ROOM_1 = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 _ROOM_2 = RoomConfig(key="unit_2", name="Unit 2", profile="ii_fc", slave=3)
+_TEST_GATEWAY_MAC = "02:00:00:00:00:01"
 
 
 class _FakeClient:
@@ -73,6 +74,7 @@ class _FakeClient:
         self.last_request_rate: float | None = None
         self.uptime_calls = 0
         self.uptime_error: MeltemModbusError | None = None
+        self.gateway_mac_calls = 0
         self.utc_clock_calls = 0
         self.utc_clock_error: MeltemModbusError | None = None
         self.node_count_calls = 0
@@ -86,6 +88,10 @@ class _FakeClient:
         if self.uptime_error is not None:
             raise self.uptime_error
         return 123
+
+    async def async_read_gateway_mac(self) -> str:
+        self.gateway_mac_calls += 1
+        return _TEST_GATEWAY_MAC
 
     async def async_read_gateway_utc_clock(self) -> int:
         self.utc_clock_calls += 1
@@ -188,6 +194,24 @@ def _build(
         max_requests_per_second=max_requests_per_second,
     )
     return coordinator, client
+
+
+async def test_gateway_mac_read_holds_shared_lock(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator, client = _build(hass)
+    original_read = client.async_read_gateway_mac
+
+    async def assert_lock_held() -> str:
+        assert coordinator._gateway_lock.locked()
+        return await original_read()
+
+    monkeypatch.setattr(client, "async_read_gateway_mac", assert_lock_held)
+
+    assert await coordinator.async_read_gateway_mac() == _TEST_GATEWAY_MAC
+    assert client.gateway_mac_calls == 1
+    assert not coordinator._gateway_lock.locked()
+    await coordinator.async_shutdown()
 
 
 def _update_interval_seconds(coordinator: MeltemDataUpdateCoordinator) -> float:

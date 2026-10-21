@@ -84,16 +84,19 @@ latency mean. Modbus exception responses are failed operations even though they
 reset the link timeout counter. Cancellation and closed-client refusals are
 excluded. Reading diagnostics also expires old samples without bus activity.
 
-Gateway uptime (`41019..41020`, low-word-first U32 seconds), UTC clock
+The gateway MAC (`41012..41014`) is read once after the initial coordinator
+refresh, through the shared coordinator lock and transport policy; failure is
+best-effort and leaves the gateway device without that connection. Gateway
+uptime (`41019..41020`, low-word-first U32 seconds), UTC clock
 (`41015..41016`), registered-device count (`43901`), and RF statistics
 (`42100..42105`) use optional 60-second reads on gateway unit `1` through the
-shared coordinator lock and transport policy. Their errors are isolated from
-room availability/backoff counters. Cached observations expire after 180
-seconds. Uptime, clock, and RF entities are disabled by default; the registered
-count is enabled by default. The four RF entities register consumers of one
-shared read, cancelled only when the last consumer disables it or the entry
-unloads. Existing component ranges remain unchanged; RF statistics have their
-own six-register component, matching the live read shape.
+same lock and policy. Their errors are isolated from room availability/backoff
+counters. Cached observations expire after 180 seconds. Uptime, clock, and RF
+entities are disabled by default; the registered count is enabled by default.
+The four RF entities register consumers of one shared read, cancelled only
+when the last consumer disables it or the entry unloads. Existing component
+ranges remain unchanged; RF statistics have their own six-register component,
+matching the live read shape.
 
 RF message buckets use `measurement`, not `total_increasing`. RF loads decode
 low-word-first Float32 percentages without rescaling, following pyairios;

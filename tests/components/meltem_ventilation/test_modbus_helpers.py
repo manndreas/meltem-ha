@@ -77,7 +77,7 @@ async def _discover(gateway: MockModbusUnit) -> list[int]:
 
 class TestResolvePreferredPortPath:
     def test_by_id_path_returned_unchanged(self) -> None:
-        path = "/dev/serial/by-id/usb-Honeywell-whatever"
+        path = "/dev/serial/by-id/usb-test-device"
         assert resolve_preferred_port_path(path) == path
 
     def test_returns_original_when_no_serial_dir(self) -> None:
@@ -96,7 +96,7 @@ class TestResolvePreferredPortPath:
         serial_dir.mkdir(parents=True)
         real_device = tmp_path / "dev" / "ttyACM0"
         real_device.touch()
-        link = serial_dir / "usb-honeywell-123"
+        link = serial_dir / "usb-test-device"
         link.symlink_to(real_device)
 
         # Redirect the hard-coded by-id lookup into the temporary tree.
