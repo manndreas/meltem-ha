@@ -906,7 +906,11 @@ class TestStartupWithRealClient:
             assert coordinator.state_room_count == 6
             with patch.object(status_sensor, "async_write_ha_state"):
                 status_sensor._handle_coordinator_update()
-            assert status_sensor.available
+            assert status_sensor.available is (
+                coordinator.last_update_success
+                and coordinator.room_available("unit_2")
+                and coordinator.read_group_available("unit_2", "status")
+            )
             assert all(
                 state.error_status is False and state.operating_hours == 0
                 for state in coordinator.safe_data.values()
