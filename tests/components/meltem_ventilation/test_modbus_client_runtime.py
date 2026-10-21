@@ -49,7 +49,11 @@ from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
 )
-from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
+from custom_components.meltem_ventilation.models import (
+    RefreshPlan,
+    RoomConfig,
+    RoomState,
+)
 
 _PORT = "/dev/ttyACM0"
 _TEST_GATEWAY_MAC = "02:00:00:00:00:01"
@@ -201,10 +205,12 @@ class TestGatewayOperations:
     ) -> None:
         link.for_unit(4).holding[REGISTER_PRODUCT_ID] = [0xC874, 0x0001]
 
-        _profile, preview = await client.probe_slave_details(4)
+        result = await client.probe_slave_details(4)
 
-        assert preview is not None
-        assert preview.startswith("ID 116852 |")
+        assert result.product_id == 116852
+        assert result.app_setup_code is None
+        assert result.preview is not None
+        assert result.preview.startswith("ID 116852 |")
 
 
 # ---------------------------------------------------------------------------

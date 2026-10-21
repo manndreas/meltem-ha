@@ -77,7 +77,37 @@ async def async_migrate_entry(hass: HomeAssistant, entry: MeltemIntegrationConfi
             minor_version=3,
         )
 
+    if entry.minor_version < 4:
+        data = dict(entry.data)
+        data[CONF_ROOMS] = [_migrate_room_identity_fields(room) for room in data[CONF_ROOMS]]
+        hass.config_entries.async_update_entry(entry, data=data, minor_version=4)
+
     return True
+
+
+def _migrate_room_identity_fields(room: Mapping[str, Any]) -> dict[str, Any]:
+    """Move identity values from the legacy display preview to dedicated fields."""
+
+    migrated = dict(room)
+    preview = room.get("preview")
+    if not isinstance(preview, str):
+        return migrated
+
+    for part in preview.split(" | "):
+        if part.startswith("ID ") and "product_id" not in migrated:
+            try:
+                migrated["product_id"] = int(part.removeprefix("ID "))
+            except ValueError:
+                pass
+        elif part.startswith("R-Code ") and "app_setup_code" not in migrated:
+            code = part.removeprefix("R-Code ")
+            if (
+                len(code) == 7
+                and code.startswith("R")
+                and all(character in "0123456789ABCDEF" for character in code[1:])
+            ):
+                migrated["app_setup_code"] = code
+    return migrated
 
 
 def _async_migrate_data_health_entities(
@@ -113,6 +143,10 @@ def _room_config(room: Mapping[str, Any]) -> RoomConfig:
         profile=room["profile"],
         slave=int(room["slave"]),
         preview=room.get("preview"),
+        product_id=int(room["product_id"]) if room.get("product_id") is not None else None,
+        app_setup_code=(
+            str(room["app_setup_code"]) if room.get("app_setup_code") is not None else None
+        ),
         supported_entity_keys=frozenset(supported_entity_keys_for_profile(str(room["profile"]))),
     )
 

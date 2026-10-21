@@ -87,6 +87,11 @@ To remove the config entry and uninstall the integration, follow the
 5. Let the integration read the configured unit list from the gateway
 6. Assign the correct profile to each detected unit
 
+The profile list shows each unit's App setup code when available. Match it to
+the code below the DataMatrix on the unit label to identify which Modbus
+address belongs to each physical unit. Profile selection still uses the model
+information on the type plate.
+
 Units are listed by their Modbus address and initially named `Unit 1`, `Unit 2`
 and so on. Rename them like any other Home Assistant device; the new name is
 also shown when you edit the profiles later.

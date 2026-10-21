@@ -139,11 +139,11 @@ async def discover_rooms(
         gateway = prepare_unit(connection.for_unit(GATEWAY_DEVICE_ID), GATEWAY_DEVICE_ID, policy)
         slaves = await discover_gateway_nodes(gateway, port, start=2, end=16)
         for index, slave in enumerate(slaves, start=1):
-            detected_suffix, preview = await detect_slave_details(
+            probe_result = await detect_slave_details(
                 prepare_unit(connection.for_unit(slave), slave, policy)
             )
             profile = profiles.get(slave) or PROFILE_BY_DETECTED_SUFFIX.get(
-                detected_suffix, "ii_plain"
+                probe_result.profile, "ii_plain"
             )
             rooms.append(
                 RoomConfig(
@@ -151,10 +151,12 @@ async def discover_rooms(
                     name=f"Unit {index}",
                     slave=slave,
                     profile=profile,
-                    preview=preview,
+                    preview=probe_result.preview,
                     supported_entity_keys=frozenset(
                         modbus_helpers.supported_entity_keys_for_profile(profile)
                     ),
+                    product_id=probe_result.product_id,
+                    app_setup_code=probe_result.app_setup_code,
                 )
             )
     except MeltemConnectionError as err:

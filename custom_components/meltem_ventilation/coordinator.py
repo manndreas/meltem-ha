@@ -71,6 +71,7 @@ from .models import (
     RefreshPlan,
     RoomConfig,
     RoomState,
+    UnitProbeResult,
     WriteValue,
 )
 from .overlay import OptimisticOverlay
@@ -140,7 +141,7 @@ class _CoordinatorClient(Protocol):
 
     async def discover_gateway_units(self, start: int, end: int) -> list[int]: ...
 
-    async def probe_slave_details(self, slave: int) -> tuple[str, str | None]: ...
+    async def probe_slave_details(self, slave: int) -> UnitProbeResult: ...
 
     async def read_room_state(
         self, room: RoomConfig, previous_state: RoomState, refresh_plan: RefreshPlan
@@ -1145,7 +1146,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     async def async_probe_slave_details(
         self,
         slave: int,
-    ) -> tuple[str, str | None]:
+    ) -> UnitProbeResult:
         """Probe one unit using the active gateway client."""
 
         async with self._gateway_lock:

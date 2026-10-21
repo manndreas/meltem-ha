@@ -56,6 +56,7 @@ from custom_components.meltem_ventilation.models import (
     RefreshPlan,
     RoomConfig,
     RoomState,
+    UnitProbeResult,
     WriteConfirmation,
 )
 from custom_components.meltem_ventilation.polling import select_due_job
@@ -103,9 +104,9 @@ class _FakeClient:
     async def async_read_room_app_setup_code(self, room: RoomConfig) -> str | None:
         raise AssertionError("Optional app setup code reads are disabled in these tests")
 
-    async def probe_slave_details(self, slave: int) -> tuple[str, str | None]:
+    async def probe_slave_details(self, slave: int) -> UnitProbeResult:
         self.probe_calls.append(slave)
-        return ("plain", f"ID {slave}")
+        return UnitProbeResult("plain", f"ID {slave}", product_id=slave)
 
     async def read_room_state(
         self,
@@ -1903,7 +1904,9 @@ class TestConfigFlowHelpers:
         rooms = _build_rooms_from_profiles(
             [2],
             selected_profiles,
-            previews_by_slave={2: "ID 116852 | basic"},
+            probe_results_by_slave={
+                2: UnitProbeResult("plain", "ID 116852 | basic", product_id=116852)
+            },
             existing_rooms_by_slave={
                 2: {
                     "key": "bathroom",
@@ -1920,6 +1923,7 @@ class TestConfigFlowHelpers:
                 "slave": 2,
                 "profile": "ii_plain",
                 "preview": "ID 116852 | basic",
+                "product_id": 116852,
             }
         ]
 
@@ -1928,7 +1932,9 @@ class TestConfigFlowHelpers:
         rooms = _build_rooms_from_profiles(
             [2],
             selected_profiles,
-            previews_by_slave={2: "ID 116852 | basic"},
+            probe_results_by_slave={
+                2: UnitProbeResult("plain", "ID 116852 | basic", product_id=116852)
+            },
         )
 
         assert rooms[0]["profile"] == "ii_plain"
@@ -1977,15 +1983,17 @@ class TestConfigFlowHelpers:
         assert [room["key"] for room in rooms] == ["slave_3", "slave_3_2"]
 
     async def test_failed_probe_leaves_the_unit_plain_without_preview(self) -> None:
-        async def _probe(slave: int) -> tuple[str, str | None]:
+        async def _probe(slave: int) -> UnitProbeResult:
             if slave == 3:
                 raise MeltemModbusError("no answer")
-            return "f", f"ID {slave}"
+            return UnitProbeResult("f", f"ID {slave}", product_id=slave)
 
-        previews, profiles = await _async_probe_units([2, 3], _probe)
+        results = await _async_probe_units([2, 3], _probe)
 
-        assert previews == {2: "ID 2"}
-        assert profiles == {2: "f", 3: "plain"}
+        assert results == {
+            2: UnitProbeResult("f", "ID 2", product_id=2),
+            3: UnitProbeResult("plain", None),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -2013,7 +2021,7 @@ class TestCoordinator:
 
         details = await coordinator.async_probe_slave_details(4)
 
-        assert details == ("plain", "ID 4")
+        assert details == UnitProbeResult("plain", "ID 4", product_id=4)
         assert client.probe_calls == [4]
 
     async def test_async_set_level_writes_without_forced_refresh(
@@ -2473,7 +2481,7 @@ class TestOptionsFlow:
     ) -> None:
         flow = self._build_flow(hass)
         flow._coordinator.client.probe_slave_details = AsyncMock(  # type: ignore[union-attr]
-            side_effect=lambda slave: ("f", f"ID {slave}")
+            side_effect=lambda slave: UnitProbeResult("f", f"ID {slave}")
         )
 
         result = await flow.async_step_rescan_units({})

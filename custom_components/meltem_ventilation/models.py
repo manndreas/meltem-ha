@@ -33,6 +33,16 @@ class GatewayRfStatistics:
 
 
 @dataclass(slots=True, frozen=True)
+class UnitProbeResult:
+    """Identity and capability data collected by the setup-time probe."""
+
+    profile: str
+    preview: str | None
+    product_id: int | None = None
+    app_setup_code: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class RoomConfig:
     """Configuration for one Meltem room/unit."""
 
@@ -43,6 +53,8 @@ class RoomConfig:
     preview: str | None = None
     # ``None`` means every entity; set ones come from the selected profile.
     supported_entity_keys: frozenset[str] | None = None
+    product_id: int | None = None
+    app_setup_code: str | None = None
 
     def supports(self, entity_key: str) -> bool:
         """Return whether this unit has one entity."""

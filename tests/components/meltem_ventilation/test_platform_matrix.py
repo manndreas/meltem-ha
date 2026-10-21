@@ -161,7 +161,7 @@ def setup_profile_fixture(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) 
     )
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.MeltemModbusClient.async_read_room_app_setup_code",
-        AsyncMock(return_value="R971C31"),
+        AsyncMock(return_value="R000001"),
     )
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.coordinator."
@@ -275,7 +275,7 @@ async def test_unit_devices_hang_off_the_gateway_device(
     # The entry was created as 1.1 and migrated on setup.
     migrated_entry = hass.config_entries.async_get_entry(entry_id)
     assert migrated_entry is not None
-    assert migrated_entry.minor_version == 3
+    assert migrated_entry.minor_version == 4
 
 
 async def test_entity_states_follow_every_coordinator_update(
@@ -603,7 +603,7 @@ async def test_app_setup_code_reads_only_when_enabled(
     read_setup_code.assert_awaited_once_with(entry.runtime_data.coordinator.rooms[0])
     state = hass.states.get(entity_id)
     assert state is not None
-    assert state.state == "R971C31"
+    assert state.state == "R000001"
     assert await hass.config_entries.async_unload(entry_id)
 
 

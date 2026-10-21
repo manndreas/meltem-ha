@@ -27,7 +27,8 @@ _ROOM = RoomConfig(
     name="Unit 1",
     profile="ii_plain",
     slave=2,
-    preview="ID 116852 | basic",
+    preview="basic",
+    product_id=116852,
 )
 _DESCRIPTIONS = {description.key: description for description in BINARY_SENSOR_DESCRIPTIONS}
 

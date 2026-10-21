@@ -35,6 +35,7 @@ from custom_components.meltem_ventilation.const import (
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
 )
+from custom_components.meltem_ventilation.models import UnitProbeResult
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -115,10 +116,16 @@ def _patch_scan_error(error: Exception):
     )
 
 
-def _patch_detect(profile: str = "plain", preview: str = "ID 2 | basic"):
+def _patch_detect(
+    profile: str = "plain",
+    preview: str = "ID 2 | basic",
+    *,
+    product_id: int | None = None,
+    app_setup_code: str | None = None,
+):
     return patch(
         f"{_PATCHES_BASE}.detect_slave_details",
-        new=AsyncMock(return_value=(profile, preview)),
+        new=AsyncMock(return_value=UnitProbeResult(profile, preview, product_id, app_setup_code)),
     )
 
 
@@ -369,7 +376,16 @@ class TestConfigFlowProfiles:
         assert result.get("step_id") == "user"
 
     async def test_profiles_step_creates_entry(self, hass: HomeAssistant) -> None:
-        with _patch_scan([2]), _patch_detect("fc", "ID 2 | CO2"), _patch_resolve():
+        with (
+            _patch_scan([2]),
+            _patch_detect(
+                "fc",
+                "R-Code R000001 | ID 116852 | CO2",
+                product_id=116852,
+                app_setup_code="R000001",
+            ),
+            _patch_resolve(),
+        ):
             result = await _async_submit_port(hass)
             result = await _async_submit_profiles(hass, result, {"slave_2": "ii_fc"})
 
@@ -382,8 +398,10 @@ class TestConfigFlowProfiles:
         assert len(rooms) == 1
         assert rooms[0]["profile"] == "ii_fc"
         assert rooms[0]["slave"] == 2
+        assert rooms[0]["product_id"] == 116852
+        assert rooms[0]["app_setup_code"] == "R000001"
         entry = _flow_entry(result)
-        assert (entry.version, entry.minor_version) == (1, 3)
+        assert (entry.version, entry.minor_version) == (1, 4)
         assert entry.options == {}
         assert entry.unique_id == _STABLE_PORT
 
@@ -417,7 +435,7 @@ class TestConfigFlowProfiles:
     ) -> None:
         with (
             _patch_scan([2]),
-            _patch_detect("fc", "R-Code R971C31 | ID 116852 | CO2"),
+            _patch_detect("fc", "R-Code R000001 | ID 116852 | CO2"),
             _patch_resolve(),
         ):
             result = await _async_submit_usb_port(hass)
@@ -426,7 +444,7 @@ class TestConfigFlowProfiles:
         assert result.get("step_id") == "profiles"
         assert list(_flow_schema(result).schema.keys()) == ["slave_2"]
         unit_details = _flow_placeholders(result)["unit_details"]
-        assert "R-Code R971C31" in unit_details
+        assert "R-Code R000001" in unit_details
         assert "Hardware ID 116852 | CO2" in unit_details
 
     async def test_usb_flow_returns_to_confirm_usb_on_scan_error(self, hass: HomeAssistant) -> None:
@@ -546,7 +564,9 @@ class TestOptionsFlow:
         coordinator = _attach_coordinator(
             entry,
             async_discover_gateway_units=AsyncMock(return_value=[2]),
-            async_probe_slave_details=AsyncMock(return_value=("plain", "ID 2 | basic")),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", "ID 2 | basic", product_id=2)
+            ),
         )
         with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload:
             rescan = await hass.config_entries.options.async_configure(rescan["flow_id"], {})
@@ -587,7 +607,9 @@ class TestOptionsFlow:
         coordinator = _attach_coordinator(
             entry,
             async_discover_gateway_units=AsyncMock(side_effect=error, return_value=slaves),
-            async_probe_slave_details=AsyncMock(return_value=("plain", "ID 2 | basic")),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", "ID 2 | basic", product_id=2)
+            ),
         )
         result = await _async_open_option(hass, entry, "rescan_units")
         result = await hass.config_entries.options.async_configure(result["flow_id"], {})
@@ -654,7 +676,14 @@ class TestOptionsFlow:
     async def test_options_edit_profiles_updates_existing_rooms(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        probe = AsyncMock(return_value=("fc", "ID 99 | CO2"))
+        probe = AsyncMock(
+            return_value=UnitProbeResult(
+                "fc",
+                "R-Code R000001 | ID 99 | CO2",
+                product_id=99,
+                app_setup_code="R000001",
+            )
+        )
         _attach_coordinator(entry, async_probe_slave_details=probe)
 
         with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload:
@@ -668,7 +697,9 @@ class TestOptionsFlow:
         # Showing and submitting the form must not probe the unit twice.
         assert probe.await_count == 1
         assert entry.data[CONF_ROOMS][0]["profile"] == "ii_fc"
-        assert entry.data[CONF_ROOMS][0]["preview"] == "ID 99 | CO2"
+        assert entry.data[CONF_ROOMS][0]["preview"] == "R-Code R000001 | ID 99 | CO2"
+        assert entry.data[CONF_ROOMS][0]["product_id"] == 99
+        assert entry.data[CONF_ROOMS][0]["app_setup_code"] == "R000001"
         # Entities follow from the profile on load, so stale stored keys are dropped.
         assert "supported_entity_keys" not in entry.data[CONF_ROOMS][0]
 
@@ -677,7 +708,9 @@ class TestOptionsFlow:
     ) -> None:
         _attach_coordinator(
             entry,
-            async_probe_slave_details=AsyncMock(return_value=("fc", "ID 99 | CO2")),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("fc", "ID 99 | CO2", product_id=99)
+            ),
         )
 
         registry = dr.async_get(hass)

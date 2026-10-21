@@ -5,7 +5,6 @@
 # pyright: reportIncompatibleVariableOverride=false
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta
 
 from homeassistant.core import callback
@@ -17,9 +16,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, GATEWAY_NAME, INTEGRATION_NAME, profile_label
 from .coordinator import MeltemDataUpdateCoordinator
 from .models import EMPTY_ROOM_STATE, RoomConfig, RoomState
-
-_PREVIEW_PRODUCT_ID_RE = re.compile(r"\bID\s+(\d+)\b")
-_PREVIEW_APP_SETUP_CODE_RE = re.compile(r"\bR-Code\s+(R[0-9A-F]{6})\b")
 
 
 def gateway_identifiers(entry_id: str) -> set[tuple[str, str]]:
@@ -112,18 +108,20 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
         self._entity_key = object_key
         self._attr_unique_id = f"{DOMAIN}_{room.key}_{object_key}"
         self._attr_translation_key = translation_key or object_key
-        self._hw_version = _product_id_from_preview(room.preview)
+        self._hw_version = str(room.product_id) if room.product_id is not None else None
         self._exported_versions: tuple[str | None, str | None] = (None, None)
 
     @property
     def device_info(self) -> DeviceInfo:
+        identifiers = {(DOMAIN, self.room.key)}
+        if self.room.app_setup_code is not None:
+            identifiers.add((DOMAIN, f"app_setup_code:{self.room.app_setup_code}"))
         info = DeviceInfo(
-            identifiers={(DOMAIN, self.room.key)},
+            identifiers=identifiers,
             manufacturer="Meltem",
             model=profile_label(self.room.profile),
             name=f"{INTEGRATION_NAME} {self.room.name}",
             hw_version=self._hw_version,
-            serial_number=_app_setup_code_from_preview(self.room.preview),
             sw_version=self._sw_version,
         )
         if (gateway_device_id := self.coordinator.gateway_device_id) is not None:
@@ -178,17 +176,3 @@ class MeltemRoomDiagnosticEntity(MeltemEntity, MeltemLocalDiagnosticEntity):
     @property
     def available(self) -> bool:
         return True
-
-
-def _product_id_from_preview(preview: str | None) -> str | None:
-    """Extract the raw product ID from the setup preview string."""
-
-    match = _PREVIEW_PRODUCT_ID_RE.search(preview or "")
-    return match.group(1) if match else None
-
-
-def _app_setup_code_from_preview(preview: str | None) -> str | None:
-    """Extract the stable R-code from the setup preview string."""
-
-    match = _PREVIEW_APP_SETUP_CODE_RE.search(preview or "")
-    return match.group(1) if match else None

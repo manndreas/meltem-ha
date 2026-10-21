@@ -50,7 +50,7 @@ from .modbus_helpers import (
     read_gateway_node_count,
     resolve_preferred_port_path,
 )
-from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData
+from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, UnitProbeResult
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ _MAX_REQUEST_RATE_SELECTOR = selector.NumberSelector(
     )
 )
 
-type _Probe = Callable[[int], Awaitable[tuple[str, str | None]]]
+type _Probe = Callable[[int], Awaitable[UnitProbeResult]]
 
 
 def _port_schema(default: str) -> vol.Schema:
@@ -200,7 +200,7 @@ def _profile_defaults(
 def _build_rooms_from_profiles(
     slaves: list[int],
     selected_profiles: Mapping[str, Any],
-    previews_by_slave: Mapping[int, str] | None = None,
+    probe_results_by_slave: Mapping[int, UnitProbeResult] | None = None,
     existing_rooms_by_slave: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, object]]:
     """Build room config entries from selected per-device profiles.
@@ -209,7 +209,7 @@ def _build_rooms_from_profiles(
     """
 
     rooms: list[dict[str, object]] = []
-    previews_by_slave = previews_by_slave or {}
+    probe_results_by_slave = probe_results_by_slave or {}
     existing_rooms_by_slave = existing_rooms_by_slave or {}
     used_room_keys: set[str] = set()
     # Kept units keep their names, so a new unit must not reuse one.
@@ -221,6 +221,7 @@ def _build_rooms_from_profiles(
 
     for slave in slaves:
         existing_room = existing_rooms_by_slave.get(slave, {})
+        probe_result = probe_results_by_slave.get(slave)
         selected_profile = str(selected_profiles[_profile_field_key(slave)])
         preferred_room_key = str(existing_room.get("key") or f"slave_{slave}")
         room_key = preferred_room_key
@@ -231,16 +232,30 @@ def _build_rooms_from_profiles(
         used_room_keys.add(room_key)
         name = str(existing_room.get("name") or _default_room_name(used_names))
         used_names.add(name)
-        rooms.append(
-            {
-                "key": room_key,
-                # Only the initial device name; renaming happens in the device registry.
-                "name": name,
-                "slave": slave,
-                "profile": selected_profile,
-                "preview": previews_by_slave.get(slave) or existing_room.get("preview"),
-            }
+        room: dict[str, object] = {
+            "key": room_key,
+            # Only the initial device name; renaming happens in the device registry.
+            "name": name,
+            "slave": slave,
+            "profile": selected_profile,
+            "preview": (probe_result.preview if probe_result else None)
+            or existing_room.get("preview"),
+        }
+        product_id = (
+            probe_result.product_id
+            if probe_result and probe_result.product_id is not None
+            else existing_room.get("product_id")
         )
+        app_setup_code = (
+            probe_result.app_setup_code
+            if probe_result and probe_result.app_setup_code is not None
+            else existing_room.get("app_setup_code")
+        )
+        if product_id is not None:
+            room["product_id"] = product_id
+        if app_setup_code is not None:
+            room["app_setup_code"] = app_setup_code
+        rooms.append(room)
 
     return rooms
 
@@ -285,34 +300,37 @@ def _connection_error(err: Exception, action: str, port: str) -> str:
     return "unknown"
 
 
-async def _async_probe_units(
-    slaves: list[int], probe: _Probe
-) -> tuple[dict[int, str], dict[int, str]]:
-    """Probe every unit and return its preview and detected profile by address.
+async def _async_probe_units(slaves: list[int], probe: _Probe) -> dict[int, UnitProbeResult]:
+    """Probe every unit and return its structured details by address.
 
     A failed probe leaves the unit plain and without preview.
     """
 
-    previews: dict[int, str] = {}
-    profiles: dict[int, str] = {}
+    results: dict[int, UnitProbeResult] = {}
     for slave in slaves:
         try:
-            profile, preview = await probe(slave)
+            result = await probe(slave)
         except MeltemModbusError as err:
             _LOGGER.warning("Probe failed for Meltem unit at slave %s: %s", slave, err)
-            profile, preview = "plain", None
-        profiles[slave] = profile
-        if preview:
-            previews[slave] = preview
-    return previews, profiles
+            result = UnitProbeResult(profile="plain", preview=None)
+        results[slave] = result
+    return results
+
+
+def _probe_previews(results: Mapping[int, UnitProbeResult]) -> dict[int, str]:
+    return {slave: result.preview for slave, result in results.items() if result.preview}
+
+
+def _probe_profiles(results: Mapping[int, UnitProbeResult]) -> dict[int, str]:
+    return {slave: result.profile for slave, result in results.items()}
 
 
 async def _async_discover_units(
     hass: HomeAssistant, port: str
-) -> tuple[list[int], dict[int, str], dict[int, str]]:
+) -> tuple[list[int], dict[int, UnitProbeResult]]:
     """Read the unit list from the gateway and probe every unit on one link.
 
-    Returns the unit addresses, their previews, and their detected profiles.
+    Returns the unit addresses and structured probe details.
     """
 
     async with _temporary_units(hass, port) as unit_for:
@@ -324,11 +342,11 @@ async def _async_discover_units(
             end=DEFAULT_SCAN_SLAVE_END,
         )
 
-        async def probe(slave: int) -> tuple[str, str | None]:
+        async def probe(slave: int) -> UnitProbeResult:
             return await detect_slave_details(await unit_for(slave))
 
-        previews, profiles = await _async_probe_units(slaves, probe)
-    return slaves, previews, profiles
+        probe_results = await _async_probe_units(slaves, probe)
+    return slaves, probe_results
 
 
 async def _async_validate_port(hass: HomeAssistant, port: str) -> None:
@@ -354,12 +372,13 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Meltem Modbus."""
 
     VERSION = 1
-    MINOR_VERSION = 3
+    MINOR_VERSION = 4
 
     def __init__(self) -> None:
         self._port = DEFAULT_PORT
         self._discovered_slaves: list[int] = []
         self._preview_by_slave: dict[int, str] = {}
+        self._probe_results_by_slave: dict[int, UnitProbeResult] = {}
         self._detected_profile_by_slave: dict[int, str] = {}
         self._usb_title_placeholders: dict[str, str] | None = None
 
@@ -455,7 +474,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Scan the gateway and keep its units; return the form error on failure."""
 
         try:
-            slaves, previews, profiles = await _async_discover_units(self.hass, port)
+            slaves, probe_results = await _async_discover_units(self.hass, port)
         except Exception as err:
             return _connection_error(err, "scanning", port)
 
@@ -470,8 +489,9 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._port = port
         self._discovered_slaves = slaves
-        self._preview_by_slave = previews
-        self._detected_profile_by_slave = profiles
+        self._probe_results_by_slave = probe_results
+        self._preview_by_slave = _probe_previews(probe_results)
+        self._detected_profile_by_slave = _probe_profiles(probe_results)
         return None
 
     async def async_step_profiles(
@@ -490,7 +510,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_ROOMS: _build_rooms_from_profiles(
                         self._discovered_slaves,
                         user_input,
-                        self._preview_by_slave,
+                        self._probe_results_by_slave,
                     ),
                 },
             )
@@ -551,6 +571,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
     def __init__(self) -> None:
         self._discovered_slaves: list[int] = []
         self._preview_by_slave: dict[int, str] = {}
+        self._probe_results_by_slave: dict[int, UnitProbeResult] = {}
         self._detected_profile_by_slave: dict[int, str] = {}
 
     @property
@@ -641,13 +662,16 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return await self._async_save_profiles(slaves, user_input, existing_rooms)
 
-        probed: dict[int, str] = {}
+        self._probe_results_by_slave = {}
         if (coordinator := self._coordinator) is not None:
-            probed, _ = await _async_probe_units(slaves, coordinator.async_probe_slave_details)
+            self._probe_results_by_slave = await _async_probe_units(
+                slaves, coordinator.async_probe_slave_details
+            )
+        probed_previews = _probe_previews(self._probe_results_by_slave)
         self._preview_by_slave = {
             slave: str(preview)
             for slave in slaves
-            if (preview := probed.get(slave) or existing_rooms[slave].get("preview"))
+            if (preview := probed_previews.get(slave) or existing_rooms[slave].get("preview"))
         }
         return self._show_profiles_form(
             "edit_profiles",
@@ -689,7 +713,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             CONF_ROOMS: _build_rooms_from_profiles(
                 slaves,
                 user_input,
-                self._preview_by_slave,
+                self._probe_results_by_slave,
                 existing_rooms,
             ),
         }
@@ -741,9 +765,11 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
             )
             return "no_devices_found"
 
-        self._preview_by_slave, self._detected_profile_by_slave = await _async_probe_units(
+        self._probe_results_by_slave = await _async_probe_units(
             slaves, coordinator.async_probe_slave_details
         )
+        self._preview_by_slave = _probe_previews(self._probe_results_by_slave)
+        self._detected_profile_by_slave = _probe_profiles(self._probe_results_by_slave)
         self._discovered_slaves = slaves
         return None
 

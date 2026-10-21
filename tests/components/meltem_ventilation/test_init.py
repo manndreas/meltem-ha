@@ -72,7 +72,7 @@ def _entry(
     options: dict[str, Any] | None = None,
     entry_id: str = "test-entry-id",
     version: int = 1,
-    minor_version: int = 3,
+    minor_version: int = 4,
 ) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -368,7 +368,7 @@ class TestAsyncMigrateEntry:
         migrated = er.async_get(hass).async_get(legacy.entity_id)
         assert migrated is not None
         assert migrated.unique_id == f"{DOMAIN}_unit_1_data_health"
-        assert entry.minor_version == 3
+        assert entry.minor_version == 4
         assert CONF_MAX_REQUESTS_PER_SECOND not in entry.data
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 2.0
 
@@ -388,7 +388,7 @@ class TestAsyncMigrateEntry:
         assert migrated_current is not None
         assert migrated_legacy.unique_id == legacy.unique_id
         assert migrated_current.unique_id == current.unique_id
-        assert entry.minor_version == 3
+        assert entry.minor_version == 4
 
     async def test_migration_preserves_an_existing_request_rate_option(
         self, hass: HomeAssistant
@@ -403,7 +403,22 @@ class TestAsyncMigrateEntry:
 
         assert CONF_MAX_REQUESTS_PER_SECOND not in entry.data
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
-        assert entry.minor_version == 3
+        assert entry.minor_version == 4
+
+    async def test_migration_moves_identity_values_from_preview(self, hass: HomeAssistant) -> None:
+        entry = _entry(
+            hass,
+            minor_version=3,
+            rooms=[{**_ROOM, "preview": "R-Code R000001 | ID 116852 | basic"}],
+        )
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        room = entry.data[CONF_ROOMS][0]
+        assert room["preview"] == "R-Code R000001 | ID 116852 | basic"
+        assert room["product_id"] == 116852
+        assert room["app_setup_code"] == "R000001"
+        assert entry.minor_version == 4
 
     async def test_migration_rejects_a_newer_major_version(self, hass: HomeAssistant) -> None:
         entry = _entry(hass, version=2, minor_version=1)
