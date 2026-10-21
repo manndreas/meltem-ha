@@ -84,6 +84,9 @@ class _FakeClient:
         self.discover_calls.append((start, end))
         return [2, 3, 4]
 
+    async def async_read_gateway_uptime(self) -> int:
+        raise AssertionError("Optional gateway uptime is disabled in these tests")
+
     async def probe_slave_details(self, slave: int) -> tuple[str, str | None]:
         self.probe_calls.append(slave)
         return ("plain", f"ID {slave}")

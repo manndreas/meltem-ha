@@ -45,3 +45,18 @@ operation without stopping the whole unit.
 Intensive ventilation is a separate switch because it is a temporary override
 that does not replace the active quick mode. It can be cancelled before the
 runtime configured in the Meltem app has elapsed.
+
+## Measured airflow and command feedback
+
+**Airflow balance** is measured supply minus extract airflow, in m³/h. Positive
+values mean more supply and negative values more extract. It uses the same
+readings as the directional airflow sensors, not the fan targets; both
+directions must be known. The gateway's total supply and extract sensors add
+the usable measured values across all configured units and remain unknown if
+any required unit value is unavailable.
+
+**Last command status** reports the latest recorded write and its readback
+outcome; an accepted command is not automatically confirmed. During intensive
+ventilation a base-mode write may temporarily be unverifiable. See the
+[diagnostics guide](DIAGNOSTICS.md#diagnostic-entities) for the states,
+confirmation timeout, attributes, and reachability diagnostics.

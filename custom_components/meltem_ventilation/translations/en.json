@@ -259,6 +259,63 @@
       },
       "modbus_device_path": {
         "name": "Modbus device path"
+      },
+      "gateway_last_answer_age": {
+        "name": "Time since last response"
+      },
+      "gateway_consecutive_timeouts": {
+        "name": "Consecutive timeouts"
+      },
+      "gateway_link_recycles": {
+        "name": "Link reconnections"
+      },
+      "gateway_available_units": {
+        "name": "Available units"
+      },
+      "gateway_unavailable_units": {
+        "name": "Unavailable units"
+      },
+      "gateway_stale_read_groups": {
+        "name": "Stale read groups"
+      },
+      "gateway_error_units": {
+        "name": "Units with errors"
+      },
+      "gateway_filter_due_units": {
+        "name": "Units needing filter changes"
+      },
+      "gateway_response_time": {
+        "name": "Mean response time"
+      },
+      "gateway_success_rate": {
+        "name": "Request success rate"
+      },
+      "gateway_supply_air_flow": {
+        "name": "Total supply air flow"
+      },
+      "gateway_extract_air_flow": {
+        "name": "Total extract air flow"
+      },
+      "gateway_uptime": {
+        "name": "Uptime (experimental)"
+      },
+      "airflow_balance": {
+        "name": "Airflow balance"
+      },
+      "last_successful_update": {
+        "name": "Last successful update"
+      },
+      "last_write_status": {
+        "name": "Last command status",
+        "state": {
+          "pending": "Pending",
+          "confirmed": "Confirmed",
+          "mismatch": "Readback differs",
+          "unconfirmed": "Not confirmed",
+          "unverifiable": "Not verifiable",
+          "failed": "Failed",
+          "superseded": "Superseded"
+        }
       }
     },
     "binary_sensor": {
@@ -276,6 +333,12 @@
       },
       "data_health": {
         "name": "Read health"
+      },
+      "gateway_connectivity": {
+        "name": "Reachable"
+      },
+      "connectivity": {
+        "name": "Reachable"
       }
     },
     "switch": {

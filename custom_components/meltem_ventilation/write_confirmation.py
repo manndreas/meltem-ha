@@ -64,6 +64,7 @@ class WriteConfirmations:
 
     def __init__(self) -> None:
         self.by_room: dict[str, dict[str, WriteConfirmation]] = {}
+        self._latest_keys: dict[str, str] = {}
 
     def record_pending(self, room_key: str, write_key: str, expected_value: WriteValue) -> None:
         """Record a write the transport accepted, awaiting its readback."""
@@ -72,6 +73,13 @@ class WriteConfirmations:
             expected_value=expected_value,
             started_at=dt_util.utcnow(),
         )
+        self._latest_keys[room_key] = write_key
+
+    def latest(self, room_key: str) -> tuple[str, WriteConfirmation] | None:
+        """Return the last recorded command, independently of confirmation updates."""
+
+        key = self._latest_keys.get(room_key)
+        return None if key is None else (key, self.by_room[room_key][key])
 
     def supersede(self, room_key: str, write_key: str) -> tuple[str, ...]:
         """Finish earlier base-mode writes replaced by an accepted command."""

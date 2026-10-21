@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -59,7 +60,9 @@ def unit_fixture() -> AsyncMock:
     return AsyncMock()
 
 
-async def _run(policy: TransportPolicy, unit: AsyncMock, operation: AsyncMock) -> object:
+async def _run(
+    policy: TransportPolicy, unit: AsyncMock, operation: Callable[..., Awaitable[object]]
+) -> object:
     return await policy.run(unit, 2, operation, 41020, 2, is_read=True)
 
 
@@ -147,6 +150,61 @@ def clock_fixture(monkeypatch: pytest.MonkeyPatch, sleeps: list[float]) -> Simpl
 
     monkeypatch.setattr("custom_components.meltem_ventilation.device.transport.async_sleep", _sleep)
     return clock
+
+
+class TestCommunicationMetrics:
+    async def test_retries_count_separately_without_rate_wait_in_latency(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
+    ) -> None:
+        policy.update_request_rate(0.5)
+        attempts = 0
+
+        async def read(*args: object) -> list[int]:
+            nonlocal attempts
+            attempts += 1
+            clock.now += 0.2
+            if attempts == 1:
+                raise ModbusTimeoutError("timeout")
+            return [1]
+
+        assert await _run(policy, unit, read) == [1]
+        diagnostics = policy.diagnostics()
+        assert diagnostics["request_sample_count"] == 2
+        assert diagnostics["request_success_rate"] == 50.0
+        assert diagnostics["mean_response_time_ms"] == pytest.approx(200.0)
+
+    async def test_exception_reply_proves_connectivity_but_is_not_success(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
+    ) -> None:
+        await _run_failing(
+            policy,
+            unit,
+            AsyncMock(side_effect=IllegalDataAddressError()),
+            expected=IllegalDataAddressError,
+        )
+        diagnostics = policy.diagnostics()
+        assert diagnostics["request_success_rate"] == 0.0
+        assert diagnostics["mean_response_time_ms"] is None
+        assert diagnostics["seconds_since_any_answer"] == 0.0
+
+    async def test_window_expires_without_new_requests(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
+    ) -> None:
+        assert policy.diagnostics()["request_success_rate"] is None
+        await _run(policy, unit, AsyncMock(return_value=[1]))
+        clock.now += 300.0
+        diagnostics = policy.diagnostics()
+        assert diagnostics["request_sample_count"] == 0
+        assert diagnostics["request_success_rate"] is None
+        assert diagnostics["mean_response_time_ms"] is None
+
+    @pytest.mark.parametrize("error", [asyncio.CancelledError(), ClientClosedError("closed")])
+    async def test_shutdown_and_cancellation_do_not_create_samples(
+        self, policy: TransportPolicy, unit: AsyncMock, error: BaseException
+    ) -> None:
+        with pytest.raises(type(error)):
+            await _run(policy, unit, AsyncMock(side_effect=error))
+        assert policy.diagnostics()["request_sample_count"] == 0
 
 
 class TestReadRequestRate:

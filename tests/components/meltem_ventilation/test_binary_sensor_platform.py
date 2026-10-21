@@ -11,6 +11,8 @@ from custom_components.meltem_ventilation.binary_sensor import (
     BINARY_SENSOR_DESCRIPTIONS,
     MeltemBinarySensorEntity,
     MeltemDataHealthBinarySensor,
+    MeltemGatewayConnectivitySensor,
+    MeltemRoomConnectivitySensor,
 )
 from custom_components.meltem_ventilation.const import DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
@@ -102,6 +104,53 @@ class TestBinarySensorEntityCreation:
 # ---------------------------------------------------------------------------
 #  State
 # ---------------------------------------------------------------------------
+
+
+class TestGatewayConnectivity:
+    @pytest.mark.parametrize("connected", [None, False, True])
+    def test_room_connectivity_stays_visible_when_room_unavailable(
+        self, connected: bool | None
+    ) -> None:
+        coordinator = _fake_coordinator()
+        coordinator.last_update_success = False
+        coordinator.room_available.return_value = False
+        coordinator.room_connectivity.return_value = connected
+        entity = MeltemRoomConnectivitySensor(coordinator, _ROOM)
+        assert entity.available is True
+        assert entity.is_on is connected
+        assert entity.unique_id == f"{DOMAIN}_unit_1_connectivity"
+
+    @pytest.mark.parametrize(
+        ("age", "expected"), [(None, None), (0.0, True), (120.0, True), (120.1, False)]
+    )
+    def test_recent_answer_controls_connectivity(
+        self, age: float | None, expected: bool | None
+    ) -> None:
+        coordinator = _fake_coordinator()
+        coordinator.last_update_success = False
+        coordinator.room_available.return_value = False
+        coordinator.client = MagicMock()
+        coordinator.client.transport_diagnostics.return_value = {"seconds_since_any_answer": age}
+
+        entity = MeltemGatewayConnectivitySensor(coordinator, "entry")
+
+        assert entity.is_on is expected
+        assert entity.available is True
+        assert entity.unique_id == f"{DOMAIN}_entry_gateway_connectivity"
+        assert entity.entity_category is EntityCategory.DIAGNOSTIC
+        assert entity.entity_registry_enabled_default is True
+        assert entity.device_class == "connectivity"
+
+    def test_recovers_on_new_answer(self) -> None:
+        coordinator = _fake_coordinator()
+        coordinator.client = MagicMock()
+        transport = {"seconds_since_any_answer": 121.0}
+        coordinator.client.transport_diagnostics.return_value = transport
+        entity = MeltemGatewayConnectivitySensor(coordinator, "entry")
+
+        assert entity.is_on is False
+        transport["seconds_since_any_answer"] = 0.0
+        assert entity.is_on is True
 
 
 class TestBinarySensorIsOn:

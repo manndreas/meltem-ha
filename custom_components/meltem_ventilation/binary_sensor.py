@@ -21,9 +21,14 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import ALL_PROFILES, READ_GROUP_ENTITY_KEYS
+from .const import ALL_PROFILES, GATEWAY_SILENT_AFTER_SECONDS, READ_GROUP_ENTITY_KEYS
 from .coordinator import MeltemDataUpdateCoordinator
-from .entity import MeltemEntity, room_supports_entity
+from .entity import (
+    MeltemEntity,
+    MeltemGatewayEntity,
+    MeltemRoomDiagnosticEntity,
+    room_supports_entity,
+)
 from .models import (
     MeltemIntegrationConfigEntry,
     RoomConfig,
@@ -64,6 +69,20 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
 )
 
 
+GATEWAY_CONNECTIVITY_DESCRIPTION = BinarySensorEntityDescription(
+    key="gateway_connectivity",
+    device_class=BinarySensorDeviceClass.CONNECTIVITY,
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
+
+
+ROOM_CONNECTIVITY_DESCRIPTION = BinarySensorEntityDescription(
+    key="connectivity",
+    device_class=BinarySensorDeviceClass.CONNECTIVITY,
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
+
+
 # The coordinator serializes all gateway access itself.
 PARALLEL_UPDATES = 0
 
@@ -88,7 +107,40 @@ async def async_setup_entry(
         for room in coordinator.rooms
         if room.supports_any(("supply_air_flow", "extract_air_flow"))
     )
+    entities.append(MeltemGatewayConnectivitySensor(coordinator, entry.entry_id))
+    entities.extend(
+        MeltemRoomConnectivitySensor(coordinator, room)
+        for room in coordinator.rooms
+        if room.supports("connectivity")
+    )
     async_add_entities(entities)
+
+
+class MeltemGatewayConnectivitySensor(MeltemGatewayEntity, BinarySensorEntity):
+    """Report recent gateway responses independently of individual units."""
+
+    entity_description = GATEWAY_CONNECTIVITY_DESCRIPTION
+
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id, self.entity_description.key)
+
+    @property
+    def is_on(self) -> bool | None:
+        age = self.coordinator.client.transport_diagnostics()["seconds_since_any_answer"]
+        return None if age is None else age <= GATEWAY_SILENT_AFTER_SECONDS
+
+
+class MeltemRoomConnectivitySensor(MeltemRoomDiagnosticEntity, BinarySensorEntity):
+    """Expose unit availability without hiding the disconnected state."""
+
+    entity_description = ROOM_CONNECTIVITY_DESCRIPTION
+
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
+        super().__init__(coordinator, room, self.entity_description.key)
+
+    @property
+    def is_on(self) -> bool | None:
+        return self.coordinator.room_connectivity(self.room.key)
 
 
 class MeltemBinarySensorEntity(MeltemEntity, BinarySensorEntity):

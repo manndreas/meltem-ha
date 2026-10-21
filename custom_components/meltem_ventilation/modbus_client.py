@@ -55,7 +55,7 @@ from .const import (
     VOC_PROFILES,
     profile_max_airflow,
 )
-from .device import MeltemRoomDevice
+from .device import MeltemGateway, MeltemRoomDevice
 from .modbus_helpers import (
     PLAUSIBLE_RANGES,
     MeltemConnectionError,
@@ -262,6 +262,12 @@ class MeltemModbusClient:
             raise MeltemModbusError(f"Modbus error while {description}: {err}") from err
         except Exception as err:
             raise MeltemModbusError(f"Unexpected error while {description}: {err!r}") from err
+
+    async def async_read_gateway_uptime(self) -> int:
+        """Read only the gateway's experimental uptime register."""
+
+        async with self._gateway_operation("reading gateway uptime"):
+            return await MeltemGateway(self._unit(DEFAULT_GATEWAY_DEVICE_ID)).async_read_uptime()
 
     async def async_validate_gateway(self) -> None:
         """Read the gateway's node count once to prove the link works.

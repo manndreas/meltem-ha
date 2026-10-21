@@ -19,7 +19,6 @@ from functools import partial
 from typing import Any
 
 from homeassistant.components.modbus import async_get_unit
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
     ConfigEntryError,
@@ -36,6 +35,7 @@ from .const import (
     DEFAULT_MAX_REQUESTS_PER_SECOND,
     DOMAIN,
     ENTITY_PLATFORM_BY_KEY,
+    GATEWAY_ENTITY_PLATFORM_BY_KEY,
     PLATFORMS,
     SENSOR_CONTROL_PROFILES,
 )
@@ -151,8 +151,10 @@ def _async_remove_unsupported_entities(
         for object_key in supported_keys:
             if platform := ENTITY_PLATFORM_BY_KEY.get(object_key):
                 expected[f"{DOMAIN}_{room.key}_{object_key}"] = platform.value
-    # Gateway-level entity, not tied to any room.
-    expected[f"{DOMAIN}_{entry.entry_id}_modbus_device_path"] = Platform.SENSOR.value
+    expected.update(
+        (f"{DOMAIN}_{entry.entry_id}_{key}", platform.value)
+        for key, platform in GATEWAY_ENTITY_PLATFORM_BY_KEY.items()
+    )
 
     registry = er.async_get(hass)
     for existing in er.async_entries_for_config_entry(registry, entry.entry_id):
