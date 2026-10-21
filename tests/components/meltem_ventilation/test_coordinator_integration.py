@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -37,6 +37,7 @@ from custom_components.meltem_ventilation.modbus_helpers import (
     supported_entity_keys_for_profile,
 )
 from custom_components.meltem_ventilation.models import (
+    GatewayRfStatistics,
     ReadHealth,
     RefreshPlan,
     RoomConfig,
@@ -72,6 +73,13 @@ class _FakeClient:
         self.last_request_rate: float | None = None
         self.uptime_calls = 0
         self.uptime_error: MeltemModbusError | None = None
+        self.utc_clock_calls = 0
+        self.utc_clock_error: MeltemModbusError | None = None
+        self.node_count_calls = 0
+        self.node_count = 6
+        self.node_count_error: MeltemModbusError | None = None
+        self.rf_statistics_calls = 0
+        self.rf_statistics_error: MeltemModbusError | None = None
 
     async def async_read_gateway_uptime(self) -> int:
         self.uptime_calls += 1
@@ -79,8 +87,26 @@ class _FakeClient:
             raise self.uptime_error
         return 123
 
+    async def async_read_gateway_utc_clock(self) -> int:
+        self.utc_clock_calls += 1
+        if self.utc_clock_error is not None:
+            raise self.utc_clock_error
+        return 1792580112
+
+    async def async_read_gateway_node_count(self) -> int:
+        self.node_count_calls += 1
+        if self.node_count_error is not None:
+            raise self.node_count_error
+        return self.node_count
+
     def transport_diagnostics(self) -> dict[str, float | int | None]:
         raise AssertionError("Transport diagnostics are not expected in coordinator polling tests")
+
+    async def async_read_gateway_rf_statistics(self) -> GatewayRfStatistics:
+        self.rf_statistics_calls += 1
+        if self.rf_statistics_error is not None:
+            raise self.rf_statistics_error
+        return GatewayRfStatistics(75, 147, 0.260866672, 0.035489265)
 
     async def discover_gateway_units(self, start: int, end: int) -> list[int]:
         raise AssertionError("Gateway discovery is not expected in coordinator polling tests")
@@ -214,6 +240,126 @@ def clock_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     return clock
 
 
+class TestGatewayRfStatistics:
+    async def test_shared_optional_reads_and_staleness(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass)
+        await coordinator.async_refresh()
+        assert client.rf_statistics_calls == 0
+        assert coordinator.gateway_rf_statistics is None
+        coordinator.set_gateway_rf_statistics_enabled("messages", True)
+        coordinator.set_gateway_rf_statistics_enabled("load", True)
+        await coordinator.async_refresh()
+        assert client.rf_statistics_calls == 1
+        assert coordinator.gateway_rf_statistics == GatewayRfStatistics(
+            75, 147, 0.260866672, 0.035489265
+        )
+        coordinator.set_gateway_rf_statistics_enabled("messages", False)
+        clock.now += 60
+        await coordinator.async_refresh()
+        assert client.rf_statistics_calls == 2
+        client.rf_statistics_error = MeltemModbusError("RF statistics unavailable")
+        clock.now += 60
+        await coordinator.async_refresh()
+        assert coordinator.gateway_rf_statistics is not None
+        assert coordinator.last_update_success
+        assert coordinator.room_available("unit_1")
+        clock.now += 121
+        assert coordinator.gateway_rf_statistics is None
+        coordinator.set_gateway_rf_statistics_enabled("load", False)
+        await coordinator.async_refresh()
+        assert client.rf_statistics_calls == 3
+        await coordinator.async_shutdown()
+
+    @pytest.mark.parametrize("shutdown", [False, True])
+    async def test_disable_or_shutdown_cancels_read(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, shutdown: bool
+    ) -> None:
+        coordinator, client = _build(hass)
+        started = asyncio.Event()
+
+        async def wait_for_response() -> GatewayRfStatistics:
+            started.set()
+            await asyncio.Future()
+            return GatewayRfStatistics(0, 0, 0.0, 0.0)
+
+        monkeypatch.setattr(client, "async_read_gateway_rf_statistics", wait_for_response)
+        coordinator.set_gateway_rf_statistics_enabled("messages", True)
+        refresh = asyncio.create_task(coordinator._async_update_data())
+        await started.wait()
+        assert coordinator._gateway_lock.locked()
+        if shutdown:
+            await coordinator.async_shutdown()
+        else:
+            coordinator.set_gateway_rf_statistics_enabled("messages", False)
+        await refresh
+        assert not coordinator._gateway_rf_statistics_consumers
+        assert coordinator._gateway_rf_statistics_task is None
+        await coordinator.async_shutdown()
+
+
+class TestGatewayConnectedDevices:
+    async def test_gateway_count_is_independent_of_configured_rooms(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass)
+        await coordinator.async_refresh()
+        assert client.node_count_calls == 0
+        assert coordinator.gateway_connected_devices is None
+        coordinator.set_gateway_connected_devices_enabled(True)
+        await coordinator.async_refresh()
+        assert len(coordinator.rooms) == 1
+        assert coordinator.gateway_connected_devices == 6
+        assert client.node_count_calls == 1
+        clock.now += 1
+        await coordinator.async_refresh()
+        assert client.node_count_calls == 1
+        clock.now += 60
+        client.node_count = 0
+        await coordinator.async_refresh()
+        assert coordinator.gateway_connected_devices == 0
+        assert client.node_count_calls == 2
+        clock.now += 60
+        client.node_count_error = MeltemModbusError("count unavailable")
+        await coordinator.async_refresh()
+        assert coordinator.gateway_connected_devices == 0
+        assert coordinator.last_update_success
+        assert coordinator.room_available("unit_1")
+        clock.now += 121
+        assert coordinator.gateway_connected_devices is None
+        coordinator.set_gateway_connected_devices_enabled(False)
+        await coordinator.async_refresh()
+        assert client.node_count_calls == 3
+        await coordinator.async_shutdown()
+
+    @pytest.mark.parametrize("shutdown", [False, True])
+    async def test_disable_or_shutdown_cancels_count_read(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, shutdown: bool
+    ) -> None:
+        coordinator, client = _build(hass)
+        started = asyncio.Event()
+
+        async def wait_for_response() -> int:
+            started.set()
+            await asyncio.Future()
+            return 0
+
+        monkeypatch.setattr(client, "async_read_gateway_node_count", wait_for_response)
+        coordinator.set_gateway_connected_devices_enabled(True)
+        refresh = asyncio.create_task(coordinator._async_update_data())
+        await started.wait()
+        assert coordinator._gateway_lock.locked()
+        if shutdown:
+            await coordinator.async_shutdown()
+        else:
+            coordinator.set_gateway_connected_devices_enabled(False)
+        await refresh
+        assert not coordinator._gateway_connected_devices_enabled
+        assert coordinator._gateway_connected_devices_task is None
+        await coordinator.async_shutdown()
+
+
 class TestGatewayUptime:
     async def test_disable_cancels_pending_optional_read(
         self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
@@ -270,6 +416,108 @@ class TestGatewayUptime:
         coordinator.set_gateway_uptime_enabled(False)
         await coordinator.async_refresh()
         assert client.uptime_calls == 2
+
+
+class TestGatewayUtcClock:
+    async def test_disabled_by_default(self, hass: HomeAssistant) -> None:
+        coordinator, client = _build(hass)
+        await coordinator.async_refresh()
+        assert client.utc_clock_calls == 0
+        assert coordinator.gateway_utc_clock is None
+
+    async def test_due_reads_are_independent_and_become_stale(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass)
+        await hass.config.async_update(time_zone="Europe/Berlin")
+        coordinator.set_gateway_utc_clock_enabled(True)
+        await coordinator.async_refresh()
+        expected = datetime.fromtimestamp(1792580112, tz=UTC)
+        observed = coordinator.gateway_utc_clock
+        assert observed is not None
+        assert observed == expected
+        assert observed.utcoffset() == timedelta(0)
+        assert client.utc_clock_calls == 1
+        assert client.uptime_calls == 0
+
+        clock.now += 1
+        await coordinator.async_refresh()
+        assert client.utc_clock_calls == 1
+        coordinator.set_gateway_uptime_enabled(True)
+        client.utc_clock_error = MeltemModbusError("clock unavailable")
+        clock.now += 60
+        await coordinator.async_refresh()
+        assert client.utc_clock_calls == 2
+        assert coordinator.gateway_utc_clock == expected
+        assert coordinator.gateway_uptime == 123
+        assert coordinator.last_update_success
+        assert coordinator.room_available("unit_1")
+
+        clock.now += 120
+        assert coordinator.gateway_utc_clock is None
+        coordinator.set_gateway_utc_clock_enabled(False)
+        await coordinator.async_refresh()
+        assert client.utc_clock_calls == 2
+        await coordinator.async_shutdown()
+
+    async def test_uptime_failure_does_not_prevent_clock_read(self, hass: HomeAssistant) -> None:
+        coordinator, client = _build(hass)
+        client.uptime_error = MeltemModbusError("uptime unavailable")
+        coordinator.set_gateway_uptime_enabled(True)
+        coordinator.set_gateway_utc_clock_enabled(True)
+        await coordinator.async_refresh()
+        assert coordinator.gateway_utc_clock is not None
+        assert coordinator.gateway_uptime is None
+        assert client.utc_clock_calls == client.uptime_calls == 1
+        assert coordinator.last_update_success
+        await coordinator.async_shutdown()
+
+    @pytest.mark.parametrize("shutdown", [False, True])
+    async def test_disable_or_shutdown_cancels_pending_read(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, shutdown: bool
+    ) -> None:
+        coordinator, client = _build(hass)
+        started = asyncio.Event()
+
+        async def wait_for_response() -> int:
+            started.set()
+            await asyncio.Future()
+            return 0
+
+        monkeypatch.setattr(client, "async_read_gateway_utc_clock", wait_for_response)
+        coordinator.set_gateway_utc_clock_enabled(True)
+        refresh = asyncio.create_task(coordinator._async_update_data())
+        await started.wait()
+        assert coordinator._gateway_lock.locked()
+        if shutdown:
+            await coordinator.async_shutdown()
+        else:
+            coordinator.set_gateway_utc_clock_enabled(False)
+        await refresh
+        assert coordinator._gateway_utc_clock_task is None
+        assert coordinator.gateway_utc_clock is None
+        assert not coordinator._gateway_utc_clock_enabled
+        await coordinator.async_shutdown()
+
+
+@pytest.mark.parametrize("timed_out", [False, True])
+async def test_rf_diagnostic_rejections_do_not_mark_room_unavailable(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, timed_out: bool
+) -> None:
+    coordinator, client = _build(hass)
+    state = RoomState(target_level=42)
+
+    async def fail_rf_reads(*_args: object) -> RoomState:
+        health = ReadHealth().failed(dt_util.utcnow(), "unsupported RF read", timed_out=timed_out)
+        return _with_health(state, ("rf_last_seen", "rf_signal", "rf_fault", "value_error"), health)
+
+    monkeypatch.setattr(client, "read_room_state", fail_rf_reads)
+    for _attempt in range(3):
+        coordinator.async_set_updated_data(
+            await coordinator._read_one_job({"unit_1": state}, _due_job("rf"))
+        )
+    assert coordinator.room_available("unit_1") is (not timed_out)
+    await coordinator.async_shutdown()
 
 
 async def test_room_diagnostic_values_are_isolated(hass: HomeAssistant) -> None:

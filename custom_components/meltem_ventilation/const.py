@@ -55,23 +55,29 @@ TRANSPORT_RETRY_DELAY_SECONDS = 0.5
 GATEWAY_SILENT_AFTER_SECONDS = 30.0
 GATEWAY_UPTIME_REFRESH_SECONDS = 60.0
 GATEWAY_UPTIME_STALE_SECONDS = 180.0
+GATEWAY_UTC_CLOCK_REFRESH_SECONDS = 60.0
+GATEWAY_UTC_CLOCK_STALE_SECONDS = 180.0
+GATEWAY_CONNECTED_DEVICES_REFRESH_SECONDS = 60.0
+GATEWAY_CONNECTED_DEVICES_STALE_SECONDS = 180.0
+GATEWAY_RF_STATISTICS_REFRESH_SECONDS = 60.0
+GATEWAY_RF_STATISTICS_STALE_SECONDS = 180.0
 
 GATEWAY_ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
     "modbus_device_path": Platform.SENSOR,
     "gateway_connectivity": Platform.BINARY_SENSOR,
-    "gateway_last_answer_age": Platform.SENSOR,
-    "gateway_consecutive_timeouts": Platform.SENSOR,
-    "gateway_link_recycles": Platform.SENSOR,
-    "gateway_available_units": Platform.SENSOR,
-    "gateway_unavailable_units": Platform.SENSOR,
-    "gateway_stale_read_groups": Platform.SENSOR,
-    "gateway_error_units": Platform.SENSOR,
-    "gateway_filter_due_units": Platform.SENSOR,
+    "gateway_last_answer": Platform.SENSOR,
+    "gateway_connected_devices": Platform.SENSOR,
+    "gateway_rf_messages_current_hour": Platform.SENSOR,
+    "gateway_rf_messages_previous_hour": Platform.SENSOR,
+    "gateway_rf_load_current_hour": Platform.SENSOR,
+    "gateway_rf_load_previous_hour": Platform.SENSOR,
     "gateway_response_time": Platform.SENSOR,
     "gateway_success_rate": Platform.SENSOR,
     "gateway_supply_air_flow": Platform.SENSOR,
     "gateway_extract_air_flow": Platform.SENSOR,
+    "gateway_airflow_delta": Platform.SENSOR,
     "gateway_uptime": Platform.SENSOR,
+    "gateway_utc_clock": Platform.SENSOR,
 }
 
 FLOW_REFRESH_SECONDS = 10
@@ -238,7 +244,11 @@ LEVEL_WRITE_FALLBACK_UNKNOWN_MODE = "unknown_mode_overridden"
 
 REGISTER_PRODUCT_ID = 40002
 REGISTER_SOFTWARE_VERSION = 40004
+REGISTER_RF_LAST_SEEN_AGE = 40100
 REGISTER_RF_COMM_STATUS = 40101
+REGISTER_RF_FAULT_STATUS = 40103
+REGISTER_VALUE_ERROR_STATUS = 40104
+REGISTER_RF_SIGNAL_STRENGTH = 40109
 
 # On the tested M-WRG-GW gateway, 41000 and 41004 are effectively swapped
 # compared to the unit manual. We map the logical sensor names to the values
@@ -258,6 +268,7 @@ REGISTER_EXTRACT_AIR_FLOW = 41020
 REGISTER_SUPPLY_AIR_FLOW = 41021
 REGISTER_DAYS_UNTIL_FILTER_CHANGE = 41027
 REGISTER_OPERATING_HOURS = 41030
+REGISTER_FAN_MOTOR_HOURS = 41032
 
 # Current-state registers, distinct from the set registers below.
 REGISTER_MODE_STATUS = 41100
@@ -281,8 +292,13 @@ REGISTER_CO2_MAX_LEVEL = 42005
 
 REGISTER_GATEWAY_NUMBER_OF_NODES = 43901
 REGISTER_GATEWAY_MAC_START = 41012
+REGISTER_GATEWAY_UTC_CLOCK = 41015
 REGISTER_GATEWAY_UPTIME = 41019
 REGISTER_GATEWAY_NODE_ADDRESS_1 = 43902
+REGISTER_GATEWAY_RF_MESSAGES_CURRENT_HOUR = 42100
+REGISTER_GATEWAY_RF_MESSAGES_PREVIOUS_HOUR = 42101
+REGISTER_GATEWAY_RF_LOAD_CURRENT_HOUR = 42102
+REGISTER_GATEWAY_RF_LOAD_PREVIOUS_HOUR = 42104
 
 # Contiguous 42000..42005 block, so the order also defines the block layout.
 CONTROL_SETTING_REGISTERS: dict[str, int] = {
@@ -335,6 +351,11 @@ READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
     ),
     "filter": frozenset({"filter_change_due", "days_until_filter_change"}),
     "hours": frozenset({"operating_hours"}),
+    "fan_hours": frozenset({"fan_motor_hours"}),
+    "rf_last_seen": frozenset({"rf_last_seen_age_seconds"}),
+    "rf_signal": frozenset({"rf_signal_strength"}),
+    "rf_fault": frozenset({"rf_fault_status"}),
+    "value_error": frozenset({"value_error_status"}),
     "control_settings": frozenset(CONTROL_SETTING_REGISTERS),
 }
 
@@ -345,12 +366,17 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
         "supply_air_flow",
         "days_until_filter_change",
         "operating_hours",
+        "fan_motor_hours",
+        "rf_last_seen_age_seconds",
+        "rf_signal_strength",
         "modbus_slave_id",
         "error_status",
         "frost_protection_active",
         "filter_change_due",
         "intensive",
         "rf_comm_status",
+        "rf_fault_status",
+        "value_error_status",
         "operation_mode",
         "preset_mode",
         "supply_level",
@@ -358,7 +384,6 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
         "airflow_balance",
         "connectivity",
         "last_successful_update",
-        "last_write_status",
     }
 )
 
@@ -377,10 +402,12 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "supply_air_flow",
             "days_until_filter_change",
             "operating_hours",
+            "fan_motor_hours",
+            "rf_last_seen_age_seconds",
+            "rf_signal_strength",
             "modbus_slave_id",
             "airflow_balance",
             "last_successful_update",
-            "last_write_status",
         ),
         Platform.SENSOR,
     ),
@@ -390,6 +417,8 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "frost_protection_active",
             "filter_change_due",
             "rf_comm_status",
+            "rf_fault_status",
+            "value_error_status",
             "data_health",
             "connectivity",
         ),

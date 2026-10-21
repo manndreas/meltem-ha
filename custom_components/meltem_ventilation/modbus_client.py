@@ -69,7 +69,7 @@ from .modbus_helpers import (
     prepare_unit,
     read_gateway_node_count,
 )
-from .models import ReadHealth, RefreshPlan, RoomConfig, RoomState
+from .models import GatewayRfStatistics, ReadHealth, RefreshPlan, RoomConfig, RoomState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -269,11 +269,33 @@ class MeltemModbusClient:
         async with self._gateway_operation("reading gateway uptime"):
             return await MeltemGateway(self._unit(DEFAULT_GATEWAY_DEVICE_ID)).async_read_uptime()
 
+    async def async_read_gateway_node_count(self) -> int:
+        """Read how many devices are registered with the gateway."""
+
+        async with self._gateway_operation("reading gateway device count"):
+            return await MeltemGateway(
+                self._unit(DEFAULT_GATEWAY_DEVICE_ID)
+            ).async_read_node_count()
+
+    async def async_read_gateway_rf_statistics(self) -> GatewayRfStatistics:
+        """Read the gateway's hourly RF message counters and load."""
+
+        async with self._gateway_operation("reading gateway RF statistics"):
+            return await MeltemGateway(
+                self._unit(DEFAULT_GATEWAY_DEVICE_ID)
+            ).async_read_rf_statistics()
+
     async def async_read_gateway_mac(self) -> str:
         """Read the gateway's Ethernet MAC address."""
 
         async with self._gateway_operation("reading gateway MAC address"):
             return await MeltemGateway(self._unit(DEFAULT_GATEWAY_DEVICE_ID)).async_read_mac()
+
+    async def async_read_gateway_utc_clock(self) -> int:
+        """Read the gateway's UTC clock register pair."""
+
+        async with self._gateway_operation("reading gateway UTC clock"):
+            return await MeltemGateway(self._unit(DEFAULT_GATEWAY_DEVICE_ID)).async_read_utc_clock()
 
     async def async_validate_gateway(self) -> None:
         """Read the gateway's node count once to prove the link works.
@@ -575,6 +597,13 @@ def _due_fields(room: RoomConfig, plan: RefreshPlan) -> dict[str, _FieldRead]:
         attribute="value",
     )
     add("operating_hours", "operating_hours", "hours", plan.refresh_operating_hours)
+    add(
+        "fan_motor_hours",
+        "fan_motor_hours",
+        "fan_hours",
+        plan.refresh_operating_hours,
+        attribute="value",
+    )
     # Feeds the device info, not an entity, so no supported key gates it.
     add(
         "software_version",
@@ -593,6 +622,34 @@ def _due_fields(room: RoomConfig, plan: RefreshPlan) -> dict[str, _FieldRead]:
             plan.refresh_control_settings and room.profile in profiles,
         )
     add("rf_comm_status", "rf_comm_status", "status", plan.refresh_status, attribute="value")
+    add(
+        "rf_fault_status",
+        "rf_fault_status",
+        "rf_fault",
+        plan.refresh_rf_diagnostics,
+        attribute="value",
+    )
+    add(
+        "value_error_status",
+        "value_error_status",
+        "value_error",
+        plan.refresh_rf_diagnostics,
+        attribute="value",
+    )
+    add(
+        "rf_last_seen_age_seconds",
+        "rf_last_seen_age",
+        "rf_last_seen",
+        plan.refresh_rf_diagnostics,
+        attribute="value",
+    )
+    add(
+        "rf_signal_strength",
+        "rf_signal_strength",
+        "rf_signal",
+        plan.refresh_rf_diagnostics,
+        attribute="value",
+    )
     return due
 
 
@@ -627,6 +684,14 @@ def _fresh_values(
             continue
         if name in PLAUSIBLE_RANGES and not is_plausible(name, int(value)):
             _LOGGER.debug("Ignoring implausible %s readback %r", name, value)
+            continue
+        if name == "rf_signal_strength" and value >= 0x8000:
+            value -= 0x10000
+        if name == "rf_fault_status":
+            values[name] = None if value == 0xFFFF else bool(value)
+            continue
+        if name == "value_error_status":
+            values[name] = bool(value) if value in (0, 1) else None
             continue
         values[name] = bool(value) if name in _FLAG_FIELDS else value
     return values

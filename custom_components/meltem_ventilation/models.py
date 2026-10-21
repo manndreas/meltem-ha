@@ -23,6 +23,16 @@ type WriteValue = str | int | bool | tuple[int, int]
 
 
 @dataclass(slots=True, frozen=True)
+class GatewayRfStatistics:
+    """Gateway RF message buckets and load percentages."""
+
+    messages_current_hour: int
+    messages_previous_hour: int
+    load_current_hour: float | None
+    load_previous_hour: float | None
+
+
+@dataclass(slots=True, frozen=True)
 class RoomConfig:
     """Configuration for one Meltem room/unit."""
 
@@ -101,6 +111,8 @@ class RoomState:
     filter_change_due: bool | None = None
     frost_protection_active: bool | None = None
     rf_comm_status: bool | None = None
+    rf_fault_status: bool | None = None
+    value_error_status: bool | None = None
 
     operation_mode: str | None = None
     preset_mode: str | None = None
@@ -111,6 +123,9 @@ class RoomState:
 
     days_until_filter_change: int | None = None
     operating_hours: int | None = None
+    fan_motor_hours: int | None = None
+    rf_last_seen_age_seconds: int | None = None
+    rf_signal_strength: int | None = None
     software_version: int | None = None
 
     humidity_starting_point: int | None = None
@@ -157,6 +172,7 @@ class RefreshPlan:
     refresh_filter_change_due: bool = True
     refresh_filter_days: bool = True
     refresh_operating_hours: bool = True
+    refresh_rf_diagnostics: bool = True
     refresh_control_settings: bool = True
 
     @classmethod
@@ -182,7 +198,9 @@ class RefreshPlan:
         if self.refresh_filter_change_due or self.refresh_filter_days:
             groups.append("filter")
         if self.refresh_operating_hours:
-            groups.append("hours")
+            groups.extend(("hours", "fan_hours"))
+        if self.refresh_rf_diagnostics:
+            groups.extend(("rf_last_seen", "rf_signal", "rf_fault", "value_error"))
         if self.refresh_control_settings:
             groups.append("control_settings")
         return tuple(groups)

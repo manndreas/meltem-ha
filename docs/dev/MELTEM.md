@@ -194,7 +194,8 @@ Potentially useful but still unclassified areas are:
 - `41019` behaved as gateway uptime on address `1`; that meaning should not be
   assumed for room-unit addresses.
 - `40103` and `40104` returned stable values in separate probes, but are not
-  decoded or exposed by the integration
+  independently verified under fault conditions. Version 4.5.0 exposes them
+  as optional diagnostics using the upstream interpretation described below.
 - `41032..41033` are documented fan-motor operating hours and were readable
   in the captured `41030×4` response on slave `3` (`[38083, 0, 38014, 0]`).
   They are not yet exposed by the integration; R-6 checks them against unit
@@ -209,6 +210,270 @@ Registers `30000` and `30002` appear in the manufacturer documentation, but
 their bus readability and function code have not been verified. The planned
 read-only probe is [R-8](LIVE_GATEWAY_TESTS.md); that plan explicitly forbids
 writing either register.
+
+### Read-only spot-check of pyairios candidates (2026-10-21)
+
+After comparing the `BRDG-02EM23` bridge model and `VMD-02RPS78` controller
+register maps in `pyairios` with this integration, targeted holding-register
+reads (`0x03`) were made on gateway address `1` and all configured unit
+addresses `2..7`. The tool kept its configured 0.1 s request gap. Gateway time
+and RF reads were repeated in two rounds 10 seconds apart. No register was
+written.
+
+On gateway address `1`:
+
+| Registers | Raw value(s) | pyairios meaning and observation |
+| --- | --- | --- |
+| `41015..41016` | `[39440, 27352]`, then `[39450, 27352]` | UTC time; low-word-first decoding advanced from `2026-10-21 10:55:12` to `10:55:22 UTC`. |
+| `41017..41018` | `[46640, 27352]`, then `[46650, 27352]` | Local time; decoded values were exactly 7200 seconds ahead of UTC. |
+| `41021` / `41022` | `4` / `60` | Daylight-saving type and timezone-offset registers; the meaning of code `4` and the relationship of `60` to the observed +2-hour offset are not established. |
+| `42100` / `42101` | `14` / `40` | RF messages sent in the current and previous hour; unchanged over the 10-second repeat. |
+| `42102..42103` | `[23096, 15340]` | RF load, current hour; pyairios `FloatRegister` decoding gives `0.0072129`. An earlier read gave `[15127, 15348]` (`0.0074533`). Upstream reports the decoded value directly in percent; physical calibration on Meltem remains unverified. |
+| `42104..42105` | `[28241, 15401]` | RF load, previous hour; decoded `0.0103412`, unchanged in the repeated sample. |
+| `43900` | `0` | Binding status; pyairios labels zero `NOT_AVAILABLE` (no binding initialized), not a connectivity status. |
+
+The adjacent bridge registers therefore identify time/timezone and RF metadata,
+not the active DHCP address. The decoded UTC/local clocks advanced as expected;
+this does not make the static IP fallback registers a source for the current
+lease.
+
+On unit addresses `2..7`:
+
+| Register | Assumed function | Slave 2 | Slave 3 | Slave 4 | Slave 5 | Slave 6 | Slave 7 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `40100` | RF last-seen age; likely seconds, based on repeats | `39` | `25` | `11` | `245` | `27` | `25` |
+| `40101` | RF communication status (`0` = no error; `1` = no data for 30 min per pyairios) | `0` | `0` | `0` | `0` | `0` | `0` |
+| `40102` | Battery status (`0xFFFF` = unavailable) | `65535` | `65535` | `65535` | `65535` | `65535` | `65535` |
+| `40103` | Fault status (`0` = no fault; `0xFFFF` = unavailable per pyairios) | `0` | `0` | `0` | `0` | `0` | `0` |
+| `40104` | Value-error status (`0` = no error; `1` = one or more out-of-range values per pyairios) | `0` | `0` | `0` | `0` | `0` | `0` |
+| `40109` | RF last RSSI, signed 16-bit; unit not specified | `65493` (`-43`) | `65484` (`-52`) | `65508` (`-28`) | `65491` (`-45`) | `65499` (`-37`) | `65473` (`-63`) |
+| `40110` | Bound status (`0` = no change, `1` = rebound, `2` = first bound per pyairios) | `0` | `0` | `0` | `0` | `0` | `0` |
+| `41030..41033` | Unit hours / fan-motor hours, each low-word-first U32 | `[38522, 0, 38423, 0]` (`38522/38423 h`, Δ99 h) | `[38535, 0, 38466, 0]` (`38535/38466 h`, Δ69 h) | `[38527, 0, 38393, 0]` (`38527/38393 h`, Δ134 h) | `[32003, 0, 31949, 0]` (`32003/31949 h`, Δ54 h) | `[36394, 0, 36179, 0]` (`36394/36179 h`, Δ215 h) | `[36381, 0, 36143, 0]` (`36381/36143 h`, Δ238 h) |
+
+The Siber `VMD-02RPS78`-specific filter, RPM, and bypass candidates were also
+read individually on every unit. All returned Modbus exception `0x02`
+(`IllegalDataAddress`):
+
+| Register | Assumed Siber function | Slave 2 | Slave 3 | Slave 4 | Slave 5 | Slave 6 | Slave 7 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `41040` | Filter time remaining (days) | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` |
+| `41041` | Filter timer duration (days) | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` |
+| `41042` | Filter time remaining (%) | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` |
+| `41043` | Exhaust fan RPM | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` |
+| `41044` | Supply fan RPM | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` |
+| `41050` | Bypass mode | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` |
+| `41051` | Bypass status | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` | `0x02` |
+
+For `40100`, two additional reads 10 seconds apart gave `5 → 15` on slave
+`3` and `40 → 50` on slave `5`; a later snapshot had been lower than the
+earlier `245` on slave `5`, consistent with the age resetting on a new RF
+frame. This supports, but does not independently prove, a seconds-since-last-RF
+interpretation. The `40109` values become `-28..-63` when cast to signed 16-bit;
+that range is plausible for RSSI, but no unit or calibration was found in the
+source, so it remains an assumption.
+
+Across all six units, the RF communication, fault, value-error, and bound-status
+registers were readable and returned `0`; battery status was consistently
+unavailable. pyairios defines `40101 = 1` as no data received for 30 minutes;
+`40103` is a boolean fault flag (with `0xFFFF` unavailable), and `40104 = 1`
+means one or more value errors, for example an out-of-range sensor value. These
+are upstream interpretations, not independently confirmed Meltem semantics;
+no fault or sensor error was induced. `40110` reports `NO_CHANGE`, `REBOUND`, or
+`NEW_BOUND` for values `0`, `1`, or `2`; it is not a live connectivity status,
+and its reset/retention behavior is unknown. The upstream fault-history reader
+uses an index register with writes, so that history was not queried. The
+unit-hours counter exceeded fan-motor hours on every device, by `54..238 h`,
+which is internally consistent and makes `41032..41033` the strongest new
+sensor candidate. Version 4.5.0 exposes the gateway RF counters and loads as
+optional diagnostics, using the raw upstream percentage scale without a factor
+of 100. The load tests below establish usefulness as an RF-traffic indicator,
+not independently calibrated airtime or per-value freshness. The hour buckets'
+exact rollover timing and Meltem fault-state semantics remain unverified.
+
+The RF statistics family is not ready: the prior scan found only `40120`
+readable, not its length/data registers. `40120` is also an index register that
+pyairios writes to select records, so it was not touched. Reset and binding
+commands were likewise not exercised.
+
+#### Short read-load pilot on 2026-10-21
+
+With Home Assistant stopped and the USB port exclusively held by the test,
+gateway registers `42100..42105` were read in six rounds about 10 seconds
+apart. `42100/42101` stayed at `[6, 27]`. `42102..42103` returned
+`[2412, 15353]` in the first four rounds (Float32 `0.007600000`) and
+`[16283, 15335]` in the final two (Float32 `0.007057143`). `42104..42105`
+stayed at `[2764, 15335]`.
+
+Slave `4` then received one read of measured airflow registers `41020..41021`
+per second for about 171 seconds. The run was configured for 180 rounds but
+was interrupted by the command time limit at round 171. All captured replies
+reported `[60, 60] m3/h`; no Modbus error was shown. Two gateway samples after
+the load phase, five seconds apart, both returned `42100/42101 = [8, 27]`,
+`42102..42103 = [37934, 15354]` (Float32 `0.007647059`), and
+`42104..42105 = [2764, 15335]`.
+
+The current-hour message counter increased by two, while the previous-hour
+counter and load stayed unchanged. The current-hour load had already varied
+during the baseline and returned close to its initial value after the read
+load, so this short A/B run does not establish that the added Modbus reads
+caused the two messages or calibrate RF load as a percentage. It also did not
+cross an hour boundary, so rollover of the current/previous-hour counters
+remains unverified. No settings were written and the measured airflow stayed
+unchanged. Repeat with alternating baseline/load windows and a longer duration
+before adding user-facing gateway RF sensors.
+
+#### Higher read-load repeat on 2026-10-21
+
+After confirming the serial port was free, the same read-only test used slave
+`4` for 120 one-second rounds. Each round read measured airflow `41020..41021`,
+status `41016..41018`, and current mode `41100..41102`: 360 Modbus read
+requests total. Every request succeeded. The airflow stayed `[60, 60] m3/h`,
+the status stayed `[0, 0, 0]`, and the mode stayed `[3, 230, 0]`. Mean request
+times were about 16.7 ms for the airflow read and 119 ms for each three-register
+read.
+
+Immediately before this phase, the gateway showed `42100/42101 = [8, 27]` and
+current-hour RF load `42102..42103 = [37934, 15354]` (Float32
+`0.007647059`). Two samples after the phase showed `[135, 27]` and
+`[40160, 15729]` (Float32 `0.058987498`). The last-hour RF load
+`42104..42105 = [2764, 15335]` (Float32 `0.007050848`) was unchanged.
+
+This stronger stimulus coincided with 127 more messages in the current-hour
+counter and roughly 7.7 times the prior current-hour load value. The test had
+no interleaved no-load control phase, so it did not establish that the extra
+reads caused either change. A subsequent faster read-only run is recorded
+below and did not reproduce a message-counter increase.
+
+#### Immediate high-rate read repeat on 2026-10-21
+
+With the port again free, the gateway counters were sampled every five seconds
+in the same serial session as room traffic. Slave `4` received 379 reads of
+`41020..41021` over 60.1 seconds, or 6.30 reads/s, above the integration's
+default 4 requests/s rate. Every request succeeded; airflow remained
+`[60, 60] m3/h`.
+
+At baseline the gateway reported `42100/42101 = [137, 27]`,
+`42102..42103 = [7837, 15706]` (Float32 `0.053251851`), and
+`42104..42105 = [2764, 15335]` (Float32 `0.007050848`). Throughout the run,
+the message counters remained `[137, 27]`. The current-hour load changed to
+`[62352, 15701]` (Float32 `0.052234232`) by 15 seconds and then stayed at that
+value through the final sample. The last-hour load remained unchanged.
+
+This immediate measurement did not show a message-count or RF-load increase
+from the higher read rate; the current-hour load moved slightly down. Together
+with the earlier coincident increase, the results do not support a reproducible
+causal relationship between Modbus read rate and `42100..42103`. The previous
+`8 -> 135` message-counter change likely included unrelated/background RF
+traffic or other timing effects. The register may reflect RF traffic generated
+by gateway activity rather than Modbus telegram count; a controlled alternating
+load/no-load experiment would be needed to distinguish that from natural
+variation. Its percentage scale also remains unverified.
+
+#### Pacing-limit read stress test on 2026-10-21
+
+The gateway registers were read every five seconds over the same serial
+connection while slave `4` received repeated reads of `41020..41021`, using the
+tool's minimum 0.1-second message spacing. Over 120.1 seconds, 948 room reads
+succeeded, averaging 7.89 requests/s. Every returned airflow value was
+`[60, 60] m3/h`.
+
+At the baseline, the gateway reported message counters `42100/42101 =
+[138, 27]`, current-hour load `42102..42103 = [40498, 15692]` (Float32
+`0.049955554`), and last-hour load `42104..42105 = [2764, 15335]` (Float32
+`0.007050848`). At about 85 seconds, the current-hour message count had
+increased to `139`; it stayed there through the final sample. The current-hour
+load changed to `[32932, 15687]` (Float32 `0.048706666`) by 20 seconds and
+then to `[41720, 15682]` (Float32 `0.047518700`) by 75 seconds, remaining at
+that value to the end. The previous-hour counter and load did not change.
+
+Even at this higher read rate, the current-hour message counter increased by
+only one and RF load moved slightly downward. The result again does not show
+that Modbus read rate drives gateway RF traffic or load. No request failed and
+the room's reported airflow stayed stable. This does not identify what creates
+the gateway RF messages or establish the load's percentage scale.
+
+#### All registered units at once on 2026-10-21
+
+The gateway reported the registered slave addresses `[3, 2, 4, 5, 7, 6]`.
+In one serial session, a round-robin poll read measured airflow
+`41020..41021` once from each address, while the gateway RF registers were
+sampled every five seconds. Over 120.4 seconds, 158 complete rounds produced
+948 successful room reads, 7.87 reads/s aggregate and 1.31 reads/s per unit.
+The last round reported `[30, 30]` on slaves `2`, `3`, `5`, `6`, and `7`, and
+`[60, 60]` on slave `4`. No request failed; no writes were sent.
+
+At baseline, `42100/42101` were `[140, 27]` and the current-hour RF load was
+`[4569, 15675]` (Float32 `0.045671318`); the previous-hour load was
+`[2764, 15335]` (Float32 `0.007050848`). At about 65 seconds the message count
+changed once to `[141, 27]`; it remained there through the end. The current
+load moved to `[4503, 15670]` (Float32 `0.044450369`) and stayed there through
+the final sample. The previous-hour count and load were unchanged.
+
+Polling all registered units above 4 requests/s did not produce a sustained
+increase in the gateway message count or current-hour RF load. This is
+consistent with the single-unit high-rate test; it still cannot establish what
+drives the gateway counters or calibrate the load scale.
+
+#### RF age and potentially cached room responses on 2026-10-21
+
+To check whether unchanged room responses were only a frozen gateway cache,
+all six registered slaves were sampled every five seconds for five minutes in
+one serial session. Each sample read `40100..40101` (RF age and communication
+status) and `41020..41021` (measured extract/supply airflow). The gateway RF
+statistics were read every ten seconds in the same session. All 60 samples per
+slave succeeded. `40101` remained `0` on every device. The number of decreases
+in `40100` during the window was: slave `2`: 6, `3`: 5, `4`: 4, `5`: 1, `6`:
+5, and `7`: 6. The final RF ages were respectively `36`, `20`, `59`, `50`, `3`,
+and `53` seconds. Sampled airflow values remained `[30, 30]` on slaves `2`,
+`3`, `5`, `6`, and `7`, and `[60, 60]` on slave `4`.
+
+The repeated decreases in `40100` on every slave are consistent with that
+register tracking newly received RF data, and argue against a completely
+frozen five-minute response cache. However, `40100` itself is returned through
+the gateway and its seconds/reset semantics remain provisional; the test
+cannot distinguish a fresh RF update from a gateway cache that refreshes in
+the background. It also cannot prove that each `41020..41021` value is newly
+measured for every Modbus request. Treat the result as evidence of ongoing
+RF-data updates, not a guarantee of per-read freshness.
+
+The gateway message counter changed from `[144, 27]` at baseline to `[145, 27]`
+around 121 seconds and `[146, 27]` around 271 seconds. Current-hour RF load
+changed from Float32 `0.040138561` to `0.037111904`; previous-hour load stayed
+at `0.007050848`. These gateway statistics still did not increase in step
+with the frequent Modbus room polling.
+
+#### Multi-block RF refresh check on 2026-10-21
+
+To compare different data groups, all six slaves were polled every ten seconds
+for 120 seconds in one serial session. Each room round read `40100..40101`,
+`41004..41005`, `41020..41021`, and `41100..41102`. All 12 rounds succeeded.
+The RF status remained `0` on every slave. RF age values repeatedly fell
+between rounds; for example, slave `5` went from `151` seconds in the first
+round to `9` seconds in the second. Temperature values stayed stable except
+for a small `12.24 -> 12.26 °C` change on slave `7`; measured airflow and mode
+values stayed stable throughout the capture.
+
+At baseline, the gateway reported `42100/42101 = [1, 147]`, current-hour RF
+load `42102..42103 = [38692, 15359]` (Float32 `0.007800000`), and previous-hour
+load `42104..42105 = [23857, 15633]` (Float32 `0.035489265`). During the test,
+`42100/42101` progressed through `[19, 147]`, `[31, 147]`, `[44, 147]`,
+`[57, 147]`, and `[69, 147]`, ending at `[75, 147]`. The current-hour load rose
+to Float32 `0.171600000` at about 63 seconds and `0.260866672` at the end; the
+previous-hour load stayed unchanged.
+
+The current-hour counter increased by 74 over 72 room-rounds, a strong
+correlation with polling all four register groups rather than repeatedly
+reading airflow alone. Along with the recurring `40100` decreases, this argues
+against the values being a completely frozen cache. It is consistent with the
+gateway refreshing RF data during a multi-group room poll, while individual
+Modbus reads may still be served from that refreshed snapshot. The test does
+not isolate which group triggers a radio exchange or prove per-register
+freshness; confirm with a control run that alternates one register group and
+the full group set before relying on exact cache behavior.
+
+The Airios `AIRIOS-VMD` overview gives another model's more specific meaning
+for `40103`: `0` fan OK and `1` fan failure. This is a useful candidate for
+comparison, not a verified mapping for the locally tested `VMD-22RPS44`.
 
 ### Registers not covered by the collected manufacturer documents
 

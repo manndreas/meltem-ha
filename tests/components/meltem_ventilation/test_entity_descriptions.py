@@ -39,8 +39,10 @@ from custom_components.meltem_ventilation.number import (
     CONTROL_SETTING_DESCRIPTIONS,
 )
 from custom_components.meltem_ventilation.sensor import (
+    GATEWAY_CONNECTED_DEVICES_DESCRIPTION,
     GATEWAY_SENSOR_DESCRIPTIONS,
     GATEWAY_UPTIME_DESCRIPTION,
+    GATEWAY_UTC_CLOCK_DESCRIPTION,
     MODBUS_DEVICE_PATH_DESCRIPTION,
     MODBUS_SLAVE_ID_DESCRIPTION,
     ROOM_DIAGNOSTIC_DESCRIPTIONS,
@@ -382,6 +384,8 @@ class TestTranslations:
             *_keys(GATEWAY_SENSOR_DESCRIPTIONS),
             *_keys(ROOM_DIAGNOSTIC_DESCRIPTIONS),
             GATEWAY_UPTIME_DESCRIPTION.key,
+            GATEWAY_UTC_CLOCK_DESCRIPTION.key,
+            GATEWAY_CONNECTED_DEVICES_DESCRIPTION.key,
             MODBUS_DEVICE_PATH_DESCRIPTION.key,
             MODBUS_SLAVE_ID_DESCRIPTION.key,
         }
@@ -405,16 +409,6 @@ class TestTranslations:
             *SENSOR_OPERATION_MODES,
         }
 
-    @pytest.mark.parametrize("language", ["en", "de"])
-    def test_write_status_translations_match_options(self, language: str) -> None:
-        translations = _load_json(_COMPONENT_DIR / "translations" / f"{language}.json")
-        description = next(
-            item for item in ROOM_DIAGNOSTIC_DESCRIPTIONS if item.key == "last_write_status"
-        )
-        assert set(translations["entity"]["sensor"]["last_write_status"]["state"]) == set(
-            description.options or []
-        )
-
     def test_icon_translations_cover_custom_entity_icons(self) -> None:
         assert _load_json(_ICONS) == {
             "entity": {
@@ -426,6 +420,8 @@ class TestTranslations:
                     "frost_protection_active": {"default": "mdi:snowflake-thermometer"},
                     "gateway_connectivity": {"default": "mdi:connection"},
                     "rf_comm_status": {"default": "mdi:wifi-alert"},
+                    "rf_fault_status": {"default": "mdi:alert-circle-outline"},
+                    "value_error_status": {"default": "mdi:alert-circle-outline"},
                 },
                 "fan": {
                     "extract_level": {"default": "mdi:home-export-outline"},
@@ -447,22 +443,23 @@ class TestTranslations:
                     "airflow_balance": {"default": "mdi:scale-balance"},
                     "days_until_filter_change": {"default": "mdi:calendar-clock"},
                     "extract_air_flow": {"default": "mdi:home-export-outline"},
-                    "gateway_available_units": {"default": "mdi:check-network-outline"},
-                    "gateway_consecutive_timeouts": {"default": "mdi:counter"},
-                    "gateway_error_units": {"default": "mdi:alert-circle-outline"},
+                    "fan_motor_hours": {"default": "mdi:fan-clock"},
+                    "gateway_connected_devices": {"default": "mdi:counter"},
+                    "gateway_airflow_delta": {"default": "mdi:scale-balance"},
                     "gateway_extract_air_flow": {"default": "mdi:home-export-outline"},
-                    "gateway_filter_due_units": {"default": "mdi:air-filter"},
-                    "gateway_last_answer_age": {"default": "mdi:timer-outline"},
-                    "gateway_link_recycles": {"default": "mdi:connection"},
+                    "gateway_last_answer": {"default": "mdi:clock-check-outline"},
                     "gateway_response_time": {"default": "mdi:timer-outline"},
-                    "gateway_stale_read_groups": {"default": "mdi:clock-alert-outline"},
+                    "gateway_rf_load_current_hour": {"default": "mdi:access-point"},
+                    "gateway_rf_load_previous_hour": {"default": "mdi:access-point"},
+                    "gateway_rf_messages_current_hour": {"default": "mdi:counter"},
+                    "gateway_rf_messages_previous_hour": {"default": "mdi:counter"},
                     "gateway_success_rate": {"default": "mdi:check-network-outline"},
                     "gateway_supply_air_flow": {"default": "mdi:home-import-outline"},
-                    "gateway_unavailable_units": {"default": "mdi:close-network-outline"},
                     "gateway_uptime": {"default": "mdi:timer-outline"},
+                    "gateway_utc_clock": {"default": "mdi:clock-outline"},
                     "last_successful_update": {"default": "mdi:clock-check-outline"},
-                    "last_write_status": {"default": "mdi:send-check-outline"},
                     "operating_hours": {"default": "mdi:fan-clock"},
+                    "rf_last_seen_age_seconds": {"default": "mdi:timer-outline"},
                     "supply_air_flow": {"default": "mdi:home-import-outline"},
                 },
                 "switch": {"intensive": {"default": "mdi:fan-plus"}},

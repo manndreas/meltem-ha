@@ -118,6 +118,12 @@ installation manuals `2400253` (`M-WRG-II`) and `2400269` (`M-WRG-S`),
 `2400388`. The Modbus-KNX communication-object document mentioned in
 [../MELTEM.md](../MELTEM.md) is also not part of this collection.
 
+### Additional model-specific register map
+
+| ID | File (link) | Content | Scope |
+| --- | --- | --- | --- |
+| `AIRIOS-VMD` | [VMD-02RPS66 / VMD-02RPS78 Modbus Registers Overview](https://taphome.com/compatibility/devices/siber-df-evo/vmd-modbus-registers.pdf) | Airios register overview, revision 1 | `VMD-02RPS66` / `VMD-02RPS78`; not the tested `VMD-22RPS44` |
+
 ## Glossary
 
 | German | Abbr. | English |

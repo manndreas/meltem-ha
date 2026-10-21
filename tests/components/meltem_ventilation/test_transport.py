@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -153,6 +154,32 @@ def clock_fixture(monkeypatch: pytest.MonkeyPatch, sleeps: list[float]) -> Simpl
 
 
 class TestCommunicationMetrics:
+    @pytest.mark.parametrize("exception_reply", [False, True])
+    async def test_last_answer_timestamp_tracks_valid_replies_only(
+        self,
+        policy: TransportPolicy,
+        unit: AsyncMock,
+        clock: SimpleNamespace,
+        exception_reply: bool,
+    ) -> None:
+        assert policy.diagnostics()["last_answer_timestamp"] is None
+        before = datetime.now(UTC).timestamp()
+        if exception_reply:
+            await _run_failing(
+                policy,
+                unit,
+                AsyncMock(side_effect=IllegalDataAddressError()),
+                expected=IllegalDataAddressError,
+            )
+        else:
+            await _run(policy, unit, AsyncMock(return_value=[1]))
+        timestamp = policy.diagnostics()["last_answer_timestamp"]
+        assert timestamp is not None
+        assert before <= timestamp <= datetime.now(UTC).timestamp()
+        clock.now += 60
+        await _run_failing(policy, unit, AsyncMock(side_effect=_SILENT))
+        assert policy.diagnostics()["last_answer_timestamp"] == timestamp
+
     async def test_retries_count_separately_without_rate_wait_in_latency(
         self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
     ) -> None:

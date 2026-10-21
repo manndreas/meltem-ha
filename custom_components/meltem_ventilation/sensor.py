@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -36,7 +36,6 @@ from .const import (
     CONF_PORT,
     DOMAIN,
     HUMIDITY_PROFILES,
-    READ_GROUP_ENTITY_KEYS,
     VOC_PROFILES,
 )
 from .coordinator import MeltemDataUpdateCoordinator
@@ -53,7 +52,6 @@ from .models import (
     RoomConfig,
     RoomState,
 )
-from .write_confirmation import confirmation_status
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -82,8 +80,9 @@ MODBUS_DEVICE_PATH_DESCRIPTION = SensorEntityDescription(
 class MeltemGatewaySensorDescription(SensorEntityDescription):
     """Describe a locally derived gateway diagnostic."""
 
-    value_fn: Callable[[MeltemDataUpdateCoordinator], int | float | None]
+    value_fn: Callable[[MeltemDataUpdateCoordinator], int | float | datetime | None]
     aggregate_key: str | None = None
+    rf_statistics_key: str | None = None
     entity_category: EntityCategory | None = EntityCategory.DIAGNOSTIC
     entity_registry_enabled_default: bool = False
 
@@ -95,14 +94,29 @@ class _GatewayAggregate:
 
 
 def _gateway_aggregate(coordinator: MeltemDataUpdateCoordinator, key: str) -> _GatewayAggregate:
-    is_flag = key in {"error_status", "filter_change_due"}
+    if key == "airflow_delta":
+        supply = _gateway_aggregate(coordinator, "supply_air_flow")
+        extract = _gateway_aggregate(coordinator, "extract_air_flow")
+        unknown_units: dict[str, str] = {}
+        for aggregate in (supply, extract):
+            units = aggregate.attributes.get("unknown_units")
+            if isinstance(units, dict):
+                unknown_units.update(units)
+        if supply.value is None or extract.value is None:
+            delta = None
+            complete = False
+        else:
+            delta = supply.value - extract.value
+            complete = True
+        return _GatewayAggregate(
+            delta,
+            {"complete": complete, "unknown_units": unknown_units},
+        )
+
     values: dict[str, int] = {}
-    affected: dict[str, str] = {}
     unknown: dict[str, str] = {}
     group_key = coordinator.read_group_for_entity(key)
     for room in coordinator.rooms:
-        if is_flag and not room.supports(key):
-            continue
         state = coordinator.safe_data.get(room.key)
         value = getattr(state, key, None)
         if (
@@ -115,51 +129,51 @@ def _gateway_aggregate(coordinator: MeltemDataUpdateCoordinator, key: str) -> _G
             unknown[room.key] = room.name
             continue
         values[room.key] = int(value)
-        if is_flag and value:
-            affected[room.key] = room.name
     complete = bool(values) and not unknown
     attributes: dict[str, object] = {"complete": complete, "unknown_units": unknown}
-    if is_flag:
-        attributes["affected_units"] = affected
     return _GatewayAggregate(sum(values.values()) if complete else None, attributes)
 
 
-def _gateway_stale_groups(
-    coordinator: MeltemDataUpdateCoordinator,
-) -> dict[str, list[str]] | None:
-    affected: dict[str, list[str]] = {}
-    known = False
-    for room in coordinator.rooms:
-        for group_key, entity_keys in READ_GROUP_ENTITY_KEYS.items():
-            if not room.supports_any(entity_keys):
-                continue
-            stale = coordinator.read_group_stale(room.key, group_key)
-            if stale is not None:
-                known = True
-            if stale is True:
-                affected.setdefault(room.key, []).append(group_key)
-    return affected if known else None
+def _gateway_last_answer(coordinator: MeltemDataUpdateCoordinator) -> datetime | None:
+    timestamp = coordinator.client.transport_diagnostics()["last_answer_timestamp"]
+    return None if timestamp is None else datetime.fromtimestamp(timestamp, tz=UTC)
 
 
-def _gateway_stale_count(coordinator: MeltemDataUpdateCoordinator) -> int | None:
-    affected = _gateway_stale_groups(coordinator)
-    return None if affected is None else sum(len(groups) for groups in affected.values())
+def _gateway_rf_value(coordinator: MeltemDataUpdateCoordinator, key: str) -> int | float | None:
+    statistics = coordinator.gateway_rf_statistics
+    return None if statistics is None else getattr(statistics, key)
 
 
 GATEWAY_SENSOR_DESCRIPTIONS: tuple[MeltemGatewaySensorDescription, ...] = (
     MeltemGatewaySensorDescription(
-        key="gateway_error_units",
-        aggregate_key="error_status",
-        entity_registry_enabled_default=True,
+        key="gateway_rf_messages_current_hour",
+        rf_statistics_key="messages_current_hour",
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda coordinator: _gateway_aggregate(coordinator, "error_status").value,
+        suggested_display_precision=0,
+        value_fn=lambda coordinator: _gateway_rf_value(coordinator, "messages_current_hour"),
     ),
     MeltemGatewaySensorDescription(
-        key="gateway_filter_due_units",
-        aggregate_key="filter_change_due",
-        entity_registry_enabled_default=True,
+        key="gateway_rf_messages_previous_hour",
+        rf_statistics_key="messages_previous_hour",
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda coordinator: _gateway_aggregate(coordinator, "filter_change_due").value,
+        suggested_display_precision=0,
+        value_fn=lambda coordinator: _gateway_rf_value(coordinator, "messages_previous_hour"),
+    ),
+    MeltemGatewaySensorDescription(
+        key="gateway_rf_load_current_hour",
+        rf_statistics_key="load_current_hour",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=4,
+        value_fn=lambda coordinator: _gateway_rf_value(coordinator, "load_current_hour"),
+    ),
+    MeltemGatewaySensorDescription(
+        key="gateway_rf_load_previous_hour",
+        rf_statistics_key="load_previous_hour",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=4,
+        value_fn=lambda coordinator: _gateway_rf_value(coordinator, "load_previous_hour"),
     ),
     MeltemGatewaySensorDescription(
         key="gateway_supply_air_flow",
@@ -182,6 +196,17 @@ GATEWAY_SENSOR_DESCRIPTIONS: tuple[MeltemGatewaySensorDescription, ...] = (
         value_fn=lambda coordinator: _gateway_aggregate(coordinator, "extract_air_flow").value,
     ),
     MeltemGatewaySensorDescription(
+        key="gateway_airflow_delta",
+        aggregate_key="airflow_delta",
+        entity_registry_enabled_default=True,
+        entity_category=None,
+        device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
+        native_unit_of_measurement=UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        value_fn=lambda coordinator: _gateway_aggregate(coordinator, "airflow_delta").value,
+    ),
+    MeltemGatewaySensorDescription(
         key="gateway_response_time",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MILLISECONDS,
@@ -201,45 +226,9 @@ GATEWAY_SENSOR_DESCRIPTIONS: tuple[MeltemGatewaySensorDescription, ...] = (
         ],
     ),
     MeltemGatewaySensorDescription(
-        key="gateway_last_answer_age",
-        device_class=SensorDeviceClass.DURATION,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfTime.SECONDS,
-        suggested_display_precision=0,
-        value_fn=lambda coordinator: coordinator.client.transport_diagnostics()[
-            "seconds_since_any_answer"
-        ],
-    ),
-    MeltemGatewaySensorDescription(
-        key="gateway_consecutive_timeouts",
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda coordinator: coordinator.client.transport_diagnostics()[
-            "consecutive_timeouts"
-        ],
-    ),
-    MeltemGatewaySensorDescription(
-        key="gateway_link_recycles",
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        value_fn=lambda coordinator: coordinator.client.transport_diagnostics()["link_recycles"],
-    ),
-    MeltemGatewaySensorDescription(
-        key="gateway_available_units",
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda coordinator: sum(
-            coordinator.room_available(room.key) for room in coordinator.rooms
-        ),
-    ),
-    MeltemGatewaySensorDescription(
-        key="gateway_unavailable_units",
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda coordinator: sum(
-            not coordinator.room_available(room.key) for room in coordinator.rooms
-        ),
-    ),
-    MeltemGatewaySensorDescription(
-        key="gateway_stale_read_groups",
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=_gateway_stale_count,
+        key="gateway_last_answer",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=_gateway_last_answer,
     ),
 )
 
@@ -355,6 +344,35 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         entity_registry_enabled_default=False,
         value_fn=lambda state: state.operating_hours,
     ),
+    MeltemSensorDescription(
+        key="fan_motor_hours",
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda state: state.fan_motor_hours,
+    ),
+    MeltemSensorDescription(
+        key="rf_last_seen_age_seconds",
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        suggested_display_precision=0,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda state: state.rf_last_seen_age_seconds,
+    ),
+    MeltemSensorDescription(
+        key="rf_signal_strength",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement="dBm",
+        suggested_display_precision=0,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda state: state.rf_signal_strength,
+    ),
 )
 
 
@@ -369,26 +387,28 @@ GATEWAY_UPTIME_DESCRIPTION = SensorEntityDescription(
 )
 
 
+GATEWAY_UTC_CLOCK_DESCRIPTION = SensorEntityDescription(
+    key="gateway_utc_clock",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    entity_registry_enabled_default=False,
+)
+
+
+GATEWAY_CONNECTED_DEVICES_DESCRIPTION = SensorEntityDescription(
+    key="gateway_connected_devices",
+    state_class=SensorStateClass.MEASUREMENT,
+    suggested_display_precision=0,
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
+
+
 ROOM_DIAGNOSTIC_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="last_successful_update",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-    ),
-    SensorEntityDescription(
-        key="last_write_status",
-        device_class=SensorDeviceClass.ENUM,
-        options=[
-            "pending",
-            "confirmed",
-            "mismatch",
-            "unconfirmed",
-            "unverifiable",
-            "failed",
-            "superseded",
-        ],
-        entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 
@@ -409,6 +429,8 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = [MeltemModbusDevicePathSensor(entry)]
     entities.append(MeltemGatewayUptimeSensor(coordinator, entry.entry_id))
+    entities.append(MeltemGatewayUtcClockSensor(coordinator, entry.entry_id))
+    entities.append(MeltemGatewayConnectedDevicesSensor(coordinator, entry.entry_id))
     entities.extend(
         MeltemGatewayDiagnosticSensor(coordinator, entry.entry_id, description)
         for description in GATEWAY_SENSOR_DESCRIPTIONS
@@ -474,13 +496,54 @@ class MeltemGatewayUptimeSensor(MeltemGatewayEntity, SensorEntity):
         return self.coordinator.gateway_uptime
 
 
+class MeltemGatewayUtcClockSensor(MeltemGatewayEntity, SensorEntity):
+    """Expose the gateway's optional UTC clock as a Home Assistant timestamp."""
+
+    entity_description = GATEWAY_UTC_CLOCK_DESCRIPTION
+
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id, self.entity_description.key)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.coordinator.set_gateway_utc_clock_enabled(True)
+        self.async_on_remove(lambda: self.coordinator.set_gateway_utc_clock_enabled(False))
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.gateway_utc_clock is not None
+
+    @property
+    def native_value(self) -> datetime | None:
+        return self.coordinator.gateway_utc_clock
+
+
+class MeltemGatewayConnectedDevicesSensor(MeltemGatewayEntity, SensorEntity):
+    """Show the gateway's registered device count, not HA room availability."""
+
+    entity_description = GATEWAY_CONNECTED_DEVICES_DESCRIPTION
+
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id, self.entity_description.key)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.coordinator.set_gateway_connected_devices_enabled(True)
+        self.async_on_remove(lambda: self.coordinator.set_gateway_connected_devices_enabled(False))
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.gateway_connected_devices is not None
+
+    @property
+    def native_value(self) -> int | None:
+        return self.coordinator.gateway_connected_devices
+
+
 class MeltemRoomDiagnosticSensor(MeltemRoomDiagnosticEntity, SensorEntity):
-    """Expose read timestamps and last command outcomes through outages."""
+    """Expose the last successful room read through outages."""
 
     entity_description: SensorEntityDescription
-    _unrecorded_attributes = frozenset(
-        {"write_key", "started_at", "expected_value", "actual_value"}
-    )
 
     def __init__(
         self,
@@ -492,33 +555,15 @@ class MeltemRoomDiagnosticSensor(MeltemRoomDiagnosticEntity, SensorEntity):
         self.entity_description = description
 
     @property
-    def native_value(self) -> datetime | str | None:
-        if self.entity_description.key == "last_successful_update":
-            return self.coordinator.last_successful_room_update(self.room.key)
-        latest = self.coordinator.latest_write(self.room.key)
-        return None if latest is None else confirmation_status(latest[1])
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, object] | None:
-        if self.entity_description.key != "last_write_status":
-            return None
-        latest = self.coordinator.latest_write(self.room.key)
-        if latest is None:
-            return None
-        key, outcome = latest
-        return {
-            "write_key": key,
-            "started_at": outcome.started_at.isoformat(),
-            "expected_value": outcome.expected_value,
-            "actual_value": outcome.actual_value,
-        }
+    def native_value(self) -> datetime | None:
+        return self.coordinator.last_successful_room_update(self.room.key)
 
 
 class MeltemGatewayDiagnosticSensor(MeltemGatewayEntity, SensorEntity):
-    """Expose locally known gateway diagnostics without reading the gateway."""
+    """Expose local diagnostics and optionally polled RF statistics."""
 
     entity_description: MeltemGatewaySensorDescription
-    _unrecorded_attributes = frozenset({"affected_units", "unknown_units"})
+    _unrecorded_attributes = frozenset({"unknown_units"})
 
     def __init__(
         self,
@@ -529,8 +574,23 @@ class MeltemGatewayDiagnosticSensor(MeltemGatewayEntity, SensorEntity):
         super().__init__(coordinator, entry_id, description.key)
         self.entity_description = description
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self.entity_description.rf_statistics_key is not None:
+            key = self.entity_description.key
+            self.coordinator.set_gateway_rf_statistics_enabled(key, True)
+            self.async_on_remove(
+                lambda: self.coordinator.set_gateway_rf_statistics_enabled(key, False)
+            )
+
     @property
-    def native_value(self) -> int | float | None:
+    def available(self) -> bool:
+        if self.entity_description.rf_statistics_key is not None:
+            return self.native_value is not None
+        return super().available
+
+    @property
+    def native_value(self) -> int | float | datetime | None:
         return self.entity_description.value_fn(self.coordinator)
 
     @property
@@ -545,9 +605,7 @@ class MeltemGatewayDiagnosticSensor(MeltemGatewayEntity, SensorEntity):
                 "sample_count": diagnostics["request_sample_count"],
                 "window_seconds": diagnostics["request_window_seconds"],
             }
-        if self.entity_description.key != "gateway_stale_read_groups":
-            return None
-        return {"affected_units": _gateway_stale_groups(self.coordinator) or {}}
+        return None
 
 
 class MeltemModbusSlaveSensor(MeltemEntity, SensorEntity):

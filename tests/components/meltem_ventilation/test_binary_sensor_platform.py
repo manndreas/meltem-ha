@@ -180,6 +180,10 @@ def _state_for_sensor(key: str, value: bool | None) -> RoomState:
         return RoomState(filter_change_due=value)
     if key == "rf_comm_status":
         return RoomState(rf_comm_status=value)
+    if key == "rf_fault_status":
+        return RoomState(rf_fault_status=value)
+    if key == "value_error_status":
+        return RoomState(value_error_status=value)
     raise AssertionError(f"Unexpected binary sensor key: {key}")
 
     def test_missing_room_returns_none(self) -> None:

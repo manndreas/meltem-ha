@@ -55,8 +55,8 @@ directions must be known. The gateway's total supply and extract sensors add
 the usable measured values across all configured units and remain unknown if
 any required unit value is unavailable.
 
-**Last command status** reports the latest recorded write and its readback
-outcome; an accepted command is not automatically confirmed. During intensive
-ventilation a base-mode write may temporarily be unverifiable. See the
-[diagnostics guide](DIAGNOSTICS.md#diagnostic-entities) for the states,
-confirmation timeout, attributes, and reachability diagnostics.
+Write readback and failure details are available through the unit's **Read
+health** diagnostic and the integration diagnostics download. An accepted
+command is not automatically confirmed; during intensive ventilation a
+base-mode write may temporarily be unverifiable. See the
+[diagnostics guide](DIAGNOSTICS.md#diagnostic-entities).

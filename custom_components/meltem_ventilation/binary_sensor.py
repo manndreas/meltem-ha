@@ -66,6 +66,20 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
         entity_registry_enabled_default=False,
         value_fn=lambda state: state.rf_comm_status,
     ),
+    MeltemBinarySensorDescription(
+        key="rf_fault_status",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda state: state.rf_fault_status,
+    ),
+    MeltemBinarySensorDescription(
+        key="value_error_status",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda state: state.value_error_status,
+    ),
 )
 
 
