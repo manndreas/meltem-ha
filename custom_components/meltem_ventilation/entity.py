@@ -19,6 +19,7 @@ from .coordinator import MeltemDataUpdateCoordinator
 from .models import EMPTY_ROOM_STATE, RoomConfig, RoomState
 
 _PREVIEW_PRODUCT_ID_RE = re.compile(r"\bID\s+(\d+)\b")
+_PREVIEW_APP_SETUP_CODE_RE = re.compile(r"\bR-Code\s+(R[0-9A-F]{6})\b")
 
 
 def gateway_identifiers(entry_id: str) -> set[tuple[str, str]]:
@@ -122,6 +123,7 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
             model=profile_label(self.room.profile),
             name=f"{INTEGRATION_NAME} {self.room.name}",
             hw_version=self._hw_version,
+            serial_number=_app_setup_code_from_preview(self.room.preview),
             sw_version=self._sw_version,
         )
         if (gateway_device_id := self.coordinator.gateway_device_id) is not None:
@@ -182,4 +184,11 @@ def _product_id_from_preview(preview: str | None) -> str | None:
     """Extract the raw product ID from the setup preview string."""
 
     match = _PREVIEW_PRODUCT_ID_RE.search(preview or "")
+    return match.group(1) if match else None
+
+
+def _app_setup_code_from_preview(preview: str | None) -> str | None:
+    """Extract the stable R-code from the setup preview string."""
+
+    match = _PREVIEW_APP_SETUP_CODE_RE.search(preview or "")
     return match.group(1) if match else None
