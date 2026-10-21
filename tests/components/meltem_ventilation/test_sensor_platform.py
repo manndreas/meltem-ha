@@ -172,7 +172,20 @@ class TestSensorEntityCreation:
         assert "Living Room" in name
         assert info.get("sw_version") == "42"
         assert info.get("hw_version") == "116852"
+        assert info.get("serial_number") is None
         assert info.get("via_device_id") == "gateway-device"
+
+    def test_device_info_uses_app_setup_code_as_serial_number(self) -> None:
+        room = RoomConfig(
+            key="unit_1",
+            name="Living Room",
+            profile="ii_fc_voc",
+            slave=2,
+            preview="R-Code R971C31 | ID 116852 | VOC",
+        )
+        sensor = MeltemSensorEntity(_coordinator(), room, _SENSORS["exhaust_temperature"])
+
+        assert sensor.device_info.get("serial_number") == "R971C31"
 
     @pytest.mark.parametrize(
         ("key", "device_class", "unit"),
