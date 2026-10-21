@@ -121,7 +121,7 @@ class TestGatewayConnectivity:
         assert entity.unique_id == f"{DOMAIN}_unit_1_connectivity"
 
     @pytest.mark.parametrize(
-        ("age", "expected"), [(None, None), (0.0, True), (120.0, True), (120.1, False)]
+        ("age", "expected"), [(None, None), (0.0, True), (30.0, True), (30.1, False)]
     )
     def test_recent_answer_controls_connectivity(
         self, age: float | None, expected: bool | None
@@ -144,7 +144,7 @@ class TestGatewayConnectivity:
     def test_recovers_on_new_answer(self) -> None:
         coordinator = _fake_coordinator()
         coordinator.client = MagicMock()
-        transport = {"seconds_since_any_answer": 121.0}
+        transport = {"seconds_since_any_answer": 31.0}
         coordinator.client.transport_diagnostics.return_value = transport
         entity = MeltemGatewayConnectivitySensor(coordinator, "entry")
 
