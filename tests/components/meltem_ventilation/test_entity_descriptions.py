@@ -39,6 +39,7 @@ from custom_components.meltem_ventilation.number import (
     CONTROL_SETTING_DESCRIPTIONS,
 )
 from custom_components.meltem_ventilation.sensor import (
+    APP_SETUP_CODE_DESCRIPTION,
     GATEWAY_CONNECTED_DEVICES_DESCRIPTION,
     GATEWAY_SENSOR_DESCRIPTIONS,
     GATEWAY_UPTIME_DESCRIPTION,
@@ -270,6 +271,10 @@ class TestDescriptionMetadata:
     def test_removed_sensors_are_absent(self) -> None:
         assert not {"current_level", "average_air_flow", "software_version"} & set(_DESCRIPTIONS)
 
+    def test_app_setup_code_is_optional_diagnostic(self) -> None:
+        assert APP_SETUP_CODE_DESCRIPTION.entity_category == "diagnostic"
+        assert APP_SETUP_CODE_DESCRIPTION.entity_registry_enabled_default is False
+
 
 class TestPurposeSpecificAutomation:
     async def test_filter_change_platforms_register_the_expected_key(self, hass) -> None:
@@ -388,6 +393,7 @@ class TestTranslations:
             GATEWAY_CONNECTED_DEVICES_DESCRIPTION.key,
             MODBUS_DEVICE_PATH_DESCRIPTION.key,
             MODBUS_SLAVE_ID_DESCRIPTION.key,
+            APP_SETUP_CODE_DESCRIPTION.key,
         }
         assert set(strings["binary_sensor"]) == {
             *_keys(BINARY_SENSOR_DESCRIPTIONS),
@@ -441,6 +447,7 @@ class TestTranslations:
                 },
                 "sensor": {
                     "airflow_balance": {"default": "mdi:scale-balance"},
+                    "app_setup_code": {"default": "mdi:qrcode"},
                     "days_until_filter_change": {"default": "mdi:calendar-clock"},
                     "extract_air_flow": {"default": "mdi:home-export-outline"},
                     "fan_motor_hours": {"default": "mdi:fan-clock"},

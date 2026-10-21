@@ -498,12 +498,13 @@ The paired R-2 scans on slaves `3` and `5` found identical readable address
 islands, but some raw values differed. A current read-only comparison with
 slave `4` and one read of the same identity fields across all six showed:
 
-- `40009` matches the manufacturing year: the user confirmed slave `5` (the
-  bathroom) was built in 2022, while the other units were built in 2021.
-  `40010` is `1804` on slave `5` and `3847` on the other five in the current
-  sweep; its meaning remains unknown and could be build or board metadata.
-  Neither field currently proves the P/E exchanger type. `40000/40001`,
-  `40100`, and `40109` also differ, with no confirmed semantics.
+- The user confirms `40009` is the correct year value; stickers may not have
+  been renewed after a board replacement. Do not use a sticker/register year
+  difference to infer a changed room mapping. `40010` was `1804` on slave `5`
+  and `3847` on the other five in the earlier sweep; its meaning remains
+  unknown and could be build or board metadata. Neither field proves the P/E
+  exchanger type. `40000/40001`, `40100`, and `40109` also differ, with no
+  confirmed semantics (the `40000/40001` identity is now resolved below).
 - `41106` is `3` on slaves `5`, `6`, and `7`, and `0` on `2`, `3`, and `4`.
   The same `0`/`3` split appeared for slaves `3`/`5` in R-2. The value is
   repeatable per-unit across the captures, but is not unique to the bathroom,
@@ -534,6 +535,56 @@ in [the slave 5 read](measurements/2026-10-09/pe-compare-slave5.txt),
 The wider identity reads are preserved for
 [slave 5](measurements/2026-10-09/pe-identity-slave5.txt) and
 [slave 4](measurements/2026-10-09/pe-identity-slave4.txt).
+
+### Type-plate and identity-register comparison (2026-10-21)
+
+The user supplied photographs for the commonly tested Andi unit, the Moni
+unit, and the bathroom unit. The visible labels identify Andi and Moni as
+`M-WRG-II E-T`, part `701010`; the bathroom is `M-WRG-II P-T`, part `700010`.
+The user identifies the bathroom as the unit without an enthalpy exchanger.
+The user notes that year stickers may be stale after a board replacement, so
+the year reported by `40009` remains authoritative. Printed Device No. and
+Part No. values are not repeated here.
+
+The gateway probe still listed six units `[3, 2, 4, 5, 7, 6]`. A fresh
+read-only holding-register read of `40000..40022` on every unit returned:
+
+| Slave | Room | `40000/40001` | DataMatrix `R` code | Product ID `40002/40003` | Firmware `40004` | `40009` | `40010` |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | Unassigned | `7175/151` | `971C07` | `51316/1` | `2326` | `2021` | `3847` |
+| 3 | Moni | `7162/151` | `971BFA` | `51316/1` | `2326` | `2021` | `3847` |
+| 4 | Andi | `7217/151` | `971C31` | `51316/1` | `2326` | `2021` | `3847` |
+| 5 | Bathroom | `3693/149` | `950E6D` | `51316/1` | `2584` | `2022` | `1804` |
+| 6 | Unassigned | `7166/151` | `971BFE` | `51316/1` | `2326` | `2021` | `3847` |
+| 7 | Unassigned | `7165/151` | `971BFD` | `51316/1` | `2326` | `2021` | `3847` |
+
+Combining `40000/40001` as a low-word-first U32 (`40001 << 16 | 40000`) gives
+the exact six-hex-digit `R` code printed below each DataMatrix. The Andi,
+Moni, and bathroom codes therefore identify slaves `4`, `3`, and `5`
+respectively. The DataMatrix payload also contains `VMD-22RPS44` and variant
+fragments (`Vh06s22` on the two E-T examples, `Vh07s24` on the P-T example),
+but their full schema has not been decoded. The observed `97` versus `95`
+prefix correlates with these two variant groups in this small sample; it is
+not yet a general part-number mapping.
+
+`40002/40003` decode low-word-first to product ID `116852` on all six units;
+`40011..40016` spell `VMD-22RPS44`, and `40021/40022` repeat the product ID.
+These common product fields do not encode the type-plate part numbers or
+distinguish `E-T` from `P-T`. The printed Device No. and Part No. were not
+found as register values in the scanned identity range; `40000/40001` match
+the separate DataMatrix `R` code instead. Moni's mapping is now confirmed by
+that code rather than by the shared product fields. The integration exposes
+this six-digit `R` code as the disabled-by-default per-unit **App setup code**
+diagnostic, reading `40000..40001` only when the entity is enabled.
+
+On slave `4`, additional reads of the already known readable islands returned
+zeros at `40024..40033`, `40050..40051`, and `40071`, plus `8` at `40041`.
+The single-register scan of `40000..40209` found 55 readable registers; no
+other value matched the printed Device No. or Part No. Modbus function
+`0x2B/0x0E` (Read Device Identification) returned exception `0x01`
+(`Illegal Function`) on slave `4`. No writes were made. These results do not
+establish that `40000/40001` encode the printed Device No.; they encode the
+DataMatrix `R` code, whose relation to the longer Device No. remains unknown.
 
 ## Temperature register quirk
 

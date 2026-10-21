@@ -243,6 +243,7 @@ LEVEL_WRITE_FALLBACK_UNKNOWN_MODE = "unknown_mode_overridden"
 # ---------------------------------------------------------------------------
 
 REGISTER_PRODUCT_ID = 40002
+REGISTER_APP_SETUP_CODE = 40000
 REGISTER_SOFTWARE_VERSION = 40004
 REGISTER_RF_LAST_SEEN_AGE = 40100
 REGISTER_RF_COMM_STATUS = 40101
@@ -369,6 +370,7 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
         "fan_motor_hours",
         "rf_last_seen_age_seconds",
         "rf_signal_strength",
+        "app_setup_code",
         "modbus_slave_id",
         "error_status",
         "frost_protection_active",
@@ -405,6 +407,7 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "fan_motor_hours",
             "rf_last_seen_age_seconds",
             "rf_signal_strength",
+            "app_setup_code",
             "modbus_slave_id",
             "airflow_balance",
             "last_successful_update",

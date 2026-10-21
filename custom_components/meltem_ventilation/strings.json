@@ -269,6 +269,10 @@
       "modbus_device_path": {
         "name": "Modbus device path"
       },
+      "app_setup_code": {
+        "name": "App setup code",
+        "description": "Use this code to add the unit manually to the Meltem app."
+      },
       "gateway_last_answer": {
         "name": "Last Modbus response"
       },

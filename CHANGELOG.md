@@ -34,6 +34,9 @@
 - Add the enabled-by-default gateway **Total airflow delta**, calculated as
   total supply minus total extract airflow. Incomplete totals leave the delta
   unknown and identify all affected units.
+- Add a disabled-by-default per-unit **App setup code** diagnostic. When enabled,
+  it reads `40000..40001` once to expose the DataMatrix `R` code for manual app
+  pairing; it adds no recurring polling load.
 - Add an optional gateway **UTC clock** timestamp with independent, rate-limited
   reads. Stale clock and connected-device readings become unavailable without
   affecting room entities.

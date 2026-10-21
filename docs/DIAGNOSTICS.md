@@ -47,8 +47,11 @@ successful unit response.
 
 **Days until filter change** and **Read health** are enabled by default.
 **Operating hours**, **RF communication status**, **Modbus slave ID**, and
-**Modbus device path** remain disabled by default. Firmware and hardware
-details are shown on the device card instead of as separate version sensors.
+**Modbus device path** remain disabled by default. **App setup code** is also
+disabled by default; enabling it reads the two identity registers `40000..40001`
+once for that entity load and exposes the manual Meltem-app code (for example
+`R971C31`). It is not polled with room data. Firmware and hardware details are
+shown on the device card instead of as separate version sensors.
 
 **Fan operating hours**, **RF last-seen age**, and **RF RSSI** are also disabled
 by default. Device operating hours and fan operating hours are separate
