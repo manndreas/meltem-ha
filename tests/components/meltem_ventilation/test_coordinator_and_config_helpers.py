@@ -88,6 +88,9 @@ class _FakeClient:
     async def async_read_gateway_uptime(self) -> int:
         raise AssertionError("Optional gateway uptime is disabled in these tests")
 
+    async def async_read_gateway_mac(self) -> str:
+        raise AssertionError("Gateway MAC reads are not expected in these tests")
+
     async def async_read_gateway_utc_clock(self) -> int:
         raise AssertionError("Optional gateway UTC clock is disabled in these tests")
 
