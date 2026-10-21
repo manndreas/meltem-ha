@@ -311,6 +311,21 @@
       "gateway_utc_clock": {
         "name": "UTC clock"
       },
+      "gateway_modbus_attempts_total": {
+        "name": "Modbus request attempts"
+      },
+      "gateway_modbus_failures_total": {
+        "name": "Failed Modbus requests"
+      },
+      "gateway_link_recycles_total": {
+        "name": "Modbus link recycles"
+      },
+      "gateway_failed_read_groups_total": {
+        "name": "Failed read groups"
+      },
+      "gateway_write_issues_total": {
+        "name": "Write command issues"
+      },
       "airflow_balance": {
         "name": "Airflow balance"
       },

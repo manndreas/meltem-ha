@@ -15,6 +15,7 @@ The config flow imports exclusively from here. The runtime client in
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -43,6 +44,7 @@ from .const import (
     TRANSPORT_RETRY_DELAY_SECONDS,
 )
 from .device import MeltemGateway, MeltemProbe, PolicyUnit, TransportPolicy
+from .device.transport import RequestOutcome
 from .models import UnitProbeResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -109,13 +111,19 @@ def build_serial_params(port: str) -> ModbusSerialParams:
     )
 
 
-def new_transport_policy() -> TransportPolicy:
+def new_transport_policy(
+    *,
+    on_request: Callable[[RequestOutcome], None] | None = None,
+    on_link_recycle: Callable[[], None] | None = None,
+) -> TransportPolicy:
     """Return the retry policy shared by all units on one gateway link."""
 
     return TransportPolicy(
         disconnect_after_timeouts=TRANSPORT_DISCONNECT_AFTER_TIMEOUTS,
         link_quiet_seconds=TRANSPORT_LINK_QUIET_SECONDS,
         connection_retry_delay=TRANSPORT_RETRY_DELAY_SECONDS,
+        on_request=on_request,
+        on_link_recycle=on_link_recycle,
     )
 
 

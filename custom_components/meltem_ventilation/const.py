@@ -78,6 +78,11 @@ GATEWAY_ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
     "gateway_airflow_delta": Platform.SENSOR,
     "gateway_uptime": Platform.SENSOR,
     "gateway_utc_clock": Platform.SENSOR,
+    "gateway_modbus_attempts_total": Platform.SENSOR,
+    "gateway_modbus_failures_total": Platform.SENSOR,
+    "gateway_link_recycles_total": Platform.SENSOR,
+    "gateway_failed_read_groups_total": Platform.SENSOR,
+    "gateway_write_issues_total": Platform.SENSOR,
 }
 
 FLOW_REFRESH_SECONDS = 10

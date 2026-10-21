@@ -48,6 +48,7 @@ from custom_components.meltem_ventilation.coordinator import (
     MeltemDataUpdateCoordinator,
     PollJob,
 )
+from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
 from custom_components.meltem_ventilation.fan import MeltemDirectionalFanEntity
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
 from custom_components.meltem_ventilation.models import (
@@ -2228,6 +2229,22 @@ class TestCoordinator:
         assert coordinator.safe_data["unit_1"].humidity_starting_point == 50
         assert coordinator._writes.by_room["unit_1"][_HUMIDITY_START_WRITE].status == "unconfirmed"
 
+    async def test_failed_control_setting_is_counted_once(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_F])
+        diagnostics = await CumulativeDiagnostics.async_create(hass, "write-issue")
+        coordinator.cumulative_diagnostics = diagnostics
+        coordinator.data = {"unit_1": RoomState(humidity_starting_point=50)}
+        client.write_control_setting = _failing("write failed")  # type: ignore[method-assign]
+
+        with pytest.raises(HomeAssistantError):
+            await coordinator.async_set_control_setting("unit_1", "humidity_starting_point", 70)
+
+        snapshot = diagnostics.diagnostics()
+        assert snapshot["write_issues"] == {"unit_1": {"send_failure": {_HUMIDITY_START_WRITE: 1}}}
+
     async def test_control_setting_publishes_the_actual_written_step(
         self,
         hass: HomeAssistant,
@@ -2416,6 +2433,39 @@ class TestCoordinator:
         state_map = await coordinator._read_one_job(previous, job)
 
         assert state_map["broken"].target_level == 30
+
+    async def test_partial_read_group_failure_is_counted_per_group(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc", slave=2)
+        coordinator, client = _build_coordinator(hass, [room])
+        diagnostics = await CumulativeDiagnostics.async_create(hass, "read-issue")
+        coordinator.cumulative_diagnostics = diagnostics
+        plan = RefreshPlan.only(refresh_status=True, refresh_temperatures=True)
+        groups = plan.read_groups()
+        assert len(groups) > 1
+        attempted_at = dt_util.utcnow() + timedelta(seconds=1)
+        state = RoomState(
+            group_read_health=tuple(
+                (
+                    group,
+                    ReadHealth(last_attempt=attempted_at, last_error="register refused")
+                    if index == 0
+                    else ReadHealth(
+                        last_attempt=attempted_at,
+                        last_successful_read=attempted_at,
+                    ),
+                )
+                for index, group in enumerate(groups)
+            )
+        )
+        client.read_room_state = AsyncMock(return_value=state)  # type: ignore[method-assign]
+        job = PollJob("mixed", "unit_1", plan, 60, 0.0)
+
+        await coordinator._read_one_job({}, job)
+
+        assert diagnostics.diagnostics()["read_failures"] == {"unit_1": {groups[0]: 1}}
 
 
 # ---------------------------------------------------------------------------

@@ -84,8 +84,20 @@
       "gateway_connected_devices": {
         "default": "mdi:counter"
       },
+      "gateway_failed_read_groups_total": {
+        "default": "mdi:database-alert-outline"
+      },
       "gateway_airflow_delta": {
         "default": "mdi:scale-balance"
+      },
+      "gateway_link_recycles_total": {
+        "default": "mdi:sync-alert"
+      },
+      "gateway_modbus_attempts_total": {
+        "default": "mdi:counter"
+      },
+      "gateway_modbus_failures_total": {
+        "default": "mdi:alert-circle-outline"
       },
       "gateway_extract_air_flow": {
         "default": "mdi:home-export-outline"
@@ -119,6 +131,9 @@
       },
       "gateway_utc_clock": {
         "default": "mdi:clock-outline"
+      },
+      "gateway_write_issues_total": {
+        "default": "mdi:alert-circle-outline"
       },
       "last_successful_update": {
         "default": "mdi:clock-check-outline"

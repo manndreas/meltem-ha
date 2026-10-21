@@ -40,6 +40,7 @@ from .const import (
     SENSOR_CONTROL_PROFILES,
 )
 from .coordinator import MeltemDataUpdateCoordinator
+from .cumulative_diagnostics import CumulativeDiagnostics
 from .entity import gateway_device_info, gateway_identifiers
 from .modbus_client import MeltemModbusClient
 from .modbus_helpers import (
@@ -259,6 +260,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
 
     _async_remove_unsupported_entities(hass, entry, rooms)
     _async_sync_devices(hass, entry, rooms)
+    cumulative_diagnostics = await CumulativeDiagnostics.async_create(hass, entry.entry_id)
 
     # All rooms share one client, and the client asks Home Assistant's modbus
     # integration for its units, so the gateway only ever sees one connection.
@@ -266,11 +268,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
         partial(async_get_unit, hass, entry, build_serial_params(port)),
         port=port,
         max_requests_per_second=max_requests_per_second,
+        on_request=cumulative_diagnostics.record_request,
+        on_link_recycle=cumulative_diagnostics.record_link_recycle,
     )
     try:
         await client.async_validate_gateway()
     except MeltemModbusError as err:
         client.shutdown()
+        await cumulative_diagnostics.async_flush()
         _LOGGER.warning("Unable to connect to the Meltem gateway via %s: %s", port, err)
         raise ConfigEntryNotReady(
             translation_domain=DOMAIN,
@@ -280,6 +285,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
     except HomeAssistantError as err:
         # Another integration already uses this port with other link settings.
         client.shutdown()
+        await cumulative_diagnostics.async_flush()
         _LOGGER.warning("Serial port %s cannot be used by the Meltem gateway: %s", port, err)
         raise ConfigEntryError(
             translation_domain=DOMAIN,
@@ -292,6 +298,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
         client=client,
         rooms=rooms,
         max_requests_per_second=max_requests_per_second,
+        cumulative_diagnostics=cumulative_diagnostics,
     )
     entry.runtime_data = MeltemRuntimeData(coordinator=coordinator)
     try:

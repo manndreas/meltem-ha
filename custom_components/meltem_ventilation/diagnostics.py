@@ -9,6 +9,7 @@ from homeassistant.components.diagnostics import REDACTED, async_redact_data
 from homeassistant.core import HomeAssistant
 
 from .const import CONF_PORT
+from .cumulative_diagnostics import CumulativeDiagnostics
 from .models import (
     MeltemIntegrationConfigEntry,
     MeltemRuntimeData,
@@ -69,6 +70,10 @@ async def async_get_config_entry_diagnostics(
     coordinator = runtime_data.coordinator
     port = str(entry.data[CONF_PORT])
     transport = coordinator.client.transport_diagnostics()
+    cumulative = getattr(coordinator, "cumulative_diagnostics", None)
+    cumulative_snapshot = (
+        cumulative.diagnostics() if isinstance(cumulative, CumulativeDiagnostics) else None
+    )
     gateway_units: list[int] | None = None
     gateway_probe_error: str | None = None
     try:
@@ -92,6 +97,7 @@ async def async_get_config_entry_diagnostics(
             "gateway_units": gateway_units,
             "gateway_probe_error": gateway_probe_error,
             "transport": transport,
+            "cumulative_diagnostics": cumulative_snapshot,
             "last_job_error": (
                 redact_port(str(last_job_error), port) if last_job_error is not None else None
             ),

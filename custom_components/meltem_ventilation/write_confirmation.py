@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 
 from homeassistant.exceptions import ServiceValidationError
@@ -62,8 +62,9 @@ def confirmation_status(confirmation: WriteConfirmation) -> str:
 class WriteConfirmations:
     """The last outcome per unit and write key."""
 
-    def __init__(self) -> None:
+    def __init__(self, on_issue: Callable[[str, str, str], None] | None = None) -> None:
         self.by_room: dict[str, dict[str, WriteConfirmation]] = {}
+        self._on_issue = on_issue
 
     def record_pending(self, room_key: str, write_key: str, expected_value: WriteValue) -> None:
         """Record a write the transport accepted, awaiting its readback."""
@@ -183,9 +184,16 @@ class WriteConfirmations:
         previous = self.by_room.get(room_key, {}).get(write_key)
         if previous is None:
             return False
+        issue_counted = previous.issue_counted or status in _UNHEALTHY_STATUSES
         self.by_room[room_key][write_key] = replace(
-            previous, status=status, actual_value=actual_value, last_error=error
+            previous,
+            status=status,
+            actual_value=actual_value,
+            last_error=error,
+            issue_counted=issue_counted,
         )
+        if status in _UNHEALTHY_STATUSES and not previous.issue_counted and self._on_issue:
+            self._on_issue(room_key, write_key, status)
         return True
 
     def mark_unconfirmed(self, room_key: str, write_key: str, error: str) -> bool:
@@ -200,6 +208,7 @@ class WriteConfirmations:
         """Judge pending writes by the latest readbacks; return whether any changed."""
 
         changed = False
+        now = dt_util.utcnow()
         for room_key, confirmations in self.by_room.items():
             state = states.get(room_key)
             if state is None:
@@ -207,7 +216,23 @@ class WriteConfirmations:
             for write_key, confirmation in tuple(confirmations.items()):
                 checked = _checked_confirmation(state, write_key, confirmation)
                 if checked is not None:
+                    if checked.status in _UNHEALTHY_STATUSES and not confirmation.issue_counted:
+                        checked = replace(checked, issue_counted=True)
+                        if self._on_issue:
+                            self._on_issue(room_key, write_key, checked.status)
                     confirmations[write_key] = checked
+                    changed = True
+                    continue
+                if (
+                    confirmation.status == "pending"
+                    and not confirmation.issue_counted
+                    and (now - confirmation.started_at).total_seconds()
+                    > WRITE_CONFIRMATION_TIMEOUT_SECONDS
+                ):
+                    confirmation = replace(confirmation, issue_counted=True)
+                    confirmations[write_key] = confirmation
+                    if self._on_issue:
+                        self._on_issue(room_key, write_key, "unconfirmed")
                     changed = True
         return changed
 

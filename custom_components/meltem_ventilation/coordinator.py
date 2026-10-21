@@ -56,6 +56,7 @@ from .const import (
     TARGET_OPTIMISTIC_SECONDS,
     WRITE_SETTLE_SECONDS,
 )
+from .cumulative_diagnostics import CumulativeDiagnostics
 from .levels import (
     LevelPair,
     levels_reached,
@@ -183,9 +184,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         client: _CoordinatorClient,
         rooms: list[RoomConfig],
         max_requests_per_second: float,
+        cumulative_diagnostics: CumulativeDiagnostics | None = None,
     ) -> None:
         self.client = client
         self.rooms = rooms
+        self.cumulative_diagnostics = cumulative_diagnostics
         self._entry_id = config_entry.entry_id
         self._rooms_by_key = {room.key: room for room in rooms}
         self._tick_seconds = 1.0 / max(0.1, max_requests_per_second)
@@ -199,7 +202,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._room_failures: dict[str, int] = {}
         self._logged_unavailable_rooms: set[str] = set()
         self._target_read_failing: set[str] = set()
-        self._writes = WriteConfirmations()
+        self._writes = WriteConfirmations(on_issue=self._record_write_issue)
         self._optimistic_presets = OptimisticOverlay[str, str](
             hass,
             PRESET_OPTIMISTIC_SECONDS,
@@ -315,6 +318,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         for overlay in self._overlays.values():
             overlay.shutdown()
         await super().async_shutdown()
+        if self.cumulative_diagnostics is not None:
+            await self.cumulative_diagnostics.async_flush()
 
     @property
     def gateway_uptime(self) -> int | None:
@@ -1307,6 +1312,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         if changed and notify:
             self.async_update_listeners()
 
+    def _record_write_issue(self, room_key: str, write_key: str, status: str) -> None:
+        if self.cumulative_diagnostics is not None:
+            self.cumulative_diagnostics.record_write_issue(room_key, write_key, status)
+
     async def _read_one_job(
         self,
         previous_states: dict[str, RoomState],
@@ -1359,6 +1368,17 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     )
 
         self._log_room_availability(room.key, refreshed_state, error)
+        if self.cumulative_diagnostics is not None:
+            for group_key in job.refresh_plan.read_groups():
+                if not room.supports_any(READ_GROUP_ENTITY_KEYS[group_key]):
+                    continue
+                health = refreshed_state.read_health_for(group_key)
+                if (
+                    health.last_attempt is not None
+                    and health.last_attempt >= read_started_at
+                    and health.last_error is not None
+                ):
+                    self.cumulative_diagnostics.record_read_failure(room.key, group_key)
         if refreshed_state == previous_state:
             return previous_states
         return {**previous_states, room.key: refreshed_state}

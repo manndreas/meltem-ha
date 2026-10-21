@@ -9,7 +9,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from modbus_connection import (
     ClientClosedError,
@@ -33,6 +33,7 @@ _GATEWAY_TARGET_ERRORS = (GatewayTargetError, GatewayPathUnavailableError)
 _NO_ANSWER_ERRORS = (ModbusTimeoutError, ModbusProtocolError)
 _RETRYABLE_ERRORS = (*_GATEWAY_TARGET_ERRORS, *_NO_ANSWER_ERRORS)
 COMMUNICATION_WINDOW_SECONDS = 300.0
+RequestOutcome = Literal["success", "no_answer", "modbus_exception", "other"]
 
 
 class TransportPolicy:
@@ -49,10 +50,14 @@ class TransportPolicy:
         disconnect_after_timeouts: int,
         link_quiet_seconds: float,
         connection_retry_delay: float,
+        on_request: Callable[[RequestOutcome], None] | None = None,
+        on_link_recycle: Callable[[], None] | None = None,
     ) -> None:
         self._disconnect_after_timeouts = disconnect_after_timeouts
         self._link_quiet_seconds = link_quiet_seconds
         self._connection_retry_delay = connection_retry_delay
+        self._on_request = on_request
+        self._on_link_recycle = on_link_recycle
         self._consecutive_timeouts = 0
         # Creating the policy and recycling the link both start a quiet window.
         self._quiet_since = time.monotonic()
@@ -131,6 +136,30 @@ class TransportPolicy:
             (finished_at, (finished_at - started_at) * 1000.0 if success else None)
         )
 
+    @staticmethod
+    def _request_outcome(error: Exception) -> RequestOutcome:
+        if isinstance(error, ModbusExceptionError):
+            return "modbus_exception"
+        if isinstance(error, (*_NO_ANSWER_ERRORS, ModbusConnectionError)):
+            return "no_answer"
+        return "other"
+
+    def _notify_request(self, outcome: RequestOutcome) -> None:
+        if self._on_request is None:
+            return
+        try:
+            self._on_request(outcome)
+        except Exception:
+            _LOGGER.exception("Failed to record cumulative Modbus request diagnostics")
+
+    def _notify_link_recycle(self) -> None:
+        if self._on_link_recycle is None:
+            return
+        try:
+            self._on_link_recycle()
+        except Exception:
+            _LOGGER.exception("Failed to record cumulative Modbus link diagnostics")
+
     async def run[T](
         self,
         unit: ModbusUnit,
@@ -172,11 +201,13 @@ class TransportPolicy:
                     result = await operation(*args)
                 except (asyncio.CancelledError, ClientClosedError):
                     raise
-                except Exception:
+                except Exception as err:
                     self._record_request(started_at, success=False)
+                    self._notify_request(self._request_outcome(err))
                     raise
                 else:
                     self._record_request(started_at, success=True)
+                    self._notify_request("success")
                 finally:
                     if is_read:
                         # Completion-based spacing also covers a slow connect
@@ -214,6 +245,7 @@ class TransportPolicy:
         self._consecutive_timeouts = 0
         self._quiet_since = time.monotonic()
         self._link_recycles += 1
+        self._notify_link_recycle()
         try:
             await unit.disconnect()
         except ModbusConnectionError as err:

@@ -40,6 +40,7 @@ from custom_components.meltem_ventilation.number import (
 )
 from custom_components.meltem_ventilation.sensor import (
     APP_SETUP_CODE_DESCRIPTION,
+    CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS,
     GATEWAY_CONNECTED_DEVICES_DESCRIPTION,
     GATEWAY_SENSOR_DESCRIPTIONS,
     GATEWAY_UPTIME_DESCRIPTION,
@@ -387,6 +388,7 @@ class TestTranslations:
         assert set(strings["sensor"]) == {
             *_keys(SENSOR_DESCRIPTIONS),
             *_keys(GATEWAY_SENSOR_DESCRIPTIONS),
+            *_keys(CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS),
             *_keys(ROOM_DIAGNOSTIC_DESCRIPTIONS),
             GATEWAY_UPTIME_DESCRIPTION.key,
             GATEWAY_UTC_CLOCK_DESCRIPTION.key,
@@ -453,8 +455,12 @@ class TestTranslations:
                     "fan_motor_hours": {"default": "mdi:fan-clock"},
                     "gateway_connected_devices": {"default": "mdi:counter"},
                     "gateway_airflow_delta": {"default": "mdi:scale-balance"},
+                    "gateway_failed_read_groups_total": {"default": "mdi:database-alert-outline"},
                     "gateway_extract_air_flow": {"default": "mdi:home-export-outline"},
                     "gateway_last_answer": {"default": "mdi:clock-check-outline"},
+                    "gateway_link_recycles_total": {"default": "mdi:sync-alert"},
+                    "gateway_modbus_attempts_total": {"default": "mdi:counter"},
+                    "gateway_modbus_failures_total": {"default": "mdi:alert-circle-outline"},
                     "gateway_response_time": {"default": "mdi:timer-outline"},
                     "gateway_rf_load_current_hour": {"default": "mdi:access-point"},
                     "gateway_rf_load_previous_hour": {"default": "mdi:access-point"},
@@ -464,6 +470,7 @@ class TestTranslations:
                     "gateway_supply_air_flow": {"default": "mdi:home-import-outline"},
                     "gateway_uptime": {"default": "mdi:timer-outline"},
                     "gateway_utc_clock": {"default": "mdi:clock-outline"},
+                    "gateway_write_issues_total": {"default": "mdi:alert-circle-outline"},
                     "last_successful_update": {"default": "mdi:clock-check-outline"},
                     "operating_hours": {"default": "mdi:fan-clock"},
                     "rf_last_seen_age_seconds": {"default": "mdi:timer-outline"},

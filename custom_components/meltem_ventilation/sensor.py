@@ -13,7 +13,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -29,8 +29,9 @@ from homeassistant.const import (
     UnitOfTime,
     UnitOfVolumeFlowRate,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
     ALL_PROFILES,
@@ -243,6 +244,24 @@ GATEWAY_SENSOR_DESCRIPTIONS: tuple[MeltemGatewaySensorDescription, ...] = (
     ),
 )
 
+CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = tuple(
+    SensorEntityDescription(
+        key=key,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        suggested_display_precision=0,
+    )
+    for key in (
+        "gateway_modbus_attempts_total",
+        "gateway_modbus_failures_total",
+        "gateway_link_recycles_total",
+        "gateway_failed_read_groups_total",
+        "gateway_write_issues_total",
+    )
+)
+CUMULATIVE_GATEWAY_SENSOR_REFRESH_SECONDS = 60
+
 
 SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
     MeltemSensorDescription(
@@ -445,6 +464,10 @@ async def async_setup_entry(
     entities.extend(
         MeltemGatewayDiagnosticSensor(coordinator, entry.entry_id, description)
         for description in GATEWAY_SENSOR_DESCRIPTIONS
+    )
+    entities.extend(
+        MeltemCumulativeGatewayDiagnosticSensor(coordinator, entry.entry_id, description)
+        for description in CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS
     )
     entities.extend(
         MeltemModbusSlaveSensor(coordinator, room)
@@ -656,6 +679,52 @@ class MeltemGatewayDiagnosticSensor(MeltemGatewayEntity, SensorEntity):
                 "window_seconds": diagnostics["request_window_seconds"],
             }
         return None
+
+
+class MeltemCumulativeGatewayDiagnosticSensor(SensorEntity):
+    """Expose persisted counters without writing a recorder state per Modbus job."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: MeltemDataUpdateCoordinator,
+        entry_id: str,
+        description: SensorEntityDescription,
+    ) -> None:
+        self.coordinator = coordinator
+        self.entity_description = description
+        self._attr_unique_id = f"{DOMAIN}_{entry_id}_{description.key}"
+        self._attr_translation_key = description.key
+        self._attr_device_info = gateway_device_info(entry_id)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_interval(
+                self.hass,
+                self._async_refresh_counters,
+                timedelta(seconds=CUMULATIVE_GATEWAY_SENSOR_REFRESH_SECONDS),
+            )
+        )
+
+    @callback
+    def _async_refresh_counters(self, now: datetime) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> int:
+        diagnostics = self.coordinator.cumulative_diagnostics
+        if diagnostics is None:
+            return 0
+        return diagnostics.sensor_value(self.entity_description.key)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, object] | None:
+        diagnostics = self.coordinator.cumulative_diagnostics
+        if diagnostics is None:
+            return None
+        return diagnostics.sensor_attributes(self.entity_description.key)
 
 
 class MeltemModbusSlaveSensor(MeltemEntity, SensorEntity):
