@@ -145,7 +145,7 @@ def setup_profile_fixture(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) 
     )
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.MeltemModbusClient.async_read_gateway_mac",
-        AsyncMock(return_value="58:f3:87:78:2e:24"),
+        AsyncMock(return_value="02:00:00:00:00:01"),
     )
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.MeltemModbusClient.async_read_gateway_utc_clock",

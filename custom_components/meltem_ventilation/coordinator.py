@@ -124,6 +124,8 @@ _READBACK_PLANS: dict[str, RefreshPlan] = {
 class _CoordinatorClient(Protocol):
     async def async_read_gateway_uptime(self) -> int: ...
 
+    async def async_read_gateway_mac(self) -> str: ...
+
     async def async_read_gateway_utc_clock(self) -> int: ...
 
     async def async_read_gateway_node_count(self) -> int: ...
@@ -296,6 +298,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         async with self._gateway_lock:
             return await self.client.async_read_room_app_setup_code(self._rooms_by_key[room_key])
+
+    async def async_read_gateway_mac(self) -> str:
+        """Read the gateway MAC address under the shared gateway lock."""
+
+        async with self._gateway_lock:
+            return await self.client.async_read_gateway_mac()
 
     async def async_shutdown(self) -> None:
         self.set_gateway_uptime_enabled(False)

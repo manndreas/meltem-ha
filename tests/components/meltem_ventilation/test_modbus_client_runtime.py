@@ -52,6 +52,7 @@ from custom_components.meltem_ventilation.modbus_helpers import (
 from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
 
 _PORT = "/dev/ttyACM0"
+_TEST_GATEWAY_MAC = "02:00:00:00:00:01"
 _ROOM = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 _ROOM_S = RoomConfig(key="unit_s", name="Unit S", profile="s_plain", slave=3)
 _ROOM_FC_VOC = RoomConfig(key="unit_v", name="Unit V", profile="ii_fc_voc", slave=4)
@@ -172,9 +173,9 @@ class TestGatewayOperations:
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
         gateway = link.for_unit(DEFAULT_GATEWAY_DEVICE_ID)
-        gateway.holding[REGISTER_GATEWAY_MAC_START] = [0x58F3, 0x8778, 0x2E24]
+        gateway.holding[REGISTER_GATEWAY_MAC_START] = [0x0200, 0x0000, 0x0001]
 
-        assert await client.async_read_gateway_mac() == "58:f3:87:78:2e:24"
+        assert await client.async_read_gateway_mac() == _TEST_GATEWAY_MAC
         assert _reads(gateway) == [(REGISTER_GATEWAY_MAC_START, 3)]
 
     async def test_read_gateway_uptime_decodes_low_word_first(

@@ -199,13 +199,12 @@ async def _async_initial_refresh_and_gateway_mac(
     hass: HomeAssistant,
     entry: MeltemIntegrationConfigEntry,
     coordinator: MeltemDataUpdateCoordinator,
-    client: MeltemModbusClient,
 ) -> None:
     """Run the initial refresh, then add the optional gateway MAC connection."""
 
     await coordinator.async_refresh()
     try:
-        gateway_mac = await client.async_read_gateway_mac()
+        gateway_mac = await coordinator.async_read_gateway_mac()
     except MeltemModbusError as err:
         _LOGGER.debug("Unable to read optional gateway MAC address: %s", err)
     else:
@@ -272,7 +271,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
 
     entry.async_create_background_task(
         hass,
-        _async_initial_refresh_and_gateway_mac(hass, entry, coordinator, client),
+        _async_initial_refresh_and_gateway_mac(hass, entry, coordinator),
         "meltem_first_refresh",
     )
     return True

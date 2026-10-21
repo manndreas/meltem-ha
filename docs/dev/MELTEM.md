@@ -198,8 +198,8 @@ Potentially useful but still unclassified areas are:
   as optional diagnostics using the upstream interpretation described below.
 - `41032..41033` are documented fan-motor operating hours and were readable
   in the captured `41030×4` response on slave `3` (`[38083, 0, 38014, 0]`).
-  They are not yet exposed by the integration; R-6 checks them against unit
-  operating hours before any entity is added.
+  Version 4.5.0 exposes them as a disabled-by-default diagnostic. R-6 remains
+  the repeatable validation procedure for checking them against unit hours.
 
 The broad scan covered `40000..49999`; it did not exhaustively scan
 `50000..65535`. Later reads of `51100..51113`, `51120..51133`,
@@ -283,17 +283,17 @@ no fault or sensor error was induced. `40110` reports `NO_CHANGE`, `REBOUND`, or
 and its reset/retention behavior is unknown. The upstream fault-history reader
 uses an index register with writes, so that history was not queried. The
 unit-hours counter exceeded fan-motor hours on every device, by `54..238 h`,
-which is internally consistent and makes `41032..41033` the strongest new
-sensor candidate. Version 4.5.0 exposes the gateway RF counters and loads as
+supporting the disabled-by-default fan-operating-hours diagnostic added in
+Version 4.5.0. Version 4.5.0 also exposes the gateway RF counters and loads as
 optional diagnostics, using the raw upstream percentage scale without a factor
 of 100. The load tests below establish usefulness as an RF-traffic indicator,
 not independently calibrated airtime or per-value freshness. The hour buckets'
 exact rollover timing and Meltem fault-state semantics remain unverified.
 
-The RF statistics family is not ready: the prior scan found only `40120`
-readable, not its length/data registers. `40120` is also an index register that
-pyairios writes to select records, so it was not touched. Reset and binding
-commands were likewise not exercised.
+The separate RF fault-history reader remains unverified: the prior scan found
+only `40120` readable, not its length/data registers. `40120` is also an index
+register that pyairios writes to select records, so it was not touched. Reset
+and binding commands were likewise not exercised.
 
 #### Short read-load pilot on 2026-10-21
 
@@ -319,8 +319,9 @@ load, so this short A/B run does not establish that the added Modbus reads
 caused the two messages or calibrate RF load as a percentage. It also did not
 cross an hour boundary, so rollover of the current/previous-hour counters
 remains unverified. No settings were written and the measured airflow stayed
-unchanged. Repeat with alternating baseline/load windows and a longer duration
-before adding user-facing gateway RF sensors.
+unchanged. This short pilot alone did not establish causality, calibration, or
+hour-bucket rollover; the later read-load repeats below provide additional
+evidence for exposing these values as provisional diagnostics.
 
 #### Higher read-load repeat on 2026-10-21
 
