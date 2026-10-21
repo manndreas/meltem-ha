@@ -167,9 +167,10 @@ Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
 - `async_get_unit(hass, entry, params, unit_id)` at runtime; the units are
   released when the entry unloads, and the link closes after the last holder
 - `async_get_temporary_unit(hass, params, unit_id)` in the config flow
-- the backend is always tmodbus via `modbus-connection`; HA `2026.10` pins
-  `modbus-connection` `4.12.3`, the first version with `require_timeout` and
-  the device-modelling framework used here, hence the minimum HA version
+- the backend is always tmodbus via `modbus-connection`; HA `2026.10.2` pins
+  `modbus-connection` `4.12.4`. Version `4.12.3` first added `require_timeout`
+  and the device-modelling framework used here; the integration's minimum
+  dependency is aligned with the supported HA baseline
 - link parameters are fixed in `build_serial_params`: 19200 baud, 8E1, RTU
 - another integration that uses the same port with other link settings makes
   setup fail with `ConfigEntryError` (config flow: `port_in_use`)
