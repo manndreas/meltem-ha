@@ -26,6 +26,8 @@ from ..const import (
     REGISTER_EXTRACT_MODE_STATUS,
     REGISTER_FILTER_CHANGE_DUE,
     REGISTER_FROST_PROTECTION_ACTIVE,
+    REGISTER_GATEWAY_MAC_START,
+    REGISTER_GATEWAY_UPTIME,
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_MAX_LEVEL,
     REGISTER_HUMIDITY_MIN_LEVEL,
@@ -55,6 +57,24 @@ class Register(Component):
     register_ranges = ((0, 0),)
 
     value = raw_register(0)
+
+
+class GatewayMac(Component):
+    """Ethernet MAC address reported by the gateway as three holding registers."""
+
+    register_ranges = ((REGISTER_GATEWAY_MAC_START, REGISTER_GATEWAY_MAC_START + 2),)
+
+    word_1 = raw_register(REGISTER_GATEWAY_MAC_START)
+    word_2 = raw_register(REGISTER_GATEWAY_MAC_START + 1)
+    word_3 = raw_register(REGISTER_GATEWAY_MAC_START + 2)
+
+
+class GatewayUptime(Component):
+    """32-bit gateway uptime in seconds, with the low word at the lower address."""
+
+    register_ranges = ((REGISTER_GATEWAY_UPTIME, REGISTER_GATEWAY_UPTIME + 1),)
+
+    uptime = _uint32(REGISTER_GATEWAY_UPTIME)
 
 
 class Airflow(Component):

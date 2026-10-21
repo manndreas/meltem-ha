@@ -11,7 +11,6 @@ from ..const import (
     REGISTER_DAYS_UNTIL_FILTER_CHANGE,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
-    REGISTER_GATEWAY_UPTIME,
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_RF_COMM_STATUS,
@@ -23,6 +22,8 @@ from .components import (
     Command,
     ControlSettings,
     ExtractAirQuality,
+    GatewayMac,
+    GatewayUptime,
     ModeBlock,
     ModeStatus,
     OperatingHours,
@@ -105,15 +106,37 @@ class MeltemGateway(Device):
     def __init__(self, unit: ModbusUnit) -> None:
         super().__init__(unit)
         self.node_count = Register(unit, base_offset=REGISTER_GATEWAY_NUMBER_OF_NODES)
-        self.uptime = Register(unit, base_offset=REGISTER_GATEWAY_UPTIME)
+        self.mac = GatewayMac(unit)
+        self.uptime = GatewayUptime(unit)
+
+    async def async_read_mac(self) -> str:
+        """Read and decode the gateway's six-byte Ethernet MAC address."""
+
+        await self.mac.async_update()
+        word_1 = self.mac.word_1
+        word_2 = self.mac.word_2
+        word_3 = self.mac.word_3
+        if word_1 is None or word_2 is None or word_3 is None:
+            raise ValueError("The gateway MAC registers returned no value")
+        octets = (
+            word_1 >> 8,
+            word_1 & 0xFF,
+            word_2 >> 8,
+            word_2 & 0xFF,
+            word_3 >> 8,
+            word_3 & 0xFF,
+        )
+        if not any(octets) or all(octet == 0xFF for octet in octets) or octets[0] & 1:
+            raise ValueError("The gateway returned an invalid Ethernet MAC address")
+        return ":".join(f"{octet:02x}" for octet in octets)
 
     async def async_read_uptime(self) -> int:
-        """Read the experimental single-word gateway uptime counter."""
+        """Read the 32-bit gateway uptime counter in seconds."""
 
         await self.uptime.async_update()
-        if self.uptime.value is None:
+        if self.uptime.uptime is None:
             raise ValueError("The gateway uptime register returned no value")
-        return int(self.uptime.value)
+        return int(self.uptime.uptime)
 
     async def async_read_node_count(self) -> int:
         """Read how many units the gateway is configured for."""

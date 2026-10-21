@@ -55,6 +55,32 @@ The same gateway still answered uptime at `41019` and discovery at `43901` /
 `0`, report-server-ID `0x11`, and device-identification `0x2B/0x0E` returned
 Modbus exception `0x01` on the gateway and unit `2`.
 
+### Network settings, MAC address, and uptime width
+
+Read-only gateway reads on 2026-10-21 established the following holding-register
+values on Modbus address `1`:
+
+- `41002:41001 = 0xC0A8:0x00CF` decodes to the documented fallback IP
+  `192.168.0.207`.
+- `41004:41003 = 0xFFFF:0xFF00` decodes to subnet mask `255.255.255.0`.
+- `41006:41005` and `41008:41007` both decode to `192.168.0.1`, matching the
+  fallback router and DNS settings.
+- `41012..41014 = [22771, 34680, 11812]` decodes to
+  `58:f3:87:78:2e:24`, matching the MAC printed on this gateway.
+
+The gateway was using DHCP at `10.0.2.1` during this test, while these registers
+continued to report the fallback configuration. They are therefore not a
+reliable source for the current DHCP lease. The active address was identified
+separately from the LAN's ARP mapping.
+
+The Airios `BRDG-02EM23` implementation in
+[`pyairios`](https://github.com/scabrero/pyairios) identifies `41019` as uptime
+and reads it as a 32-bit value. A live read of `41019..41020` returned
+`[10303, 0]`; an earlier single-word read returned `9671` with the upper word
+still `0`. This confirms the low-word-first 32-bit seconds representation used
+by the integration. The gateway hardware was identified by the user as the
+same `BRDG-02EM23` model.
+
 ### Request pacing and block reads
 
 - requests sent too quickly cause partial reads, stale data, or a temporary

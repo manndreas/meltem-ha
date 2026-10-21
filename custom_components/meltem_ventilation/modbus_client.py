@@ -264,10 +264,16 @@ class MeltemModbusClient:
             raise MeltemModbusError(f"Unexpected error while {description}: {err!r}") from err
 
     async def async_read_gateway_uptime(self) -> int:
-        """Read only the gateway's experimental uptime register."""
+        """Read the gateway's uptime register pair."""
 
         async with self._gateway_operation("reading gateway uptime"):
             return await MeltemGateway(self._unit(DEFAULT_GATEWAY_DEVICE_ID)).async_read_uptime()
+
+    async def async_read_gateway_mac(self) -> str:
+        """Read the gateway's Ethernet MAC address."""
+
+        async with self._gateway_operation("reading gateway MAC address"):
+            return await MeltemGateway(self._unit(DEFAULT_GATEWAY_DEVICE_ID)).async_read_mac()
 
     async def async_validate_gateway(self) -> None:
         """Read the gateway's node count once to prove the link works.

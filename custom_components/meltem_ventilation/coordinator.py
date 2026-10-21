@@ -279,7 +279,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         return self._gateway_uptime_value
 
     def set_gateway_uptime_enabled(self, enabled: bool) -> None:
-        """Poll the experimental register only while its entity is enabled."""
+        """Poll the uptime register only while its entity is enabled."""
 
         if self._gateway_uptime_enabled == enabled:
             return

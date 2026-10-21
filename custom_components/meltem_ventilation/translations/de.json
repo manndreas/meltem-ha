@@ -297,7 +297,7 @@
         "name": "Gesamter Abluftvolumenstrom"
       },
       "gateway_uptime": {
-        "name": "Betriebszeit (experimentell)"
+        "name": "Betriebszeit"
       },
       "airflow_balance": {
         "name": "Luftmengenbilanz"

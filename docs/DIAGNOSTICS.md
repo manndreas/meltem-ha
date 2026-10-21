@@ -103,7 +103,7 @@ The gateway device provides these overview and diagnostic entities:
 | Total extract air flow | Sum of measured extract airflow in m³/h | Yes |
 | Mean response time | Mean successful request duration in milliseconds over the last 5 minutes | No |
 | Request success rate | Successful attempts as a percentage of all attempts over the last 5 minutes | No |
-| Uptime (experimental) | Raw gateway uptime register, in seconds | No |
+| Uptime | Gateway uptime, in seconds | No |
 
 Except for the optional uptime read described below, these entities use
 existing runtime data and do not send additional Modbus requests or discover
@@ -161,20 +161,18 @@ unknown; with no successful samples the mean response time is unknown. Samples
 expire even without further traffic. The window resets on integration reload
 and is bounded to 10,000 attempts.
 
-### Experimental gateway uptime
+### Gateway uptime
 
-Enabling **Uptime (experimental)** adds one read of register `41019` on gateway
-address `1` about every 60 seconds. The read shares the gateway lock and read
-rate limit; scheduling, retries, or backoff may delay it. Disabling the entity
-stops these reads, and an uptime failure does not make room data unavailable.
-After more than 180 seconds without a successful uptime read the sensor becomes
-unavailable.
+Enabling **Uptime** adds one read of registers `41019..41020` on gateway address
+`1` about every 60 seconds. The 32-bit value is in seconds, with the low word at
+`41019`. The read shares the gateway lock and read-rate limit; scheduling,
+retries, or backoff may delay it. Disabling the entity stops these reads, and an
+uptime failure does not make room data unavailable. After more than 180 seconds
+without a successful uptime read the sensor becomes unavailable.
 
-This is one raw 16-bit register, not a locally extrapolated timer or cumulative
-counter. Restart behavior, wraparound, and whether another register extends the
-counter still need hardware verification. Do not use it to detect restarts yet.
-It is deliberately disabled by default and uses a measurement state class,
-not `total_increasing`.
+The sensor reports the gateway's uptime value without local extrapolation. It
+is deliberately disabled by default and uses a measurement state class, not
+`total_increasing`.
 
 ## A single unit is unavailable
 

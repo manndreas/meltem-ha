@@ -167,21 +167,49 @@ def _async_remove_unsupported_entities(
         registry.async_remove(existing.entity_id)
 
 
+def _async_register_gateway_device(
+    hass: HomeAssistant,
+    entry: MeltemIntegrationConfigEntry,
+    gateway_mac: str | None = None,
+) -> None:
+    """Register the gateway, including any optional network identity."""
+
+    registry = dr.async_get(hass)
+    gateway = gateway_device_info(entry.entry_id, gateway_mac)
+    registry.async_get_or_create(config_entry_id=entry.entry_id, **gateway)
+
+
 def _async_sync_devices(
     hass: HomeAssistant, entry: MeltemIntegrationConfigEntry, rooms: list[RoomConfig]
 ) -> None:
     """Register the gateway device and drop devices of units no longer configured."""
 
     registry = dr.async_get(hass)
-    gateway = gateway_device_info(entry.entry_id)
     # Unit devices reference the gateway via ``via_device_id``, so it must exist first.
-    registry.async_get_or_create(config_entry_id=entry.entry_id, **gateway)
+    _async_register_gateway_device(hass, entry)
     configured = {(DOMAIN, room.key) for room in rooms} | gateway_identifiers(entry.entry_id)
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
         if device.identifiers & configured:
             continue
         _LOGGER.info("Removing device of unconfigured Meltem unit %s", device.name)
         registry.async_remove_device(device.id)
+
+
+async def _async_initial_refresh_and_gateway_mac(
+    hass: HomeAssistant,
+    entry: MeltemIntegrationConfigEntry,
+    coordinator: MeltemDataUpdateCoordinator,
+    client: MeltemModbusClient,
+) -> None:
+    """Run the initial refresh, then add the optional gateway MAC connection."""
+
+    await coordinator.async_refresh()
+    try:
+        gateway_mac = await client.async_read_gateway_mac()
+    except MeltemModbusError as err:
+        _LOGGER.debug("Unable to read optional gateway MAC address: %s", err)
+    else:
+        _async_register_gateway_device(hass, entry, gateway_mac)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> bool:
@@ -242,7 +270,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
         del entry.runtime_data
         raise
 
-    entry.async_create_background_task(hass, coordinator.async_refresh(), "meltem_first_refresh")
+    entry.async_create_background_task(
+        hass,
+        _async_initial_refresh_and_gateway_mac(hass, entry, coordinator, client),
+        "meltem_first_refresh",
+    )
     return True
 
 

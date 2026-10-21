@@ -297,7 +297,7 @@
         "name": "Total extract air flow"
       },
       "gateway_uptime": {
-        "name": "Uptime (experimental)"
+        "name": "Uptime"
       },
       "airflow_balance": {
         "name": "Airflow balance"

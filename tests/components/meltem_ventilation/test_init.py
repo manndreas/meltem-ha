@@ -39,6 +39,7 @@ from custom_components.meltem_ventilation.const import (
 )
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
+    MeltemModbusError,
     build_serial_params,
     supported_entity_keys_for_profile,
 )
@@ -115,6 +116,7 @@ def setup_mocks(hass: HomeAssistant) -> Iterator[_SetupMocks]:
         patch(f"{_INIT}.MeltemDataUpdateCoordinator", autospec=True) as coordinator_cls,
         patch.object(hass.config_entries, "async_forward_entry_setups", new=AsyncMock()) as forward,
     ):
+        client_cls.return_value.async_read_gateway_mac.return_value = None
         yield _SetupMocks(resolve, client_cls, coordinator_cls, forward)
 
 
@@ -410,16 +412,45 @@ class TestAsyncMigrateEntry:
 
 @pytest.mark.usefixtures("setup_mocks")
 class TestDeviceRegistrySync:
-    async def test_setup_registers_the_gateway_device(self, hass: HomeAssistant) -> None:
+    async def test_setup_registers_the_gateway_device(
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks
+    ) -> None:
         entry = _entry(hass)
+        setup_mocks.client_cls.return_value.async_read_gateway_mac.return_value = (
+            "58:f3:87:78:2e:24"
+        )
 
         await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
 
         gateway = dr.async_get(hass).async_get_device_by_identifier(
             (DOMAIN, entry.entry_id), entry.entry_id
         )
         assert gateway is not None
         assert gateway.model == "M-WRG-GW"
+        assert (dr.CONNECTION_NETWORK_MAC, "58:f3:87:78:2e:24") in gateway.connections
+
+    async def test_failed_optional_mac_read_keeps_existing_connection(
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks
+    ) -> None:
+        entry = _entry(hass)
+        registry = dr.async_get(hass)
+        mac_connection = (dr.CONNECTION_NETWORK_MAC, "58:f3:87:78:2e:24")
+        registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, entry.entry_id)},
+            connections={mac_connection},
+        )
+        setup_mocks.client_cls.return_value.async_read_gateway_mac.side_effect = MeltemModbusError(
+            "register unavailable"
+        )
+
+        assert await async_setup_entry(hass, entry) is True
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+        gateway = registry.async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
+        assert gateway is not None
+        assert mac_connection in gateway.connections
 
     async def test_setup_removes_devices_of_unconfigured_units(self, hass: HomeAssistant) -> None:
         entry = _entry(hass)
