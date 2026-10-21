@@ -57,7 +57,7 @@ jobs:
 
           while true; do
             CI_STATE=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${RELEASE_SHA}&branch=main&event=push&per_page=100" \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${RELEASE_SHA}&branch=main&per_page=100" \
               --jq '
                 if any(.workflow_runs[]; .conclusion == "success") then "success"
                 elif any(.workflow_runs[]; .status != "completed") then "pending"
