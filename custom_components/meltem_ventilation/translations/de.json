@@ -270,8 +270,7 @@
         "name": "Modbus-Gerätepfad"
       },
       "app_setup_code": {
-        "name": "App-Setup-Code",
-        "description": "Mit diesem Code kannst du das Gerät manuell in der Meltem-App hinzufügen."
+        "name": "App-Setup-Code"
       },
       "gateway_last_answer": {
         "name": "Letzte Modbus-Antwort"
