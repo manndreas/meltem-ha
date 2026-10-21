@@ -2,6 +2,9 @@
 
 ## 4.5.0
 
+- Raise the minimum supported Home Assistant version to `2026.10.2` and align
+  the test harness and Modbus dependency pins with that release.
+- Raise the minimum supported HACS version to `2.0.5`.
 - **Breaking:** Remove the gateway available/unavailable unit counts, device-error
   and due-filter counts, consecutive timeout count, stale read-group count, and
   link-reconnection count. Replace the last-response-age entity with a new

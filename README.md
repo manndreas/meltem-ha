@@ -55,7 +55,7 @@ automation that runs intensive ventilation while a room is occupied.
 
 ### Requirements
 
-- Home Assistant `2026.10` or newer
+- Home Assistant `2026.10.2` or newer
 - a Meltem `M-WRG-GW` gateway
 - supported `M-WRG-S` / `M-WRG-II` units already added in the Meltem app
 - the gateway connected to the Home Assistant host via USB
