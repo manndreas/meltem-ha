@@ -415,13 +415,19 @@ class TestConfigFlowProfiles:
     async def test_usb_flow_shows_unit_previews_in_the_description(
         self, hass: HomeAssistant
     ) -> None:
-        with _patch_scan([2]), _patch_detect("fc", "ID 2 | CO2"), _patch_resolve():
+        with (
+            _patch_scan([2]),
+            _patch_detect("fc", "R-Code R971C31 | ID 116852 | CO2"),
+            _patch_resolve(),
+        ):
             result = await _async_submit_usb_port(hass)
 
         assert result.get("type") == FlowResultType.FORM
         assert result.get("step_id") == "profiles"
         assert list(_flow_schema(result).schema.keys()) == ["slave_2"]
-        assert "Hardware ID 2 | CO2" in _flow_placeholders(result)["unit_details"]
+        unit_details = _flow_placeholders(result)["unit_details"]
+        assert "R-Code R971C31" in unit_details
+        assert "Hardware ID 116852 | CO2" in unit_details
 
     async def test_usb_flow_returns_to_confirm_usb_on_scan_error(self, hass: HomeAssistant) -> None:
         with _patch_scan_error(MeltemConnectionError("fail")):

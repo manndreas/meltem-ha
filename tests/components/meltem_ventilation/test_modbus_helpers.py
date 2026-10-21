@@ -17,6 +17,7 @@ from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
 from custom_components.meltem_ventilation.const import (
     BASE_SUPPORTED_ENTITY_KEYS,
+    REGISTER_APP_SETUP_CODE,
     REGISTER_CO2_EXTRACT_AIR,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
@@ -229,6 +230,7 @@ class TestDetectSlaveDetails:
         unit.holding.update(
             {
                 REGISTER_PRODUCT_ID: _PRODUCT_ID_WORDS,
+                REGISTER_APP_SETUP_CODE: [0x1C31, 0x0097],
                 REGISTER_HUMIDITY_EXTRACT_AIR: 45,
                 REGISTER_CO2_EXTRACT_AIR: 800,
                 REGISTER_HUMIDITY_SUPPLY_AIR: 48,
@@ -239,19 +241,46 @@ class TestDetectSlaveDetails:
         profile, preview = await detect_slave_details(unit)
 
         assert profile == "fc_voc"
-        assert preview == "ID 116852 | VOC"
+        assert preview == "R-Code R971C31 | ID 116852 | VOC"
         assert _reads(unit) == [
             (REGISTER_PRODUCT_ID, 2),
             (REGISTER_HUMIDITY_EXTRACT_AIR, 1),
             (REGISTER_HUMIDITY_SUPPLY_AIR, 1),
             (REGISTER_CO2_EXTRACT_AIR, 1),
             (REGISTER_VOC_SUPPLY_AIR, 1),
+            (REGISTER_APP_SETUP_CODE, 2),
         ]
 
     async def test_detects_plain_profile_when_capabilities_are_missing(
         self, unit: MockModbusUnit
     ) -> None:
         unit.holding[REGISTER_PRODUCT_ID] = _PRODUCT_ID_WORDS
+        for register in _CAPABILITY_REGISTERS:
+            unit.fail_read(register, IllegalDataAddressError())
+
+        profile, preview = await detect_slave_details(unit)
+
+        assert profile == "plain"
+        assert preview == "ID 116852 | basic"
+
+    async def test_an_unreadable_app_setup_code_does_not_fail_profile_detection(
+        self, unit: MockModbusUnit
+    ) -> None:
+        unit.holding[REGISTER_PRODUCT_ID] = _PRODUCT_ID_WORDS
+        unit.fail_read(REGISTER_APP_SETUP_CODE, IllegalDataAddressError())
+        for register in _CAPABILITY_REGISTERS:
+            unit.fail_read(register, IllegalDataAddressError())
+
+        profile, preview = await detect_slave_details(unit)
+
+        assert profile == "plain"
+        assert preview == "ID 116852 | basic"
+
+    async def test_app_setup_code_timeout_does_not_fail_profile_detection(
+        self, unit: MockModbusUnit
+    ) -> None:
+        unit.holding[REGISTER_PRODUCT_ID] = _PRODUCT_ID_WORDS
+        unit.fail_read(REGISTER_APP_SETUP_CODE, ModbusTimeoutError("code timeout"))
         for register in _CAPABILITY_REGISTERS:
             unit.fail_read(register, IllegalDataAddressError())
 
