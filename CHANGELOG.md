@@ -1,10 +1,5 @@
 # Changelog
 
-## 4.4.1
-
-- Add the `climate.fans_ventilation` integration category to resolve the HACS
-  validation warning about missing manifest categories.
-
 ## 4.4.0
 
 - Add gateway reachability, last-response age, timeout and link-recovery
