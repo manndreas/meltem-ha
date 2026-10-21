@@ -9,6 +9,8 @@ from the profile selected for it during setup.
 # pyright: reportIncompatibleVariableOverride=false
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -46,12 +48,15 @@ from .entity import (
     gateway_device_info,
     room_supports_entity,
 )
+from .modbus_helpers import MeltemModbusError
 from .models import (
     MeltemIntegrationConfigEntry,
     MeltemRuntimeData,
     RoomConfig,
     RoomState,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -71,6 +76,12 @@ MODBUS_SLAVE_ID_DESCRIPTION = SensorEntityDescription(
 MODBUS_DEVICE_PATH_DESCRIPTION = SensorEntityDescription(
     key="modbus_device_path",
     translation_key="modbus_device_path",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    entity_registry_enabled_default=False,
+)
+
+APP_SETUP_CODE_DESCRIPTION = SensorEntityDescription(
+    key="app_setup_code",
     entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
 )
@@ -441,6 +452,11 @@ async def async_setup_entry(
         if room_supports_entity(room, MODBUS_SLAVE_ID_DESCRIPTION.key)
     )
     entities.extend(
+        MeltemRoomAppSetupCodeSensor(coordinator, room)
+        for room in coordinator.rooms
+        if room_supports_entity(room, APP_SETUP_CODE_DESCRIPTION.key)
+    )
+    entities.extend(
         MeltemSensorEntity(coordinator, room, description)
         for room in coordinator.rooms
         for description in SENSOR_DESCRIPTIONS
@@ -557,6 +573,39 @@ class MeltemRoomDiagnosticSensor(MeltemRoomDiagnosticEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         return self.coordinator.last_successful_room_update(self.room.key)
+
+
+class MeltemRoomAppSetupCodeSensor(MeltemRoomDiagnosticEntity, SensorEntity):
+    """Read the app setup code once, only while the diagnostic is enabled."""
+
+    entity_description = APP_SETUP_CODE_DESCRIPTION
+
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
+        super().__init__(coordinator, room, self.entity_description.key)
+        self._setup_code: str | None = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        task = self.hass.async_create_task(self._async_read_setup_code(), "Meltem app setup code")
+
+        def cancel_setup_code_read() -> None:
+            task.cancel()
+
+        self.async_on_remove(cancel_setup_code_read)
+
+    async def _async_read_setup_code(self) -> None:
+        try:
+            self._setup_code = await self.coordinator.async_read_room_app_setup_code(self.room.key)
+        except asyncio.CancelledError:
+            raise
+        except MeltemModbusError as err:
+            _LOGGER.debug("Optional app setup code read failed for %s: %s", self.room.key, err)
+            return
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> str | None:
+        return self._setup_code
 
 
 class MeltemGatewayDiagnosticSensor(MeltemGatewayEntity, SensorEntity):

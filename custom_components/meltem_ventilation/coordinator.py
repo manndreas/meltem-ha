@@ -130,6 +130,8 @@ class _CoordinatorClient(Protocol):
 
     async def async_read_gateway_rf_statistics(self) -> GatewayRfStatistics: ...
 
+    async def async_read_room_app_setup_code(self, room: RoomConfig) -> str | None: ...
+
     def seconds_since_successful_read(self, slave: int) -> float | None: ...
 
     def transport_diagnostics(self) -> dict[str, float | int | None]: ...
@@ -288,6 +290,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             (DOMAIN, self._entry_id), self._entry_id
         )
         return device.id if device is not None else None
+
+    async def async_read_room_app_setup_code(self, room_key: str) -> str | None:
+        """Read a unit's app setup code under the shared gateway lock."""
+
+        async with self._gateway_lock:
+            return await self.client.async_read_room_app_setup_code(self._rooms_by_key[room_key])
 
     async def async_shutdown(self) -> None:
         self.set_gateway_uptime_enabled(False)

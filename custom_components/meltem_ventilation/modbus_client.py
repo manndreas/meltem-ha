@@ -269,6 +269,12 @@ class MeltemModbusClient:
         async with self._gateway_operation("reading gateway uptime"):
             return await MeltemGateway(self._unit(DEFAULT_GATEWAY_DEVICE_ID)).async_read_uptime()
 
+    async def async_read_room_app_setup_code(self, room: RoomConfig) -> str | None:
+        """Read one room's DataMatrix code without adding it to regular polling."""
+
+        async with self._gateway_operation(f"reading app setup code for room {room.key}"):
+            return await self._room_device(room).async_read_app_setup_code()
+
     async def async_read_gateway_node_count(self) -> int:
         """Read how many devices are registered with the gateway."""
 

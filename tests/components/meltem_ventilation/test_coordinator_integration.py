@@ -108,6 +108,9 @@ class _FakeClient:
             raise self.rf_statistics_error
         return GatewayRfStatistics(75, 147, 0.260866672, 0.035489265)
 
+    async def async_read_room_app_setup_code(self, room: RoomConfig) -> str | None:
+        raise AssertionError("App setup code reads are not expected in coordinator polling tests")
+
     async def discover_gateway_units(self, start: int, end: int) -> list[int]:
         raise AssertionError("Gateway discovery is not expected in coordinator polling tests")
 

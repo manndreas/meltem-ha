@@ -45,6 +45,7 @@ _BASE_SENSORS = {
     "fan_motor_hours",
     "rf_last_seen_age_seconds",
     "rf_signal_strength",
+    "app_setup_code",
     "modbus_slave_id",
     "airflow_balance",
     "last_successful_update",
@@ -157,6 +158,10 @@ def setup_profile_fixture(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.MeltemModbusClient.async_read_gateway_rf_statistics",
         AsyncMock(return_value=GatewayRfStatistics(75, 147, 0.260866672, 0.035489265)),
+    )
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.MeltemModbusClient.async_read_room_app_setup_code",
+        AsyncMock(return_value="R971C31"),
     )
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.coordinator."
@@ -572,6 +577,34 @@ async def test_optional_room_diagnostics_follow_updates(
     assert entity_state is not None
     assert entity_state.state == str(value)
     assert entity_state.attributes["unit_of_measurement"] == unit
+
+
+async def test_app_setup_code_reads_only_when_enabled(
+    hass: HomeAssistant, setup_profile: SetupProfile
+) -> None:
+    entry_id = await setup_profile("ii_plain")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_unit_1_app_setup_code"
+    )
+    assert entity_id is not None
+    registered = registry.async_get(entity_id)
+    assert registered is not None
+    assert registered.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    read_setup_code = entry.runtime_data.coordinator.client.async_read_room_app_setup_code
+    read_setup_code.assert_not_awaited()
+
+    registry.async_update_entity(entity_id, disabled_by=None)
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
+
+    read_setup_code.assert_awaited_once_with(entry.runtime_data.coordinator.rooms[0])
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == "R971C31"
+    assert await hass.config_entries.async_unload(entry_id)
 
 
 async def test_room_connectivity_updates_without_reads_and_stops_after_unload(

@@ -26,6 +26,7 @@ from ..const import (
 from ..models import GatewayRfStatistics
 from .components import (
     Airflow,
+    AppSetupCode,
     Command,
     ControlSettings,
     ExtractAirQuality,
@@ -82,6 +83,7 @@ class MeltemRoomDevice(Device):
         self.operating_hours = OperatingHours(unit)
         self.fan_motor_hours = FanMotorHours(unit)
         self.software_version = Register(unit, base_offset=REGISTER_SOFTWARE_VERSION)
+        self.app_setup_code = AppSetupCode(unit)
         self.control_settings = ControlSettings(unit)
         if not has_co2:
             _only(
@@ -101,6 +103,17 @@ class MeltemRoomDevice(Device):
         self.current_level_readback = Register(unit, base_offset=REGISTER_CURRENT_LEVEL)
         self.mode_status = ModeStatus(unit)
         self.command = Command(unit)
+
+    async def async_read_app_setup_code(self) -> str | None:
+        """Read the six-digit DataMatrix code from the two identity registers."""
+
+        await self.app_setup_code.async_update()
+        low_word = self.app_setup_code.low_word
+        high_word = self.app_setup_code.high_word
+        if low_word is None or high_word is None or high_word > 0xFF:
+            return None
+        code = (high_word << 16) | low_word
+        return f"R{code:06X}"
 
 
 class MeltemProbe(Device):

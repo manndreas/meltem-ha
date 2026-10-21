@@ -12,6 +12,7 @@ from functools import partial
 from modbus_connection.model import Component, float32, raw_register, uint32
 
 from ..const import (
+    REGISTER_APP_SETUP_CODE,
     REGISTER_APPLY,
     REGISTER_CO2_EXTRACT_AIR,
     REGISTER_CO2_MAX_LEVEL,
@@ -224,3 +225,12 @@ class ProductId(Component):
     register_ranges = ((REGISTER_PRODUCT_ID, REGISTER_PRODUCT_ID + 1),)
 
     product_id = _uint32(REGISTER_PRODUCT_ID)
+
+
+class AppSetupCode(Component):
+    """Two low-word-first registers that carry the DataMatrix R-code."""
+
+    register_ranges = ((REGISTER_APP_SETUP_CODE, REGISTER_APP_SETUP_CODE + 1),)
+
+    low_word = raw_register(REGISTER_APP_SETUP_CODE)
+    high_word = raw_register(REGISTER_APP_SETUP_CODE + 1)

@@ -72,6 +72,9 @@
       "days_until_filter_change": {
         "default": "mdi:calendar-clock"
       },
+      "app_setup_code": {
+        "default": "mdi:qrcode"
+      },
       "extract_air_flow": {
         "default": "mdi:home-export-outline"
       },

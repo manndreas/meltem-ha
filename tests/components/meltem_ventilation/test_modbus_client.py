@@ -128,6 +128,32 @@ async def test_gateway_rf_statistics_decode_bridge_block(
 
 
 @pytest.mark.parametrize(
+    ("low_word", "high_word", "expected"),
+    [(7217, 151, "R971C31"), (7162, 151, "R971BFA"), (3693, 149, "R950E6D")],
+)
+async def test_room_app_setup_code_decodes_data_matrix_suffix(
+    client: MeltemModbusClient,
+    unit: MockModbusUnit,
+    low_word: int,
+    high_word: int,
+    expected: str,
+) -> None:
+    unit.holding[40000] = [low_word, high_word]
+
+    assert await client.async_read_room_app_setup_code(_PLAIN) == expected
+    assert _reads(unit) == [(40000, 2)]
+
+
+async def test_room_app_setup_code_rejects_out_of_range_prefix(
+    client: MeltemModbusClient, unit: MockModbusUnit
+) -> None:
+    unit.holding[40000] = [7217, 256]
+
+    assert await client.async_read_room_app_setup_code(_PLAIN) is None
+    assert _reads(unit) == [(40000, 2)]
+
+
+@pytest.mark.parametrize(
     ("component_type", "address"),
     [(FanMotorHours, 41032), (GatewayUtcClock, 41015)],
 )
