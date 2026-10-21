@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.5.1
+
+- Display gateway uptime in days with one decimal place instead of raw seconds.
+- Show RF load with two decimal places, and mean response time and successful
+  Modbus requests with no decimal places.
+
 ## 4.5.0
 
 - Raise the minimum supported Home Assistant version to `2026.10.2` and align

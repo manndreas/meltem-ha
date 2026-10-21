@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.const import EntityCategory, UnitOfVolumeFlowRate
+from homeassistant.const import EntityCategory, UnitOfTime, UnitOfVolumeFlowRate
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -25,6 +25,7 @@ from custom_components.meltem_ventilation.sensor import (
     ROOM_DIAGNOSTIC_DESCRIPTIONS,
     SENSOR_DESCRIPTIONS,
     MeltemGatewayDiagnosticSensor,
+    MeltemGatewayUptimeSensor,
     MeltemModbusDevicePathSensor,
     MeltemModbusSlaveSensor,
     MeltemRoomDiagnosticSensor,
@@ -111,6 +112,25 @@ class TestSensorEntityCreation:
         assert entity.entity_category is EntityCategory.DIAGNOSTIC
         assert entity.entity_registry_enabled_default is False
         assert client.mock_calls == [call.transport_diagnostics()]
+
+    def test_gateway_uptime_is_reported_in_days(self) -> None:
+        coordinator = _coordinator()
+        coordinator.gateway_uptime = 129_600
+
+        entity = MeltemGatewayUptimeSensor(coordinator, "gateway-entry")
+
+        assert entity.native_value == 1.5
+        assert entity.native_unit_of_measurement == UnitOfTime.DAYS
+        assert entity.device_class is SensorDeviceClass.DURATION
+        assert entity.suggested_display_precision == 1
+
+    def test_gateway_diagnostic_display_precision(self) -> None:
+        descriptions = {description.key: description for description in GATEWAY_SENSOR_DESCRIPTIONS}
+
+        assert descriptions["gateway_rf_load_current_hour"].suggested_display_precision == 2
+        assert descriptions["gateway_rf_load_previous_hour"].suggested_display_precision == 2
+        assert descriptions["gateway_response_time"].suggested_display_precision == 0
+        assert descriptions["gateway_success_rate"].suggested_display_precision == 0
 
     def test_modbus_slave_sensor_metadata_and_value(self) -> None:
         entity = MeltemModbusSlaveSensor(_coordinator(), _ROOM)

@@ -175,7 +175,7 @@ GATEWAY_SENSOR_DESCRIPTIONS: tuple[MeltemGatewaySensorDescription, ...] = (
         rf_statistics_key="load_current_hour",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=4,
+        suggested_display_precision=2,
         value_fn=lambda coordinator: _gateway_rf_value(coordinator, "load_current_hour"),
     ),
     MeltemGatewaySensorDescription(
@@ -183,7 +183,7 @@ GATEWAY_SENSOR_DESCRIPTIONS: tuple[MeltemGatewaySensorDescription, ...] = (
         rf_statistics_key="load_previous_hour",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=4,
+        suggested_display_precision=2,
         value_fn=lambda coordinator: _gateway_rf_value(coordinator, "load_previous_hour"),
     ),
     MeltemGatewaySensorDescription(
@@ -222,7 +222,7 @@ GATEWAY_SENSOR_DESCRIPTIONS: tuple[MeltemGatewaySensorDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MILLISECONDS,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=1,
+        suggested_display_precision=0,
         value_fn=lambda coordinator: coordinator.client.transport_diagnostics()[
             "mean_response_time_ms"
         ],
@@ -231,7 +231,7 @@ GATEWAY_SENSOR_DESCRIPTIONS: tuple[MeltemGatewaySensorDescription, ...] = (
         key="gateway_success_rate",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=1,
+        suggested_display_precision=0,
         value_fn=lambda coordinator: coordinator.client.transport_diagnostics()[
             "request_success_rate"
         ],
@@ -390,9 +390,9 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
 GATEWAY_UPTIME_DESCRIPTION = SensorEntityDescription(
     key="gateway_uptime",
     device_class=SensorDeviceClass.DURATION,
-    native_unit_of_measurement=UnitOfTime.SECONDS,
+    native_unit_of_measurement=UnitOfTime.DAYS,
     state_class=SensorStateClass.MEASUREMENT,
-    suggested_display_precision=0,
+    suggested_display_precision=1,
     entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
 )
@@ -508,8 +508,9 @@ class MeltemGatewayUptimeSensor(MeltemGatewayEntity, SensorEntity):
         return self.coordinator.gateway_uptime is not None
 
     @property
-    def native_value(self) -> int | None:
-        return self.coordinator.gateway_uptime
+    def native_value(self) -> float | None:
+        uptime = self.coordinator.gateway_uptime
+        return None if uptime is None else uptime / 86_400
 
 
 class MeltemGatewayUtcClockSensor(MeltemGatewayEntity, SensorEntity):
