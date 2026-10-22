@@ -30,8 +30,8 @@ async_sleep = asyncio.sleep
 
 # The gateway answered for a unit behind it that did not.
 _GATEWAY_TARGET_ERRORS = (GatewayTargetError, GatewayPathUnavailableError)
-_NO_ANSWER_ERRORS = (ModbusTimeoutError, ModbusProtocolError)
-_RETRYABLE_ERRORS = (*_GATEWAY_TARGET_ERRORS, *_NO_ANSWER_ERRORS)
+NO_ANSWER_ERRORS = (ModbusTimeoutError, ModbusProtocolError)
+_RETRYABLE_ERRORS = (*_GATEWAY_TARGET_ERRORS, *NO_ANSWER_ERRORS)
 COMMUNICATION_WINDOW_SECONDS = 300.0
 RequestOutcome = Literal["success", "no_answer", "modbus_exception", "other"]
 
@@ -140,7 +140,7 @@ class TransportPolicy:
     def _request_outcome(error: Exception) -> RequestOutcome:
         if isinstance(error, ModbusExceptionError):
             return "modbus_exception"
-        if isinstance(error, (*_NO_ANSWER_ERRORS, ModbusConnectionError)):
+        if isinstance(error, (*NO_ANSWER_ERRORS, ModbusConnectionError)):
             return "no_answer"
         return "other"
 
@@ -216,7 +216,7 @@ class TransportPolicy:
         except ModbusExceptionError:
             self._link_answered()
             raise
-        except _NO_ANSWER_ERRORS:
+        except NO_ANSWER_ERRORS:
             await self._count_timeout(unit)
             raise
 

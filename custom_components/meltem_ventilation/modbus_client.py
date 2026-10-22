@@ -23,7 +23,6 @@ from modbus_connection import (
     ModbusConnectionError,
     ModbusError,
     ModbusExceptionError,
-    ModbusTimeoutError,
     ModbusUnit,
 )
 
@@ -56,7 +55,7 @@ from .const import (
     profile_max_airflow,
 )
 from .device import MeltemGateway, MeltemRoomDevice
-from .device.transport import RequestOutcome
+from .device.transport import NO_ANSWER_ERRORS, RequestOutcome
 from .modbus_helpers import (
     PLAUSIBLE_RANGES,
     MeltemConnectionError,
@@ -120,7 +119,7 @@ class _ReadJob:
     """Read errors of one room read, per read-health group."""
 
     errors: dict[str, str] = field(default_factory=dict)
-    # Groups that failed with a timeout rather than an answer from the unit.
+    # Groups with no valid answer, rather than an exception response from the unit.
     timeouts: set[str] = field(default_factory=set)
     # Set once the unit timed out; the rest of the job is skipped then.
     silent_error: ModbusError | None = None
@@ -130,7 +129,7 @@ class _ReadJob:
 
         for group in groups:
             self.errors.setdefault(group, str(error))
-            if isinstance(error, ModbusTimeoutError):
+            if isinstance(error, NO_ANSWER_ERRORS):
                 self.timeouts.add(group)
 
 
@@ -403,16 +402,16 @@ class MeltemModbusClient:
         """Read the due components and record failures per health group.
 
         ``reads`` maps each component to the health groups its outcome counts
-        for. A timeout means the unit is silent, so the rest of the job is
-        skipped instead of timing out once per block; before anything answered
-        the poll itself stops, after that only the mode reads are spared.
+        for. A timeout or protocol error means there was no valid answer, so
+        the mode reads are skipped. A timeout before anything answered also
+        stops the poll itself instead of timing out once per block.
         """
 
         if not reads:
             return set()
         try:
             report = await device.async_poll(list(reads))
-        except ModbusTimeoutError as err:
+        except NO_ANSWER_ERRORS as err:
             job.silent_error = err
             for groups in reads.values():
                 job.record_error(groups, err)
@@ -422,7 +421,7 @@ class MeltemModbusClient:
             if error is None:
                 continue
             job.record_error(groups, error)
-            if isinstance(error, ModbusTimeoutError):
+            if isinstance(error, NO_ANSWER_ERRORS):
                 job.silent_error = error
         return report.updated
 
@@ -526,7 +525,7 @@ class MeltemModbusClient:
         """Read the read-only current-state map, backing off on exception responses.
 
         The set registers at 41120..41124 remain the write interface. A timeout
-        means the unit went silent, so the rest of the job is skipped.
+        or protocol error skips the rest of the job.
         """
 
         if not room.supports_any(_MODE_ENTITY_KEYS):
@@ -549,7 +548,7 @@ class MeltemModbusClient:
         except ModbusConnectionError:
             raise
         except ModbusError as err:
-            if isinstance(err, ModbusTimeoutError):
+            if isinstance(err, NO_ANSWER_ERRORS):
                 job.silent_error = err
             elif isinstance(err, ModbusExceptionError):
                 self._mode_backoff.mark_failure(key, err)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from math import isfinite
 
-from modbus_connection import ModbusUnit
+from modbus_connection import ModbusProtocolError, ModbusUnit
 from modbus_connection.model import Component, Device, ManualComponent, raw_register
 
 from ..const import (
@@ -163,7 +163,7 @@ class MeltemGateway(Device):
         current = self.rf_statistics.messages_current_hour
         previous = self.rf_statistics.messages_previous_hour
         if current is None or previous is None:
-            raise ValueError("The gateway RF counters returned no value")
+            raise ModbusProtocolError("The gateway RF counters returned no value")
 
         def valid_load(value: float | None) -> float | None:
             return value if value is not None and isfinite(value) and 0 <= value <= 100 else None
@@ -183,7 +183,7 @@ class MeltemGateway(Device):
         word_2 = self.mac.word_2
         word_3 = self.mac.word_3
         if word_1 is None or word_2 is None or word_3 is None:
-            raise ValueError("The gateway MAC registers returned no value")
+            raise ModbusProtocolError("The gateway MAC registers returned no value")
         octets = (
             word_1 >> 8,
             word_1 & 0xFF,
@@ -193,7 +193,7 @@ class MeltemGateway(Device):
             word_3 & 0xFF,
         )
         if not any(octets) or all(octet == 0xFF for octet in octets) or octets[0] & 1:
-            raise ValueError("The gateway returned an invalid Ethernet MAC address")
+            raise ModbusProtocolError("The gateway returned an invalid Ethernet MAC address")
         return ":".join(f"{octet:02x}" for octet in octets)
 
     async def async_read_uptime(self) -> int:
@@ -201,7 +201,7 @@ class MeltemGateway(Device):
 
         await self.uptime.async_update()
         if self.uptime.uptime is None:
-            raise ValueError("The gateway uptime register returned no value")
+            raise ModbusProtocolError("The gateway uptime register returned no value")
         return int(self.uptime.uptime)
 
     async def async_read_node_count(self) -> int:
@@ -216,7 +216,7 @@ class MeltemGateway(Device):
         await self.utc_clock.async_update()
         value = self.utc_clock.value
         if value is None or value == 0xFFFFFFFF:
-            raise ValueError("The gateway UTC clock returned no valid time")
+            raise ModbusProtocolError("The gateway UTC clock returned no valid time")
         return int(value)
 
     async def async_read_node_addresses(self, count: int) -> list[int]:

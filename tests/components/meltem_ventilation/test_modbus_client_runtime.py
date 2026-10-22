@@ -213,6 +213,15 @@ class TestGatewayOperations:
         assert await client.async_read_gateway_mac() == _TEST_GATEWAY_MAC
         assert _reads(gateway) == [(REGISTER_GATEWAY_MAC_START, 3)]
 
+    @pytest.mark.parametrize("words", [[0, 0, 0], [0xFFFF] * 3, [0x0100, 0, 1]])
+    async def test_invalid_gateway_mac_uses_the_modbus_error_contract(
+        self, client: MeltemModbusClient, link: MockModbusConnection, words: list[int]
+    ) -> None:
+        link.for_unit(DEFAULT_GATEWAY_DEVICE_ID).holding[REGISTER_GATEWAY_MAC_START] = words
+
+        with pytest.raises(MeltemModbusError, match="invalid Ethernet MAC address"):
+            await client.async_read_gateway_mac()
+
     async def test_read_gateway_uptime_decodes_low_word_first(
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:

@@ -15,7 +15,7 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
-from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
+from modbus_connection import IllegalDataAddressError, ModbusProtocolError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit, WriteEvent
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -487,6 +487,42 @@ class TestGatewayUtcClock:
         await coordinator.async_refresh()
         assert client.utc_clock_calls == 2
         await coordinator.async_shutdown()
+
+    async def test_invalid_clock_keeps_successful_room_updates(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, _ = _build(hass)
+        link = MockModbusConnection()
+        gateway = link.for_unit(1)
+        gateway.holding[41015] = [0xFFFF, 0xFFFF]
+        link.for_unit(_ROOM_1.slave).holding.update({41020: [75, 75], 41100: [3, 150, 0]})
+        client = MeltemModbusClient(link.for_unit, port="/dev/test")
+        coordinator.client = client
+        coordinator.data = {"unit_1": RoomState(supply_air_flow=30, extract_air_flow=30)}
+        coordinator._startup_jobs = []
+        coordinator._jobs = [_due_job("flow")]
+        coordinator.set_gateway_utc_clock_enabled(True)
+
+        try:
+            await coordinator.async_refresh()
+
+            assert coordinator.last_update_success
+            assert coordinator.room_available("unit_1")
+            assert coordinator.safe_data["unit_1"].supply_air_flow == 75
+            assert coordinator.safe_data["unit_1"].target_level == 75
+            assert coordinator.gateway_utc_clock is None
+            assert coordinator._consecutive_transport_failures == 0
+            assert coordinator._backoff_seconds is None
+
+            gateway.holding[41015] = [0x5678, 0x1234]
+            clock.now += 61.0
+            await coordinator.async_refresh()
+
+            assert coordinator.last_update_success
+            assert coordinator.gateway_utc_clock == datetime.fromtimestamp(0x12345678, tz=UTC)
+        finally:
+            await coordinator.async_shutdown()
+            client.shutdown()
 
     async def test_uptime_failure_does_not_prevent_clock_read(self, hass: HomeAssistant) -> None:
         coordinator, client = _build(hass)
@@ -972,11 +1008,12 @@ class TestStartupWithRealClient:
         ("error", "backoff_seconds"),
         [
             (ModbusTimeoutError("silent"), TRANSPORT_BACKOFF_START_SECONDS),
+            (ModbusProtocolError("invalid response"), TRANSPORT_BACKOFF_START_SECONDS),
             # A unit that refuses reads still answers, so the link is healthy.
             (IllegalDataAddressError(), None),
         ],
     )
-    async def test_real_client_failures_mark_room_unavailable_and_back_off_only_on_timeouts(
+    async def test_real_client_failures_mark_room_unavailable_and_back_off_without_an_answer(
         self,
         hass: HomeAssistant,
         clock: SimpleNamespace,
