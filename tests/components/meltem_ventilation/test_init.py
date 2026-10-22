@@ -25,6 +25,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meltem_ventilation import (
     async_migrate_entry,
+    async_remove_entry,
     async_setup_entry,
     async_unload_entry,
 )
@@ -37,6 +38,7 @@ from custom_components.meltem_ventilation.const import (
     FIXED_TIMEOUT,
     PLATFORMS,
 )
+from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
@@ -351,6 +353,19 @@ class TestAsyncUnloadEntry:
 
         assert coordinator.async_shutdown.await_count == int(unloaded)
         assert coordinator.client.shutdown.call_count == int(unloaded)
+
+
+class TestAsyncRemoveEntry:
+    async def test_removes_persisted_diagnostics(self, hass: HomeAssistant) -> None:
+        entry = _entry(hass)
+        diagnostics = await CumulativeDiagnostics.async_create(hass, entry.entry_id)
+        diagnostics.record_request("success")
+        await diagnostics.async_flush()
+
+        await async_remove_entry(hass, entry)
+
+        restored = await CumulativeDiagnostics.async_create(hass, entry.entry_id)
+        assert restored.request_attempts == 0
 
 
 # ---------------------------------------------------------------------------
