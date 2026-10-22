@@ -82,7 +82,11 @@ request attempts. Each retry is a separate sample. Response-time measurements
 start after locking and rate-limit waits; only successful operations enter the
 latency mean. Modbus exception responses are failed operations even though they
 reset the link timeout counter. Cancellation and closed-client refusals are
-excluded. Reading diagnostics also expires old samples without bus activity.
+excluded. Reading the transport diagnostics snapshot also expires old samples
+without bus activity. A config-entry diagnostics export additionally performs
+a gateway discovery through the shared coordinator lock; it reads the node
+count and, when available, the node address list, so it can briefly delay
+polling.
 
 The gateway MAC (`41012..41014`) is read once after the initial coordinator
 refresh, through the shared coordinator lock and transport policy; failure is

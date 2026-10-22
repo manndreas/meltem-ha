@@ -173,6 +173,37 @@ class TestGatewayOperations:
 
         assert not isinstance(err.value, MeltemModbusError)
 
+    async def test_unexpected_gateway_error_is_logged_and_passed_through(
+        self,
+        client: MeltemModbusClient,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        error = RuntimeError("programming error")
+
+        async def _raise(_gateway: object) -> int:
+            raise error
+
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.modbus_client.MeltemGateway.async_read_uptime",
+            _raise,
+        )
+
+        with pytest.raises(RuntimeError) as err:
+            await client.async_read_gateway_uptime()
+
+        assert err.value is error
+        record = next(
+            (
+                record
+                for record in caplog.records
+                if record.getMessage() == "Unexpected error while reading gateway uptime"
+            ),
+            None,
+        )
+        assert record is not None
+        assert record.exc_info is not None
+
     async def test_read_gateway_mac_decodes_three_registers(
         self, client: MeltemModbusClient, link: MockModbusConnection
     ) -> None:
