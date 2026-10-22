@@ -71,6 +71,17 @@ class CumulativeDiagnostics:
             stored = None
         return cls(store, stored)
 
+    @classmethod
+    async def async_remove(cls, hass: HomeAssistant, entry_id: str) -> None:
+        """Remove the persisted counters when their config entry is deleted."""
+
+        store: Store[dict[str, Any]] = Store(
+            hass,
+            STORAGE_VERSION,
+            f"{STORAGE_KEY_PREFIX}_{entry_id}",
+        )
+        await store.async_remove()
+
     @property
     def period_started_at(self) -> str:
         """Return the start of the persisted counter period in UTC."""

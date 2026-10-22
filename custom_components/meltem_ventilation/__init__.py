@@ -330,3 +330,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: MeltemIntegrationConfig
         runtime_data.coordinator.client.shutdown()
 
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> None:
+    """Remove data that belongs to a permanently deleted config entry."""
+
+    await CumulativeDiagnostics.async_remove(hass, entry.entry_id)

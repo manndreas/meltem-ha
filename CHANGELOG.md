@@ -7,7 +7,8 @@
   The new gateway sensors are disabled by default and do not add Modbus reads.
 - Include period metadata and per-category, per-room, and per-command counter
   breakdowns in the diagnostics download. Counters survive integration and Home
-  Assistant restarts; a new config entry starts a new period.
+  Assistant restarts; a new config entry starts a new period, and deleting the
+  entry removes its stored counters.
 
 ## 4.6.0
 
