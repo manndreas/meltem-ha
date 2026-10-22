@@ -273,8 +273,9 @@ class MeltemModbusClient:
             ) from err
         except ModbusError as err:
             raise MeltemModbusError(f"Modbus error while {description}: {err}") from err
-        except Exception as err:
-            raise MeltemModbusError(f"Unexpected error while {description}: {err!r}") from err
+        except Exception:
+            _LOGGER.exception("Unexpected error while %s", description)
+            raise
 
     async def async_read_gateway_uptime(self) -> int:
         """Read the gateway's uptime register pair."""
