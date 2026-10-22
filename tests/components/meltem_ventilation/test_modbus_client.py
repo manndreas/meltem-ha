@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.util import dt as dt_util
-from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
+from modbus_connection import IllegalDataAddressError, ModbusProtocolError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
 from custom_components.meltem_ventilation.const import (
@@ -639,8 +639,12 @@ class TestReadHealth:
         confirmed = await client.read_room_state(_F, recovered, _CONTROL_SETTINGS)
         assert confirmed.humidity_starting_point == 70
 
-    async def test_a_timeout_is_told_apart_from_an_exception_response(
-        self, client: MeltemModbusClient, unit: MockModbusUnit
+    @pytest.mark.parametrize("error_type", [ModbusTimeoutError, ModbusProtocolError])
+    async def test_no_answer_is_told_apart_from_an_exception_response(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        error_type: type[ModbusTimeoutError | ModbusProtocolError],
     ) -> None:
         _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
         first = await _read_flow(client)
@@ -650,10 +654,28 @@ class TestReadHealth:
         assert refused.last_error is not None
         assert refused.last_error_timed_out is False
 
-        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, ModbusTimeoutError("silent"))
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, error_type("no valid response"))
         silent = (await _read_flow(client, first)).read_health_for("flow")
         assert silent.last_error is not None
         assert silent.last_error_timed_out is True
+
+    @pytest.mark.parametrize("error_type", [ModbusTimeoutError, ModbusProtocolError])
+    async def test_unanswered_airflow_skips_mode_reads(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        error_type: type[ModbusTimeoutError | ModbusProtocolError],
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, error_type("no valid response"))
+
+        state = await _read_flow(client)
+
+        assert _reads(unit) == [(REGISTER_EXTRACT_AIR_FLOW, 2)] * 2
+        for group in ("flow", "flow_control", "intensive"):
+            health = state.read_health_for(group)
+            assert health.last_error is not None
+            assert health.last_error_timed_out is True
 
 
 # ---------------------------------------------------------------------------
@@ -959,12 +981,16 @@ class TestModeReadBackoff:
 
         assert _reads(unit).count((REGISTER_MODE_STATUS, 3)) == 2
 
-    async def test_a_unit_falling_silent_ends_the_mode_reads(
-        self, client: MeltemModbusClient, unit: MockModbusUnit
+    @pytest.mark.parametrize("error_type", [ModbusTimeoutError, ModbusProtocolError])
+    async def test_unanswered_mode_reads_do_not_start_backoff(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        error_type: type[ModbusTimeoutError | ModbusProtocolError],
     ) -> None:
-        """Only refused registers (HW-4) back off; a timeout ends the job."""
+        """Only refused registers (HW-4) start the optional mode backoff."""
         _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
-        unit.fail_read(REGISTER_MODE_STATUS, ModbusTimeoutError("silent"))
+        unit.fail_read(REGISTER_MODE_STATUS, error_type("no valid response"))
 
         state = await _read_flow(client, RoomState(operation_mode="manual"))
 
@@ -976,6 +1002,7 @@ class TestModeReadBackoff:
         assert state.operation_mode == "manual"
         assert state.read_health_for("flow").consecutive_failures == 0
         assert state.read_health_for("flow_control").consecutive_failures == 1
+        assert state.read_health_for("flow_control").last_error_timed_out is True
         assert not client._mode_backoff.is_active((2, "mode_status"))
 
     def test_backoff_caps_the_failure_counter(self, client: MeltemModbusClient) -> None:

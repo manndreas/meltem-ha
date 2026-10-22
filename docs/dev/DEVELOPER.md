@@ -224,14 +224,21 @@ window only counts answers to Meltem requests, so a recycle can still hit
 another integration that keeps the gateway busy with its own traffic.
 
 The client maps `ModbusConnectionError` to `MeltemConnectionError` and every
-other `ModbusError` to `MeltemModbusError`. When a unit times out before any
-of its blocks answered in a job, the rest of that job is skipped and all of
+other `ModbusError` to `MeltemModbusError`. Gateway readers also report missing
+or invalid payloads as `ModbusProtocolError`, so optional gateway reads cannot
+discard successful room updates because of an invalid value. Transport and
+read health share `NO_ANSWER_ERRORS` for timeouts and protocol errors; both
+count as missing valid answers for the coordinator's transport backoff and
+skip subsequent mode reads in the job.
+
+When a unit times out before any of its blocks answered in a job, the rest of
+that job is skipped and all of
 its groups are marked failed, so a silent unit costs one timeout plus one
 retry per job instead of one per block. The same holds when a unit falls
-silent during the current-mode status read: the first timeout there ends the job. Only an
-exception response starts the mode backoff, because only that is the HW-4
-refusal; a timeout is retried on the next flow job. The setup probe also stops
-at the first timeout of a unit.
+silent during the current-mode status read: the first timeout or protocol
+error there ends the job. Only an exception response starts the mode backoff,
+because only that is the HW-4 refusal; a timeout or protocol error is retried
+on the next flow job. The setup probe also stops at the first timeout of a unit.
 
 So far an unconfigured address timed out after about 0.8 s, while a
 physically powered-off unit caused no timeout at all: the gateway kept
