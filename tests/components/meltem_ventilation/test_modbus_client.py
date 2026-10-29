@@ -136,14 +136,23 @@ async def test_gateway_rf_statistics_decode_bridge_block(
 
 @pytest.mark.parametrize(
     ("low_word", "high_word", "expected"),
-    [(1, 0, "R000001"), (2, 0, "R000002"), (3, 0, "R000003")],
+    [
+        (0, 0, None),
+        (1, 0, "R000001"),
+        (2, 0, "R000002"),
+        (3, 0, "R000003"),
+        (0, 1, "R010000"),
+        (0xABCD, 0x12, "R12ABCD"),
+        (0xFFFF, 0xFF, "RFFFFFF"),
+        (0xFFFF, 0x100, None),
+    ],
 )
 async def test_room_app_setup_code_decodes_data_matrix_suffix(
     client: MeltemModbusClient,
     unit: MockModbusUnit,
     low_word: int,
     high_word: int,
-    expected: str,
+    expected: str | None,
 ) -> None:
     unit.holding[40000] = [low_word, high_word]
 

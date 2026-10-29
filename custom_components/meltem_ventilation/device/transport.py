@@ -66,7 +66,9 @@ class TransportPolicy:
         self._answered_requests = 0
         self._last_read_answer: dict[int, float] = {}
         self._link_recycles = 0
+        self._operation_lock = asyncio.Lock()
         self._request_lock = asyncio.Lock()
+        self._unanswered_reads: dict[int, set[tuple[int, int]]] = {}
         self._read_interval = 0.0
         self._last_read_finished: float | None = None
         self._closed = False
@@ -177,15 +179,36 @@ class TransportPolicy:
     ) -> T:
         """Run one request, retrying once on a lost link, timeout, or silent target."""
 
-        try:
-            return await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
-        except ClientClosedError:
-            raise
-        except ModbusConnectionError:
-            await async_sleep(self._connection_retry_delay)
-        except _RETRYABLE_ERRORS:
-            pass
-        return await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
+        async with self._operation_lock:
+            signature = (args[0], args[1]) if is_read and len(args) == 2 else None
+            try:
+                result = await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
+            except ClientClosedError:
+                raise
+            except ModbusConnectionError:
+                await async_sleep(self._connection_retry_delay)
+                result = await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
+            except _RETRYABLE_ERRORS:
+                result = await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
+
+            unanswered = self._unanswered_reads.get(unit_id, set())
+            if signature is not None and any(
+                address != signature[0] and count == signature[1] for address, count in unanswered
+            ):
+                confirmed = await self._attempt(unit, unit_id, operation, *args, is_read=True)
+                if confirmed != result:
+                    unanswered.add(signature)
+                    raise ModbusProtocolError("Ambiguous delayed register response")
+                unanswered.difference_update(
+                    (address, count)
+                    for address, count in tuple(unanswered)
+                    if count == signature[1]
+                )
+                if not unanswered:
+                    self._unanswered_reads.pop(unit_id, None)
+            if is_read and (not args or args[0] != REGISTER_RF_COMM_STATUS):
+                self._last_read_answer[unit_id] = time.monotonic()
+            return result
 
     async def _attempt[T](
         self,
@@ -206,9 +229,19 @@ class TransportPolicy:
                 started_at = time.monotonic()
                 try:
                     result = await operation(*args)
-                except (asyncio.CancelledError, ClientClosedError):
+                except asyncio.CancelledError:
+                    if is_read and len(args) == 2:
+                        self._unanswered_reads.setdefault(unit_id, set()).add((args[0], args[1]))
+                    raise
+                except ClientClosedError:
                     raise
                 except Exception as err:
+                    if (
+                        is_read
+                        and len(args) == 2
+                        and isinstance(err, (*NO_ANSWER_ERRORS, ModbusConnectionError))
+                    ):
+                        self._unanswered_reads.setdefault(unit_id, set()).add((args[0], args[1]))
                     self._record_request(started_at, success=False)
                     self._notify_request(self._request_outcome(err))
                     raise
@@ -228,8 +261,6 @@ class TransportPolicy:
             raise
 
         self._link_answered()
-        if is_read and (not args or args[0] != REGISTER_RF_COMM_STATUS):
-            self._last_read_answer[unit_id] = time.monotonic()
         return result
 
     def _link_answered(self) -> None:

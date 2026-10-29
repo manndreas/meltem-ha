@@ -1272,15 +1272,23 @@ class TestDirectionalWrites:
 
         client.write_unbalanced_levels = blocked_write
         first = asyncio.create_task(supply.async_set_percentage(40))
-        await asyncio.wait_for(started.wait(), 5)
-        second = asyncio.create_task(change_extract())
+        second: asyncio.Task[None] | None = None
         try:
+            await asyncio.wait_for(started.wait(), 5)
+            second = asyncio.create_task(change_extract())
             await asyncio.wait_for(second_started.wait(), 5)
             assert not second.done()
             assert client.write_level_calls == []
+            release.set()
+            await asyncio.wait_for(asyncio.gather(first, second), 5)
         finally:
             release.set()
-        await asyncio.wait_for(asyncio.gather(first, second), 5)
+            first.cancel()
+            if second is not None:
+                second.cancel()
+            await asyncio.gather(
+                first, *([second] if second is not None else []), return_exceptions=True
+            )
 
         assert client.write_unbalanced_calls == [("unit_1", 40, 60)]
         assert client.write_level_calls == [("unit_1", 40)]
@@ -1336,11 +1344,23 @@ class TestDirectionalWrites:
                 if change == "preset"
                 else coordinator.async_set_operation_mode("unit_1", change)
             )
-            await change_started.wait()
-            fan_task = asyncio.create_task(write_direction())
-            await fan_started.wait()
-            release_change.set()
-            await asyncio.gather(change_task, fan_task)
+            fan_task: asyncio.Task[None] | None = None
+            try:
+                await asyncio.wait_for(change_started.wait(), 5)
+                fan_task = asyncio.create_task(write_direction())
+                await asyncio.wait_for(fan_started.wait(), 5)
+                release_change.set()
+                await asyncio.wait_for(asyncio.gather(change_task, fan_task), 5)
+            finally:
+                release_change.set()
+                change_task.cancel()
+                if fan_task is not None:
+                    fan_task.cancel()
+                await asyncio.gather(
+                    change_task,
+                    *([fan_task] if fan_task is not None else []),
+                    return_exceptions=True,
+                )
 
         if change == "preset":
             assert client.write_unbalanced_calls == [("unit_1", 80, 40)]
@@ -1373,9 +1393,12 @@ class TestDirectionalWrites:
 
         client.write_level = _yielding_write_level
         if concurrent:
-            await asyncio.gather(
-                coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, first_level),
-                coordinator.async_set_direction_level("unit_1", DIRECTION_EXTRACT, 30),
+            await asyncio.wait_for(
+                asyncio.gather(
+                    coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, first_level),
+                    coordinator.async_set_direction_level("unit_1", DIRECTION_EXTRACT, 30),
+                ),
+                5,
             )
         else:
             await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, first_level)
@@ -1414,6 +1437,84 @@ class TestDirectionalWrites:
         assert client.write_level_calls == [("unit_1", 0), ("unit_1", 60)]
         assert client.write_unbalanced_calls == []
         assert coordinator.effective_levels("unit_1") == (60, 60)
+
+
+class TestCancelledWrites:
+    async def test_preexisting_read_at_cancel_timestamp_is_not_fresh(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        state = _fresh(RoomState(operation_mode="manual", target_level=30))["unit_1"]
+        coordinator.async_set_updated_data({"unit_1": state})
+        read_at = state.read_health_for("flow_control").last_successful_read
+        assert read_at is not None
+        client.write_level = AsyncMock(side_effect=asyncio.CancelledError)
+
+        with patch(
+            "custom_components.meltem_ventilation.coordinator.dt_util.utcnow", return_value=read_at
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await coordinator.async_set_level("unit_1", 80)
+            assert coordinator.effective_levels("unit_1") == (None, None)
+
+    @pytest.mark.parametrize("previous_write", [False, True])
+    async def test_cancelled_send_invalidates_previous_airflow(
+        self, hass: HomeAssistant, previous_write: bool
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.async_set_updated_data(
+            _fresh(RoomState(operation_mode="manual", target_level=30))
+        )
+        if previous_write:
+            await coordinator.async_set_level("unit_1", 60)
+        client.write_level = AsyncMock(side_effect=asyncio.CancelledError)
+
+        with pytest.raises(asyncio.CancelledError):
+            await coordinator.async_set_level("unit_1", 80)
+
+        assert coordinator.effective_levels("unit_1") == (None, None)
+        assert _write_status(coordinator, "airflow_levels") == "unconfirmed"
+        assert not coordinator._gateway_lock.locked()
+        with pytest.raises(HomeAssistantError):
+            await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 40)
+        with pytest.raises(HomeAssistantError):
+            await coordinator.async_set_operation_mode("unit_1", "manual")
+        assert client.write_unbalanced_calls == []
+        assert client.write_operating_mode_calls == []
+
+    async def test_cancelled_queued_write_does_not_invalidate_previous_write(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.async_set_updated_data(
+            _fresh(RoomState(operation_mode="manual", target_level=30))
+        )
+        await coordinator.async_set_level("unit_1", 60)
+        await coordinator._gateway_lock.acquire()
+        task = asyncio.create_task(coordinator.async_set_level("unit_1", 80))
+        try:
+            await asyncio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 5)
+        finally:
+            coordinator._gateway_lock.release()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        assert client.write_level_calls == [("unit_1", 60)]
+        assert coordinator.effective_levels("unit_1") == (60, 60)
+        assert _write_status(coordinator, "airflow_levels") == "pending"
+
+    async def test_cancelled_control_setting_is_unconfirmed(self, hass: HomeAssistant) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_F])
+        client.write_control_setting = AsyncMock(side_effect=asyncio.CancelledError)
+
+        with pytest.raises(asyncio.CancelledError):
+            await coordinator.async_set_control_setting("unit_1", "humidity_starting_point", 60)
+
+        assert _write_status(coordinator, _HUMIDITY_START_WRITE) == "unconfirmed"
+        assert not coordinator._gateway_lock.locked()
 
 
 class TestAirflowWriteConfirmation:
@@ -2343,9 +2444,15 @@ class TestCoordinator:
         writes = [(min_key, 80), (max_key, 20)]
         if not minimum_first:
             writes.reverse()
-        results = await asyncio.gather(
-            *(coordinator.async_set_control_setting("unit_1", key, value) for key, value in writes),
-            return_exceptions=True,
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                *(
+                    coordinator.async_set_control_setting("unit_1", key, value)
+                    for key, value in writes
+                ),
+                return_exceptions=True,
+            ),
+            5,
         )
 
         assert results[0] is None

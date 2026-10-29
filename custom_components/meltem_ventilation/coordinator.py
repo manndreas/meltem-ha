@@ -204,6 +204,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         self._logged_unavailable_rooms: set[str] = set()
         self._target_read_failing: set[str] = set()
         self._writes = WriteConfirmations(on_issue=self._record_write_issue)
+        self._uncertain_flow_since: dict[str, datetime] = {}
         self._optimistic_presets = OptimisticOverlay[str, str](
             hass,
             PRESET_OPTIMISTIC_SECONDS,
@@ -615,11 +616,29 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
     def _resolve_levels(self, room_key: str) -> tuple[LevelPair, str | None]:
         """Return the effective supply/extract pair and where it comes from."""
 
+        if self._flow_write_uncertain(room_key):
+            return (None, None), None
         state = self.safe_data.get(room_key)
         reported, source = (None, None) if state is None else reported_levels(state)
         if (pending := self._optimistic_levels.active(room_key, state, reported)) is not None:
             return pending, LEVEL_SOURCE_PENDING
         return (reported if reported is not None else (None, None)), source
+
+    def _flow_write_uncertain(self, room_key: str) -> bool:
+        written_at = self._uncertain_flow_since.get(room_key)
+        if written_at is None:
+            return False
+        state = self.safe_data.get(room_key)
+        if (
+            state is not None
+            and read_health.group_fresh(state, "flow_control")
+            and (last_read := state.read_health_for("flow_control").last_successful_read)
+            is not None
+            and last_read > written_at
+        ):
+            self._uncertain_flow_since.pop(room_key, None)
+            return False
+        return True
 
     def level_write_fallback(self, room_key: str) -> str | None:
         """Return the fallback used by the last fan write until a mode readback follows."""
@@ -897,6 +916,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         room = self._rooms_by_key[room_key]
         async with self._gateway_lock:
+            if self._flow_write_uncertain(room_key):
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="airflow_unknown",
+                    translation_placeholders={"unit": room.name},
+                )
             levels, source = self._resolve_levels(room_key)
             if (pending := self._optimistic_levels.get(room_key, None)) is not None:
                 levels, source = pending, LEVEL_SOURCE_PENDING
@@ -919,6 +944,12 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         room = self._rooms_by_key[room_key]
         state = self.safe_data.get(room.key, EMPTY_ROOM_STATE)
+        if self._flow_write_uncertain(room_key):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="airflow_unknown",
+                translation_placeholders={"unit": room.name},
+            )
         if operation_mode == OPERATION_MODE_INACTIVE:
             if state.operation_mode in DIRECT_OPERATION_MODES and read_health.group_fresh(
                 state, "flow_control"
@@ -1081,6 +1112,19 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             )
         try:
             write_result = await write_method(*write_args)
+        except asyncio.CancelledError:
+            if write_group(write_key) == "flow_control":
+                self._uncertain_flow_since[room.key] = dt_util.utcnow()
+                for previous_key, flow_overlay in self._overlays.items():
+                    if write_group(previous_key) == "flow_control":
+                        flow_overlay.clear(room.key)
+            elif overlay is not None:
+                overlay.clear(room.key)
+            self._writes.supersede(room.key, write_key)
+            self._writes.record_pending(room.key, write_key, expected_value)
+            self._writes.mark_unconfirmed(room.key, write_key, "Write was cancelled")
+            self.async_update_listeners()
+            raise
         except Exception as err:
             # A failed write makes any earlier pending value doubtful.
             if overlay is not None:

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.components.diagnostics import REDACTED, async_redact_data
 from homeassistant.core import HomeAssistant
@@ -18,6 +19,26 @@ from .models import (
 )
 
 TO_REDACT: set[str] = {CONF_PORT}
+_SETUP_CODE = re.compile(r"R[0-9A-Fa-f]{6}|(?<![A-Za-z0-9])r[0-9A-Fa-f]{6}(?![A-Za-z0-9])")
+
+
+def _redact_setup_codes(value: Any) -> Any:
+    if isinstance(value, str):
+        return _SETUP_CODE.sub(REDACTED, value)
+    if isinstance(value, dict):
+        return {
+            _redact_setup_codes(key): (
+                REDACTED
+                if key == "app_setup_code" and item is not None
+                else _redact_setup_codes(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_setup_codes(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_setup_codes(item) for item in value)
+    return value
 
 
 def redact_port(message: str | None, port: str) -> str | None:
@@ -66,7 +87,10 @@ async def async_get_config_entry_diagnostics(
 
     runtime_data: MeltemRuntimeData | None = getattr(entry, "runtime_data", None)
     if runtime_data is None:
-        return {"entry": _serialize_entry(entry), "coordinator": None}
+        return cast(
+            dict[str, Any],
+            _redact_setup_codes({"entry": _serialize_entry(entry), "coordinator": None}),
+        )
 
     coordinator = runtime_data.coordinator
     port = str(entry.data[CONF_PORT])
@@ -84,31 +108,40 @@ async def async_get_config_entry_diagnostics(
         gateway_probe_error = redact_port(f"{type(err).__name__}: {err}", port)
 
     last_job_error = coordinator.last_job_error
-    return {
-        "entry": _serialize_entry(entry),
-        "coordinator": {
-            "last_update_success": coordinator.last_update_success,
-            "update_interval_seconds": (
-                coordinator.update_interval.total_seconds()
-                if coordinator.update_interval is not None
-                else None
-            ),
-            "configured_room_count": len(coordinator.rooms),
-            "state_room_count": coordinator.state_room_count,
-            "gateway_units": gateway_units,
-            "gateway_probe_error": gateway_probe_error,
-            "transport": transport,
-            "cumulative_diagnostics": cumulative_snapshot,
-            "last_job_error": (
-                redact_port(str(last_job_error), port) if last_job_error is not None else None
-            ),
-            "unavailable_rooms": [
-                room.key for room in coordinator.rooms if not coordinator.room_available(room.key)
-            ],
-            "rooms": [_serialize_room(room) for room in coordinator.rooms],
-            "room_states": {
-                room_key: _serialize_room_state(room_state, port)
-                for room_key, room_state in coordinator.safe_data.items()
-            },
-        },
-    }
+    return cast(
+        dict[str, Any],
+        _redact_setup_codes(
+            {
+                "entry": _serialize_entry(entry),
+                "coordinator": {
+                    "last_update_success": coordinator.last_update_success,
+                    "update_interval_seconds": (
+                        coordinator.update_interval.total_seconds()
+                        if coordinator.update_interval is not None
+                        else None
+                    ),
+                    "configured_room_count": len(coordinator.rooms),
+                    "state_room_count": coordinator.state_room_count,
+                    "gateway_units": gateway_units,
+                    "gateway_probe_error": gateway_probe_error,
+                    "transport": transport,
+                    "cumulative_diagnostics": cumulative_snapshot,
+                    "last_job_error": (
+                        redact_port(str(last_job_error), port)
+                        if last_job_error is not None
+                        else None
+                    ),
+                    "unavailable_rooms": [
+                        room.key
+                        for room in coordinator.rooms
+                        if not coordinator.room_available(room.key)
+                    ],
+                    "rooms": [_serialize_room(room) for room in coordinator.rooms],
+                    "room_states": {
+                        room_key: _serialize_room_state(room_state, port)
+                        for room_key, room_state in coordinator.safe_data.items()
+                    },
+                },
+            }
+        ),
+    )

@@ -27,6 +27,7 @@ from custom_components.meltem_ventilation.const import (
     MODE_UNBALANCED,
     REGISTER_APPLY,
     REGISTER_CURRENT_LEVEL,
+    REGISTER_DAYS_UNTIL_FILTER_CHANGE,
     REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
@@ -39,7 +40,7 @@ from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemModbusError,
     build_serial_params,
 )
-from custom_components.meltem_ventilation.models import RoomConfig
+from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Pseudo-terminals require POSIX")
 
@@ -145,6 +146,10 @@ class _RtuGateway:
                 response = _frame(response[:1] + bytes((4,)) + response[2:-2])
             elif action == "wrong_length":
                 response = _frame(response[:2] + bytes((4,)) + response[3:-2] + b"\x00\x01")
+            elif action == "wrong_write_address":
+                response = _frame(response[:2] + (address + 1).to_bytes(2, "big") + response[4:-2])
+            elif action == "wrong_write_value":
+                response = _frame(response[:4] + (value + 1).to_bytes(2, "big"))
             elif action == "fragmented":
                 os.write(self.master, response[:3])
                 self.pending.append(self.loop.call_later(0.02, os.write, self.master, response[3:]))
@@ -281,6 +286,38 @@ async def test_real_serial_client_retries_a_write_applied_before_its_reply_was_l
     assert serial_gateway.registers[2][REGISTER_APPLY] == 0
 
 
+@pytest.mark.parametrize("response", ["wrong_write_address", "wrong_write_value"])
+@pytest.mark.parametrize("bad_replies", [1, 2])
+async def test_real_serial_client_rejects_write_echo_mismatches(
+    serial_gateway: _RtuGateway, response: str, bad_replies: int
+) -> None:
+    connection = _connection(serial_gateway.device)
+    client = MeltemModbusClient(connection.for_unit, port=serial_gateway.device)
+    room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+    serial_gateway.actions.extend(("normal", response, response if bad_replies == 2 else "normal"))
+    try:
+        if bad_replies == 1:
+            await client.write_level(room, 50)
+        else:
+            with pytest.raises(MeltemModbusError):
+                await client.write_level(room, 50)
+        assert serial_gateway.requests == [
+            (2, 6, REGISTER_MODE, MODE_MANUAL),
+            (2, 6, REGISTER_CURRENT_LEVEL, 100),
+            (2, 6, REGISTER_CURRENT_LEVEL, 100),
+            *([(2, 6, REGISTER_APPLY, 0)] if bad_replies == 1 else []),
+        ]
+        await client.write_level(room, 40)
+        assert serial_gateway.requests[-3:] == [
+            (2, 6, REGISTER_MODE, MODE_MANUAL),
+            (2, 6, REGISTER_CURRENT_LEVEL, 80),
+            (2, 6, REGISTER_APPLY, 0),
+        ]
+    finally:
+        client.shutdown()
+        await connection.close()
+
+
 async def test_real_serial_client_surfaces_modbus_exception(serial_gateway: _RtuGateway) -> None:
     connection = _connection(serial_gateway.device)
     client = MeltemModbusClient(connection.for_unit, port=serial_gateway.device)
@@ -384,6 +421,40 @@ async def test_late_reply_from_another_unit_cannot_be_used_as_the_next_units_val
         (3, 3, REGISTER_CURRENT_LEVEL, 1),
         (3, 3, REGISTER_CURRENT_LEVEL, 1),
     ]
+
+
+async def test_late_reply_cannot_be_used_for_another_register_of_the_same_unit(
+    serial_gateway: _RtuGateway,
+) -> None:
+    serial_gateway.registers[2][REGISTER_CURRENT_LEVEL] = 60
+    serial_gateway.registers[2][REGISTER_DAYS_UNTIL_FILTER_CHANGE] = 90
+    serial_gateway.registers[3][REGISTER_CURRENT_LEVEL] = 100
+    connection = _connection(serial_gateway.device)
+    client = MeltemModbusClient(connection.for_unit, port=serial_gateway.device)
+    room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+    serial_gateway.actions.extend(("late", "timeout", "send_late", "normal"))
+    try:
+        with pytest.raises(MeltemModbusError):
+            await client.read_balanced_target_readback(room)
+        state = await client.read_room_state(
+            room,
+            RoomState(days_until_filter_change=25),
+            RefreshPlan.only(refresh_filter_days=True),
+        )
+        other = RoomConfig(key="unit_2", name="Unit 2", profile="ii_plain", slave=3)
+        assert await client.read_balanced_target_readback(other) == 50
+        recovered = await client.read_room_state(
+            room, state, RefreshPlan.only(refresh_filter_days=True)
+        )
+    finally:
+        client.shutdown()
+        await connection.close()
+
+    assert state.days_until_filter_change == 25
+    assert state.read_health_for("filter").last_error is not None
+    assert state.read_health_for("filter").last_successful_read is None
+    assert recovered.days_until_filter_change == 90
+    assert recovered.read_health_for("filter").last_error is None
 
 
 @pytest.fixture

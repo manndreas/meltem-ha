@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import types
+from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -94,6 +96,50 @@ def _dump(diagnostics: dict[str, Any]) -> str:
 
 
 class TestDiagnostics:
+    @pytest.mark.parametrize("with_runtime", [False, True])
+    async def test_setup_codes_are_redacted_everywhere_without_mutating_sources(
+        self, hass: HomeAssistant, with_runtime: bool
+    ) -> None:
+        entry = _entry(hass, with_runtime=with_runtime)
+        entry.data[CONF_ROOMS][0].update(app_setup_code="R00AB12", preview="R-Code R00AB12 | ID 42")
+        entry.data[CONF_ROOMS].append({"key": "unit_2", "preview": "R-Code R000123 | ID 43"})
+        original_data = deepcopy(dict(entry.data))
+        if with_runtime:
+            coordinator = entry.runtime_data.coordinator
+            room = replace(_ROOM, app_setup_code="R00AB12", preview="R-Code R00AB12 | ID 42")
+            coordinator.rooms = [room]
+            coordinator.last_job_error = MeltemModbusError("Read R000456 failed")
+            coordinator.async_discover_gateway_units.side_effect = MeltemModbusError(
+                "Probe R000789 failed"
+            )
+            coordinator.safe_data = {
+                "unit_1": RoomState().with_read_health(
+                    "flow", ReadHealth(last_error="Read R000ABC failed")
+                )
+            }
+            coordinator.client.transport_diagnostics.return_value = {
+                "error": "R000DEF failed",
+                "detail": "embeddedR000BADsuffix",
+                "app_setup_code": "not-a-formatted-code",
+            }
+
+        result = await async_get_config_entry_diagnostics(hass, entry)
+        rendered = _dump(result)
+
+        for secret in ("R00AB12", "R000123", "R000456", "R000789", "R000ABC", "R000DEF", "R000BAD"):
+            assert secret not in rendered
+        assert "not-a-formatted-code" not in rendered
+        assert result["entry"]["data"][CONF_ROOMS][0]["app_setup_code"] == REDACTED
+        assert result["entry"]["data"][CONF_ROOMS][0]["preview"] == f"R-Code {REDACTED} | ID 42"
+        assert dict(entry.data) == original_data
+        if with_runtime:
+            coordinator = entry.runtime_data.coordinator
+            assert coordinator.rooms == [
+                replace(_ROOM, app_setup_code="R00AB12", preview="R-Code R00AB12 | ID 42")
+            ]
+            assert coordinator.rooms[0].app_setup_code == "R00AB12"
+            assert coordinator.last_job_error.args == ("Read R000456 failed",)
+
     async def test_serial_port_is_redacted_everywhere(self, hass: HomeAssistant) -> None:
         """The diagnostics download is attached to public issues."""
         entry = _entry(hass)

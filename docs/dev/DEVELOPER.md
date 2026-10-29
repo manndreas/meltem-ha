@@ -204,6 +204,21 @@ instance per gateway link):
 | other `ModbusExceptionError` | no retry; resets the counter |
 | `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS` timeouts in a row, across all units, and no answer at all for `TRANSPORT_LINK_QUIET_SECONDS` | `disconnect()`; the next request reopens the link, and a new quiet window starts |
 
+After an unanswered or cancelled read, the policy remembers its unit, address,
+and length. The next successful read of a different address with the same
+length on that unit is repeated once before its result is accepted. Matching
+values clear the remembered uncertainty for that length; conflicting values
+fail the read and leave it uncertain. The control read is serialized with the
+original operation, counts as another request, and obeys the shared read-rate
+limit. Other units and different response lengths do not trigger it. This adds
+bus traffic only after an uncertain read.
+
+Modbus RTU read replies contain neither the requested register address nor a
+transaction ID. Two matching values do not prove that both replies belong to
+the new request: multiple delayed replies or later delayed responses can still
+be mistaken for current data. A changing value can also make a valid pair
+disagree. The control read reduces this risk; it cannot eliminate it.
+
 An exception response is not retried immediately by the transport. For a
 polled component, `AcknowledgeError` (`0x05`) starts a per-slave/component
 backoff of 10, 20, 40, then at most 60 seconds. The next due read retries the
@@ -427,6 +442,15 @@ unsettled commands of the other two kinds as `superseded` and clears their
 pending displays. This outcome is final and does not flag `data_health`.
 Failed replacements do not supersede earlier commands. Intensive and control
 setting writes remain independent.
+
+Cancellation while sending is different from a definite failure: the device
+may already have applied some or all of the command. The new outcome is
+`unconfirmed`, and affected pending overlays are cleared without doing I/O
+during cancellation. After an interrupted flow-control write, directional and
+operating-mode changes that depend on the old state are refused until a later
+successful flow-control read; an explicit balanced or unbalanced command can
+still be sent. Cancellation while merely waiting for the gateway lock leaves
+the previous state unchanged.
 
 Pending values are dropped when a readback confirms them
 (`_confirm_pending_writes`), never as a side effect of reading an entity
@@ -820,9 +844,9 @@ missing, truncated, corrupted, delayed, and mismatched responses, retries,
 and reconnection. Home Assistant fan service tests also run through its shared
 Modbus integration and the real RTU client to the simulated serial device.
 An RTU reply arriving after a timeout can satisfy a retry of the same read;
-the protocol does not identify which attempt produced it. A read response
-does not identify the register address, so an otherwise identical late
-response from the same unit can also be ambiguous for a subsequent read.
+the protocol does not identify which attempt produced it. The tests also
+exercise the bounded control read for ambiguous subsequent responses, but the
+protocol limitations described above remain.
 A write whose reply was lost may likewise have been applied more than once.
 These tests do not establish that repeated writes are harmless on physical
 hardware or that the simulated post-write readback models the physical latch.

@@ -10,6 +10,13 @@ update interval for every entity. It defaults to **4 read requests per second**
 and can be set from **0.5 to 10 requests per second** in steps of 0.5. Write
 sequences retain their separate hardware timing.
 
+After a read times out, is interrupted, or loses its connection, a later read
+of a different register with the same response length on that unit may require
+one additional control read. This read shares the rate cap. Conflicting results
+are treated as a failed read instead of replacing the previous value. The
+Modbus RTU protocol cannot always distinguish delayed replies, so matching
+results reduce the risk but cannot guarantee that the value is current.
+
 Each unit's values are refreshed in groups:
 
 | Data group | Normal refresh interval |
@@ -92,6 +99,18 @@ unavailable. It turns on when a read group is stale (three consecutive failed
 read jobs or its stale interval has elapsed) or while a recent command has
 failed, mismatched, or remained unconfirmed. Its attributes show details per
 group and for recent commands.
+
+An interrupted command may already have reached the unit. It is marked
+unconfirmed, and direction or operating-mode changes that depend on the old
+airflow are refused until a fresh mode read is available.
+
+### Diagnostics download privacy
+
+The diagnostics download redacts the configured serial port and R-codes,
+including R-codes in legacy unit previews and error messages. This does not
+change the saved configuration, device registry, or optional app setup code
+entity. Review any download before sharing it because other contextual data,
+such as unit names, may still be present.
 
 ### Gateway diagnostics
 

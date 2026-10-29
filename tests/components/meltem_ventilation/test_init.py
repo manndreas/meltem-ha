@@ -887,6 +887,117 @@ class TestSharedModbusConnection:
             assert supply.attributes["percentage"] == 60
             assert await hass.config_entries.async_unload(entry.entry_id)
 
+    @pytest.mark.parametrize("previous_write", [False, True])
+    @pytest.mark.parametrize("after_write", [False, True], ids=("before", "after"))
+    @pytest.mark.parametrize(
+        "cancel_address", [REGISTER_MODE, REGISTER_CURRENT_LEVEL, REGISTER_APPLY]
+    )
+    async def test_cancelled_write_at_each_register_is_uncertain(
+        self,
+        hass: HomeAssistant,
+        previous_write: bool,
+        after_write: bool,
+        cancel_address: int,
+    ) -> None:
+        links: list[MockModbusConnection] = []
+        entry = _entry(hass, options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0})
+
+        with self._patch_link(links):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            try:
+                await hass.async_block_till_done(wait_background_tasks=True)
+                coordinator = entry.runtime_data.coordinator
+                unit = links[0].for_unit(2)
+                if previous_write:
+                    await coordinator.async_set_level("unit_1", 60)
+                write_register = unit.write_register
+                written: list[int] = []
+
+                async def cancel_at_register(address: int, value: int) -> None:
+                    if address == cancel_address and not after_write:
+                        raise asyncio.CancelledError()
+                    await write_register(address, value)
+                    written.append(address)
+                    if address == cancel_address:
+                        raise asyncio.CancelledError()
+
+                unit.write_register = cancel_at_register
+                with pytest.raises(asyncio.CancelledError):
+                    await coordinator.async_set_level("unit_1", 80)
+                unit.write_register = write_register
+
+                assert not coordinator._gateway_lock.locked()
+                assert coordinator.effective_levels("unit_1") == (None, None)
+                confirmation = coordinator._writes.by_room["unit_1"]["airflow_levels"]
+                assert confirmation.expected_value == (80, 80)
+                assert confirmation.status == "unconfirmed"
+                with pytest.raises(HomeAssistantError):
+                    await coordinator.async_set_direction_level("unit_1", "extract", 40)
+                assert (REGISTER_APPLY in written) is (
+                    cancel_address == REGISTER_APPLY and after_write
+                )
+            finally:
+                assert await hass.config_entries.async_unload(entry.entry_id)
+
+    async def test_cancelled_applied_write_requires_a_fresh_readback(
+        self, hass: HomeAssistant
+    ) -> None:
+        links: list[MockModbusConnection] = []
+        entry = _entry(hass, options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0})
+
+        with self._patch_link(links):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            try:
+                await hass.async_block_till_done(wait_background_tasks=True)
+                coordinator = entry.runtime_data.coordinator
+                unit = links[0].for_unit(2)
+                writes: list[WriteEvent] = []
+
+                def apply_write(event: WriteEvent) -> None:
+                    writes.append(event)
+                    if event.address == REGISTER_APPLY:
+                        current = next(
+                            int(write.values[0])
+                            for write in reversed(writes)
+                            if write.address == REGISTER_CURRENT_LEVEL
+                        )
+                        unit.holding[REGISTER_MODE_STATUS] = [MODE_MANUAL, current, 0]
+                        unit.holding[REGISTER_EXTRACT_AIR_FLOW] = [current // 2, current // 2]
+
+                unit.on_write(apply_write)
+                await coordinator.async_set_level("unit_1", 60)
+                assert coordinator.effective_levels("unit_1") == (60, 60)
+                write_register = unit.write_register
+
+                async def cancel_after_apply(address: int, value: int) -> None:
+                    await write_register(address, value)
+                    if address == REGISTER_APPLY:
+                        raise asyncio.CancelledError()
+
+                unit.write_register = cancel_after_apply
+                with pytest.raises(asyncio.CancelledError):
+                    await coordinator.async_set_level("unit_1", 80)
+                unit.write_register = write_register
+
+                assert not coordinator._gateway_lock.locked()
+                confirmation = coordinator._writes.by_room["unit_1"]["airflow_levels"]
+                assert confirmation.expected_value == (80, 80)
+                assert confirmation.status == "unconfirmed"
+                assert coordinator.effective_levels("unit_1") == (None, None)
+                assert coordinator.data_health_stale("unit_1") is True
+                with pytest.raises(HomeAssistantError):
+                    await coordinator.async_set_direction_level("unit_1", "extract", 40)
+
+                coordinator._startup_jobs = []
+                for job in coordinator._jobs:
+                    job.next_due = 0.0 if job.key == "flow" else float("inf")
+                coordinator._last_read_started = None
+                await coordinator.async_refresh()
+                assert coordinator.effective_levels("unit_1") == (80, 80)
+                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
+            finally:
+                assert await hass.config_entries.async_unload(entry.entry_id)
+
     @pytest.mark.parametrize("kind", ["number", "select", "switch"])
     @pytest.mark.parametrize("write_fails", [False, True], ids=("confirmed", "rejected"))
     async def test_other_services_use_the_shared_link(

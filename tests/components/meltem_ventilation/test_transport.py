@@ -166,6 +166,113 @@ def clock_fixture(monkeypatch: pytest.MonkeyPatch, sleeps: list[float]) -> Simpl
     return clock
 
 
+class TestDelayedReadResponses:
+    async def test_only_ambiguous_reads_are_checked_and_each_attempt_is_rate_limited(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
+    ) -> None:
+        policy.update_request_rate(2.0)
+        original = AsyncMock(side_effect=[_SILENT, [10]])
+        assert await policy.run(unit, 2, original, 41121, 1, is_read=True) == [10]
+
+        neighbour = AsyncMock(return_value=[30])
+        assert await policy.run(unit, 3, neighbour, 41027, 1, is_read=True) == [30]
+        different_length = AsyncMock(return_value=[40, 50])
+        assert await policy.run(unit, 2, different_length, 41020, 2, is_read=True) == [40, 50]
+        same_register = AsyncMock(return_value=[10])
+        assert await policy.run(unit, 2, same_register, 41121, 1, is_read=True) == [10]
+
+        checked = AsyncMock(side_effect=[[90], [90]])
+        assert await policy.run(unit, 2, checked, 41027, 1, is_read=True) == [90]
+        assert checked.await_count == 2
+        assert (
+            neighbour.await_count == different_length.await_count == same_register.await_count == 1
+        )
+        assert policy.diagnostics()["request_sample_count"] == 7
+        assert clock.now == pytest.approx(103.0)
+
+        after_recovery = AsyncMock(return_value=[55])
+        assert await policy.run(unit, 2, after_recovery, 40100, 1, is_read=True) == [55]
+        assert after_recovery.await_count == 1
+
+    async def test_mismatch_keeps_read_uncertain_until_a_matching_check(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
+    ) -> None:
+        with pytest.raises(ModbusTimeoutError):
+            await policy.run(unit, 2, AsyncMock(side_effect=_SILENT), 41121, 1, is_read=True)
+
+        mismatch = AsyncMock(side_effect=[[60], [90]])
+        with pytest.raises(ModbusProtocolError, match="Ambiguous delayed register response"):
+            await policy.run(unit, 2, mismatch, 41027, 1, is_read=True)
+        assert mismatch.await_count == 2
+        assert policy.seconds_since_read_answer(2) is None
+
+        recovery = AsyncMock(side_effect=[[90], [90]])
+        assert await policy.run(unit, 2, recovery, 41027, 1, is_read=True) == [90]
+        assert recovery.await_count == 2
+        assert policy.seconds_since_read_answer(2) == 0
+
+    @pytest.mark.parametrize("error", [ModbusTimeoutError("silent"), asyncio.CancelledError()])
+    async def test_failed_or_cancelled_check_keeps_read_uncertain(
+        self, policy: TransportPolicy, unit: AsyncMock, error: BaseException
+    ) -> None:
+        await policy.run(unit, 2, AsyncMock(side_effect=[_SILENT, [60]]), 41121, 1, is_read=True)
+        with pytest.raises(type(error)):
+            await policy.run(unit, 2, AsyncMock(side_effect=[[90], error]), 41027, 1, is_read=True)
+
+        recovery = AsyncMock(side_effect=[[90], [90]])
+        assert await policy.run(unit, 2, recovery, 41027, 1, is_read=True) == [90]
+        assert recovery.await_count == 2
+
+    async def test_control_read_cannot_be_interleaved_with_another_request(
+        self, policy: TransportPolicy, unit: AsyncMock
+    ) -> None:
+        await policy.run(unit, 2, AsyncMock(side_effect=[_SILENT, [60]]), 41121, 1, is_read=True)
+        started = asyncio.Event()
+        release = asyncio.Event()
+        requests: list[int] = []
+
+        async def read(address: int, count: int) -> list[int]:
+            requests.append(address)
+            if len(requests) == 1:
+                started.set()
+                await release.wait()
+            return [90]
+
+        first = asyncio.create_task(policy.run(unit, 2, read, 41027, 1, is_read=True))
+        second: asyncio.Task[list[int]] | None = None
+        try:
+            await asyncio.wait_for(started.wait(), 5)
+            second = asyncio.create_task(policy.run(unit, 2, read, 40100, 1, is_read=True))
+            await asyncio.sleep(0)
+            assert requests == [41027]
+            release.set()
+            await asyncio.wait_for(asyncio.gather(first, second), 5)
+            assert requests == [41027, 41027, 40100]
+        finally:
+            release.set()
+            first.cancel()
+            if second is not None:
+                second.cancel()
+            await asyncio.gather(
+                first, *([second] if second is not None else []), return_exceptions=True
+            )
+
+    async def test_shutdown_before_control_read_keeps_previous_success_time(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
+    ) -> None:
+        await policy.run(unit, 2, AsyncMock(side_effect=[_SILENT, [60]]), 41121, 1, is_read=True)
+        clock.now += 1
+
+        async def shutdown_after_first_read(address: int, count: int) -> list[int]:
+            policy.shutdown()
+            return [90]
+
+        with pytest.raises(ClientClosedError):
+            await policy.run(unit, 2, shutdown_after_first_read, 41027, 1, is_read=True)
+        assert policy.seconds_since_read_answer(2) == 1
+        assert (41121, 1) in policy._unanswered_reads[2]
+
+
 class TestCommunicationMetrics:
     @pytest.mark.parametrize("exception_reply", [False, True])
     async def test_last_answer_timestamp_tracks_valid_replies_only(
@@ -377,8 +484,11 @@ class TestReadRequestRate:
             await asyncio.sleep(0)
             return [1]
 
-        await asyncio.gather(
-            *(policy.run(unit, slave, _read, 41020, 1, is_read=True) for slave in (2, 3, 4))
+        await asyncio.wait_for(
+            asyncio.gather(
+                *(policy.run(unit, slave, _read, 41020, 1, is_read=True) for slave in (2, 3, 4))
+            ),
+            5,
         )
 
         assert starts == pytest.approx([100.0, 100.5, 101.0])
@@ -449,18 +559,23 @@ class TestReadRequestRate:
         )
         operation = AsyncMock(return_value=[1])
         task = asyncio.create_task(_run(policy, unit, operation))
-        await waiting.wait()
-        if shutdown:
-            policy.shutdown()
+        try:
+            await asyncio.wait_for(waiting.wait(), 5)
+            if shutdown:
+                policy.shutdown()
+                resume.set()
+                with pytest.raises(ClientClosedError):
+                    await asyncio.wait_for(task, 5)
+            else:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 5)
+                clock.now += 1.0
+                assert await _run(policy, unit, AsyncMock(return_value=[1])) == [1]
+        finally:
             resume.set()
-            with pytest.raises(ClientClosedError):
-                await task
-        else:
             task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            clock.now += 1.0
-            assert await _run(policy, unit, AsyncMock(return_value=[1])) == [1]
+            await asyncio.gather(task, return_exceptions=True)
         operation.assert_not_awaited()
 
     @pytest.mark.parametrize("rate", [0.0, -1.0, float("nan"), float("inf")])
