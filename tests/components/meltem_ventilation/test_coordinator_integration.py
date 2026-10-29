@@ -29,7 +29,12 @@ from custom_components.meltem_ventilation.binary_sensor import (
     MeltemBinarySensorEntity,
     MeltemDataHealthBinarySensor,
 )
-from custom_components.meltem_ventilation.const import DOMAIN, WRITE_HEALTH_RETENTION_SECONDS
+from custom_components.meltem_ventilation.const import (
+    DOMAIN,
+    REGISTER_EXTRACT_AIR_FLOW,
+    REGISTER_MODE_STATUS,
+    WRITE_HEALTH_RETENTION_SECONDS,
+)
 from custom_components.meltem_ventilation.coordinator import (
     TRANSPORT_BACKOFF_MAX_SECONDS,
     TRANSPORT_BACKOFF_START_SECONDS,
@@ -1352,6 +1357,56 @@ class TestPostWriteRefresh:
 
 
 class TestReadOneJob:
+    async def test_backed_off_flow_job_preserves_room_failure_streak_until_success(
+        self, hass: HomeAssistant
+    ) -> None:
+        link = MockModbusConnection()
+        unit = link.for_unit(_ROOM_1.slave)
+        unit.holding.update(
+            {
+                REGISTER_EXTRACT_AIR_FLOW: [30, 30],
+                REGISTER_MODE_STATUS: [3, 60, 0],
+            }
+        )
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, AcknowledgeError())
+        unit.fail_read(REGISTER_MODE_STATUS, AcknowledgeError())
+        client = MeltemModbusClient(link.for_unit, port="/dev/test")
+        entry = MockConfigEntry(domain=DOMAIN, title="Meltem", version=1, source="user")
+        entry.add_to_hass(hass)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass,
+            config_entry=entry,
+            client=client,
+            rooms=[_ROOM_1],
+            max_requests_per_second=2.0,
+        )
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        coordinator._room_failures["unit_1"] = 2
+        job = _due_job("flow")
+
+        first = await coordinator._read_one_job(coordinator.data, job)
+        assert coordinator._room_failures["unit_1"] == 3
+        assert not coordinator.room_available("unit_1")
+        reads_after_failure = len(unit.read_events)
+
+        second = await coordinator._read_one_job(first, job)
+
+        assert len(unit.read_events) == reads_after_failure
+        assert coordinator._room_failures["unit_1"] == 3
+        assert not coordinator.room_available("unit_1")
+
+        client._component_backoff.until[(_ROOM_1.slave, "airflow")] = time.monotonic() - 1
+        client._mode_backoff.until[(_ROOM_1.slave, "mode_status")] = time.monotonic() - 1
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, None)
+        unit.fail_read(REGISTER_MODE_STATUS, None)
+
+        recovered = await coordinator._read_one_job(second, job)
+
+        assert recovered["unit_1"].read_health_for("flow").last_error is None
+        assert "unit_1" not in coordinator._room_failures
+        assert coordinator.room_available("unit_1")
+        client.shutdown()
+
     async def test_backed_off_component_does_not_add_failed_group_counts(
         self, hass: HomeAssistant
     ) -> None:

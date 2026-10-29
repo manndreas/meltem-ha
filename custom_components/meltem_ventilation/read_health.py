@@ -114,15 +114,7 @@ def job_read_failure(
 ) -> JobReadFailure | None:
     """Return the failure when a job's primary read groups all failed without raising."""
 
-    groups = (
-        ("flow",)
-        if refresh_plan.refresh_airflow and room.supports_any(READ_GROUP_ENTITY_KEYS["flow"])
-        else tuple(
-            group_key
-            for group_key in refresh_plan.read_groups()
-            if room.supports_any(READ_GROUP_ENTITY_KEYS[group_key])
-        )
-    )
+    groups = _job_read_groups(room, refresh_plan)
     failed = [
         health
         for group_key in groups
@@ -135,6 +127,34 @@ def job_read_failure(
     return JobReadFailure(
         MeltemModbusError(str(failed[0].last_error)),
         link_failure=all(health.last_error_timed_out for health in failed),
+    )
+
+
+def job_read_succeeded(
+    room: RoomConfig,
+    state: RoomState,
+    refresh_plan: RefreshPlan,
+    read_started_at: datetime,
+) -> bool:
+    """Return whether a primary group had a successful read during this job."""
+
+    return any(
+        (health := state.read_health_for(group_key)).last_error is None
+        and health.last_successful_read is not None
+        and health.last_successful_read >= read_started_at
+        for group_key in _job_read_groups(room, refresh_plan)
+    )
+
+
+def _job_read_groups(room: RoomConfig, refresh_plan: RefreshPlan) -> tuple[str, ...]:
+    """Return the groups whose failures determine the outcome of one job."""
+
+    if refresh_plan.refresh_airflow and room.supports_any(READ_GROUP_ENTITY_KEYS["flow"]):
+        return ("flow",)
+    return tuple(
+        group_key
+        for group_key in refresh_plan.read_groups()
+        if room.supports_any(READ_GROUP_ENTITY_KEYS[group_key])
     )
 
 

@@ -1360,7 +1360,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 )
                 if not optional_rejection:
                     self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
-            else:
+            elif read_health.job_read_succeeded(
+                room, refreshed_state, job.refresh_plan, read_started_at
+            ):
                 self._room_failures.pop(room.key, None)
                 if job.refresh_plan.refresh_airflow:
                     refreshed_state = await self._read_balanced_target_if_pending(
