@@ -10,6 +10,7 @@ import struct
 import time
 from collections.abc import Mapping
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -43,6 +44,8 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_EXHAUST_AIR_TEMPERATURE,
     REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_EXTRACT_AIR_TEMPERATURE,
+    REGISTER_GATEWAY_UPTIME,
+    REGISTER_GATEWAY_UTC_CLOCK,
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_STARTING_POINT,
     REGISTER_HUMIDITY_SUPPLY_AIR,
@@ -51,6 +54,7 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_OPERATING_HOURS,
     REGISTER_SUPPLY_AIR_TEMPERATURE,
     REGISTER_VOC_SUPPLY_AIR,
+    TRANSPORT_READ_RECOVERY_SECONDS,
 )
 from custom_components.meltem_ventilation.device.components import FanMotorHours, GatewayUtcClock
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
@@ -105,6 +109,50 @@ async def test_gateway_uptime_reads_two_words_on_bridge_only(
     assert await client.async_read_gateway_uptime() == 123
     assert _reads(gateway) == [(41019, 2)]
     assert _reads(unit) == []
+
+
+async def test_gateway_clock_recovers_after_an_uptime_timeout(
+    client: MeltemModbusClient, link: MockModbusConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.device.transport.time",
+        SimpleNamespace(monotonic=lambda: clock.now),
+    )
+
+    async def advance(seconds: float) -> None:
+        clock.now += seconds
+
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.device.transport.async_sleep", advance
+    )
+    client.update_request_rate(0.5)
+    gateway = link.for_unit(1)
+    gateway.holding[REGISTER_GATEWAY_UPTIME] = [123, 0]
+    gateway.holding[REGISTER_GATEWAY_UTC_CLOCK] = lambda: [
+        (1700000000 + int(clock.now)) & 0xFFFF,
+        (1700000000 + int(clock.now)) >> 16,
+    ]
+    original_read = gateway.read_holding_registers
+    failed = False
+
+    async def read(address: int, count: int) -> list[int]:
+        nonlocal failed
+        if address == REGISTER_GATEWAY_UPTIME and not failed:
+            failed = True
+            raise ModbusTimeoutError("silent")
+        return await original_read(address, count)
+
+    gateway.read_holding_registers = read
+    with pytest.raises(MeltemModbusError, match="silent"):
+        await client.async_read_gateway_uptime()
+    with pytest.raises(MeltemModbusError, match="quarantined"):
+        await client.async_read_gateway_utc_clock()
+    assert not gateway.read_events
+    clock.now += TRANSPORT_READ_RECOVERY_SECONDS
+    assert await client.async_read_gateway_utc_clock() == 1700000105
+    assert await client.async_read_gateway_utc_clock() == 1700000107
+    assert not client.read_quarantined(1)
 
 
 @pytest.mark.parametrize("count", [0, 6])
@@ -340,7 +388,11 @@ def _float_words(value: float) -> list[int]:
 
 
 def _reads(unit: MockModbusUnit) -> list[tuple[int, int]]:
-    return [(event.address, event.count) for event in unit.read_events]
+    return [
+        (event.address, event.count)
+        for event in unit.read_events
+        if event.register_type == "holding"
+    ]
 
 
 async def _read_flow(
@@ -751,11 +803,39 @@ class TestReadHealth:
 
         state = await _read_flow(client)
 
-        assert _reads(unit) == [(REGISTER_EXTRACT_AIR_FLOW, 2)] * 2
+        assert _reads(unit) == [(REGISTER_EXTRACT_AIR_FLOW, 2)]
+        assert not [event for event in unit.read_events if event.register_type == "input"]
         for group in ("flow", "flow_control", "intensive"):
             health = state.read_health_for(group)
             assert health.last_error is not None
             assert health.last_error_timed_out is True
+
+    async def test_airflow_timeout_does_not_recount_backed_off_mode(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
+        first = await _read_flow(client)
+        unit.fail_read(REGISTER_MODE_STATUS, AcknowledgeError())
+        refused = await _read_flow(client, first)
+        mode_health = refused.read_health_for("flow_control")
+        intensive_health = refused.read_health_for("intensive")
+        mode_reads = _reads(unit).count((REGISTER_MODE_STATUS, 3))
+
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, ModbusTimeoutError("silent"))
+        failed = await _read_flow(client, refused)
+        failed = await _read_flow(client, failed)
+
+        assert _reads(unit).count((REGISTER_MODE_STATUS, 3)) == mode_reads
+        assert failed.read_health_for("flow_control") == mode_health
+        assert failed.read_health_for("intensive") == intensive_health
+        assert failed.read_health_for("flow").consecutive_failures == 1
+
+        client._mode_backoff.until[(_PLAIN.slave, "mode_status")] = time.monotonic() - 1
+        unit.fail_read(REGISTER_MODE_STATUS, None)
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, None)
+        recovered = await _read_flow(client, failed)
+        assert recovered.group_read_health == failed.group_read_health
+        assert client.read_quarantined(_PLAIN.slave)
 
     async def test_exception_and_timeout_in_one_group_still_prove_a_response(
         self, client: MeltemModbusClient, unit: MockModbusUnit
@@ -1118,7 +1198,6 @@ class TestModeReadBackoff:
 
         assert _reads(unit) == [
             (REGISTER_EXTRACT_AIR_FLOW, 2),
-            (REGISTER_MODE_STATUS, 3),
             (REGISTER_MODE_STATUS, 3),
         ]
         assert state.operation_mode == "manual"

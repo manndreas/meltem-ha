@@ -24,7 +24,6 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import UNDEFINED
 from modbus_connection import (
-    AcknowledgeError,
     ClientClosedError,
     IllegalDataValueError,
     ModbusConnectionError,
@@ -142,6 +141,7 @@ def setup_mocks(hass: HomeAssistant) -> Iterator[_SetupMocks]:
         patch.object(hass.config_entries, "async_forward_entry_setups", new=AsyncMock()) as forward,
     ):
         client_cls.return_value.async_read_gateway_mac.return_value = None
+        client_cls.return_value.read_quarantined.return_value = False
 
         async def _read_gateway_mac() -> str | None:
             return await client_cls.return_value.async_read_gateway_mac()
@@ -260,6 +260,20 @@ class TestAsyncSetupEntry:
             unit_factory(2)
 
         get_unit.assert_called_once_with(hass, entry, build_serial_params(_PORT), 2)
+
+    async def test_unanswered_gateway_validation_schedules_setup_retry(
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks
+    ) -> None:
+        client = setup_mocks.client_cls.return_value
+        client.async_validate_gateway.side_effect = MeltemConnectionError("unanswered")
+        client.read_quarantined.return_value = True
+        entry = _entry(hass)
+
+        with pytest.raises(ConfigEntryNotReady) as err:
+            await async_setup_entry(hass, entry)
+        assert err.value.translation_key == "gateway_unavailable"
+        assert err.value.translation_placeholders == {"port": _PORT}
+        client.shutdown.assert_called_once()
 
     async def test_setup_normalizes_port_path(
         self,
@@ -598,7 +612,7 @@ class TestSharedModbusConnection:
 
         return patch("homeassistant.components.modbus.connection.ModbusConnection", _connection)
 
-    async def test_rooms_recover_independently_after_link_loss_and_acknowledgements(
+    async def test_rooms_recover_independently_after_link_loss(
         self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         clock = SimpleNamespace(now=time.monotonic())
@@ -678,34 +692,21 @@ class TestSharedModbusConnection:
                 assert state_for(second_id).state == "unavailable"
 
                 monkeypatch.setattr(link, "_connect_client", connect)
-                for unit in (first, second):
-                    unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, AcknowledgeError())
-                recycles = coordinator.client.transport_diagnostics()["link_recycles"]
-                for _ in range(3):
-                    await poll("unit_1")
-                    await poll("unit_2")
-                assert link.connected
-                assert coordinator.read_group_stale("unit_1", "flow") is True
-                assert coordinator.read_group_stale("unit_2", "flow") is True
-                assert coordinator.client.transport_diagnostics()["link_recycles"] == recycles
-                assert coordinator.safe_data["unit_1"].supply_air_flow == 30
-                assert coordinator.safe_data["unit_2"].supply_air_flow == 45
-
-                first.fail_read(REGISTER_EXTRACT_AIR_FLOW, None)
+                reads = (len(first.read_events), len(second.read_events))
                 first.holding[REGISTER_EXTRACT_AIR_FLOW] = [50, 50]
                 first.holding[REGISTER_MODE_STATUS] = [MODE_MANUAL, 100, 0]
                 await poll("unit_1")
-                assert coordinator.read_group_stale("unit_1", "flow") is False
-                assert coordinator.read_group_stale("unit_2", "flow") is True
+                assert link.connected
+                assert len(first.read_events) > reads[0]
+                assert coordinator.room_available("unit_1")
                 assert state_for(first_id).attributes["percentage"] == 50
                 assert state_for(second_id).state == "unavailable"
-                assert coordinator.safe_data["unit_2"].supply_air_flow == 45
 
-                second.fail_read(REGISTER_EXTRACT_AIR_FLOW, None)
                 second.holding[REGISTER_EXTRACT_AIR_FLOW] = [55, 55]
                 second.holding[REGISTER_MODE_STATUS] = [MODE_MANUAL, 110, 0]
                 await poll("unit_2")
-                assert coordinator.read_group_stale("unit_2", "flow") is False
+                assert len(second.read_events) > reads[1]
+                assert coordinator.room_available("unit_2")
                 assert state_for(second_id).attributes["percentage"] == 55
             finally:
                 assert await hass.config_entries.async_unload(entry.entry_id)

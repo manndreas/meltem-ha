@@ -197,27 +197,31 @@ instance per gateway link):
 
 | Error | Behavior |
 | --- | --- |
-| `ModbusTimeoutError`, `ModbusProtocolError` | retry once; counts toward the timeout counter |
+| `ModbusTimeoutError`, `ModbusProtocolError` | pause unanswered reads for 5 s; retry writes once; counts toward the timeout counter |
 | `GatewayTargetError`, `GatewayPathUnavailableError` | retry once; resets the counter, the gateway answered |
-| `ModbusConnectionError` | wait `TRANSPORT_RETRY_DELAY_SECONDS` (5 s) for the serial endpoint to re-enumerate, retry once; the library reconnects |
+| `ModbusConnectionError` | pause reads for 5 s; for writes wait `TRANSPORT_RETRY_DELAY_SECONDS` (5 s), then retry once |
 | `ClientClosedError` | no retry |
 | other `ModbusExceptionError` | no retry; resets the counter |
 | `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS` timeouts in a row, across all units, and no answer at all for `TRANSPORT_LINK_QUIET_SECONDS` | `disconnect()`; the next request reopens the link, and a new quiet window starts |
 
-After an unanswered or cancelled read, the policy remembers its unit, address,
-and length. The next successful read of a different address with the same
-length on that unit is repeated once before its result is accepted. Matching
-values clear the remembered uncertainty for that length; conflicting values
-fail the read and leave it uncertain. The control read is serialized with the
-original operation, counts as another request, and obeys the shared read-rate
-limit. Other units and different response lengths do not trigger it. This adds
-bus traffic only after an uncertain read.
+After an unanswered, malformed, disconnected or cancelled holding-register read,
+the policy pauses further reads of that unit for `TRANSPORT_READ_RECOVERY_SECONDS`
+(5 s). It does not immediately retry or send a synchronization request. During
+the pause, skipped jobs do not change read health or failure counters. After
+the pause, the next scheduled read is attempted; a further failure starts a new
+pause. The coordinator keeps an affected room unavailable until a successful
+unit read, not merely until the pause expires. Writes and other unit IDs are not
+blocked. A gateway-unit timeout also delays its diagnostic and discovery reads;
+Home Assistant retries a failed initial setup through its normal backoff.
 
-Modbus RTU read replies contain neither the requested register address nor a
-transaction ID. Two matching values do not prove that both replies belong to
-the new request: multiple delayed replies or later delayed responses can still
-be mistaken for current data. A changing value can also make a valid pair
-disagree. The control read reduces this risk; it cannot eliminate it.
+Five seconds is a conservative recovery delay, not a measured or guaranteed
+maximum response time. A stale RTU response may still arrive after the pause and
+be mistaken for a later response to the same unit and length. This is not a
+bus-wide quarantine: other holders of the Home Assistant connection can send
+requests without this policy's lock. Reload or setup retry creates a new policy;
+disconnecting or reopening the port is not a verified reset of the gateway.
+Without an exclusive shared-link quarantine and a proven release condition,
+stale answers remain possible. See HW-7.
 
 An exception response is not retried immediately by the transport. For a
 polled component, `AcknowledgeError` (`0x05`) starts a per-slave/component
@@ -254,13 +258,11 @@ count as missing valid answers for the coordinator's transport backoff and
 skip subsequent mode reads in the job.
 
 When a unit times out before any of its blocks answered in a job, the rest of
-that job is skipped and all of
-its groups are marked failed, so a silent unit costs one timeout plus one
-retry per job instead of one per block. The same holds when a unit falls
-silent during the current-mode status read: the first timeout or protocol
-error there ends the job. Only an exception response starts the mode backoff,
-because only that is the HW-4 refusal; a timeout or protocol error is retried
-on the next flow job. The setup probe also stops at the first timeout of a unit.
+that job is skipped and its groups are marked failed. Jobs during the recovery
+pause are skipped without another request or failure count. If a timeout occurs
+after another block answered, later blocked components are skipped. Only an
+exception response starts the mode backoff; the setup probe also stops at the
+first timeout of a unit.
 
 So far an unconfigured address timed out after about 0.8 s, while a
 physically powered-off unit caused no timeout at all: the gateway kept
@@ -280,7 +282,7 @@ How the hardware findings are implemented now:
 | --- | --- |
 | The gateway needs a pause between requests | `REQUEST_GAP_SECONDS` via `set_message_spacing` in `prepare_unit` |
 | 0.8 s is enough for the gateway to answer | `FIXED_TIMEOUT` via `require_timeout` in `prepare_unit` |
-| pymodbus' default resend turned one unanswered register into about eight timeouts | `TransportPolicy` retries once, without disconnecting |
+| pymodbus' default resend turned one unanswered register into about eight timeouts | `TransportPolicy` pauses reads after the first unanswered attempt |
 | M-WRG-S and M-WRG-II status is read separately from the set registers (HW-4) | Every supported profile reads `41100..41102`; writes remain on `41120..41122` plus `41132`. M-WRG-S uses the same map by explicit assumption; live data is from M-WRG-II. |
 | Read-side sensor subcodes differ from write values | `_read_mode_block` normalizes `41101` status codes before decoding sensor modes; the codes come from the ioBroker decode and are not yet observed on hardware (HW-4) |
 | `41000` and `41004` are swapped on the gateway | field mapping of `Temperatures` in `device/components.py` |
@@ -843,10 +845,9 @@ exercise reads, writes, unknown registers, exception frames, fragmented,
 missing, truncated, corrupted, delayed, and mismatched responses, retries,
 and reconnection. Home Assistant fan service tests also run through its shared
 Modbus integration and the real RTU client to the simulated serial device.
-An RTU reply arriving after a timeout can satisfy a retry of the same read;
-the protocol does not identify which attempt produced it. The tests also
-exercise the bounded control read for ambiguous subsequent responses, but the
-protocol limitations described above remain.
+The tests exercise the local read quarantine, including multiple delayed RTU
+replies. They do not prove safety across reloads or for other holders of the
+shared connection, as described above.
 A write whose reply was lost may likewise have been applied more than once.
 These tests do not establish that repeated writes are harmless on physical
 hardware or that the simulated post-write readback models the physical latch.

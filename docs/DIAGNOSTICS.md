@@ -177,10 +177,16 @@ totals using the same sign convention; positive means net supply airflow.
 ### Communication quality
 
 The rolling five-minute window counts actual Modbus request attempts, including
-retries and writes. A timeout followed by a successful retry counts as one
-failed and one successful attempt. A valid Modbus error reply proves gateway
-connectivity but counts as a failed operation. Cancellation and attempts refused
-because the client is closed are excluded.
+retries and writes. A timed-out write followed by a successful retry counts as
+one failed and one successful attempt. An unanswered read pauses further reads
+of that unit for five seconds; the next scheduled job then retries. A valid
+Modbus error reply proves gateway connectivity but counts as a failed operation.
+Cancellation and attempts refused because the client is closed are excluded.
+
+An affected room remains unavailable until a unit read succeeds. Home Assistant
+automatically retries a failed initial gateway setup. The five-second pause is
+not a guarantee that delayed replies have been discarded; other integrations
+sharing the connection are not blocked by this policy.
 
 The mean response time uses successful attempts only and excludes waiting for
 the gateway lock, read-rate limit, and retry delays. Both sensors expose

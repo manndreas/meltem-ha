@@ -172,6 +172,9 @@ class _FakeClient:
     def seconds_since_successful_read(self, slave: int) -> float | None:
         return self.silent_seconds_by_slave.get(slave)
 
+    def read_quarantined(self, slave: int) -> bool:
+        return False
+
     def update_request_rate(self, max_requests_per_second: float) -> None:
         self.max_requests_per_second = max_requests_per_second
 

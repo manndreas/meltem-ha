@@ -260,7 +260,7 @@ class TestGatewayOperations:
 
 
 class TestReadFailures:
-    async def test_a_lost_link_is_raised_after_one_paused_retry(
+    async def test_a_lost_read_link_is_raised_without_retry(
         self,
         client: MeltemModbusClient,
         link: MockModbusConnection,
@@ -272,8 +272,8 @@ class TestReadFailures:
         with pytest.raises(MeltemConnectionError, match=_PORT):
             await client.read_room_state(_ROOM, RoomState(), RefreshPlan())
 
-        assert len(unit.read_events) == 2
-        assert sleeps == [5.0]
+        assert len(unit.read_events) == 1
+        assert sleeps == []
 
     async def test_a_silent_unit_ends_the_job_after_its_first_block(
         self, client: MeltemModbusClient, link: MockModbusConnection
@@ -284,7 +284,7 @@ class TestReadFailures:
 
         state = await client.read_room_state(_ROOM, previous, RefreshPlan())
 
-        assert _reads(unit) == [(REGISTER_EXTRACT_AIR_FLOW, 2)] * 2
+        assert _reads(unit) == [(REGISTER_EXTRACT_AIR_FLOW, 2)]
         assert state.supply_air_flow == 30
         assert state.operation_mode == "manual"
         for group in ("flow", "flow_control", "status", "temperature", "hours"):
@@ -302,6 +302,9 @@ class TestReadFailures:
         assert state.supply_air_flow == 40
         assert all(address != REGISTER_MODE_STATUS for address, _count in _reads(unit))
         assert state.read_health_for("flow_control").consecutive_failures == 1
+        assert state.read_health_for("status").last_attempt is None
+        assert state.read_health_for("filter").last_attempt is None
+        assert state.read_health_for("hours").last_attempt is None
 
     async def test_silent_units_do_not_recycle_the_link(
         self, client: MeltemModbusClient, link: MockModbusConnection

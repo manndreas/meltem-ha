@@ -14,9 +14,12 @@
   skipped polls do not inflate failed read-group diagnostics.
 - Count timeouts from attempted register groups even when other groups are
   paused, and preserve gateway backoff when a whole polling job is skipped.
-- Keep the gateway reachable when a read job combines responses with a timeout,
-  and keep a room reachable when the job still yields usable values, including
-  partially paused groups.
+- Keep the gateway reachable when a read job combines responses with a timeout.
+- After an unanswered or cancelled read, pause further reads of that unit for
+  five seconds and resume polling. The room remains unavailable until a read
+  succeeds. This reduces, but cannot eliminate, the risk of delayed RTU replies.
+- Preserve gateway backoff during skipped startup jobs and avoid recounting
+  paused mode reads when an airflow read times out.
 
 ## 4.6.1
 

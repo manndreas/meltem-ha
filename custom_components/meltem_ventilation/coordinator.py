@@ -138,6 +138,8 @@ class _CoordinatorClient(Protocol):
 
     def seconds_since_successful_read(self, slave: int) -> float | None: ...
 
+    def read_quarantined(self, slave: int) -> bool: ...
+
     def transport_diagnostics(self) -> dict[str, float | int | None]: ...
 
     async def discover_gateway_units(self, start: int, end: int) -> list[int]: ...
@@ -533,6 +535,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         room = self._rooms_by_key.get(room_key)
         if room is not None:
+            if self.client.read_quarantined(room.slave):
+                return "reads quarantined after an unanswered request"
             silent_for = self.client.seconds_since_successful_read(room.slave)
             if silent_for is not None and silent_for > ROOM_SILENT_AFTER_SECONDS:
                 return f"no successful read for more than {ROOM_SILENT_AFTER_SECONDS:.0f} seconds"
@@ -684,6 +688,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         return state is not None and read_health.group_fresh(state, group_key)
 
     async def _async_update_data(self) -> dict[str, RoomState]:
+        startup_without_values = False
         try:
             async with self._gateway_lock:
                 now = time.monotonic()
@@ -713,6 +718,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     job.next_due = time.monotonic() + self._job_interval(job, never_read=never_read)
                 if not any(state.has_data for state in updated_data.values()):
                     self._startup_states = updated_data
+                    startup_without_values = True
                     raise self._last_job_error or MeltemModbusError(
                         f"No state values received from room {job.room_key} "
                         f"for job {job.key} during startup"
@@ -730,7 +736,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 return updated_data
         except MeltemModbusError as err:
             # Before any state arrives, an unsuccessful job is a startup failure.
-            self._on_transport_failure()
+            if not startup_without_values or self._last_job_link_failure:
+                self._on_transport_failure()
+            elif self._last_job_attempted:
+                self._on_transport_success()
             if self._backoff_seconds is None:
                 # Retrying at the request rate would hammer a gateway that is down.
                 self.update_interval = timedelta(seconds=TRANSPORT_BACKOFF_START_SECONDS)

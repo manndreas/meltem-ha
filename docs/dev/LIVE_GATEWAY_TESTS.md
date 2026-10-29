@@ -521,8 +521,9 @@ Run R on every unit unless the test says otherwise.
 
 ### T-5 — Silent address in the integration client
 
-- **Checks:** a silent unit costs one timeout plus one retry per job, the link
-  is not recycled while other units answer (`link_recycles` stays `0`), and
+- **Checks:** a silent unit costs one timeout per attempted job and pauses
+  subsequent reads for five seconds,
+  the link is not recycled while other units answer (`link_recycles` stays `0`), and
   the other units are not slowed down (HW-7 measurement 2; per-job skip and
   quiet window in [DEVELOPER.md](DEVELOPER.md#transport-home-assistants-shared-modbus-connection)).
 - **Type:** R, 10 minutes
@@ -537,7 +538,7 @@ Run R on every unit unless the test says otherwise.
 
   Every job line shows room, requests, duration, and the failed read groups;
   `client.transport_diagnostics()` follows every minute.
-- **Pass if G-5 showed a timeout:** at most 2 requests per ghost job,
+- **Pass if G-5 showed a timeout:** at most 1 request per attempted ghost job,
   `link_recycles = 0`, 100 % success on the real rooms, one airflow round over
   all rooms finishes within 10 s.
 - **If G-5 showed code 10/11:** record the requests per job (in-memory

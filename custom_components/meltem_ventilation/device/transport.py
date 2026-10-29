@@ -22,7 +22,7 @@ from modbus_connection import (
     ModbusUnit,
 )
 
-from ..const import REGISTER_RF_COMM_STATUS
+from ..const import REGISTER_RF_COMM_STATUS, TRANSPORT_READ_RECOVERY_SECONDS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,8 +36,12 @@ COMMUNICATION_WINDOW_SECONDS = 300.0
 RequestOutcome = Literal["success", "no_answer", "modbus_exception", "other"]
 
 
+class ReadQuarantinedError(ModbusProtocolError):
+    """A read was not sent because an earlier response may still arrive."""
+
+
 class TransportPolicy:
-    """Retry once, and recycle the link only when nothing answers at all.
+    """Quarantine uncertain reads and retry eligible requests once.
 
     One policy is shared by all units on a gateway link. The link is recycled
     after a run of timeouts only if no request got any answer for a while, so
@@ -68,7 +72,7 @@ class TransportPolicy:
         self._link_recycles = 0
         self._operation_lock = asyncio.Lock()
         self._request_lock = asyncio.Lock()
-        self._unanswered_reads: dict[int, set[tuple[int, int]]] = {}
+        self._unanswered_reads: dict[int, float] = {}
         self._read_interval = 0.0
         self._last_read_finished: float | None = None
         self._closed = False
@@ -91,6 +95,16 @@ class TransportPolicy:
         """Return the number of requests that received a valid response."""
 
         return self._answered_requests
+
+    def read_quarantined(self, unit_id: int) -> bool:
+        """Return whether unanswered traffic prevents further reads of a unit."""
+
+        return unit_id in self._unanswered_reads
+
+    def read_delayed(self, unit_id: int) -> bool:
+        """Return whether the unit's recovery pause is still active."""
+
+        return time.monotonic() < self._unanswered_reads.get(unit_id, 0.0)
 
     async def _wait_for_read_slot(self) -> None:
         while self._last_read_finished is not None and not self._closed:
@@ -177,38 +191,37 @@ class TransportPolicy:
         *args: Any,
         is_read: bool,
     ) -> T:
-        """Run one request, retrying once on a lost link, timeout, or silent target."""
+        """Run one request under the shared policy and quarantine unanswered reads."""
 
         async with self._operation_lock:
-            signature = (args[0], args[1]) if is_read and len(args) == 2 else None
+            if is_read:
+                self._ensure_read_allowed(unit_id)
             try:
                 result = await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
             except ClientClosedError:
                 raise
             except ModbusConnectionError:
+                if is_read and unit_id in self._unanswered_reads:
+                    raise
                 await async_sleep(self._connection_retry_delay)
                 result = await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
             except _RETRYABLE_ERRORS:
+                if is_read and unit_id in self._unanswered_reads:
+                    raise
                 result = await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
 
-            unanswered = self._unanswered_reads.get(unit_id, set())
-            if signature is not None and any(
-                address != signature[0] and count == signature[1] for address, count in unanswered
-            ):
-                confirmed = await self._attempt(unit, unit_id, operation, *args, is_read=True)
-                if confirmed != result:
-                    unanswered.add(signature)
-                    raise ModbusProtocolError("Ambiguous delayed register response")
-                unanswered.difference_update(
-                    (address, count)
-                    for address, count in tuple(unanswered)
-                    if count == signature[1]
-                )
-                if not unanswered:
-                    self._unanswered_reads.pop(unit_id, None)
             if is_read and (not args or args[0] != REGISTER_RF_COMM_STATUS):
+                self._unanswered_reads.pop(unit_id, None)
                 self._last_read_answer[unit_id] = time.monotonic()
             return result
+
+    def _ensure_read_allowed(self, unit_id: int) -> None:
+        if self._closed:
+            raise ClientClosedError("The Meltem gateway client was shut down")
+        if self.read_delayed(unit_id):
+            raise ReadQuarantinedError(
+                f"Unit {unit_id} is quarantined after an unanswered register read"
+            )
 
     async def _attempt[T](
         self,
@@ -230,18 +243,18 @@ class TransportPolicy:
                 try:
                     result = await operation(*args)
                 except asyncio.CancelledError:
-                    if is_read and len(args) == 2:
-                        self._unanswered_reads.setdefault(unit_id, set()).add((args[0], args[1]))
+                    if is_read:
+                        self._unanswered_reads[unit_id] = (
+                            time.monotonic() + TRANSPORT_READ_RECOVERY_SECONDS
+                        )
                     raise
                 except ClientClosedError:
                     raise
                 except Exception as err:
-                    if (
-                        is_read
-                        and len(args) == 2
-                        and isinstance(err, (*NO_ANSWER_ERRORS, ModbusConnectionError))
-                    ):
-                        self._unanswered_reads.setdefault(unit_id, set()).add((args[0], args[1]))
+                    if is_read and isinstance(err, (*NO_ANSWER_ERRORS, ModbusConnectionError)):
+                        self._unanswered_reads[unit_id] = (
+                            time.monotonic() + TRANSPORT_READ_RECOVERY_SECONDS
+                        )
                     self._record_request(started_at, success=False)
                     self._notify_request(self._request_outcome(err))
                     raise

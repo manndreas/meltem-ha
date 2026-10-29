@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import time
 from collections import deque
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 
 import pytest
 from homeassistant.components.modbus.connection import async_get_connection_info
@@ -34,6 +36,7 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_GATEWAY_NUMBER_OF_NODES,
     REGISTER_MODE,
     REGISTER_MODE_STATUS,
+    TRANSPORT_READ_RECOVERY_SECONDS,
 )
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import (
@@ -103,6 +106,24 @@ class _RtuGateway:
             address = int.from_bytes(request[2:4], "big")
             value = int.from_bytes(request[4:6], "big")
             self.requests.append((unit, function, address, value))
+            if function == 4:
+                action = (
+                    self.actions.popleft()
+                    if self.actions and self.actions[0].startswith("sync_")
+                    else "sync_normal"
+                )
+                if action == "sync_timeout":
+                    continue
+                if action in ("sync_late", "sync_late_twice"):
+                    if self.late_response is None:
+                        self.errors.append("No delayed response available")
+                    else:
+                        os.write(self.master, self.late_response)
+                        if action == "sync_late_twice":
+                            os.write(self.master, self.late_response)
+                        self.late_response = None
+                os.write(self.master, _frame(bytes((unit, function | 0x80, 1))))
+                continue
             action = self.actions.popleft() if self.actions else "normal"
             if action == "timeout":
                 continue
@@ -212,21 +233,22 @@ async def test_real_serial_client_reads_writes_and_reconnects(serial_gateway: _R
 
 
 @pytest.mark.parametrize("first_response", ["timeout", "bad_crc", "short"])
-async def test_real_serial_client_retries_a_missing_or_malformed_response(
+async def test_real_serial_client_quarantines_a_missing_or_malformed_response(
     serial_gateway: _RtuGateway, first_response: str
 ) -> None:
     connection = _connection(serial_gateway.device)
     client = MeltemModbusClient(connection.for_unit, port=serial_gateway.device)
     serial_gateway.actions.extend((first_response, "normal"))
     try:
-        await client.async_validate_gateway()
+        with pytest.raises(MeltemModbusError):
+            await client.async_validate_gateway()
     finally:
         client.shutdown()
         await connection.close()
-    assert serial_gateway.requests == [(1, 3, REGISTER_GATEWAY_NUMBER_OF_NODES, 1)] * 2
+    assert serial_gateway.requests == [(1, 3, REGISTER_GATEWAY_NUMBER_OF_NODES, 1)]
 
 
-async def test_real_serial_client_reports_repeated_timeout_and_recovers(
+async def test_real_serial_client_does_not_retry_after_timeout(
     serial_gateway: _RtuGateway,
 ) -> None:
     connection = _connection(serial_gateway.device)
@@ -236,14 +258,15 @@ async def test_real_serial_client_reports_repeated_timeout_and_recovers(
         with pytest.raises(MeltemModbusError) as err:
             await client.async_validate_gateway()
         assert isinstance(err.value.__cause__, ModbusTimeoutError)
-        await client.async_validate_gateway()
+        with pytest.raises(MeltemModbusError, match="quarantined"):
+            await client.async_validate_gateway()
     finally:
         client.shutdown()
         await connection.close()
-    assert serial_gateway.requests == [(1, 3, REGISTER_GATEWAY_NUMBER_OF_NODES, 1)] * 3
+    assert serial_gateway.requests == [(1, 3, REGISTER_GATEWAY_NUMBER_OF_NODES, 1)]
 
 
-async def test_real_serial_client_accepts_late_reply_to_the_same_retried_read(
+async def test_real_serial_client_does_not_retry_a_delayed_read(
     serial_gateway: _RtuGateway,
 ) -> None:
     connection = _connection(serial_gateway.device)
@@ -251,15 +274,22 @@ async def test_real_serial_client_accepts_late_reply_to_the_same_retried_read(
     client = MeltemModbusClient(
         connection.for_unit, port=serial_gateway.device, on_request=outcomes.append
     )
-    serial_gateway.actions.extend(("late", "send_late"))
+    serial_gateway.actions.append("late")
     try:
-        await client.async_validate_gateway()
+        with pytest.raises(MeltemModbusError):
+            await client.async_validate_gateway()
+        assert serial_gateway.late_response is not None
+        os.write(serial_gateway.master, serial_gateway.late_response)
+        serial_gateway.late_response = None
+        await asyncio.sleep(0)
+        with pytest.raises(MeltemModbusError, match="quarantined"):
+            await client.async_validate_gateway()
     finally:
         client.shutdown()
         await connection.close()
 
-    assert outcomes == ["no_answer", "success"]
-    assert serial_gateway.requests == [(1, 3, REGISTER_GATEWAY_NUMBER_OF_NODES, 1)] * 2
+    assert outcomes == ["no_answer"]
+    assert serial_gateway.requests == [(1, 3, REGISTER_GATEWAY_NUMBER_OF_NODES, 1)]
     assert serial_gateway.late_response is None
 
 
@@ -366,19 +396,20 @@ async def test_real_serial_client_reads_isolated_units_and_rejects_unknown_regis
 
 
 @pytest.mark.parametrize("response", ["wrong_unit", "wrong_function", "wrong_length"])
-async def test_real_serial_client_retries_a_reply_with_the_wrong_header_or_length(
+async def test_real_serial_client_quarantines_a_reply_with_the_wrong_header_or_length(
     serial_gateway: _RtuGateway, response: str
 ) -> None:
     connection = _connection(serial_gateway.device)
     client = MeltemModbusClient(connection.for_unit, port=serial_gateway.device)
     serial_gateway.actions.extend((response, "normal"))
     try:
-        await client.async_validate_gateway()
+        with pytest.raises(MeltemModbusError):
+            await client.async_validate_gateway()
     finally:
         client.shutdown()
         await connection.close()
 
-    assert serial_gateway.requests == [(1, 3, REGISTER_GATEWAY_NUMBER_OF_NODES, 1)] * 2
+    assert serial_gateway.requests == [(1, 3, REGISTER_GATEWAY_NUMBER_OF_NODES, 1)]
 
 
 async def test_real_serial_client_accepts_a_fragmented_response(
@@ -405,10 +436,14 @@ async def test_late_reply_from_another_unit_cannot_be_used_as_the_next_units_val
     client = MeltemModbusClient(connection.for_unit, port=serial_gateway.device)
     first = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
     second = RoomConfig(key="unit_2", name="Unit 2", profile="ii_plain", slave=3)
-    serial_gateway.actions.extend(("late", "timeout", "send_late", "normal"))
+    serial_gateway.actions.extend(("late", "normal"))
     try:
         with pytest.raises(MeltemModbusError):
             await client.read_balanced_target_readback(first)
+        assert serial_gateway.late_response is not None
+        os.write(serial_gateway.master, serial_gateway.late_response)
+        serial_gateway.late_response = None
+        await asyncio.sleep(0)
         assert await client.read_balanced_target_readback(second) == 45
     finally:
         client.shutdown()
@@ -417,13 +452,11 @@ async def test_late_reply_from_another_unit_cannot_be_used_as_the_next_units_val
     assert serial_gateway.late_response is None
     assert serial_gateway.requests == [
         (2, 3, REGISTER_CURRENT_LEVEL, 1),
-        (2, 3, REGISTER_CURRENT_LEVEL, 1),
-        (3, 3, REGISTER_CURRENT_LEVEL, 1),
         (3, 3, REGISTER_CURRENT_LEVEL, 1),
     ]
 
 
-async def test_late_reply_cannot_be_used_for_another_register_of_the_same_unit(
+async def test_late_reply_cannot_be_used_for_a_quarantined_unit(
     serial_gateway: _RtuGateway,
 ) -> None:
     serial_gateway.registers[2][REGISTER_CURRENT_LEVEL] = 60
@@ -432,10 +465,15 @@ async def test_late_reply_cannot_be_used_for_another_register_of_the_same_unit(
     connection = _connection(serial_gateway.device)
     client = MeltemModbusClient(connection.for_unit, port=serial_gateway.device)
     room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
-    serial_gateway.actions.extend(("late", "timeout", "send_late", "normal"))
+    serial_gateway.actions.append("late")
     try:
         with pytest.raises(MeltemModbusError):
             await client.read_balanced_target_readback(room)
+        assert serial_gateway.late_response is not None
+        os.write(serial_gateway.master, serial_gateway.late_response)
+        serial_gateway.late_response = None
+        await asyncio.sleep(0)
+        reads_before = list(serial_gateway.requests)
         state = await client.read_room_state(
             room,
             RoomState(days_until_filter_change=25),
@@ -443,18 +481,83 @@ async def test_late_reply_cannot_be_used_for_another_register_of_the_same_unit(
         )
         other = RoomConfig(key="unit_2", name="Unit 2", profile="ii_plain", slave=3)
         assert await client.read_balanced_target_readback(other) == 50
-        recovered = await client.read_room_state(
-            room, state, RefreshPlan.only(refresh_filter_days=True)
-        )
+        assert serial_gateway.requests == [*reads_before, (3, 3, REGISTER_CURRENT_LEVEL, 1)]
     finally:
         client.shutdown()
         await connection.close()
 
     assert state.days_until_filter_change == 25
-    assert state.read_health_for("filter").last_error is not None
+    assert state.last_read_job is not None
+    assert not state.last_read_job.attempted_groups
     assert state.read_health_for("filter").last_successful_read is None
-    assert recovered.days_until_filter_change == 90
-    assert recovered.read_health_for("filter").last_error is None
+
+
+async def test_two_late_replies_cannot_be_accepted_as_a_filter_value(
+    serial_gateway: _RtuGateway,
+) -> None:
+    serial_gateway.registers[2][REGISTER_CURRENT_LEVEL] = 60
+    serial_gateway.registers[2][REGISTER_DAYS_UNTIL_FILTER_CHANGE] = 90
+    connection = _connection(serial_gateway.device)
+    client = MeltemModbusClient(connection.for_unit, port=serial_gateway.device)
+    room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+    serial_gateway.actions.append("late")
+    try:
+        with pytest.raises(MeltemModbusError):
+            await client.read_balanced_target_readback(room)
+        assert serial_gateway.late_response is not None
+        os.write(serial_gateway.master, serial_gateway.late_response * 2)
+        serial_gateway.late_response = None
+        await asyncio.sleep(0)
+        state = await client.read_room_state(
+            room,
+            RoomState(days_until_filter_change=25),
+            RefreshPlan.only(refresh_filter_days=True),
+        )
+        assert state.days_until_filter_change == 25
+        assert serial_gateway.requests == [(2, 3, REGISTER_CURRENT_LEVEL, 1)]
+    finally:
+        client.shutdown()
+        await connection.close()
+
+
+@pytest.mark.parametrize("reply_count", [1, 2])
+async def test_late_replies_during_recovery_pause_are_not_used_as_new_values(
+    serial_gateway: _RtuGateway, monkeypatch: pytest.MonkeyPatch, reply_count: int
+) -> None:
+    clock = SimpleNamespace(now=time.monotonic())
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.device.transport.time",
+        SimpleNamespace(monotonic=lambda: clock.now),
+    )
+    serial_gateway.registers[2][REGISTER_CURRENT_LEVEL] = 60
+    serial_gateway.registers[2][REGISTER_DAYS_UNTIL_FILTER_CHANGE] = 90
+    connection = _connection(serial_gateway.device)
+    client = MeltemModbusClient(connection.for_unit, port=serial_gateway.device)
+    room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
+    serial_gateway.actions.append("late")
+    try:
+        with pytest.raises(MeltemModbusError):
+            await client.read_balanced_target_readback(room)
+        assert serial_gateway.late_response is not None
+        os.write(serial_gateway.master, serial_gateway.late_response * reply_count)
+        serial_gateway.late_response = None
+        await asyncio.sleep(0)
+        clock.now += TRANSPORT_READ_RECOVERY_SECONDS
+        state = await client.read_room_state(
+            room,
+            RoomState(days_until_filter_change=25),
+            RefreshPlan.only(refresh_filter_days=True),
+        )
+        assert state.days_until_filter_change == 90
+        assert state.read_health_for("filter").last_error is None
+        assert not client.read_quarantined(2)
+        assert serial_gateway.requests == [
+            (2, 3, REGISTER_CURRENT_LEVEL, 1),
+            (2, 3, REGISTER_DAYS_UNTIL_FILTER_CHANGE, 1),
+        ]
+    finally:
+        client.shutdown()
+        await connection.close()
 
 
 @pytest.fixture

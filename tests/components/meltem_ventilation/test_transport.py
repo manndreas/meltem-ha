@@ -21,6 +21,7 @@ from modbus_connection import (
 )
 from modbus_connection.mock import MockModbusConnection
 
+from custom_components.meltem_ventilation.const import TRANSPORT_READ_RECOVERY_SECONDS
 from custom_components.meltem_ventilation.device import PolicyUnit, TransportPolicy
 
 _RETRY_DELAY = 5.0
@@ -83,21 +84,19 @@ async def _run_failing(
     times: int = 1,
     expected: type[Exception] | tuple[type[Exception], ...] = ModbusTimeoutError,
 ) -> None:
-    for _ in range(times):
+    for offset in range(times):
         with pytest.raises(expected):
-            await _run(policy, unit, operation)
+            await policy.run(unit, 2 + offset, operation, 41020, 2, is_read=True)
 
 
 class TestRetry:
     @pytest.mark.parametrize(
         "error",
         [
-            _SILENT,
-            ModbusProtocolError("garbled"),
             GatewayPathUnavailableError(),
             GatewayTargetError(),
         ],
-        ids=["timeout", "protocol", "gateway-path-unavailable", "silent-unit-behind-the-gateway"],
+        ids=["gateway-path-unavailable", "silent-unit-behind-the-gateway"],
     )
     async def test_an_unanswered_request_is_retried_once(
         self, policy: TransportPolicy, unit: AsyncMock, error: Exception
@@ -107,22 +106,22 @@ class TestRetry:
         assert await _run(policy, unit, operation) == [30, 30]
         assert operation.await_count == 2
 
-    async def test_a_second_timeout_is_raised(
-        self, policy: TransportPolicy, unit: AsyncMock
-    ) -> None:
+    async def test_a_timeout_is_not_retried(self, policy: TransportPolicy, unit: AsyncMock) -> None:
         operation = AsyncMock(side_effect=_SILENT)
 
         await _run_failing(policy, unit, operation)
 
-        assert operation.await_count == 2
+        assert operation.await_count == 1
 
-    async def test_a_lost_link_is_retried_after_a_pause(
+    async def test_a_lost_read_link_is_not_retried(
         self, policy: TransportPolicy, unit: AsyncMock, sleeps: list[float]
     ) -> None:
         operation = AsyncMock(side_effect=[ModbusConnectionError("gone"), [1]])
 
-        assert await _run(policy, unit, operation) == [1]
-        assert sleeps == [_RETRY_DELAY]
+        with pytest.raises(ModbusConnectionError):
+            await _run(policy, unit, operation)
+        assert sleeps == []
+        assert operation.await_count == 1
 
     async def test_a_closed_link_is_not_retried(
         self, policy: TransportPolicy, unit: AsyncMock, sleeps: list[float]
@@ -167,110 +166,75 @@ def clock_fixture(monkeypatch: pytest.MonkeyPatch, sleeps: list[float]) -> Simpl
 
 
 class TestDelayedReadResponses:
-    async def test_only_ambiguous_reads_are_checked_and_each_attempt_is_rate_limited(
+    async def test_unanswered_read_recovers_after_a_bounded_pause(
         self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
     ) -> None:
-        policy.update_request_rate(2.0)
-        original = AsyncMock(side_effect=[_SILENT, [10]])
-        assert await policy.run(unit, 2, original, 41121, 1, is_read=True) == [10]
-
-        neighbour = AsyncMock(return_value=[30])
-        assert await policy.run(unit, 3, neighbour, 41027, 1, is_read=True) == [30]
-        different_length = AsyncMock(return_value=[40, 50])
-        assert await policy.run(unit, 2, different_length, 41020, 2, is_read=True) == [40, 50]
-        same_register = AsyncMock(return_value=[10])
-        assert await policy.run(unit, 2, same_register, 41121, 1, is_read=True) == [10]
-
-        checked = AsyncMock(side_effect=[[90], [90]])
-        assert await policy.run(unit, 2, checked, 41027, 1, is_read=True) == [90]
-        assert checked.await_count == 2
-        assert (
-            neighbour.await_count == different_length.await_count == same_register.await_count == 1
-        )
-        assert policy.diagnostics()["request_sample_count"] == 7
-        assert clock.now == pytest.approx(103.0)
-
-        after_recovery = AsyncMock(return_value=[55])
-        assert await policy.run(unit, 2, after_recovery, 40100, 1, is_read=True) == [55]
-        assert after_recovery.await_count == 1
-
-    async def test_mismatch_keeps_read_uncertain_until_a_matching_check(
-        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
-    ) -> None:
+        operation = AsyncMock(side_effect=[_SILENT, [60]])
         with pytest.raises(ModbusTimeoutError):
-            await policy.run(unit, 2, AsyncMock(side_effect=_SILENT), 41121, 1, is_read=True)
+            await policy.run(unit, 2, operation, 41121, 1, is_read=True)
+        assert operation.await_count == 1
+        clock.now += TRANSPORT_READ_RECOVERY_SECONDS - 0.1
+        with pytest.raises(ModbusProtocolError, match="quarantined"):
+            await policy.run(unit, 2, operation, 41027, 1, is_read=True)
+        assert operation.await_count == 1
+        unit.read_input_registers.assert_not_awaited()
+        neighbour = AsyncMock(return_value=[90])
+        assert await policy.run(unit, 3, neighbour, 41027, 1, is_read=True) == [90]
+        assert 2 in policy._unanswered_reads
+        clock.now += 0.1
+        assert policy.read_quarantined(2)
+        assert await policy.run(unit, 2, operation, 41027, 1, is_read=True) == [60]
+        assert not policy.read_quarantined(2)
 
-        mismatch = AsyncMock(side_effect=[[60], [90]])
-        with pytest.raises(ModbusProtocolError, match="Ambiguous delayed register response"):
-            await policy.run(unit, 2, mismatch, 41027, 1, is_read=True)
-        assert mismatch.await_count == 2
-        assert policy.seconds_since_read_answer(2) is None
+    async def test_repeated_timeout_restarts_recovery_pause(
+        self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
+    ) -> None:
+        operation = AsyncMock(side_effect=[_SILENT, _SILENT, [90]])
+        with pytest.raises(ModbusTimeoutError):
+            await policy.run(unit, 2, operation, 41027, 1, is_read=True)
+        clock.now += TRANSPORT_READ_RECOVERY_SECONDS
+        with pytest.raises(ModbusTimeoutError):
+            await policy.run(unit, 2, operation, 41027, 1, is_read=True)
+        with pytest.raises(ModbusProtocolError, match="quarantined"):
+            await policy.run(unit, 2, operation, 41027, 1, is_read=True)
+        assert operation.await_count == 2
+        clock.now += TRANSPORT_READ_RECOVERY_SECONDS
+        assert await policy.run(unit, 2, operation, 41027, 1, is_read=True) == [90]
+        assert not policy.read_quarantined(2)
 
-        recovery = AsyncMock(side_effect=[[90], [90]])
-        assert await policy.run(unit, 2, recovery, 41027, 1, is_read=True) == [90]
-        assert recovery.await_count == 2
-        assert policy.seconds_since_read_answer(2) == 0
-
-    @pytest.mark.parametrize("error", [ModbusTimeoutError("silent"), asyncio.CancelledError()])
-    async def test_failed_or_cancelled_check_keeps_read_uncertain(
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ModbusTimeoutError("silent"),
+            ModbusProtocolError("bad frame"),
+            ModbusConnectionError("gone"),
+            asyncio.CancelledError(),
+        ],
+    )
+    async def test_failed_or_cancelled_read_quarantines_unit(
         self, policy: TransportPolicy, unit: AsyncMock, error: BaseException
     ) -> None:
-        await policy.run(unit, 2, AsyncMock(side_effect=[_SILENT, [60]]), 41121, 1, is_read=True)
         with pytest.raises(type(error)):
-            await policy.run(unit, 2, AsyncMock(side_effect=[[90], error]), 41027, 1, is_read=True)
+            await policy.run(unit, 2, AsyncMock(side_effect=error), 41121, 1, is_read=True)
+        operation = AsyncMock(return_value=[90])
+        with pytest.raises(ModbusProtocolError, match="quarantined"):
+            await policy.run(unit, 2, operation, 41027, 1, is_read=True)
+        operation.assert_not_awaited()
+        assert policy.read_quarantined(2)
 
-        recovery = AsyncMock(side_effect=[[90], [90]])
-        assert await policy.run(unit, 2, recovery, 41027, 1, is_read=True) == [90]
-        assert recovery.await_count == 2
-
-    async def test_control_read_cannot_be_interleaved_with_another_request(
-        self, policy: TransportPolicy, unit: AsyncMock
-    ) -> None:
-        await policy.run(unit, 2, AsyncMock(side_effect=[_SILENT, [60]]), 41121, 1, is_read=True)
-        started = asyncio.Event()
-        release = asyncio.Event()
-        requests: list[int] = []
-
-        async def read(address: int, count: int) -> list[int]:
-            requests.append(address)
-            if len(requests) == 1:
-                started.set()
-                await release.wait()
-            return [90]
-
-        first = asyncio.create_task(policy.run(unit, 2, read, 41027, 1, is_read=True))
-        second: asyncio.Task[list[int]] | None = None
-        try:
-            await asyncio.wait_for(started.wait(), 5)
-            second = asyncio.create_task(policy.run(unit, 2, read, 40100, 1, is_read=True))
-            await asyncio.sleep(0)
-            assert requests == [41027]
-            release.set()
-            await asyncio.wait_for(asyncio.gather(first, second), 5)
-            assert requests == [41027, 41027, 40100]
-        finally:
-            release.set()
-            first.cancel()
-            if second is not None:
-                second.cancel()
-            await asyncio.gather(
-                first, *([second] if second is not None else []), return_exceptions=True
-            )
-
-    async def test_shutdown_before_control_read_keeps_previous_success_time(
+    async def test_shutdown_before_synchronization_keeps_previous_success_time(
         self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
     ) -> None:
-        await policy.run(unit, 2, AsyncMock(side_effect=[_SILENT, [60]]), 41121, 1, is_read=True)
+        await policy.run(unit, 2, AsyncMock(return_value=[60]), 41121, 1, is_read=True)
         clock.now += 1
-
-        async def shutdown_after_first_read(address: int, count: int) -> list[int]:
-            policy.shutdown()
-            return [90]
-
+        unit.read_input_registers.side_effect = _SILENT
+        with pytest.raises(ModbusTimeoutError):
+            await policy.run(unit, 2, AsyncMock(side_effect=_SILENT), 41121, 1, is_read=True)
+        policy.shutdown()
         with pytest.raises(ClientClosedError):
-            await policy.run(unit, 2, shutdown_after_first_read, 41027, 1, is_read=True)
+            await policy.run(unit, 2, AsyncMock(return_value=[90]), 41027, 1, is_read=True)
         assert policy.seconds_since_read_answer(2) == 1
-        assert (41121, 1) in policy._unanswered_reads[2]
+        assert 2 in policy._unanswered_reads
 
 
 class TestCommunicationMetrics:
@@ -297,6 +261,7 @@ class TestCommunicationMetrics:
         assert timestamp is not None
         assert before <= timestamp <= datetime.now(UTC).timestamp()
         clock.now += 60
+        unit.read_input_registers.side_effect = _SILENT
         await _run_failing(policy, unit, AsyncMock(side_effect=_SILENT))
         assert policy.diagnostics()["last_answer_timestamp"] == timestamp
 
@@ -311,7 +276,7 @@ class TestCommunicationMetrics:
             attempts += 1
             clock.now += 0.2
             if attempts == 1:
-                raise ModbusTimeoutError("timeout")
+                raise GatewayTargetError()
             return [1]
 
         assert await _run(policy, unit, read) == [1]
@@ -323,11 +288,11 @@ class TestCommunicationMetrics:
     async def test_request_observer_sees_each_retry_outcome(self, unit: AsyncMock) -> None:
         outcomes: list[str] = []
         policy = _policy(0, on_request=outcomes.append)
-        operation = AsyncMock(side_effect=[_SILENT, [1]])
+        operation = AsyncMock(side_effect=[GatewayTargetError(), [1]])
 
         assert await _run(policy, unit, operation) == [1]
 
-        assert outcomes == ["no_answer", "success"]
+        assert outcomes == ["modbus_exception", "success"]
         assert operation.await_count == 2
 
     async def test_request_observer_distinguishes_modbus_exceptions(self, unit: AsyncMock) -> None:
@@ -431,10 +396,8 @@ class TestReadRequestRate:
     @pytest.mark.parametrize(
         ("error", "second_start"),
         [
-            (_SILENT, 102.0),
-            (ModbusProtocolError("garbled"), 102.0),
             (GatewayTargetError(), 102.0),
-            (ModbusConnectionError("gone"), 105.0),
+            (GatewayPathUnavailableError(), 102.0),
         ],
     )
     async def test_retries_also_take_a_read_slot(
@@ -588,21 +551,21 @@ class TestLinkRecycling:
     async def test_consecutive_timeouts_drop_the_link(
         self, policy: TransportPolicy, unit: AsyncMock
     ) -> None:
+        unit.read_input_registers.side_effect = _SILENT
         operation = AsyncMock(side_effect=_SILENT)
 
-        await _run_failing(policy, unit, operation)
-        unit.disconnect.assert_not_awaited()
-
-        await _run_failing(policy, unit, operation)
+        await _run_failing(policy, unit, operation, times=3)
         unit.disconnect.assert_awaited_once()
 
     async def test_an_answer_resets_the_timeout_count(
         self, policy: TransportPolicy, unit: AsyncMock
     ) -> None:
-        operation = AsyncMock(side_effect=[_SILENT, [1]] * 3)
-
-        for _ in range(3):
-            await _run(policy, unit, operation)
+        for slave in (2, 4, 6):
+            with pytest.raises(ModbusTimeoutError):
+                await policy.run(
+                    unit, slave, AsyncMock(side_effect=_SILENT), 41020, 2, is_read=True
+                )
+            await policy.run(unit, slave + 1, AsyncMock(return_value=[1]), 41020, 2, is_read=True)
 
         unit.disconnect.assert_not_awaited()
 
@@ -621,9 +584,9 @@ class TestLinkRecycling:
         unit.disconnect.side_effect = ModbusConnectionError("already gone")
         operation = AsyncMock(side_effect=[_SILENT] * 3 + [[1]])
 
-        await _run_failing(policy, unit, operation)
+        await _run_failing(policy, unit, operation, times=3)
 
-        assert await _run(policy, unit, operation) == [1]
+        assert await policy.run(unit, 5, operation, 41020, 2, is_read=True) == [1]
 
 
 class TestQuietWindow:
@@ -648,6 +611,7 @@ class TestQuietWindow:
         self, quiet_policy: TransportPolicy, unit: AsyncMock
     ) -> None:
         quiet_policy._quiet_since -= 11
+        unit.read_input_registers.side_effect = _SILENT
 
         await _run_failing(quiet_policy, unit, AsyncMock(side_effect=_SILENT), times=3)
 
@@ -659,6 +623,7 @@ class TestQuietWindow:
         recycles: list[int] = []
         policy = _policy(10, on_link_recycle=lambda: recycles.append(1))
         policy._quiet_since -= 11
+        unit.read_input_registers.side_effect = _SILENT
 
         await _run_failing(policy, unit, AsyncMock(side_effect=_SILENT), times=3)
 

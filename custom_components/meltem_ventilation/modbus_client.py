@@ -56,7 +56,7 @@ from .const import (
     profile_max_airflow,
 )
 from .device import MeltemGateway, MeltemRoomDevice
-from .device.transport import NO_ANSWER_ERRORS, RequestOutcome
+from .device.transport import NO_ANSWER_ERRORS, ReadQuarantinedError, RequestOutcome
 from .modbus_helpers import (
     PLAUSIBLE_RANGES,
     MeltemConnectionError,
@@ -242,6 +242,11 @@ class MeltemModbusClient:
 
         return self._policy.seconds_since_read_answer(slave)
 
+    def read_quarantined(self, slave: int) -> bool:
+        """Return whether reads of a unit are blocked after an unanswered request."""
+
+        return self._policy.read_quarantined(slave)
+
     def transport_diagnostics(self) -> dict[str, float | int | None]:
         """Return the health counters of the gateway link."""
 
@@ -386,12 +391,16 @@ class MeltemModbusClient:
             device = self._room_device(room)
             job = _ReadJob()
             answered_before = self._policy.answered_requests
-            due = _due_fields(room, refresh_plan)
-            updated = await self._poll(device, _due_reads(due), job, slave=room.slave)
-            state = replace(previous_state, **_fresh_values(device, due, updated, job))
-            if refresh_plan.refresh_airflow:
-                block = await self._read_mode_block(room, device, job)
-                state = _apply_mode_read(room, state, block)
+            state = previous_state
+            if self._policy.read_delayed(room.slave):
+                job.skip(refresh_plan.read_groups())
+            else:
+                due = _due_fields(room, refresh_plan)
+                updated = await self._poll(device, _due_reads(due), job, slave=room.slave)
+                state = replace(previous_state, **_fresh_values(device, due, updated, job))
+                if refresh_plan.refresh_airflow:
+                    block = await self._read_mode_block(room, device, job)
+                    state = _apply_mode_read(room, state, block)
             job.had_answer = self._policy.answered_requests > answered_before
             return replace(
                 state,
@@ -471,6 +480,9 @@ class MeltemModbusClient:
                     self._component_backoff.clear((slave, component))
                     if component != "rf_comm_status":
                         job.unit_success_groups.update(groups)
+                continue
+            if isinstance(error, ReadQuarantinedError):
+                job.skip(groups)
                 continue
             job.record_error(groups, error)
             if isinstance(error, NO_ANSWER_ERRORS):
@@ -588,13 +600,12 @@ class MeltemModbusClient:
 
         if not room.supports_any(_MODE_ENTITY_KEYS):
             return None
-        if job.silent_error is not None:
-            job.record_error(_MODE_GROUPS, job.silent_error)
-            return None
-
         key = (room.slave, "mode_status")
         if self._mode_backoff.is_active(key):
             job.skip(_MODE_GROUPS)
+            return None
+        if job.silent_error is not None:
+            job.record_error(_MODE_GROUPS, job.silent_error)
             return None
 
         status = device.mode_status

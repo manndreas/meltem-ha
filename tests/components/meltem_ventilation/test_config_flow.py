@@ -312,8 +312,8 @@ class TestConfigFlowUser:
         for unit in (gateway, co2_unit):
             assert unit.required_timeout == FIXED_TIMEOUT
             assert unit.message_spacing == REQUEST_GAP_SECONDS
-        # The silent unit is given up after its first probe and one retry.
-        assert len(gateway_link.for_unit(3).read_events) == 2
+        # The silent unit is given up after its first unanswered probe.
+        assert len(gateway_link.for_unit(3).read_events) == 1
 
     async def test_user_step_scans_and_probes_on_one_link(
         self, hass: HomeAssistant, gateway_link: MockModbusConnection

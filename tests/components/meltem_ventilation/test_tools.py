@@ -221,7 +221,7 @@ class TestIntegrationLikeBenchmark:
         assert samples[0].ok is (slave == 2)
         if slave == 3:
             assert "flow: silent" in samples[0].detail
-            assert len(link.for_unit(3).read_events) == 2
+            assert len(link.for_unit(3).read_events) == 1
         else:
             assert samples[0].detail == ""
 

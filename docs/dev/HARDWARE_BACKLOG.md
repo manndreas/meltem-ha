@@ -843,7 +843,7 @@ the original timing and error findings in this backlog were measured with
 pymodbus. A first live comparison with tmodbus was run on 2026-10-02; results
 and the remaining post-release items are below.
 
-Two behaviors found in review depend on how the gateway answers and are left
+Behaviors found in review depend on how the gateway answers and are left
 as they are until measured:
 
 - **Code 10/11 for a powered-off unit.** A silent unit ends its job after the
@@ -853,6 +853,11 @@ as they are until measured:
 - **Busy (code 6).** tmodbus retries it internally for up to 60 s with
   growing waits, while the link and `_gateway_lock` stay held, so UI writes
   wait as well. `modbus-connection` does not make this configurable.
+- **Delayed responses after a read timeout.** The integration pauses its own
+  reads for that unit for five seconds, but cannot quarantine other consumers
+  of the shared connection. No safe release time or gateway reset is established;
+  an old answer arriving after the pause can still be mistaken for a new one.
+  See [DEVELOPER.md](DEVELOPER.md#transport-home-assistants-shared-modbus-connection).
 
 ### Why this cannot be decided blind
 
