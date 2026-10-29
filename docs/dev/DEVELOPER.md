@@ -801,20 +801,31 @@ and every entity platform, including:
 - coordinator write-then-refresh behavior, optimistic state, transport backoff
 - mixed read failures and responses within and across groups, skipped backed-off
   registers, recovery, and read-health freshness and availability boundaries
-- setup metadata repair, profile-aware entity cleanup, and serial unload
-  synchronization, including a queued write and persisted diagnostics
+- a shared-link outage followed by per-room `0x05` responses and staggered
+  recovery, using a controlled clock and Home Assistant entity states
+- setup metadata repair, profile-aware entity cleanup, cancellation during
+  setup, and serial unload synchronization, including a queued write, shutdown
+  errors, and persisted diagnostics
+- interrupted multi-register writes, including lost responses after the write
+  was applied, cancellation, and a complete subsequent write sequence
 - control-setting range and manufacturer-step normalization
 - config-flow helper functions for defaults and room mapping
 - entity creation per model profile across all platforms
 - the link settings in `tools/_link.py` against `const.py`
 
 On POSIX, the separate RTU protocol tests connect the real tmodbus client to a
-local pseudo-terminal simulator. They exercise reads, writes, exception frames,
-missing, truncated, corrupted and delayed responses, retries, and reconnection.
+local pseudo-terminal simulator with separate per-unit register maps. They
+exercise reads, writes, unknown registers, exception frames, fragmented,
+missing, truncated, corrupted, delayed, and mismatched responses, retries,
+and reconnection. Home Assistant fan service tests also run through its shared
+Modbus integration and the real RTU client to the simulated serial device.
 An RTU reply arriving after a timeout can satisfy a retry of the same read;
-the protocol does not identify which attempt produced it. A write whose reply
-was lost may likewise have been applied more than once. These tests do not
-establish that repeated writes are harmless on physical hardware.
+the protocol does not identify which attempt produced it. A read response
+does not identify the register address, so an otherwise identical late
+response from the same unit can also be ambiguous for a subsequent read.
+A write whose reply was lost may likewise have been applied more than once.
+These tests do not establish that repeated writes are harmless on physical
+hardware or that the simulated post-write readback models the physical latch.
 They are skipped on Windows. Neither simulator establishes physical gateway
 behavior; live validation and its safety rules remain in
 [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) and

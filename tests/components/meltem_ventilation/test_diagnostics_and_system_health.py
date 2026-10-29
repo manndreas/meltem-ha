@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import types
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -12,7 +13,7 @@ import pytest
 from homeassistant.components.diagnostics import REDACTED
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.json import ExtendedJSONEncoder
+from homeassistant.helpers.json import ExtendedJSONEncoder, JSONEncoder
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import CONF_PORT, CONF_ROOMS, DOMAIN
@@ -124,15 +125,58 @@ class TestDiagnostics:
         assert "last_read_job" not in diagnostics["room_states"]["unit_1"]
 
     async def test_result_is_json_serialisable(self, hass: HomeAssistant) -> None:
-        result = await async_get_config_entry_diagnostics(hass, _entry(hass))
+        entry = _entry(hass)
+        coordinator = entry.runtime_data.coordinator
+        read_at = datetime(2026, 10, 29, 10, 0, tzinfo=UTC)
+        coordinator.update_interval = timedelta(seconds=15)
+        coordinator.safe_data = {
+            "unit_1": RoomState(
+                supply_air_flow=40,
+                extract_air_flow=35,
+                operation_mode="manual",
+                target_level=40,
+            ).with_read_health(
+                "flow",
+                ReadHealth(
+                    last_attempt=read_at,
+                    last_successful_read=read_at,
+                    consecutive_failures=1,
+                    last_error="temporary failure",
+                ),
+            )
+        }
 
-        reloaded = json.loads(_dump(result))
+        result = await async_get_config_entry_diagnostics(hass, entry)
+        # Unlike ExtendedJSONEncoder, this fails on an unsupported object
+        # instead of silently turning it into an opaque repr marker.
+        reloaded = json.loads(json.dumps(result, cls=JSONEncoder))
 
-        # frozensets would otherwise turn into an opaque type marker.
+        assert reloaded == json.loads(_dump(result))
+        assert reloaded["entry"]["data"][CONF_PORT] == REDACTED
+        assert reloaded["coordinator"]["update_interval_seconds"] == 15
+        assert reloaded["coordinator"]["gateway_units"] == [2, 3]
         assert reloaded["coordinator"]["rooms"][0]["supported_entity_keys"] == [
             "extract_level",
             "supply_level",
         ]
+        state = reloaded["coordinator"]["room_states"]["unit_1"]
+        assert state["supply_air_flow"] == 40
+        assert state["extract_air_flow"] == 35
+        assert state["operation_mode"] == "manual"
+        assert state["target_level"] == 40
+        assert state["group_read_health"] == [
+            [
+                "flow",
+                {
+                    "last_attempt": "2026-10-29T10:00:00+00:00",
+                    "last_successful_read": "2026-10-29T10:00:00+00:00",
+                    "consecutive_failures": 1,
+                    "last_error": "temporary failure",
+                    "last_error_timed_out": False,
+                },
+            ]
+        ]
+        assert "last_read_job" not in state
 
     async def test_reports_gateway_units(self, hass: HomeAssistant) -> None:
         result = await async_get_config_entry_diagnostics(hass, _entry(hass))
@@ -155,7 +199,22 @@ class TestDiagnostics:
 
         result = await async_get_config_entry_diagnostics(hass, entry)
 
-        assert result["coordinator"]["cumulative_diagnostics"] == cumulative.diagnostics()
+        assert result["coordinator"]["cumulative_diagnostics"] == {
+            "period_started_at": cumulative.period_started_at,
+            "transport": {
+                "request_attempts": 1,
+                "request_failures": 1,
+                "request_failures_by_category": {
+                    "no_answer": 1,
+                    "modbus_exception": 0,
+                    "other": 0,
+                },
+                "successful_attempts": 0,
+                "link_recycles": 1,
+            },
+            "read_failures": {"unit_1": {"flow": 1}},
+            "write_issues": {"unit_1": {"readback_mismatch": {"airflow_levels": 1}}},
+        }
 
     async def test_reports_a_failing_gateway_probe(self, hass: HomeAssistant) -> None:
         entry = _entry(hass)

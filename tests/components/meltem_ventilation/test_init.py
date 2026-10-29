@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import (
     ConfigEntryError,
     ConfigEntryNotReady,
@@ -21,7 +23,13 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import UNDEFINED
-from modbus_connection import ClientClosedError, IllegalDataValueError, ModbusTimeoutError
+from modbus_connection import (
+    AcknowledgeError,
+    ClientClosedError,
+    IllegalDataValueError,
+    ModbusConnectionError,
+    ModbusTimeoutError,
+)
 from modbus_connection.mock import MockModbusConnection, WriteEvent
 from pytest_homeassistant.common import MockConfigEntry
 
@@ -45,6 +53,7 @@ from custom_components.meltem_ventilation.const import (
     PRESET_MODE_CODE_INTENSIVE,
     REGISTER_APPLY,
     REGISTER_CURRENT_LEVEL,
+    REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
     REGISTER_HUMIDITY_STARTING_POINT,
     REGISTER_MODE,
@@ -168,19 +177,38 @@ class TestAsyncSetupEntry:
         create_task.assert_called_once()
         assert isinstance(entry.runtime_data, MeltemRuntimeData)
 
+    @pytest.mark.parametrize("error", [RuntimeError("platform failed"), asyncio.CancelledError()])
     async def test_setup_failure_after_coordinator_removes_runtime_data(
         self,
         hass: HomeAssistant,
         setup_mocks: _SetupMocks,
+        error: BaseException,
     ) -> None:
-        setup_mocks.forward.side_effect = RuntimeError("platform failed")
+        setup_mocks.forward.side_effect = error
         entry = _entry(hass)
 
-        with pytest.raises(RuntimeError, match="platform failed"):
+        with pytest.raises(type(error)) as raised:
             await async_setup_entry(hass, entry)
 
+        assert raised.value is error
         assert not hasattr(entry, "runtime_data")
         setup_mocks.coordinator_cls.return_value.async_shutdown.assert_awaited_once()
+        setup_mocks.client_cls.return_value.shutdown.assert_called_once()
+
+    async def test_setup_cleanup_survives_coordinator_shutdown_failure(
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks
+    ) -> None:
+        setup_mocks.forward.side_effect = RuntimeError("platform failed")
+        coordinator = setup_mocks.coordinator_cls.return_value
+        coordinator.async_shutdown.side_effect = RuntimeError("shutdown failed")
+        entry = _entry(hass)
+
+        with pytest.raises(RuntimeError, match="shutdown failed") as raised:
+            await async_setup_entry(hass, entry)
+
+        assert isinstance(raised.value.__context__, RuntimeError)
+        assert str(raised.value.__context__) == "platform failed"
+        assert not hasattr(entry, "runtime_data")
         setup_mocks.client_cls.return_value.shutdown.assert_called_once()
 
     @pytest.mark.parametrize(
@@ -367,6 +395,24 @@ class TestAsyncUnloadEntry:
         assert coordinator.async_shutdown.await_count == int(unloaded)
         assert coordinator.client.shutdown.call_count == int(unloaded)
 
+    @pytest.mark.parametrize("error", [RuntimeError("shutdown failed"), asyncio.CancelledError()])
+    async def test_client_is_shutdown_when_coordinator_shutdown_fails(
+        self, hass: HomeAssistant, error: BaseException
+    ) -> None:
+        entry = _entry(hass)
+        coordinator = MagicMock()
+        coordinator.async_shutdown = AsyncMock(side_effect=error)
+        entry.runtime_data = MeltemRuntimeData(coordinator=coordinator)
+
+        with patch.object(
+            hass.config_entries, "async_unload_platforms", new=AsyncMock(return_value=True)
+        ):
+            with pytest.raises(type(error)) as raised:
+                await async_unload_entry(hass, entry)
+
+        assert raised.value is error
+        coordinator.client.shutdown.assert_called_once()
+
 
 class TestAsyncRemoveEntry:
     async def test_removes_persisted_diagnostics(self, hass: HomeAssistant) -> None:
@@ -533,18 +579,136 @@ class TestSharedModbusConnection:
     """Set up through the real modbus integration, on an in-memory link."""
 
     @staticmethod
-    def _patch_link(links: list[MockModbusConnection], *, gateway_silent: bool = False):
+    def _patch_link(
+        links: list[MockModbusConnection], *, gateway_silent: bool = False, two_rooms: bool = False
+    ):
         def _connection(params, **kwargs) -> MockModbusConnection:
             link = MockModbusConnection()
             gateway = link.for_unit(1)
-            gateway.holding.update({43901: 1, 43902: [2]})
+            gateway.holding.update(
+                {43901: 2 if two_rooms else 1, 43902: [2, 3] if two_rooms else [2]}
+            )
             if gateway_silent:
                 gateway.fail_requests(ModbusTimeoutError("silent"))
             link.for_unit(2).holding.update({41020: [30, 30], 41100: [3, 60, 0]})
+            if two_rooms:
+                link.for_unit(3).holding.update({41020: [45, 45], 41100: [3, 90, 0]})
             links.append(link)
             return link
 
         return patch("homeassistant.components.modbus.connection.ModbusConnection", _connection)
+
+    async def test_rooms_recover_independently_after_link_loss_and_acknowledgements(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = SimpleNamespace(now=time.monotonic())
+        for module in ("coordinator", "modbus_client", "device.transport"):
+            monkeypatch.setattr(
+                f"custom_components.meltem_ventilation.{module}.time",
+                SimpleNamespace(monotonic=lambda: clock.now),
+            )
+
+        async def advance(seconds: float) -> None:
+            clock.now += seconds
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.device.transport.async_sleep", advance
+        )
+        links: list[MockModbusConnection] = []
+        room_2 = {**_ROOM, "key": "unit_2", "name": "Unit 2", "slave": 3}
+        entry = _entry(
+            hass,
+            rooms=[_ROOM, room_2],
+            options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0},
+        )
+
+        with self._patch_link(links, two_rooms=True):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            try:
+                await hass.async_block_till_done(wait_background_tasks=True)
+                coordinator = entry.runtime_data.coordinator
+                first, second = links[0].for_unit(2), links[0].for_unit(3)
+
+                async def poll(room_key: str) -> None:
+                    clock.now += 60
+                    coordinator._startup_jobs = []
+                    for job in coordinator._jobs:
+                        job.next_due = (
+                            0.0 if job.room_key == room_key and job.key == "flow" else float("inf")
+                        )
+                    coordinator._last_read_started = None
+                    await coordinator.async_refresh()
+                    await hass.async_block_till_done()
+
+                await poll("unit_1")
+                await poll("unit_2")
+                registry = er.async_get(hass)
+                first_id = registry.async_get_entity_id(
+                    Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_supply_level"
+                )
+                second_id = registry.async_get_entity_id(
+                    Platform.FAN, DOMAIN, f"{DOMAIN}_unit_2_supply_level"
+                )
+                assert first_id is not None and second_id is not None
+
+                def state_for(entity_id: str) -> State:
+                    state = hass.states.get(entity_id)
+                    assert state is not None
+                    return state
+
+                assert state_for(first_id).attributes["percentage"] == 30
+                assert state_for(second_id).attributes["percentage"] == 45
+
+                link = links[0]
+                connect = link._connect_client
+                monkeypatch.setattr(
+                    link,
+                    "_connect_client",
+                    AsyncMock(side_effect=ModbusConnectionError("link lost")),
+                )
+                link.simulate_connection_lost()
+                assert not link.connected
+                for _ in range(3):
+                    await poll("unit_1")
+                    await poll("unit_2")
+                assert not coordinator.room_available("unit_1")
+                assert not coordinator.room_available("unit_2")
+                assert state_for(first_id).state == "unavailable"
+                assert state_for(second_id).state == "unavailable"
+
+                monkeypatch.setattr(link, "_connect_client", connect)
+                for unit in (first, second):
+                    unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, AcknowledgeError())
+                recycles = coordinator.client.transport_diagnostics()["link_recycles"]
+                for _ in range(3):
+                    await poll("unit_1")
+                    await poll("unit_2")
+                assert link.connected
+                assert coordinator.read_group_stale("unit_1", "flow") is True
+                assert coordinator.read_group_stale("unit_2", "flow") is True
+                assert coordinator.client.transport_diagnostics()["link_recycles"] == recycles
+                assert coordinator.safe_data["unit_1"].supply_air_flow == 30
+                assert coordinator.safe_data["unit_2"].supply_air_flow == 45
+
+                first.fail_read(REGISTER_EXTRACT_AIR_FLOW, None)
+                first.holding[REGISTER_EXTRACT_AIR_FLOW] = [50, 50]
+                first.holding[REGISTER_MODE_STATUS] = [MODE_MANUAL, 100, 0]
+                await poll("unit_1")
+                assert coordinator.read_group_stale("unit_1", "flow") is False
+                assert coordinator.read_group_stale("unit_2", "flow") is True
+                assert state_for(first_id).attributes["percentage"] == 50
+                assert state_for(second_id).state == "unavailable"
+                assert coordinator.safe_data["unit_2"].supply_air_flow == 45
+
+                second.fail_read(REGISTER_EXTRACT_AIR_FLOW, None)
+                second.holding[REGISTER_EXTRACT_AIR_FLOW] = [55, 55]
+                second.holding[REGISTER_MODE_STATUS] = [MODE_MANUAL, 110, 0]
+                await poll("unit_2")
+                assert coordinator.read_group_stale("unit_2", "flow") is False
+                assert state_for(second_id).attributes["percentage"] == 55
+            finally:
+                assert await hass.config_entries.async_unload(entry.entry_id)
 
     @pytest.mark.parametrize("write_fails", [False, True], ids=("confirmed", "rejected"))
     async def test_fan_service_writes_and_reconciles_through_the_shared_link(
@@ -902,8 +1066,9 @@ class TestSharedModbusConnection:
             with pytest.raises(ClientClosedError):
                 await link.for_unit(1).read_holding_registers(43901, 1)
 
+    @pytest.mark.parametrize("shutdown_fails", [False, True])
     async def test_unload_during_blocked_read_does_not_send_a_queued_write(
-        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, shutdown_fails: bool
     ) -> None:
         links: list[MockModbusConnection] = []
         entry = _entry(hass, options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0})
@@ -958,9 +1123,27 @@ class TestSharedModbusConnection:
             assert not write_task.done()
             assert writes == []
             try:
-                assert await asyncio.wait_for(
-                    hass.config_entries.async_unload(entry.entry_id), timeout=5
-                )
+                if shutdown_fails:
+                    cumulative = coordinator.cumulative_diagnostics
+                    assert cumulative is not None
+                    with (
+                        patch.object(
+                            hass.config_entries,
+                            "async_unload_platforms",
+                            new=AsyncMock(return_value=True),
+                        ),
+                        patch.object(
+                            cumulative,
+                            "async_flush",
+                            new=AsyncMock(side_effect=RuntimeError("shutdown failed")),
+                        ),
+                        pytest.raises(RuntimeError, match="shutdown failed"),
+                    ):
+                        await asyncio.wait_for(async_unload_entry(hass, entry), timeout=5)
+                else:
+                    assert await asyncio.wait_for(
+                        hass.config_entries.async_unload(entry.entry_id), timeout=5
+                    )
             finally:
                 resume.set()
             await read_task
@@ -969,6 +1152,8 @@ class TestSharedModbusConnection:
             assert writes == []
             assert not coordinator._gateway_lock.locked()
 
+            if shutdown_fails:
+                assert await hass.config_entries.async_unload(entry.entry_id)
             assert await hass.config_entries.async_setup(entry.entry_id)
             await hass.async_block_till_done(wait_background_tasks=True)
             assert len(links) == 2

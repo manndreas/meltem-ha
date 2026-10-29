@@ -301,14 +301,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
         cumulative_diagnostics=cumulative_diagnostics,
     )
     entry.runtime_data = MeltemRuntimeData(coordinator=coordinator)
+    forwarded = False
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    except Exception:
-        await coordinator.async_shutdown()
-        client.shutdown()
-        # Home Assistant only drops runtime_data on unload, not after a failed setup.
-        del entry.runtime_data
-        raise
+        forwarded = True
+    finally:
+        if not forwarded:
+            try:
+                await coordinator.async_shutdown()
+            finally:
+                client.shutdown()
+                # Home Assistant only drops runtime_data on unload, not after a failed setup.
+                del entry.runtime_data
 
     entry.async_create_background_task(
         hass,
@@ -324,10 +328,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: MeltemIntegrationConfig
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         runtime_data: MeltemRuntimeData = entry.runtime_data
-        await runtime_data.coordinator.async_shutdown()
-        # A pending write readback must not reach the link after unloading;
-        # the modbus integration closes the link once the entry releases it.
-        runtime_data.coordinator.client.shutdown()
+        try:
+            await runtime_data.coordinator.async_shutdown()
+        finally:
+            # A pending write readback must not reach the link after unloading;
+            # the modbus integration closes the link once the entry releases it.
+            runtime_data.coordinator.client.shutdown()
 
     return unload_ok
 

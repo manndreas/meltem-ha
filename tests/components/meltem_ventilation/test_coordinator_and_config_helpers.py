@@ -1256,10 +1256,34 @@ class TestDirectionalWrites:
         coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
         supply = MeltemDirectionalFanEntity(coordinator, _UNIT_1, DIRECTION_SUPPLY)
         extract = MeltemDirectionalFanEntity(coordinator, _UNIT_1, DIRECTION_EXTRACT)
+        started = asyncio.Event()
+        second_started = asyncio.Event()
+        release = asyncio.Event()
+        original_write = client.write_unbalanced_levels
 
-        await asyncio.gather(supply.async_set_percentage(40), extract.async_set_percentage(40))
+        async def blocked_write(room: RoomConfig, supply_level: int, extract_level: int) -> None:
+            started.set()
+            await release.wait()
+            await original_write(room, supply_level, extract_level)
 
-        assert client.write_level_calls[-1] == ("unit_1", 40)
+        async def change_extract() -> None:
+            second_started.set()
+            await extract.async_set_percentage(40)
+
+        client.write_unbalanced_levels = blocked_write
+        first = asyncio.create_task(supply.async_set_percentage(40))
+        await asyncio.wait_for(started.wait(), 5)
+        second = asyncio.create_task(change_extract())
+        try:
+            await asyncio.wait_for(second_started.wait(), 5)
+            assert not second.done()
+            assert client.write_level_calls == []
+        finally:
+            release.set()
+        await asyncio.wait_for(asyncio.gather(first, second), 5)
+
+        assert client.write_unbalanced_calls == [("unit_1", 40, 60)]
+        assert client.write_level_calls == [("unit_1", 40)]
         assert coordinator.effective_levels("unit_1") == (40, 40)
 
     @pytest.mark.parametrize(

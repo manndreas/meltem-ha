@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -429,6 +430,76 @@ class TestWriteLevel:
 
 
 class TestWriteUnbalancedLevels:
+    @pytest.mark.parametrize(
+        "failed_register",
+        [REGISTER_MODE, REGISTER_CURRENT_LEVEL, REGISTER_EXTRACT_AIR_TARGET_LEVEL, REGISTER_APPLY],
+        ids=("mode", "supply", "extract", "apply"),
+    )
+    @pytest.mark.parametrize(
+        "failure", ["rejected", "timeout", "applied_timeout", "cancelled", "applied_cancelled"]
+    )
+    async def test_interrupted_write_stops_and_a_followup_rewrites_all_targets(
+        self,
+        client: MeltemModbusClient,
+        link: MockModbusConnection,
+        failed_register: int,
+        failure: str,
+    ) -> None:
+        unit = link.for_unit(_ROOM.slave)
+        events = _writes(link, _ROOM)
+        original_write = unit.write_register
+        attempts: list[int] = []
+        failing = True
+
+        async def interrupted_write(address: int, value: int) -> None:
+            attempts.append(address)
+            if failing and address == failed_register:
+                if failure.startswith("applied_"):
+                    await original_write(address, value)
+                if failure.endswith("cancelled"):
+                    raise asyncio.CancelledError()
+                if failure == "rejected":
+                    raise IllegalDataValueError()
+                raise ModbusTimeoutError("write response lost")
+            await original_write(address, value)
+
+        unit.write_register = interrupted_write
+        sequence = [
+            (REGISTER_MODE, MODE_UNBALANCED),
+            (REGISTER_CURRENT_LEVEL, 120),
+            (REGISTER_EXTRACT_AIR_TARGET_LEVEL, 80),
+            (REGISTER_APPLY, 0),
+        ]
+        failed_index = next(
+            i for i, (address, _) in enumerate(sequence) if address == failed_register
+        )
+        repeats = 2 if failure.endswith("timeout") else 1
+        expected_error = (
+            asyncio.CancelledError if failure.endswith("cancelled") else MeltemModbusError
+        )
+
+        with pytest.raises(expected_error):
+            await client.write_unbalanced_levels(_ROOM, 60, 40)
+
+        assert (
+            attempts
+            == [address for address, _ in sequence[:failed_index]] + [failed_register] * repeats
+        )
+        accepted = sequence[:failed_index]
+        if failure.startswith("applied_"):
+            accepted += [sequence[failed_index]] * repeats
+        assert _written(events) == accepted
+
+        failing = False
+        await client.write_unbalanced_levels(_ROOM, 30, 50)
+
+        assert _written(events)[len(accepted) :] == [
+            (REGISTER_MODE, MODE_UNBALANCED),
+            (REGISTER_CURRENT_LEVEL, 60),
+            (REGISTER_EXTRACT_AIR_TARGET_LEVEL, 100),
+            (REGISTER_APPLY, 0),
+        ]
+
     @pytest.mark.parametrize(
         ("supply", "extract", "raw_supply", "raw_extract"),
         [(60, 40, 120, 80), (999, -10, 200, 0)],
