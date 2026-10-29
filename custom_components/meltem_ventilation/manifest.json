@@ -1,6 +1,9 @@
 {
   "domain": "meltem_ventilation",
   "name": "Meltem Modbus",
+  "categories": [
+    "climate.fans_ventilation"
+  ],
   "codeowners": [
     "@manndreas"
   ],
@@ -17,7 +20,7 @@
     "tmodbus"
   ],
   "requirements": [
-    "modbus-connection>=4.12.4"
+    "modbus-connection>=4.12.7"
   ],
   "single_config_entry": true,
   "usb": [
@@ -28,5 +31,5 @@
       "vid": "10AC"
     }
   ],
-  "version": "4.6.2"
+  "version": "4.7.0"
 }

@@ -19,7 +19,7 @@ from homeassistant.helpers.service_info.usb import UsbServiceInfo
 from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection
 from probatio.schema import Schema
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.config_flow import MeltemVentilationConfigFlow
 from custom_components.meltem_ventilation.const import (

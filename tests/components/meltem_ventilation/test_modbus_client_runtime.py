@@ -272,7 +272,7 @@ class TestReadFailures:
             await client.read_room_state(_ROOM, RoomState(), RefreshPlan())
 
         assert len(unit.read_events) == 2
-        assert sleeps == [0.5]
+        assert sleeps == [5.0]
 
     async def test_a_silent_unit_ends_the_job_after_its_first_block(
         self, client: MeltemModbusClient, link: MockModbusConnection

@@ -171,8 +171,8 @@ Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
 - `async_get_unit(hass, entry, params, unit_id)` at runtime; the units are
   released when the entry unloads, and the link closes after the last holder
 - `async_get_temporary_unit(hass, params, unit_id)` in the config flow
-- the backend is always tmodbus via `modbus-connection`; HA `2026.10.2` pins
-  `modbus-connection` `4.12.4`. Version `4.12.3` first added `require_timeout`
+- the backend is always tmodbus via `modbus-connection`; HA `2026.11.0` pins
+  `modbus-connection` `4.12.7`. Version `4.12.3` first added `require_timeout`
   and the device-modelling framework used here; the integration's minimum
   dependency is aligned with the supported HA baseline
 - link parameters are fixed in `build_serial_params`: 19200 baud, 8E1, RTU
@@ -769,7 +769,7 @@ The file overview is in `AGENTS.md` under "Important files".
 ## Tests
 
 The test suite runs against a real Home Assistant test environment provided by
-`pytest-homeassistant-custom-component`, which requires Python 3.14. Modbus
+`pytest-home-assistant`, which requires Python 3.14. Modbus
 traffic runs against `modbus_connection.mock.MockModbusConnection`, an
 in-memory register bank, so the request shapes, the retry policy, and the
 decoding are tested together. It covers the Modbus layer, the coordinator,

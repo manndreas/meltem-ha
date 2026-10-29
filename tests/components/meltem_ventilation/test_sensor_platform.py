@@ -10,9 +10,12 @@ import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import EntityCategory, UnitOfTime, UnitOfVolumeFlowRate
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
+from homeassistant.helpers.typing import UNDEFINED
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
+from custom_components.meltem_ventilation import entity as entity_module
 from custom_components.meltem_ventilation.const import CONF_PORT, DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
 from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
@@ -76,6 +79,32 @@ def _sensor(key: str, state: RoomState | None = None) -> MeltemSensorEntity:
 
 
 class TestSensorEntityCreation:
+    @pytest.mark.parametrize("gateway_mac", [None, "02:00:00:00:00:01"])
+    def test_gateway_device_info_optional_mac(self, gateway_mac: str | None) -> None:
+        info = entity_module.gateway_device_info("gateway-entry", gateway_mac)
+
+        assert isinstance(info, DeviceInfo)
+        assert info.identifiers == {(DOMAIN, "gateway-entry")}
+        if gateway_mac is None:
+            assert info.connections is UNDEFINED
+        else:
+            assert info.connections == {(CONNECTION_NETWORK_MAC, gateway_mac)}
+
+    @pytest.mark.parametrize("gateway_device_id", [None, "gateway-device"])
+    def test_room_device_info_optional_gateway(self, gateway_device_id: str | None) -> None:
+        sensor = _sensor("exhaust_temperature", RoomState(software_version=42))
+        setattr(sensor.coordinator, "gateway_device_id", gateway_device_id)
+
+        info = sensor.device_info
+
+        assert isinstance(info, DeviceInfo)
+        assert info.identifiers == {(DOMAIN, "unit_1")}
+        assert info.sw_version == "42"
+        if gateway_device_id is None:
+            assert info.via_device_id is UNDEFINED
+        else:
+            assert info.via_device_id == gateway_device_id
+
     async def test_cumulative_gateway_counter_metadata_value_and_attributes(
         self, hass: HomeAssistant
     ) -> None:
@@ -142,7 +171,9 @@ class TestSensorEntityCreation:
         )
 
         assert entity.unique_id == f"{DOMAIN}_gateway-entry_gateway_last_answer"
-        assert entity.device_info == {
+        info = entity.device_info
+        assert isinstance(info, DeviceInfo)
+        assert info.as_dict() == {
             "identifiers": {(DOMAIN, "gateway-entry")},
             "manufacturer": "Meltem",
             "model": "M-WRG-GW",
@@ -207,15 +238,15 @@ class TestSensorEntityCreation:
 
         info = sensor.device_info
 
-        assert (DOMAIN, "unit_1") in (info.get("identifiers") or set())
-        assert info.get("manufacturer") == "Meltem"
-        name = info.get("name")
-        assert name is not None
+        assert info.identifiers == {(DOMAIN, "unit_1")}
+        assert info.manufacturer == "Meltem"
+        name = info.name
+        assert isinstance(name, str)
         assert "Living Room" in name
-        assert info.get("sw_version") == "42"
-        assert info.get("hw_version") == "116852"
-        assert info.get("serial_number") is None
-        assert info.get("via_device_id") == "gateway-device"
+        assert info.sw_version == "42"
+        assert info.hw_version == "116852"
+        assert info.serial_number is UNDEFINED
+        assert info.via_device_id == "gateway-device"
 
     def test_device_info_uses_structured_unit_identity(self) -> None:
         room = RoomConfig(
@@ -229,11 +260,13 @@ class TestSensorEntityCreation:
         )
         sensor = MeltemSensorEntity(_coordinator(), room, _SENSORS["exhaust_temperature"])
 
-        assert sensor.device_info.get("hw_version") == "116852"
-        assert (DOMAIN, "app_setup_code:R000001") in (
-            sensor.device_info.get("identifiers") or set()
-        )
-        assert sensor.device_info.get("serial_number") is None
+        info = sensor.device_info
+        assert info.hw_version == "116852"
+        assert info.identifiers == {
+            (DOMAIN, "unit_1"),
+            (DOMAIN, "app_setup_code:R000001"),
+        }
+        assert info.serial_number is UNDEFINED
 
     @pytest.mark.parametrize(
         ("key", "device_class", "unit"),

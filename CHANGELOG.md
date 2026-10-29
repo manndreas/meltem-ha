@@ -1,6 +1,11 @@
 # Changelog
 
-## 4.6.2
+## 4.7.0
+
+- **Breaking:** Raise the minimum supported Home Assistant version to `2026.11.0`
+  and use its dataclass-based `DeviceInfo` and device registry API.
+- Add the fans and ventilation integration category for the Home Assistant
+  community catalog.
 
 - Back off repeated Modbus `0x05` responses per unit and register block to
   reduce redundant polling while a device recovers, then resume normal polling

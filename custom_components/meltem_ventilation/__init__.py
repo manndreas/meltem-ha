@@ -211,7 +211,7 @@ def _async_register_gateway_device(
 
     registry = dr.async_get(hass)
     gateway = gateway_device_info(entry.entry_id, gateway_mac)
-    registry.async_get_or_create(config_entry_id=entry.entry_id, **gateway)
+    registry.async_get_or_create_from_info(config_entry_id=entry.entry_id, device_info=gateway)
 
 
 def _async_sync_devices(

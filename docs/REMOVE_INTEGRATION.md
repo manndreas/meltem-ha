@@ -15,9 +15,9 @@ the gateway. You do not need to remove the entities individually.
 
 ## Uninstall the integration
 
-If you installed the integration with HACS, open **HACS** > **Integrations**,
-select **Meltem Modbus**, and use its menu to remove it. Restart Home Assistant
-afterwards.
+If you installed the integration through the Marketplace, open **Settings** >
+**Marketplace** > **Installed**, select **Meltem Modbus**, and uninstall it.
+Restart Home Assistant afterwards.
 
 If you installed it manually, remove the
 `custom_components/meltem_ventilation/` directory from your Home Assistant

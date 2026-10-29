@@ -68,10 +68,10 @@ class TestBinarySensorEntityCreation:
     def test_device_info(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=7)})
         info = _entity(coordinator, "error_status").device_info
-        assert (DOMAIN, "unit_1") in (info.get("identifiers") or set())
-        assert info.get("manufacturer") == "Meltem"
-        assert info.get("sw_version") == "7"
-        assert info.get("hw_version") == "116852"
+        assert info.identifiers == {(DOMAIN, "unit_1")}
+        assert info.manufacturer == "Meltem"
+        assert info.sw_version == "7"
+        assert info.hw_version == "116852"
 
     def test_data_health_entity_reports_group_details(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState()})

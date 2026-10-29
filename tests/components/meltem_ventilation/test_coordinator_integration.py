@@ -22,7 +22,7 @@ from modbus_connection import (
     ModbusTimeoutError,
 )
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit, WriteEvent
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.binary_sensor import (
     BINARY_SENSOR_DESCRIPTIONS,

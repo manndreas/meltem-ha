@@ -1,14 +1,13 @@
 # Test and lint dependencies.
 #
-# The harness pins the HA minimum in hacs.json and its matching pytest stack.
-# Do not install those separately - doing so silently breaks the combination.
-# It also dictates the minimum Python version used in CI.
-pytest-homeassistant-custom-component==0.13.373
-# Match the Modbus integration manifest in Home Assistant 2026.10.2.
-modbus-connection[tmodbus]==4.12.4
-tmodbus==0.6.2
+# Pin Home Assistant and its official test helpers to the supported release.
+homeassistant==2026.11.0
+pytest-home-assistant @ https://github.com/home-assistant/core/archive/refs/tags/2026.11.0.tar.gz#subdirectory=packages/pytest-home-assistant
+# Match the Modbus integration manifest in Home Assistant 2026.11.0.
+modbus-connection[tmodbus]==4.12.7
+tmodbus==1.1.0
 # The modbus integration still imports pymodbus for its YAML hubs.
 pymodbus==3.13.1
 ruff==0.17.1
-# Type-check against the Home Assistant version the harness installs.
+# Type-check against the Home Assistant release above.
 mypy==2.4.0

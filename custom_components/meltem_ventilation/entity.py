@@ -34,7 +34,7 @@ def gateway_device_info(entry_id: str, gateway_mac: str | None = None) -> Device
         name=GATEWAY_NAME,
     )
     if gateway_mac is not None:
-        info["connections"] = {(dr.CONNECTION_NETWORK_MAC, gateway_mac)}
+        info.connections = {(dr.CONNECTION_NETWORK_MAC, gateway_mac)}
     return info
 
 
@@ -125,7 +125,7 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
             sw_version=self._sw_version,
         )
         if (gateway_device_id := self.coordinator.gateway_device_id) is not None:
-            info["via_device_id"] = gateway_device_id
+            info.via_device_id = gateway_device_id
         return info
 
     @property

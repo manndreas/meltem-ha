@@ -19,9 +19,10 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.typing import UNDEFINED
 from modbus_connection import ClientClosedError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.meltem_ventilation import (
     async_migrate_entry,
@@ -452,14 +453,23 @@ class TestDeviceRegistrySync:
         self, hass: HomeAssistant, setup_mocks: _SetupMocks
     ) -> None:
         entry = _entry(hass)
+        registry = dr.async_get(hass)
         setup_mocks.client_cls.return_value.async_read_gateway_mac.return_value = _TEST_GATEWAY_MAC
 
-        await async_setup_entry(hass, entry)
-        await hass.async_block_till_done(wait_background_tasks=True)
+        with patch.object(
+            registry, "async_get_or_create_from_info", wraps=registry.async_get_or_create_from_info
+        ) as register:
+            await async_setup_entry(hass, entry)
+            await hass.async_block_till_done(wait_background_tasks=True)
 
-        gateway = dr.async_get(hass).async_get_device_by_identifier(
-            (DOMAIN, entry.entry_id), entry.entry_id
-        )
+        assert register.call_count == 2
+        first_info = register.call_args_list[0].kwargs["device_info"]
+        mac_info = register.call_args_list[1].kwargs["device_info"]
+        assert isinstance(first_info, dr.DeviceInfo)
+        assert first_info.connections is UNDEFINED
+        assert isinstance(mac_info, dr.DeviceInfo)
+        assert mac_info.connections == {(dr.CONNECTION_NETWORK_MAC, _TEST_GATEWAY_MAC)}
+        gateway = registry.async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
         assert gateway is not None
         assert gateway.model == "M-WRG-GW"
         assert (dr.CONNECTION_NETWORK_MAC, _TEST_GATEWAY_MAC) in gateway.connections

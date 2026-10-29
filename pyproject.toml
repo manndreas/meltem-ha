@@ -1,10 +1,11 @@
 [project]
 name = "meltem-modbus"
-version = "4.6.2"
+version = "4.7.0"
 requires-python = ">=3.13"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-p no:respx"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["."]

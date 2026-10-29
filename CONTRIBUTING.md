@@ -18,9 +18,8 @@ Thanks for helping improve the Meltem Home Assistant integration.
 
 The integration itself targets the Python version shipped with Home Assistant,
 which is why `pyproject.toml` declares `requires-python = ">=3.13"`. The test
-toolchain is stricter: `pytest-homeassistant-custom-component` currently
-requires Python `>=3.14`, so use a 3.14 interpreter for the virtual
-environment.
+toolchain is stricter: Home Assistant's test helpers currently require Python
+`>=3.14.2`, so use a suitable 3.14 interpreter for the virtual environment.
 
 ```bash
 python -m venv .venv
@@ -28,14 +27,18 @@ source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements-test.txt
 ```
 
-Do not install `homeassistant`, `pytest` or `pytest-asyncio` separately -
-`pytest-homeassistant-custom-component` pins the matching versions.
-The harness ships Home Assistant `2026.10` but not the requirements of its
-Modbus integration, from which the integration gets its serial link, so
-`requirements-test.txt` adds the `modbus-connection`, `tmodbus` and `pymodbus`
-versions pinned in `homeassistant/components/modbus/manifest.json`; compare
-them again whenever the harness pin is raised. Tests never open a serial port; they
-run against `modbus_connection.mock.MockModbusConnection`.
+For an existing environment, first uninstall
+`pytest-homeassistant-custom-component`; the old and new test plugins must not
+be installed together.
+
+The official `pytest-home-assistant` test helpers are pinned to the Home
+Assistant Core `2026.11.0` source tag.
+They do not install the requirements of Home Assistant's Modbus integration, so
+`requirements-test.txt` adds the
+`modbus-connection`, `tmodbus` and `pymodbus` versions pinned in
+`homeassistant/components/modbus/manifest.json`. Compare them again when
+updating Home Assistant. Tests never open a serial port; they run against
+`modbus_connection.mock.MockModbusConnection`.
 
 Run tests, formatting, lint, and the type check with:
 

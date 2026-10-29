@@ -55,20 +55,20 @@ automation that runs intensive ventilation while a room is occupied.
 
 ### Requirements
 
-- Home Assistant `2026.10.2` or newer
+- Home Assistant `2026.11.0` or newer
 - a Meltem `M-WRG-GW` gateway
 - supported `M-WRG-S` / `M-WRG-II` units already added in the Meltem app
 - the gateway connected to the Home Assistant host via USB
   > **Note:** Use a USB cable that is fully wired for data — charge-only cables will not work.
 
-### HACS
+### Marketplace
 
-1. Open HACS in Home Assistant
-2. Open the top-right menu -> `Custom repositories`
-3. Add `https://github.com/manndreas/meltem-ha` as type `Integration`
-4. Search for `Meltem Modbus`
-5. Install the integration
-6. Restart Home Assistant
+1. Open `Settings` -> `Marketplace`
+2. Select `Add from link` and enter `https://github.com/manndreas/meltem-ha`
+3. Connect GitHub when prompted for the custom repository
+4. Install `Meltem Modbus` and continue to setup
+
+Updates still require a Home Assistant restart.
 
 ### Manual
 

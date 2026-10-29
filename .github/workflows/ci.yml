@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  # pytest-homeassistant-custom-component dictates the minimum Python version.
+  # Home Assistant's test helpers dictate the minimum Python version.
   PYTHON_VERSION: "3.14"
 
 jobs:

@@ -61,27 +61,41 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
-class MeltemSensorDescription(SensorEntityDescription):
+class _MeltemSensorDescriptionBase(SensorEntityDescription):
+    """Expose Home Assistant's dynamically generated description fields to type checkers."""
+
+    key: str
+    device_class: SensorDeviceClass | None = None
+    entity_category: EntityCategory | None = None
+    entity_registry_enabled_default: bool = True
+    native_unit_of_measurement: str | None = None
+    state_class: SensorStateClass | None = None
+    suggested_display_precision: int | None = None
+    translation_key: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class MeltemSensorDescription(_MeltemSensorDescriptionBase):
     """Describe a Meltem sensor."""
 
     value_fn: Callable[[RoomState], int | float | None]
     supported_profiles: frozenset[str] = ALL_PROFILES
 
 
-MODBUS_SLAVE_ID_DESCRIPTION = SensorEntityDescription(
+MODBUS_SLAVE_ID_DESCRIPTION = _MeltemSensorDescriptionBase(
     key="modbus_slave_id",
     entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
 )
 
-MODBUS_DEVICE_PATH_DESCRIPTION = SensorEntityDescription(
+MODBUS_DEVICE_PATH_DESCRIPTION = _MeltemSensorDescriptionBase(
     key="modbus_device_path",
     translation_key="modbus_device_path",
     entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
 )
 
-APP_SETUP_CODE_DESCRIPTION = SensorEntityDescription(
+APP_SETUP_CODE_DESCRIPTION = _MeltemSensorDescriptionBase(
     key="app_setup_code",
     entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
@@ -89,7 +103,7 @@ APP_SETUP_CODE_DESCRIPTION = SensorEntityDescription(
 
 
 @dataclass(frozen=True, kw_only=True)
-class MeltemGatewaySensorDescription(SensorEntityDescription):
+class MeltemGatewaySensorDescription(_MeltemSensorDescriptionBase):
     """Describe a locally derived gateway diagnostic."""
 
     value_fn: Callable[[MeltemDataUpdateCoordinator], int | float | datetime | None]
@@ -245,7 +259,7 @@ GATEWAY_SENSOR_DESCRIPTIONS: tuple[MeltemGatewaySensorDescription, ...] = (
 )
 
 CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = tuple(
-    SensorEntityDescription(
+    _MeltemSensorDescriptionBase(
         key=key,
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -406,7 +420,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
 )
 
 
-GATEWAY_UPTIME_DESCRIPTION = SensorEntityDescription(
+GATEWAY_UPTIME_DESCRIPTION = _MeltemSensorDescriptionBase(
     key="gateway_uptime",
     device_class=SensorDeviceClass.DURATION,
     native_unit_of_measurement=UnitOfTime.DAYS,
@@ -417,7 +431,7 @@ GATEWAY_UPTIME_DESCRIPTION = SensorEntityDescription(
 )
 
 
-GATEWAY_UTC_CLOCK_DESCRIPTION = SensorEntityDescription(
+GATEWAY_UTC_CLOCK_DESCRIPTION = _MeltemSensorDescriptionBase(
     key="gateway_utc_clock",
     device_class=SensorDeviceClass.TIMESTAMP,
     entity_category=EntityCategory.DIAGNOSTIC,
@@ -425,7 +439,7 @@ GATEWAY_UTC_CLOCK_DESCRIPTION = SensorEntityDescription(
 )
 
 
-GATEWAY_CONNECTED_DEVICES_DESCRIPTION = SensorEntityDescription(
+GATEWAY_CONNECTED_DEVICES_DESCRIPTION = _MeltemSensorDescriptionBase(
     key="gateway_connected_devices",
     state_class=SensorStateClass.MEASUREMENT,
     suggested_display_precision=0,
@@ -434,7 +448,7 @@ GATEWAY_CONNECTED_DEVICES_DESCRIPTION = SensorEntityDescription(
 
 
 ROOM_DIAGNOSTIC_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
-    SensorEntityDescription(
+    _MeltemSensorDescriptionBase(
         key="last_successful_update",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,

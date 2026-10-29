@@ -13,7 +13,7 @@ from homeassistant.components.diagnostics import REDACTED
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.json import ExtendedJSONEncoder
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import CONF_PORT, CONF_ROOMS, DOMAIN
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator

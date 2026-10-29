@@ -5,8 +5,6 @@ from __future__ import annotations
 import socket
 import sys
 
-import pytest
-
 if sys.platform == "win32":
     # The proactor event loop creates an AF_INET socketpair, which the harness's
     # socket guard blocks. Only that loopback pair is let through; Linux uses a
@@ -23,8 +21,3 @@ if sys.platform == "win32":
             socket.socket = guarded_socket
 
     socket.socketpair = _loopback_socketpair
-
-
-@pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
-    """Allow pytest-homeassistant-custom-component to load the integration."""
