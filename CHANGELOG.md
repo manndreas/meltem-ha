@@ -207,7 +207,7 @@ first start after the update.
 
 ### Breaking changes
 
-- Requires Home Assistant `2025.1` and `pymodbus` `3.13` or newer.
+- Requires Home Assistant `2025.1` and `pymodbus` `3.14` or newer.
 - Control airflow with separate **Supply air** and **Extract air** fans. Equal
   settings run the unit balanced; different settings run it unbalanced. Set
   both to zero to switch the unit off. Turning it back on starts both directions,
