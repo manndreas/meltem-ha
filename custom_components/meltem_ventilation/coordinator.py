@@ -514,6 +514,14 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 time.monotonic() + GATEWAY_RF_STATISTICS_REFRESH_SECONDS
             )
 
+    async def _async_read_optional_gateway_values_due(self) -> None:
+        """Read optional gateway values in order while holding the gateway lock."""
+
+        await self._async_read_gateway_uptime_due()
+        await self._async_read_gateway_utc_clock_due()
+        await self._async_read_gateway_connected_devices_due()
+        await self._async_read_gateway_rf_statistics_due()
+
     def room_available(self, room_key: str) -> bool:
         """Return whether one room still delivers usable data.
 
@@ -694,10 +702,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 now = time.monotonic()
                 job, startup = self._select_poll_job(now)
                 if job is None:
-                    await self._async_read_gateway_uptime_due()
-                    await self._async_read_gateway_utc_clock_due()
-                    await self._async_read_gateway_connected_devices_due()
-                    await self._async_read_gateway_rf_statistics_due()
+                    await self._async_read_optional_gateway_values_due()
                     self._schedule_next_tick()
                     return self.safe_data
 
@@ -709,10 +714,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 self._last_job_link_failure = False
                 self._last_job_attempted = False
                 updated_data = await self._read_one_job(self.safe_data or self._startup_states, job)
-                await self._async_read_gateway_uptime_due()
-                await self._async_read_gateway_utc_clock_due()
-                await self._async_read_gateway_connected_devices_due()
-                await self._async_read_gateway_rf_statistics_due()
+                await self._async_read_optional_gateway_values_due()
                 never_read = job.never_read(self._rooms_by_key[job.room_key], updated_data)
                 if startup or never_read:
                     job.next_due = time.monotonic() + self._job_interval(job, never_read=never_read)

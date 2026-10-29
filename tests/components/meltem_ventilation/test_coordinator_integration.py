@@ -8,6 +8,7 @@ import time
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1186,6 +1187,55 @@ class TestStartupWithRealClient:
 
 
 class TestAsyncUpdateData:
+    @pytest.mark.parametrize("job_due", [False, True])
+    @pytest.mark.parametrize("fail_at_clock", [False, True])
+    async def test_optional_gateway_reads_run_in_order_under_lock(
+        self,
+        hass: HomeAssistant,
+        monkeypatch: pytest.MonkeyPatch,
+        job_due: bool,
+        fail_at_clock: bool,
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator.data = {"unit_1": RoomState(target_level=10)}
+        _set_jobs_due(coordinator, 0.0 if job_due else time.monotonic() + 9999)
+        events: list[str] = []
+        read_room_state = client.read_room_state
+
+        async def record_room_read(
+            room: RoomConfig, previous_state: RoomState, refresh_plan: RefreshPlan
+        ) -> RoomState:
+            assert coordinator._gateway_lock.locked()
+            events.append("room")
+            return await read_room_state(room, previous_state, refresh_plan)
+
+        async def record_gateway_read(name: str) -> None:
+            assert coordinator._gateway_lock.locked()
+            events.append(name)
+            if name == "clock" and fail_at_clock:
+                raise RuntimeError("clock failed")
+
+        monkeypatch.setattr(client, "read_room_state", record_room_read)
+        for name, method in (
+            ("uptime", "_async_read_gateway_uptime_due"),
+            ("clock", "_async_read_gateway_utc_clock_due"),
+            ("devices", "_async_read_gateway_connected_devices_due"),
+            ("rf", "_async_read_gateway_rf_statistics_due"),
+        ):
+            monkeypatch.setattr(coordinator, method, partial(record_gateway_read, name))
+
+        if fail_at_clock:
+            with pytest.raises(RuntimeError, match="clock failed"):
+                await coordinator._async_update_data()
+        else:
+            await coordinator._async_update_data()
+
+        assert events == (["room"] if job_due else []) + (
+            ["uptime", "clock"] if fail_at_clock else ["uptime", "clock", "devices", "rf"]
+        )
+        assert not coordinator._gateway_lock.locked()
+        await coordinator.async_shutdown()
+
     async def test_empty_data_triggers_one_startup_job(
         self,
         hass: HomeAssistant,
