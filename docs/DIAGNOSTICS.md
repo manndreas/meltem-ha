@@ -10,12 +10,12 @@ update interval for every entity. It defaults to **4 read requests per second**
 and can be set from **0.5 to 10 requests per second** in steps of 0.5. Write
 sequences retain their separate hardware timing.
 
-After a read times out, is interrupted, or loses its connection, a later read
-of a different register with the same response length on that unit may require
-one additional control read. This read shares the rate cap. Conflicting results
-are treated as a failed read instead of replacing the previous value. The
-Modbus RTU protocol cannot always distinguish delayed replies, so matching
-results reduce the risk but cannot guarantee that the value is current.
+After a read receives no usable response, is interrupted, or loses its
+connection, further reads to that unit pause for five seconds. This recovery
+pause does not block writes or reads to other units. Polling resumes on its
+normal schedule, and the unit remains unavailable until a read succeeds. The
+pause reduces the chance that a delayed serial response is mistaken for a
+current value, but cannot eliminate it.
 
 Each unit's values are refreshed in groups:
 
