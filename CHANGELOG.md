@@ -2,42 +2,32 @@
 
 ## 4.7.0
 
-- **Breaking:** Raise the minimum supported Home Assistant version to `2026.11.0`
-  and use its dataclass-based `DeviceInfo` and device registry API.
-- Add the fans and ventilation integration category for the Home Assistant
-  community catalog.
-
-- Back off repeated Modbus `0x05` responses per unit and register block to
-  reduce redundant polling while a device recovers, then resume normal polling
-  after a successful read.
-- Keep cached values and read health unchanged while a block is backed off, so
-  skipped polls do not inflate failed read-group diagnostics.
-- Count timeouts from attempted register groups even when other groups are
-  paused, and preserve gateway backoff when a whole polling job is skipped.
-- Keep the gateway reachable when a read job combines responses with a timeout.
-- After an unanswered or cancelled read, pause further reads of that unit for
-  five seconds and resume polling. The room remains unavailable until a read
-  succeeds. This reduces, but cannot eliminate, the risk of delayed RTU replies.
-- Preserve gateway backoff during skipped startup jobs and avoid recounting
-  paused mode reads when an airflow read times out.
+- **Breaking:** Requires Home Assistant `2026.11.0` or newer.
+- List the integration in the fans and ventilation category in the Home
+  Assistant community catalog.
+- Reduce repeated requests when a unit returns a temporary error. Normal polling
+  resumes when the affected readings succeed again.
+- Keep diagnostic counts and gateway availability accurate when some readings
+  are delayed or skipped.
+- After a unit does not answer or a read is cancelled, wait five seconds before
+  reading it again. The unit remains unavailable until a read succeeds. This
+  reduces, but does not eliminate, the risk of delayed replies being mistaken
+  for current readings.
 
 ## 4.6.1
 
-- Add persistent cumulative diagnostic counters for Modbus request attempts and
-  failures, link recycles, failed read groups, and problematic write commands.
-  The new gateway sensors are disabled by default and do not add Modbus reads.
-- Include period metadata and per-category, per-room, and per-command counter
-  breakdowns in the diagnostics download. Counters survive integration and Home
-  Assistant restarts; a new config entry starts a new period, and deleting the
-  entry removes its stored counters.
+- Add optional gateway sensors counting requests, communication failures,
+  reconnections, and read and command problems. They are disabled by default and
+  do not generate additional gateway requests.
+- Include detailed counts by unit and command in the diagnostics download.
+  Counts survive restarts, start fresh for a new integration entry, and are
+  deleted when that entry is removed.
 
 ## 4.6.0
 
-- Show each unit's App setup code in the initial setup and rescan profile lists
-  so users can match Modbus addresses to the physical unit labels.
-- Store product ID and App setup code as structured room identity fields, use
-  the stable R-code as an additional Home Assistant device identifier, and
-  migrate existing config entries without losing their known values.
+- Show each unit's app setup code during setup and rescans, making it easier to
+  match the listed units to their physical labels.
+- Improve how Home Assistant identifies units without losing existing details.
 
 ## 4.5.1
 
@@ -47,68 +37,48 @@
 
 ## 4.5.0
 
-- Raise the minimum supported Home Assistant version to `2026.10.2` and align
-  the test harness and Modbus dependency pins with that release.
-- Raise the minimum supported HACS version to `2.0.5`.
+- Requires Home Assistant `2026.10.2` and HACS `2.0.5` or newer.
 - **Breaking:** Remove the gateway available/unavailable unit counts, device-error
   and due-filter counts, consecutive timeout count, stale read-group count, and
-  link-reconnection count. Replace the last-response-age entity with a new
-  **Last Modbus response** timestamp entity. Update automations and dashboards
-  that referenced these removed entities; their registry entries are cleaned up.
-- Remove the per-unit **Last command status** entity. Failed or unconfirmed
-  writes remain part of the internal confirmation logic and Read health diagnostics.
-- Rename gateway **Reachable** to **Modbus connection** and detect an unanswered
-  link after 30 seconds instead of 120 seconds. The optional response timestamp
-  stays fixed during an outage rather than counting elapsed seconds.
-- Add **Connected device count**, enabled by default, using gateway register
-  `43901`. It counts registered gateway devices, not currently reachable RF
-  devices or configured Home Assistant units. Reads stop when disabled.
-- Rename the optional success-rate diagnostic to **Successful Modbus requests
-  (5 min)** to make its transport scope and rolling window explicit.
-- Register the gateway MAC address as a Home Assistant device connection.
-  This best-effort background read does not block integration setup.
-- Decode gateway uptime as low-word-first 32-bit seconds and remove its
-  experimental label. The sensor remains disabled by default.
-- Add disabled-by-default per-unit RF last-seen age, signed RF RSSI, and fan
-  operating hours. The provisional RSSI unit is dBm; fan operating hours are
-  separate from the existing device operating-hours counter.
-- Add disabled-by-default per-unit **RF fault status** (`40103`) and **Value
-  error** (`40104`) diagnostics with independent read-health groups. Unknown
-  status values are not reported as healthy or faulty.
-- Add optional gateway RF sent-message counts (`42100/42101`) and RF load
-  percentages (`42102..42105`) for the current and previous hour. All four
-  entities share one rate-limited read while any is enabled; percentages use
-  the upstream scale without local rescaling.
+  link-reconnection count, as well as each unit's **Last command status**.
+  Replace the last-response-age entity with **Last Modbus response**. Update
+  automations and dashboards that use the removed entities; their registry
+  entries are cleaned up automatically.
+- Failed or unconfirmed commands still appear in Read health diagnostics.
+- Rename gateway **Reachable** to **Modbus connection** and detect a connection
+  outage after 30 seconds instead of 120 seconds.
+- Add **Connected device count**, enabled by default. It counts devices
+  registered with the gateway, not necessarily devices that are currently
+  reachable or configured in Home Assistant.
+- Rename the optional success-rate sensor to **Successful Modbus requests
+  (5 min)** and make gateway uptime a regular, optional diagnostic.
+- Add optional diagnostics for each unit's last radio contact, signal strength,
+  fan operating hours, radio fault status, and value errors. Fan hours are
+  separate from device operating hours; the signal strength unit is provisional.
+- Add optional gateway diagnostics for radio messages and load during the
+  current and previous hour.
 - Add the enabled-by-default gateway **Total airflow delta**, calculated as
-  total supply minus total extract airflow. Incomplete totals leave the delta
-  unknown and identify all affected units.
-- Add a disabled-by-default per-unit **App setup code** diagnostic. When enabled,
-  it reads `40000..40001` once to expose the DataMatrix `R` code for manual app
-  pairing; it adds no recurring polling load.
-- Add an optional gateway **UTC clock** timestamp with independent, rate-limited
-  reads. Stale clock and connected-device readings become unavailable without
-  affecting room entities.
-- Update English/German labels, icons, documentation, and regression tests for
-  the gateway and unit diagnostics.
+  supply minus extract airflow. If readings are missing, the delta stays unknown
+  and identifies the affected units.
+- Add an optional **App setup code** sensor for manual app pairing and an
+  optional gateway **UTC clock** sensor.
+- Add the gateway MAC address to its Home Assistant device information and
+  update diagnostic labels, icons, and documentation.
 
 ## 4.4.0
 
-- Add gateway reachability, last-response age, timeout and link-recovery
-  counters, available/unavailable unit counts, and stale read-group diagnostics.
-- Add gateway error and due-filter counts with affected-unit attributes, plus
-  measured supply/extract airflow totals. Incomplete totals stay unknown and
-  identify their missing contributors rather than silently reporting partial sums.
-- Add optional mean response time and request success rate over a rolling
-  five-minute window, counting retries individually without extra bus requests.
-- Add per-unit reachability, last successful update, latest command status and
-  measured supply-minus-extract airflow balance. Local diagnostic timers keep
-  outages and command timeouts visible without additional polling.
-- Add disabled-by-default experimental gateway uptime via a single-register
-  read every 60 seconds while enabled. Stale uptime becomes unavailable;
-  restart and counter-wrap behavior still need hardware verification.
-- Add English/German labels, status translations, icons, and documentation for
-  the gateway overviews and device diagnostics, and preserve their registry
-  settings across integration reloads.
+- Add gateway diagnostics for connection problems, unit availability, device
+  errors, and filters due for replacement.
+- Show total measured supply and extract airflow. If readings are missing, the
+  totals stay unknown and identify the affected units.
+- Add optional gateway response-time, request-success-rate, and experimental
+  uptime sensors. Uptime behavior after a restart still needs hardware testing.
+- Add per-unit diagnostics for availability, the last successful update,
+  command status, and the difference between supply and extract airflow.
+- Add English and German labels and documentation for the new diagnostics.
+
+Some of these diagnostics were removed or renamed in 4.5.0; see its migration
+notes above.
 
 ## 4.3.1
 
@@ -118,184 +88,88 @@
 
 ## 4.3.0
 
-- Keep the other temperature and air-quality values of a unit available when
-  one sensor reports a hardware sentinel such as `239` or `32767`: only that
-  value keeps its last reading instead of failing the whole read group.
-- Start the gateway polling backoff only after timeouts or lost connections,
-  not when a unit answers a read with a Modbus exception response.
-- Record the fallback of a fan command only after the gateway accepted the
-  write, so a failed write leaves no `last_write_fallback` or log warning behind.
-- Settle optimistic airflow, quick-mode, and intensive values only against a
-  read that succeeded after the write, and keep the exact balanced airflow
-  target across coarse status polls.
-- Count a read job whose groups all failed without raising as a failed job, so
-  units that stay silent or refuse reads become unavailable and show their last
-  job error in diagnostics.
-- Read only the registers a unit's profile has, so humidity-only units no
-  longer read CO2 and VOC registers.
-- Shut the coordinator down when a platform fails to set up.
+- Keep other temperature and air-quality readings up to date when one sensor
+  reports an invalid value; the affected sensor keeps its last valid reading.
+- Improve airflow, quick-mode, and intensive-ventilation feedback after a
+  command, including when a confirmation is delayed.
+- Mark units that repeatedly fail to provide readings unavailable and show the
+  latest error in diagnostics.
+- Reduce unnecessary requests for sensors a unit does not have and improve
+  recovery from connection and setup failures.
 
 ## 4.2.0
 
-- Confirm balanced airflow writes with a single read of the set register
-  `41121`, because the status value `41101` reports balanced targets as
-  `200 + airflow / 10` rather than the written raw value.
-- Read `41121` only while an airflow write is at most 10 minutes old and still
-  open, skip it during intensive ventilation, treat a quick-mode code there as
-  no airflow target instead of an error, and warn once per failing streak
-  instead of on every airflow poll.
-- Judge a balanced airflow write made during intensive ventilation once the
-  override has ended.
-- Log a unit becoming unavailable and its recovery from the poll results only,
-  so diagnostics and system health no longer trigger these messages and a
-  silent unit no longer alternates between them; log single failed read jobs at
-  debug level.
-- Return to Home Assistant's standard coordinator entity with plain entity
-  properties instead of the hand-invalidated cached properties from 4.1.1.
-- Lint the Markdown files with Markdownlint and type-check the integration,
-  tests, and tools with Pyright in CI.
+- Improve confirmation of balanced airflow changes, including changes made
+  during intensive ventilation.
+- Report unit outages and recoveries more consistently and reduce repeated
+  messages in the logs.
 
 ## 4.1.1
 
-- Migrate the configured maximum request rate from entry data to options while
-  preserving the existing value.
-- Log when a room becomes unavailable and when it recovers, while reducing
-  repetitive gateway-backoff log messages.
-- Report an invalid humidity or CO2 control range as a service validation
-  error instead of a generic Home Assistant error.
-- Add translated entity icons and English/German entity and config-flow
-  strings.
-- Document data updates, automation examples, the filter-change trigger and
-  condition, and integration removal; move developer documentation under
-  `docs/dev/`.
-- Clarify fan feedback, quick-mode state, and unavailable-unit behavior in the
-  README; clean up Markdown formatting throughout the documentation.
-- Enable strict type checking, resolve Pylance diagnostics across the
-  integration, tests, and tools, and use a runtime-data-typed config entry.
+- Preserve the configured maximum request rate when moving it into integration
+  options.
+- Log when a unit becomes unavailable or recovers, with fewer repetitive
+  connection messages.
+- Explain invalid humidity or CO2 control ranges in service errors.
+- Add English and German labels and icons, and expand the documentation for
+  controls, updates, automations, filter changes, and removing the integration.
 
 ## 4.1.0
 
-- Read current mode and airflow targets from the read-only status block
-  `41100..41102` for all supported M-WRG-S and M-WRG-II profiles; stop polling
-  the write-side mode registers. The M-WRG-S path follows the same map by
-  assumption and still needs live hardware validation.
-- Remove the legacy multi-register and single-register mode-read fallbacks.
-- The data-read status no longer stays in the problem state on units that
-  refuse the write-side mode registers until a first write.
-- While intensive ventilation runs, the status block does not report the base
-  mode. The operating mode, airflow targets, and quick mode keep their last
-  known values; after a restart during intensive ventilation they stay unknown
-  until it ends.
-- An airflow or operating-mode change during intensive ventilation is recorded
-  as `unverifiable` instead of a mismatch and no longer flags the data-read
-  status; the first readback after intensive ventilation ends judges it.
-- Read groups that failed at startup are retried after a minute, then at
-  growing intervals, instead of only after their regular interval of up to an
-  hour.
-- Include the status block and its single registers in the gateway profiling
-  tools, and document why earlier broad scans did not identify its meaning.
+- Improve operating-mode and airflow feedback, including on units that do not
+  report their settings until after a change. The change still needs testing
+  with M-WRG-S hardware.
+- During intensive ventilation, the operating mode, airflow targets, and quick
+  mode keep their last known values. After a restart during intensive
+  ventilation, they remain unknown until it ends.
+- Check airflow and mode changes made during intensive ventilation after the
+  override ends, instead of incorrectly reporting a mismatch.
+- Retry readings that fail at startup sooner.
 
 ## 4.0.1
 
-- Enforce the configured maximum request rate across individual Modbus read
-  requests, retries, and all units sharing the gateway connection. Rate changes
-  apply immediately; write-sequence timing is unchanged.
-- Publish startup data progressively, reading airflow before slower groups and
-  continuing normal polling while the remaining groups are initialized.
-- Keep unread groups unknown during startup and preserve failed-read health
-  until that group succeeds or reaches the existing failure threshold.
-- Clear outdated health for the intensive group when the short mode-register
-  fallback makes that read unavailable, so recovered data no longer leaves the
-  data-read status in the problem state.
+- Apply the configured request-rate limit across all units and read retries.
+  Changes to the limit take effect immediately.
+- Show available startup data progressively, starting with airflow, instead of
+  waiting for every reading. Values not yet read remain unknown.
+- Improve read-health reporting during startup and after recovery.
 
 ## 4.0.0
 
-- Requires Home Assistant `2026.10` or newer. The integration now uses the
-  serial connection of Home Assistant's built-in Modbus integration instead of
-  its own `pymodbus` client. Entities are unchanged.
-- The serial port is now changed with `Reconfigure` on the integration entry,
-  which checks the new port first. The options keep the request rate, the
-  unit profiles, and the rescan.
-- All gateway communication is asynchronous and no longer occupies Home
-  Assistant's executor threads.
-- A serial port that another integration already uses with different settings
-  is reported as a setup error instead of fighting over the port lock, and the
-  setup dialog names that cause instead of a generic connection error.
-- Every request is retried at most once, and plain Modbus exception responses
-  from a unit are not retried at all. The link is only reopened after
-  three timeouts in a row while no unit answered for 10 seconds, so a silent
-  unit no longer resets the connection for all others.
-- A unit that does not answer at all ends its poll job after the first
-  unanswered block instead of timing out on every block; this also applies to
-  the mode registers and to the setup probe.
-- Setup now checks the gateway by reading its unit count.
-- The system information page no longer shows the serial port path in the
-  last scheduler error.
-- A minimum level above the maximum level of the humidity or CO2 control is
-  refused before it reaches the unit.
-- Units added by a rescan no longer get the default name of a unit that is
-  kept.
-- A unit that falls silent in the middle of a poll job skips its mode
-  registers instead of timing out on them as well.
-- A gateway that does not answer at startup is retried every 5 seconds
-  instead of at the request rate, and the first full read keeps the request
-  rate between units. A first read where no unit returns any state values
-  also uses this backoff.
-- Post-write readbacks wait for the configured request-rate slot.
-- An invalid sensor value keeps the last known value but marks its read group
-  as failed instead of refreshing the timestamp of stale data.
-- Only a valid target-register readback confirms an airflow write; a target
-  derived from measured airflow cannot confirm it.
-- A pending fan, quick-mode or intensive value disappears when its window
-  ends, even if no poll follows.
-- Entries from older releases no longer poll registers of sensors that the
-  selected profile does not have.
-- Setup probes follow the same retry rules as normal polling. The setup
-  dialog opens the serial port once for reading the unit list and probing
-  the units.
-- `write_registers` stops at the first failed write unless `--keep-going`
-  is given.
-- The diagnostics download shows how often the serial link was reopened.
-- In unbalanced mode, a failed read of the mode registers keeps the last
-  supply target instead of clearing it, as it already did for the extract
-  target.
-- The integration loads Home Assistant's `modbus` integration, so its
-  `modbus.*` actions now show up in Home Assistant.
-- Debug logging for the serial link moved from `pymodbus` to the
-  `modbus_connection` and `tmodbus` loggers.
-- The developer tools in `tools/` use `modbus-connection` with tmodbus and
-  share their link settings. `raw_requests` and `count_requests` replace the
-  scripts in the live test plan, `capture_setting_family --range` replaces
-  `diff_register_snapshot`, and `monitor_gateway` is gone.
+- Requires Home Assistant `2026.10` or newer. Gateway communication now uses
+  Home Assistant's built-in Modbus integration; existing entities are unchanged.
+- Change the serial port using **Reconfigure** on the integration entry. The
+  options still contain the request rate, unit profiles, and rescan.
+- Report conflicting serial-port settings clearly during setup, and check that
+  the gateway responds before completing setup. Home Assistant's `modbus.*`
+  actions are now available.
+- Improve recovery when the gateway or a unit stops responding. A silent unit
+  is less likely to interrupt other units, and an unavailable gateway is retried
+  at a reduced rate.
+- Keep the last valid sensor reading when the device reports an invalid value,
+  while showing the reading problem in diagnostics.
+- Improve confirmation and expiry of airflow, quick-mode, and intensive
+  ventilation changes. A failed mode read no longer clears the last known supply
+  target in unbalanced mode.
+- Reject a humidity or CO2 minimum above its maximum before sending it to the
+  unit, and fix duplicate default names for units added by a rescan.
+- Hide the serial port path from scheduler errors on the system information
+  page and include link reconnection counts in the diagnostics download.
 
 ## 3.1.0
 
-- The minimum supported Home Assistant version is now `2026.8`, the release the
-  integration is tested against. The automation triggers and conditions and
-  the `pymodbus` 3.13 requirement need a much newer release than the
-  previously declared `2025.1`.
-- Added diagnostic sensors for the gateway device path and unit Modbus slave IDs.
-- Added device automation triggers and conditions for filter changes.
-- Track read freshness by register group and expose read and write outcomes in
-  the data-health sensor. System Health lists stale read groups per unit.
-- Improve fan control when airflow or operating-mode readings are incomplete,
-  and reduce polling of silent units and unnecessary target-register reads.
-- Unit devices are now linked to the gateway device, and devices of units that
-  a rescan no longer finds are removed automatically.
-- Airflow sensors now use the volume flow rate device class.
-- Fixed the maximum request rate option not being honored for sub-second
-  intervals.
-- Fixed a reload failing because a late write readback reopened the serial port.
-- Fixed the quick mode showing `Individual` after a restart during intensive
-  ventilation.
-- Fixed intensive commands flagging data health on units that cannot report
-  the intensive state.
-- Setup no longer probes the gateway for entity metadata of older entries.
-- Fixed optional-read backoff growth after repeated failures.
-- Fixed the data-health sensor not reporting stale read groups unless a write
-  also failed.
-- Redact the configured serial path from gateway, job, and read errors in
+- Requires Home Assistant `2026.8` or newer.
+- Add filter-change triggers and conditions for device automations, plus
+  diagnostic sensors for the gateway port and unit addresses.
+- Show outdated readings and command problems in data-health diagnostics, and
+  outdated readings in System Health. Hide the serial port path from errors in
   diagnostic downloads.
+- Link unit devices to the gateway in Home Assistant and remove devices that are
+  no longer found during a rescan.
+- Improve fan control with incomplete readings and reduce unnecessary requests
+  to silent units.
+- Fix request-rate limits below one second, reloads after writes, and quick-mode
+  feedback after a restart during intensive ventilation.
 
 ## 3.0.2
 
@@ -333,154 +207,68 @@ first start after the update.
 
 ### Breaking changes
 
-- The minimum supported Home Assistant version is now `2025.1`, and `pymodbus`
-  `3.13` or newer is required.
-- Airflow control now uses two dedicated `fan` entities per unit, `Supply air`
-  and `Extract air`, instead of a single shared ventilation slider.
-  - The previous combined fan entity is removed. Its registry entry is cleaned
-    up automatically on upgrade.
-  - Setting both directions to the same value runs the unit balanced, different
-    values switch it to unbalanced operation.
-  - Turning both directions to zero switches the unit off. Turning a stopped
-    unit back on starts both directions rather than a single one, and so does
-    the first change after a sensor-driven mode.
-- `Quick mode` no longer offers `Extract` and `Supply`. Both states are now
-  expressed directly by setting one of the two fans to zero. If the unit reports
-  one of them (for example after using the Meltem app), the select shows
-  `Individual`; the fan entities show the actual airflow.
-- The control-mode select is now `Sensor control` and only offers the
-  sensor-driven modes plus `Off`. Manual airflow, unbalanced operation and
-  switching the unit off are reachable through the fan entities.
-  - Units without a humidity or CO2 sensor no longer get this entity at all.
-  - Selecting `Off` only ends a running sensor mode. If the unit already runs
-    on a manually set airflow, the selection does nothing, so an unbalanced
-    setup is no longer collapsed onto a single value.
-- Intensive ventilation is now a `switch` instead of a button plus a separate
-  binary sensor, so a running override can also be cancelled again.
-  - The old button and binary sensor are removed and cleaned up automatically.
+- Requires Home Assistant `2025.1` and `pymodbus` `3.13` or newer.
+- Control airflow with separate **Supply air** and **Extract air** fans. Equal
+  settings run the unit balanced; different settings run it unbalanced. Set
+  both to zero to switch the unit off. Turning it back on starts both directions,
+  as does the first fan adjustment after a sensor-driven mode.
+- **Quick mode** no longer offers `Extract` and `Supply`; set one fan to zero
+  instead. When such a mode is selected in the Meltem app, quick mode shows
+  `Individual` and the fans show the airflow.
+- **Sensor control** offers sensor-driven modes and `Off`; units without a
+  humidity or CO2 sensor no longer have this entity. Its `Off` option ends
+  sensor control without switching the unit off.
+- Intensive ventilation is now a switch, so it can also be stopped. The old
+  button and status sensor are removed automatically.
+- Units without humidity or CO2 sensors no longer offer outdoor, extract, or
+  supply air temperature sensors; they retain the exhaust air temperature.
 
 ### Fixes
 
-- Unloading or reloading the integration now waits for an active serial
-  operation before closing the client, so a background read can no longer
-  reconnect afterwards and leave the port locked.
-- Missing or incomplete stored unit metadata is repaired on startup. The
-  best-effort sensor probe is merged with profile-derived temperatures and
-  thresholds, including for entries affected by earlier probe-only metadata.
-- A setup failure after coordinator creation no longer leaves stale runtime
-  data behind for the options flow to mistake for a running integration.
-- Room entities stay unavailable until their first successful state read
-  instead of briefly accepting commands with unknown device values at startup.
-- Humidity and CO2 control values sent through services are now snapped to the
-  manufacturer-defined register step before they are written and published.
-- Changing a unit to a profile with fewer capabilities now removes entity
-  registry entries that the new profile no longer supports, instead of leaving
-  them permanently unavailable.
-- System Health and diagnostics now count only units with at least one live
-  state value, not placeholder states created after a failed read.
-- The options dialog no longer crashes when the entry never finished setting up.
-  Changing the profiles, rescanning or adjusting the request rate raised an
-  error on exactly the screen you need to fix an unreachable gateway.
-- Switching a single fan off while a sensor-driven mode is running no longer
-  stops the whole unit.
-- `pymodbus` is now required in a version that actually provides the API the
-  integration calls. An older but still matching version already present in the
-  Home Assistant environment made every register read and write fail.
-- Resolving the serial port performed blocking filesystem access inside the
-  Home Assistant event loop, on every setup and every options change.
-- A lost serial connection in the middle of a poll is no longer swallowed.
-  Optional register reads still hide ordinary Modbus errors, but a dead
-  connection now reaches the coordinator, which marks the units unavailable and
-  backs off instead of reporting unchanged values.
-- After a reconnect, the remaining reads of the same poll no longer run against
-  the closed connection and silently keep the previous values.
-- A read or write that received no answer at all now reconnects before
-  retrying, instead of repeating the attempt on the same dead connection.
-- A fan could report more than 100 %, for example during intensive ventilation
-  or after selecting an `M-WRG-S` profile for an `M-WRG-II` unit.
-- A fan without data reports `unknown` instead of `off`.
-- Changing one fan while a sensor-driven mode is active now writes a balanced
-  airflow. Both fans only report fluctuating measurements in that state, so the
-  opposite direction was previously pinned to a sampled value.
-- Quick-mode codes are no longer decoded as an unbalanced airflow target. A
-  unit running `Low`, `Medium`, `High` or intensive ventilation in unbalanced
-  mode reported full airflow instead of no target.
-- Saving the connection options no longer treats an unchanged port as a port
-  change when the stored path predates a `/dev/serial/by-id` symlink, which
-  caused an unnecessary reload every time.
-- Turning on intensive ventilation no longer fails because the switch used an
-  obsolete Modbus-client call signature.
-- Clearing a quick mode immediately after selecting it now still sends the
-  manual-mode write, even when the gateway readback has not caught up yet.
-- Humidity and CO2 setting ranges now match the manufacturer register table.
-  This notably exposes the full `40..80%` humidity starting-point range in
-  single-percent steps and prevents out-of-range backend writes.
-- Humidity and CO2 settings are published optimistically after a successful
-  write and stay visible if the immediate confirmation read fails.
-- Changing or normalizing the serial port now keeps the config-entry unique ID
-  synchronized, so later USB discovery can still match the existing entry.
-- The humidity and CO2 threshold numbers were never created: their entity
-  description did not derive from `NumberEntityDescription`, so Home Assistant
-  rejected them with an `AttributeError`.
-- Units without humidity or CO2 sensors no longer offer outdoor, extract and
-  supply air temperature sensors. Per the manufacturer sensor matrix these
-  units only have an exhaust air temperature sensor.
+- Fix reloads leaving the serial port locked, improve recovery from connection
+  losses, and keep the options dialog usable after a failed setup.
+- Keep unit entities unavailable until their first successful reading, rather
+  than accepting commands with unknown values.
+- Fix fan and quick-mode feedback, including readings above 100%, unknown fans
+  appearing off, and incorrect targets in unbalanced mode.
+- Fix switching one fan off during sensor control, starting intensive
+  ventilation, and immediately clearing a quick mode.
+- Show humidity and CO2 threshold controls with the correct ranges and steps,
+  including the full 40-80% humidity starting-point range. Successful changes
+  remain visible even if immediate confirmation fails.
+- Repair missing unit information and remove unsupported entities when a unit's
+  profile changes.
 
 ### Other changes
 
-- Setup and the options flow now identify each unit by its Modbus address. The
-  profile field labels are translated and no longer change when the hardware
-  preview changes.
-- The profile steps list every detected unit with its hardware details and, if
-  you renamed the device in Home Assistant, with that name. Units are named in
-  Home Assistant like any other device; there is no separate name field.
-- Devices of units that a rescan no longer finds can be deleted from the device
-  page instead of lingering as unavailable.
-- The intensive switch shows a pending change immediately instead of jumping
-  back until the gateway confirms it.
-- The scheduler now sleeps until the next poll job is due instead of waking up
-  on every request-rate tick.
-- The sensors removed in 2.0.0 (`average_air_flow`, `current_level` and the
-  separate `software_version` diagnostic) are now also deleted from the entity
-  registry automatically. Previously they lingered as unavailable entities.
-- Setup now fails with a retryable error when the gateway cannot be reached,
-  so Home Assistant retries instead of loading an entry without data.
-- Entities of a single unreachable unit become unavailable instead of showing
-  frozen values while the other units keep working. This now also covers units
-  that stay silent while the gateway itself still answers.
-- Polling backs off progressively when the gateway stays unreachable.
-- Pending airflow writes are shown optimistically and shared between both fans,
-  so adjusting them in quick succession no longer reverts a value.
-- During humidity, CO2 or automatic control the fans now show the measured
-  airflow. Previously the mode selector was misread as a ventilation level and
-  displayed a fixed, plausible-looking value.
-- Changing a fan is refused while the airflow of the opposite direction is
-  unknown, because every write sends both directions at once.
-- The `pyserial` dependency is now requested explicitly, which is required for
-  the serial gateway connection.
+- Identify units in setup and options by address, hardware details, and their
+  Home Assistant device name. Rename units on their device pages.
+- Allow devices no longer found during a rescan to be removed from their device
+  pages. Also clean up the remaining registry entries for sensors removed in
+  2.0.0.
+- Show fan and intensive-ventilation changes immediately while they await
+  confirmation. Fans show measured airflow during humidity, CO2, or automatic
+  control.
+- Refuse a fan adjustment when the opposite airflow is unknown, because both
+  directions must be sent together.
+- Mark an unreachable unit unavailable while other units continue working. If
+  the gateway cannot be reached at setup, Home Assistant retries automatically.
 
 ## 2.0.0
 
-- Reworked quick-mode handling to better match real device behavior.
-  - `Intensive ventilation` is now a separate action button instead of a normal quick-mode entry.
-  - Added `Intensive ventilation active` as a dedicated status entity.
-  - Improved quick-mode readback, fallback handling, and post-write refreshes.
-- Simplified and cleaned up the airflow UI.
-  - Removed redundant derived airflow sensors.
-  - Kept the shared airflow slider as the main control for the common balanced case.
-  - Improved labels, icons, and quick-mode naming for better day-to-day usability.
-- Improved stability with real hardware.
-  - Short transient communication failures now keep the last valid state instead of immediately flipping everything to unavailable.
-  - Added more defensive handling when optional mode registers are only partially readable.
-- Improved device information.
-  - Firmware and hardware information are now shown more cleanly on the device card.
-  - Removed the separate software-version sensor after moving that information into device info.
-- Cleaned up diagnostics and terminology.
-  - Removed undocumented diagnostic flags that were not meaningfully interpretable.
-  - Clarified user-facing names for modes, airflow values, and error state.
-- Improved setup and options UX.
-  - The profile-editing flow now shows the configured room/device name so existing units are easier to identify.
-- Expanded reverse-engineering notes, helper tools, and automated test coverage.
+- Move intensive ventilation from quick mode to a separate button and add an
+  active-status sensor. Improve quick-mode feedback after changes.
+- Simplify airflow controls, remove redundant sensors, and improve labels and
+  icons. The shared airflow slider remains the main control for balanced use.
+- Keep the last valid values during short communication interruptions instead
+  of immediately marking entities unavailable.
+- Show firmware and hardware information on the device card and remove the
+  separate software-version sensor.
+- Show the configured device name when editing a unit's profile and clarify
+  diagnostic names.
+
+Airflow and intensive-ventilation controls changed again in 3.0.0; see its
+migration notes above.
 
 ## 1.1.0
 
