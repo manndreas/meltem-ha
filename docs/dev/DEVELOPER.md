@@ -199,7 +199,7 @@ instance per gateway link):
 | --- | --- |
 | `ModbusTimeoutError`, `ModbusProtocolError` | retry once; counts toward the timeout counter |
 | `GatewayTargetError`, `GatewayPathUnavailableError` | retry once; resets the counter, the gateway answered |
-| `ModbusConnectionError` | wait `TRANSPORT_RETRY_DELAY_SECONDS`, retry once; the library reconnects |
+| `ModbusConnectionError` | wait `TRANSPORT_RETRY_DELAY_SECONDS` (5 s) for the serial endpoint to re-enumerate, retry once; the library reconnects |
 | `ClientClosedError` | no retry |
 | other `ModbusExceptionError` | no retry; resets the counter |
 | `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS` timeouts in a row, across all units, and no answer at all for `TRANSPORT_LINK_QUIET_SECONDS` | `disconnect()`; the next request reopens the link, and a new quiet window starts |

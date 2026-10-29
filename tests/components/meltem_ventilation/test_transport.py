@@ -22,7 +22,7 @@ from modbus_connection.mock import MockModbusConnection
 
 from custom_components.meltem_ventilation.device import PolicyUnit, TransportPolicy
 
-_RETRY_DELAY = 0.5
+_RETRY_DELAY = 5.0
 _SILENT = ModbusTimeoutError("silent")
 
 
@@ -316,12 +316,12 @@ class TestReadRequestRate:
         assert starts == pytest.approx([100.0, 100.0 + 1 / rate, 100.0 + 2 / rate])
 
     @pytest.mark.parametrize(
-        "error",
+        ("error", "second_start"),
         [
-            _SILENT,
-            ModbusProtocolError("garbled"),
-            GatewayTargetError(),
-            ModbusConnectionError("gone"),
+            (_SILENT, 102.0),
+            (ModbusProtocolError("garbled"), 102.0),
+            (GatewayTargetError(), 102.0),
+            (ModbusConnectionError("gone"), 105.0),
         ],
     )
     async def test_retries_also_take_a_read_slot(
@@ -330,6 +330,7 @@ class TestReadRequestRate:
         unit: AsyncMock,
         clock: SimpleNamespace,
         error: Exception,
+        second_start: float,
     ) -> None:
         policy.update_request_rate(0.5)
         starts: list[float] = []
@@ -341,7 +342,7 @@ class TestReadRequestRate:
             return [1]
 
         assert await policy.run(unit, 2, _read, 41020, 1, is_read=True) == [1]
-        assert starts == pytest.approx([100.0, 102.0])
+        assert starts == pytest.approx([100.0, second_start])
 
     async def test_slow_connect_does_not_allow_a_wire_burst(
         self, policy: TransportPolicy, unit: AsyncMock, clock: SimpleNamespace
