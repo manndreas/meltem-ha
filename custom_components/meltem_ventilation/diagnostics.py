@@ -52,6 +52,7 @@ def _serialize_room(room: RoomConfig) -> dict[str, Any]:
 
 def _serialize_room_state(state: RoomState, port: str) -> dict[str, Any]:
     data = asdict(state)
+    data.pop("last_read_job")
     for _group_key, health in data["group_read_health"]:
         health["last_error"] = redact_port(health["last_error"], port)
     return data

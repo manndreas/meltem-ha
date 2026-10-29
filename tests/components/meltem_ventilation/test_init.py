@@ -38,13 +38,18 @@ from custom_components.meltem_ventilation.const import (
     CONF_ROOMS,
     DOMAIN,
     FIXED_TIMEOUT,
+    MODE_MANUAL,
     MODE_UNBALANCED,
     PLATFORMS,
+    PRESET_MODE_CODE_HIGH,
+    PRESET_MODE_CODE_INTENSIVE,
     REGISTER_APPLY,
     REGISTER_CURRENT_LEVEL,
     REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+    REGISTER_HUMIDITY_STARTING_POINT,
     REGISTER_MODE,
     REGISTER_MODE_STATUS,
+    REGISTER_PRESET_MODE,
 )
 from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
 from custom_components.meltem_ventilation.modbus_helpers import (
@@ -638,6 +643,218 @@ class TestSharedModbusConnection:
 
             assert await hass.config_entries.async_unload(entry.entry_id)
 
+    @pytest.mark.parametrize("lost_responses", [1, 2], ids=("retry-acknowledged", "both-lost"))
+    async def test_applied_write_with_lost_response_is_reconciled(
+        self, hass: HomeAssistant, lost_responses: int
+    ) -> None:
+        links: list[MockModbusConnection] = []
+        entry = _entry(hass, options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0})
+
+        with self._patch_link(links):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            coordinator = entry.runtime_data.coordinator
+            unit = links[0].for_unit(2)
+            writes: list[WriteEvent] = []
+            write_register = unit.write_register
+            apply_attempts = 0
+
+            def _apply_write(event: WriteEvent) -> None:
+                writes.append(event)
+                if event.address == REGISTER_APPLY:
+                    values = {write.address: int(write.values[0]) for write in writes}
+                    unit.holding[REGISTER_MODE_STATUS] = [
+                        values[REGISTER_MODE],
+                        values[REGISTER_CURRENT_LEVEL],
+                        values[REGISTER_EXTRACT_AIR_TARGET_LEVEL],
+                    ]
+
+            async def _lose_apply_response(address: int, value: int) -> None:
+                nonlocal apply_attempts
+                await write_register(address, value)
+                if address == REGISTER_APPLY:
+                    apply_attempts += 1
+                    if apply_attempts <= lost_responses:
+                        raise ModbusTimeoutError("response lost after apply")
+
+            unit.on_write(_apply_write)
+            unit.write_register = _lose_apply_response
+            supply_id = er.async_get(hass).async_get_entity_id(
+                Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_supply_level"
+            )
+            assert supply_id is not None
+
+            async def _set_supply() -> None:
+                await hass.services.async_call(
+                    "fan",
+                    "set_percentage",
+                    {"entity_id": supply_id, "percentage": 60},
+                    blocking=True,
+                )
+
+            if lost_responses == 2:
+                with pytest.raises(HomeAssistantError):
+                    await _set_supply()
+            else:
+                await _set_supply()
+            await hass.async_block_till_done()
+
+            assert apply_attempts == 2
+            assert [event.address for event in writes] == [
+                REGISTER_MODE,
+                REGISTER_CURRENT_LEVEL,
+                REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+                REGISTER_APPLY,
+                REGISTER_APPLY,
+            ]
+            assert unit.holding[REGISTER_MODE_STATUS] == [MODE_UNBALANCED, 120, 60]
+            if lost_responses == 1:
+                coordinator._startup_jobs = []
+                for job in coordinator._jobs:
+                    job.next_due = 0.0 if job.key == "flow" else float("inf")
+                coordinator._last_read_started = None
+                await coordinator.async_refresh()
+                await hass.async_block_till_done()
+                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
+            else:
+                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "failed"
+            supply = hass.states.get(supply_id)
+            assert supply is not None
+            assert supply.attributes["percentage"] == 60
+            assert await hass.config_entries.async_unload(entry.entry_id)
+
+    @pytest.mark.parametrize("kind", ["number", "select", "switch"])
+    @pytest.mark.parametrize("write_fails", [False, True], ids=("confirmed", "rejected"))
+    async def test_other_services_use_the_shared_link(
+        self,
+        hass: HomeAssistant,
+        monkeypatch: pytest.MonkeyPatch,
+        kind: str,
+        write_fails: bool,
+    ) -> None:
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.coordinator.async_sleep", AsyncMock()
+        )
+        links: list[MockModbusConnection] = []
+        room = {**_ROOM, "profile": "ii_f"}
+        entry = _entry(hass, rooms=[room], options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0})
+
+        with self._patch_link(links):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            coordinator = entry.runtime_data.coordinator
+            unit = links[0].for_unit(2)
+            unit.holding[REGISTER_HUMIDITY_STARTING_POINT] = [55, 20, 90]
+            coordinator._startup_jobs = []
+            for job in coordinator._jobs:
+                job.next_due = 0.0 if job.key == "control_settings" else float("inf")
+            coordinator._last_read_started = None
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+
+            writes: list[WriteEvent] = []
+
+            def _apply_write(event: WriteEvent) -> None:
+                writes.append(event)
+                if event.address == REGISTER_APPLY:
+                    value = (
+                        PRESET_MODE_CODE_HIGH if kind == "select" else PRESET_MODE_CODE_INTENSIVE
+                    )
+                    unit.holding[REGISTER_MODE_STATUS] = [MODE_MANUAL, value, 0]
+
+            unit.on_write(_apply_write)
+            failed_register = (
+                REGISTER_HUMIDITY_STARTING_POINT if kind == "number" else REGISTER_PRESET_MODE
+            )
+            if write_fails:
+                unit.fail_write(failed_register, IllegalDataValueError())
+
+            platform, key, service, service_data = {
+                "number": (Platform.NUMBER, "humidity_starting_point", "set_value", {"value": 65}),
+                "select": (Platform.SELECT, "preset_mode", "select_option", {"option": "high"}),
+                "switch": (Platform.SWITCH, "intensive", "turn_on", {}),
+            }[kind]
+            entity_id = er.async_get(hass).async_get_entity_id(
+                platform, DOMAIN, f"{DOMAIN}_unit_1_{key}"
+            )
+            assert entity_id is not None
+            initial = hass.states.get(entity_id)
+            assert initial is not None
+
+            async def _call_service() -> None:
+                await hass.services.async_call(
+                    platform.value, service, {"entity_id": entity_id, **service_data}, blocking=True
+                )
+
+            if write_fails:
+                with pytest.raises(HomeAssistantError):
+                    await _call_service()
+            else:
+                await _call_service()
+            await hass.async_block_till_done()
+
+            state = hass.states.get(entity_id)
+            assert state is not None
+            if write_fails:
+                assert writes == []
+                assert state.state == initial.state
+            elif kind == "number":
+                assert [(event.address, event.values[0]) for event in writes] == [
+                    (REGISTER_HUMIDITY_STARTING_POINT, 65)
+                ]
+                assert float(state.state) == 65.0
+                assert (
+                    coordinator._writes.by_room["unit_1"][
+                        "control_setting:humidity_starting_point"
+                    ].status
+                    == "confirmed"
+                )
+            else:
+                assert writes[-1].address == REGISTER_APPLY
+                assert state.state == ("high" if kind == "select" else "on")
+                key = "preset_mode" if kind == "select" else "intensive"
+                assert coordinator._writes.by_room["unit_1"][key].status == "confirmed"
+
+            assert await hass.config_entries.async_unload(entry.entry_id)
+
+    async def test_invalid_control_range_is_rejected_before_writing(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.coordinator.async_sleep", AsyncMock()
+        )
+        links: list[MockModbusConnection] = []
+        room = {**_ROOM, "profile": "ii_f"}
+        entry = _entry(hass, rooms=[room], options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0})
+
+        with self._patch_link(links):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            coordinator = entry.runtime_data.coordinator
+            unit = links[0].for_unit(2)
+            unit.holding[REGISTER_HUMIDITY_STARTING_POINT] = [55, 20, 60]
+            coordinator._startup_jobs = []
+            for job in coordinator._jobs:
+                job.next_due = 0.0 if job.key == "control_settings" else float("inf")
+            coordinator._last_read_started = None
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+            writes: list[WriteEvent] = []
+            unit.on_write(writes.append)
+            entity_id = er.async_get(hass).async_get_entity_id(
+                Platform.NUMBER, DOMAIN, f"{DOMAIN}_unit_1_humidity_min_level"
+            )
+            assert entity_id is not None
+
+            with pytest.raises(HomeAssistantError):
+                await hass.services.async_call(
+                    "number", "set_value", {"entity_id": entity_id, "value": 80}, blocking=True
+                )
+
+            assert writes == []
+            assert unit.holding[REGISTER_HUMIDITY_STARTING_POINT] == [55, 20, 60]
+            assert await hass.config_entries.async_unload(entry.entry_id)
+
     async def test_unload_releases_the_link(self, hass: HomeAssistant) -> None:
         links: list[MockModbusConnection] = []
         entry = _entry(hass)
@@ -684,6 +901,126 @@ class TestSharedModbusConnection:
             assert not link.for_unit(2).read_events
             with pytest.raises(ClientClosedError):
                 await link.for_unit(1).read_holding_registers(43901, 1)
+
+    async def test_unload_during_blocked_read_does_not_send_a_queued_write(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        links: list[MockModbusConnection] = []
+        entry = _entry(hass, options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0})
+        blocked = asyncio.Event()
+        resume = asyncio.Event()
+        service_started = asyncio.Event()
+
+        with self._patch_link(links):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            coordinator = entry.runtime_data.coordinator
+            unit = links[0].for_unit(2)
+            original_read = unit.read_holding_registers
+            writes: list[WriteEvent] = []
+            unit.on_write(writes.append)
+
+            async def _blocked_read(address: int, count: int) -> list[int]:
+                blocked.set()
+                await resume.wait()
+                return await original_read(address, count)
+
+            monkeypatch.setattr(unit, "read_holding_registers", _blocked_read)
+            coordinator._startup_jobs = []
+            for job in coordinator._jobs:
+                job.next_due = 0.0 if job.key == "flow" else float("inf")
+            coordinator._last_read_started = None
+            read_task = asyncio.create_task(coordinator.async_refresh())
+            await asyncio.wait_for(blocked.wait(), timeout=5)
+            assert coordinator._gateway_lock.locked()
+            supply_id = er.async_get(hass).async_get_entity_id(
+                Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_supply_level"
+            )
+            assert supply_id is not None
+            set_direction = coordinator.async_set_direction_level
+
+            async def _queued_write(room_key: str, direction: str, level: int) -> None:
+                service_started.set()
+                await set_direction(room_key, direction, level)
+
+            monkeypatch.setattr(coordinator, "async_set_direction_level", _queued_write)
+
+            async def _set_supply() -> None:
+                await hass.services.async_call(
+                    "fan",
+                    "set_percentage",
+                    {"entity_id": supply_id, "percentage": 60},
+                    blocking=True,
+                )
+
+            write_task = asyncio.create_task(_set_supply())
+            await asyncio.wait_for(service_started.wait(), timeout=5)
+            assert not write_task.done()
+            assert writes == []
+            try:
+                assert await asyncio.wait_for(
+                    hass.config_entries.async_unload(entry.entry_id), timeout=5
+                )
+            finally:
+                resume.set()
+            await read_task
+            with pytest.raises(HomeAssistantError):
+                await write_task
+            assert writes == []
+            assert not coordinator._gateway_lock.locked()
+
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            assert len(links) == 2
+            assert links[1].for_unit(2).read_events
+            assert await hass.config_entries.async_unload(entry.entry_id)
+
+    async def test_diagnostics_survive_unload_reload_and_are_removed_with_entry(
+        self, hass: HomeAssistant
+    ) -> None:
+        links: list[MockModbusConnection] = []
+        entry = _entry(hass, options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0})
+
+        with self._patch_link(links):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            coordinator = entry.runtime_data.coordinator
+            unit = links[0].for_unit(2)
+            unit.fail_read(41020, IllegalDataValueError())
+            coordinator._startup_jobs = []
+            for job in coordinator._jobs:
+                job.next_due = 0.0 if job.key == "flow" else float("inf")
+            coordinator._last_read_started = None
+            await coordinator.async_refresh()
+            cumulative = coordinator.cumulative_diagnostics
+            assert cumulative is not None
+            attempts = cumulative.request_attempts
+            failures = cumulative.request_failures
+            failed_groups = cumulative.failed_read_groups
+            period = cumulative.period_started_at
+            assert attempts > 0 and failures > 0 and failed_groups > 0
+
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            restored = await CumulativeDiagnostics.async_create(hass, entry.entry_id)
+            assert restored.request_attempts == attempts
+            assert restored.request_failures == failures
+            assert restored.failed_read_groups == failed_groups
+            assert restored.period_started_at == period
+
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            reloaded = entry.runtime_data.coordinator.cumulative_diagnostics
+            assert reloaded is not None
+            assert reloaded.request_attempts > attempts
+            assert reloaded.request_failures == failures
+            assert reloaded.failed_read_groups == failed_groups
+            assert reloaded.period_started_at == period
+            assert await hass.config_entries.async_remove(entry.entry_id)
+
+        removed = await CumulativeDiagnostics.async_create(hass, entry.entry_id)
+        assert removed.request_attempts == 0
+        assert removed.request_failures == 0
+        assert removed.failed_read_groups == 0
 
     async def test_a_silent_gateway_retries_setup_and_releases_the_link(
         self, hass: HomeAssistant

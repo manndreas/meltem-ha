@@ -16,12 +16,14 @@ import pytest
 from homeassistant.util import dt as dt_util
 from modbus_connection import (
     AcknowledgeError,
+    GatewayTargetError,
     IllegalDataAddressError,
     ModbusProtocolError,
     ModbusTimeoutError,
 )
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
+from custom_components.meltem_ventilation import read_health
 from custom_components.meltem_ventilation.const import (
     MODE_AUTOMATIC_VALUE,
     MODE_CO2_CONTROL_VALUE,
@@ -745,6 +747,46 @@ class TestReadHealth:
             health = state.read_health_for(group)
             assert health.last_error is not None
             assert health.last_error_timed_out is True
+
+    async def test_exception_and_timeout_in_one_group_still_prove_a_response(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        room = replace(
+            _F, supported_entity_keys=frozenset({"exhaust_temperature", "supply_air_temperature"})
+        )
+        unit.fail_read(REGISTER_EXTRACT_AIR_TEMPERATURE, IllegalDataAddressError())
+        unit.fail_read(REGISTER_SUPPLY_AIR_TEMPERATURE, ModbusTimeoutError("silent"))
+        started = dt_util.utcnow()
+
+        state = await client.read_room_state(room, RoomState(), _TEMPERATURES)
+
+        health = state.read_health_for("temperature")
+        assert health.last_error_timed_out
+        assert state.last_read_job is not None
+        assert state.last_read_job.answered
+        assert not state.last_read_job.value_groups
+        assert not read_health.job_read_unanswered(room, state, _TEMPERATURES, started)
+        failure = read_health.job_read_failure(room, state, _TEMPERATURES, started)
+        assert failure is not None
+        assert not failure.link_failure
+
+    async def test_exception_response_before_timed_out_retry_is_not_lost(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        room = replace(_F, supported_entity_keys=frozenset({"exhaust_temperature"}))
+        unit.read_holding_registers = AsyncMock(
+            side_effect=[GatewayTargetError(), ModbusTimeoutError("silent")]
+        )
+        started = dt_util.utcnow()
+
+        state = await client.read_room_state(room, RoomState(), _TEMPERATURES)
+
+        health = state.read_health_for("temperature")
+        assert health.last_error_timed_out
+        assert state.last_read_job is not None
+        assert state.last_read_job.answered
+        assert not state.last_read_job.value_groups
+        assert not read_health.job_read_unanswered(room, state, _TEMPERATURES, started)
 
 
 # ---------------------------------------------------------------------------

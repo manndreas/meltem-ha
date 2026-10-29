@@ -37,8 +37,10 @@ They do not install the requirements of Home Assistant's Modbus integration, so
 `requirements-test.txt` adds the
 `modbus-connection`, `tmodbus` and `pymodbus` versions pinned in
 `homeassistant/components/modbus/manifest.json`. Compare them again when
-updating Home Assistant. Tests never open a serial port; they run against
-`modbus_connection.mock.MockModbusConnection`.
+updating Home Assistant. Most tests use
+`modbus_connection.mock.MockModbusConnection`. On POSIX, the RTU protocol tests
+also open a local pseudo-terminal pair; they never access a physical serial port.
+Those tests are skipped on Windows.
 
 Run tests, formatting, lint, and the type check with:
 
@@ -57,6 +59,7 @@ Useful focused test runs:
 ```bash
 pytest tests/components/meltem_ventilation/test_modbus_client.py
 pytest tests/components/meltem_ventilation/test_transport.py
+pytest tests/components/meltem_ventilation/test_serial_protocol.py
 pytest tests/components/meltem_ventilation/test_config_flow.py
 pytest tests/components/meltem_ventilation/test_entity_descriptions.py
 ```

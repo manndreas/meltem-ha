@@ -121,6 +121,7 @@ class TestDiagnostics:
             diagnostics["room_states"]["unit_1"]["group_read_health"][0][1]["last_error"]
             == f"Read failed at {REDACTED}"
         )
+        assert "last_read_job" not in diagnostics["room_states"]["unit_1"]
 
     async def test_result_is_json_serialisable(self, hass: HomeAssistant) -> None:
         result = await async_get_config_entry_diagnostics(hass, _entry(hass))

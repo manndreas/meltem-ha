@@ -622,12 +622,15 @@ A unit's change to unavailable and its recovery are each logged once at info
 level. The check runs after every read job of that unit, so availability
 queries from entities, diagnostics, or system health have no side effects. A
 job whose attempted primary read groups all swallowed their Modbus errors
-still counts as a failed job (`read_health.job_read_failure`); groups skipped
+still records a failed group (`read_health.job_read_failure`); groups skipped
 by component backoff do not mask failures from the groups actually attempted.
-Gateway backoff counts a job only when every attempted group received no valid
-answer (timeout or protocol error, recorded in `ReadHealth.last_error_timed_out`),
-including a secondary mode read when the primary airflow group is skipped. Any
-group that answers keeps the link healthy.
+A partially failed group still keeps the room reachable if it delivered a usable
+value. The job outcome separately tracks actual attempts and valid responses,
+including exception responses before a retry. This avoids classifying the whole
+gateway as unanswered merely because another block in the same group timed out.
+It also recognizes successful reads when a different block in that group is
+paused, without rewriting the group's cached read health. A bridge-local RF
+communication-status value alone does not clear a room's failure streak.
 Once any room has data, a job with no attempted groups neither increments nor
 clears the transport failure streak. With no room data at all, the startup
 failure still backs off. Bridge-local `40101` (`REGISTER_RF_COMM_STATUS`)
@@ -786,8 +789,9 @@ and every entity platform, including:
   gateway errors
 - setup and unload through Home Assistant's real `modbus` integration on an
   in-memory link, including the release of the port
-- a Home Assistant fan service call through the entity, coordinator, and
-  in-memory link, including successful readback and a rejected write
+- Home Assistant fan, number, select, and switch services through the entity,
+  coordinator, and in-memory link, including successful readback and rejected
+  writes, plus a lost response after an applied write
 - gateway-backed discovery via `43901` / `43902..`
 - minimal setup-time capability probing
 - balanced airflow derivation and per-profile scaling
@@ -795,17 +799,24 @@ and every entity platform, including:
 - `NaN` and out-of-range sentinel filtering for temperature and air-quality reads
 - scheduler job construction and due-job selection
 - coordinator write-then-refresh behavior, optimistic state, transport backoff
-- mixed RF read failures, skipped backed-off registers, and recovery, plus
-  read-health freshness and availability boundaries
+- mixed read failures and responses within and across groups, skipped backed-off
+  registers, recovery, and read-health freshness and availability boundaries
 - setup metadata repair, profile-aware entity cleanup, and serial unload
-  synchronization
+  synchronization, including a queued write and persisted diagnostics
 - control-setting range and manufacturer-step normalization
 - config-flow helper functions for defaults and room mapping
 - entity creation per model profile across all platforms
 - the link settings in `tools/_link.py` against `const.py`
 
-The in-memory link does not establish physical gateway behavior; live
-validation and its safety rules remain in
+On POSIX, the separate RTU protocol tests connect the real tmodbus client to a
+local pseudo-terminal simulator. They exercise reads, writes, exception frames,
+missing, truncated, corrupted and delayed responses, retries, and reconnection.
+An RTU reply arriving after a timeout can satisfy a retry of the same read;
+the protocol does not identify which attempt produced it. A write whose reply
+was lost may likewise have been applied more than once. These tests do not
+establish that repeated writes are harmless on physical hardware.
+They are skipped on Windows. Neither simulator establishes physical gateway
+behavior; live validation and its safety rules remain in
 [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) and
 [LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md).
 

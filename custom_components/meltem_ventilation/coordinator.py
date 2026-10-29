@@ -1366,7 +1366,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                     for group in job.refresh_plan.read_groups()
                     if room.supports_any(READ_GROUP_ENTITY_KEYS[group])
                 )
-                if not optional_rejection:
+                if read_health.job_read_received_values(
+                    room, refreshed_state, job.refresh_plan, read_started_at
+                ):
+                    self._room_failures.pop(room.key, None)
+                elif not optional_rejection:
                     self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
             elif read_health.job_read_succeeded(
                 room, refreshed_state, job.refresh_plan, read_started_at

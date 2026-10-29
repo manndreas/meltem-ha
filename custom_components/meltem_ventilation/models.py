@@ -7,7 +7,7 @@ the coordinator, entities, and Modbus client can share a stable contract.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -94,6 +94,17 @@ EMPTY_READ_HEALTH = ReadHealth()
 
 
 @dataclass(slots=True, frozen=True)
+class ReadJobOutcome:
+    """Actual attempts and answers in the most recent room read."""
+
+    completed_at: datetime
+    attempted_groups: frozenset[str]
+    answered: bool
+    value_groups: frozenset[str]
+    unit_success_groups: frozenset[str]
+
+
+@dataclass(slots=True, frozen=True)
 class WriteConfirmation:
     """Outcome of one requested write and its device readback."""
 
@@ -149,6 +160,7 @@ class RoomState:
     co2_max_level: int | None = None
 
     group_read_health: tuple[tuple[str, ReadHealth], ...] = ()
+    last_read_job: ReadJobOutcome | None = field(default=None, compare=False, repr=False)
 
     @property
     def has_data(self) -> bool:
@@ -169,7 +181,9 @@ class RoomState:
 
 
 _ROOM_VALUE_FIELDS: tuple[str, ...] = tuple(
-    field.name for field in fields(RoomState) if field.name != "group_read_health"
+    item.name
+    for item in fields(RoomState)
+    if item.name not in {"group_read_health", "last_read_job"}
 )
 EMPTY_ROOM_STATE = RoomState()
 

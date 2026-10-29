@@ -10,7 +10,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import AIRFLOW_STALE_AFTER_SECONDS, READ_FAILURE_THRESHOLD, READ_GROUP_ENTITY_KEYS
 from .modbus_helpers import MeltemModbusError
-from .models import ReadHealth, RefreshPlan, RoomConfig, RoomState
+from .models import ReadHealth, ReadJobOutcome, RefreshPlan, RoomConfig, RoomState
 from .polling import READ_GROUP_INTERVAL_SECONDS
 
 
@@ -120,9 +120,12 @@ def job_read_failure(
     )
     if not attempted or any(health.last_error is None for health in attempted):
         return None
+    job = _current_job(state, read_started_at)
     return JobReadFailure(
         MeltemModbusError(str(attempted[0].last_error)),
-        link_failure=all(health.last_error_timed_out for health in attempted),
+        link_failure=(
+            not job.answered if job is not None else all(h.last_error_timed_out for h in attempted)
+        ),
     )
 
 
@@ -134,6 +137,11 @@ def job_read_attempted(
 ) -> bool:
     """Return whether any supported group was actually read during this job."""
 
+    if job := _current_job(state, read_started_at):
+        return any(
+            group in job.attempted_groups and room.supports_any(READ_GROUP_ENTITY_KEYS[group])
+            for group in refresh_plan.read_groups()
+        )
     return bool(_attempted_read_health(room, state, refresh_plan.read_groups(), read_started_at))
 
 
@@ -145,10 +153,28 @@ def job_read_unanswered(
 ) -> bool:
     """Return whether every group actually attempted received no valid answer."""
 
+    if job := _current_job(state, read_started_at):
+        return job_read_attempted(room, state, refresh_plan, read_started_at) and not job.answered
     attempted = _attempted_read_health(room, state, refresh_plan.read_groups(), read_started_at)
     return bool(attempted) and all(
         health.last_error is not None and health.last_error_timed_out for health in attempted
     )
+
+
+def job_read_received_values(
+    room: RoomConfig, state: RoomState, refresh_plan: RefreshPlan, read_started_at: datetime
+) -> bool:
+    """Return whether an attempted primary group yielded a usable value."""
+
+    job = _current_job(state, read_started_at)
+    return job is not None and bool(
+        job.value_groups.intersection(_job_read_groups(room, refresh_plan))
+    )
+
+
+def _current_job(state: RoomState, read_started_at: datetime) -> ReadJobOutcome | None:
+    job = state.last_read_job
+    return job if job is not None and job.completed_at >= read_started_at else None
 
 
 def _attempted_read_health(
@@ -171,8 +197,10 @@ def job_read_succeeded(
 ) -> bool:
     """Return whether a primary group had a successful read during this job."""
 
-    return any(
-        (health := state.read_health_for(group_key)).last_error is None
+    job = _current_job(state, read_started_at)
+    return job_read_received_values(room, state, refresh_plan, read_started_at) or any(
+        (job is None or group_key in job.unit_success_groups)
+        and (health := state.read_health_for(group_key)).last_error is None
         and health.last_successful_read is not None
         and health.last_successful_read >= read_started_at
         for group_key in _job_read_groups(room, refresh_plan)

@@ -536,7 +536,7 @@ class TestCoordinatorResilience:
         previous = {"broken": RoomState(target_level=10), "unit_2": RoomState(target_level=20)}
 
         for _ in range(ROOM_UNAVAILABLE_AFTER_FAILURES):
-            await coordinator._read_one_job(
+            previous = await coordinator._read_one_job(
                 previous,
                 PollJob(
                     key="flow_broken",
@@ -548,6 +548,7 @@ class TestCoordinatorResilience:
             )
 
         coordinator.data = previous
+        assert previous["unit_2"] == RoomState(target_level=20)
         assert not coordinator.room_available("broken")
         assert coordinator.room_available("unit_2")
 

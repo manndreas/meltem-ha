@@ -33,11 +33,14 @@ from custom_components.meltem_ventilation.binary_sensor import (
 )
 from custom_components.meltem_ventilation.const import (
     DOMAIN,
+    REGISTER_ERROR_STATUS,
     REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_MODE_STATUS,
+    REGISTER_RF_COMM_STATUS,
     REGISTER_RF_FAULT_STATUS,
     REGISTER_RF_LAST_SEEN_AGE,
     REGISTER_RF_SIGNAL_STRENGTH,
+    REGISTER_SUPPLY_AIR_TEMPERATURE,
     REGISTER_VALUE_ERROR_STATUS,
     WRITE_HEALTH_RETENTION_SECONDS,
 )
@@ -56,6 +59,7 @@ from custom_components.meltem_ventilation.modbus_helpers import (
 from custom_components.meltem_ventilation.models import (
     GatewayRfStatistics,
     ReadHealth,
+    ReadJobOutcome,
     RefreshPlan,
     RoomConfig,
     RoomState,
@@ -974,13 +978,16 @@ class TestStartupWithRealClient:
                 assert steps < 100
 
             assert coordinator.state_room_count == 6
+            for job in coordinator._jobs:
+                job.next_due = (
+                    0.0 if job.room_key == "unit_2" and job.key == "status" else float("inf")
+                )
+            clock.now += 1 / rate
+            coordinator._last_read_started = None
+            await coordinator.async_refresh()
             with patch.object(status_sensor, "async_write_ha_state"):
                 status_sensor._handle_coordinator_update()
-            assert status_sensor.available is (
-                coordinator.last_update_success
-                and coordinator.room_available("unit_2")
-                and coordinator.read_group_available("unit_2", "status")
-            )
+            assert status_sensor.available
             assert all(
                 state.error_status is False and state.operating_hours == 0
                 for state in coordinator.safe_data.values()
@@ -1335,15 +1342,24 @@ class TestPostWriteRefresh:
         coordinator.data = {"unit_1": RoomState(target_level=10)}
         coordinator._last_read_started = time.monotonic()
 
-        with patch(
-            "custom_components.meltem_ventilation.coordinator.async_sleep", new=AsyncMock()
-        ) as sleep:
-            await coordinator._async_refresh_room_after_write(_ROOM_1)
+        waiting = asyncio.Event()
+        resume = asyncio.Event()
+        delays: list[float] = []
 
-        sleep.assert_awaited_once()
-        sleep_await = sleep.await_args
-        assert sleep_await is not None
-        assert 0 < sleep_await.args[0] <= 2.0
+        async def _sleep(seconds: float) -> None:
+            delays.append(seconds)
+            waiting.set()
+            await resume.wait()
+
+        with patch("custom_components.meltem_ventilation.coordinator.async_sleep", new=_sleep):
+            task = asyncio.create_task(coordinator._async_refresh_room_after_write(_ROOM_1))
+            await waiting.wait()
+            assert client.read_calls == []
+            resume.set()
+            await task
+
+        assert len(delays) == 1
+        assert 0 < delays[0] <= 2.0
         assert len(client.read_calls) == 1
 
     async def test_refresh_after_write_honors_minimum_attempt_count(
@@ -1381,6 +1397,180 @@ class TestPostWriteRefresh:
 
 
 class TestReadOneJob:
+    async def test_only_gateway_rf_status_does_not_clear_a_room_failure_streak(
+        self, hass: HomeAssistant
+    ) -> None:
+        link = MockModbusConnection()
+        unit = link.for_unit(2)
+        unit.holding[REGISTER_RF_COMM_STATUS] = 0
+        room = replace(_ROOM_1, supported_entity_keys=frozenset({"rf_comm_status"}))
+        client = MeltemModbusClient(link.for_unit, port="/dev/test", max_requests_per_second=1000)
+        entry = MockConfigEntry(domain=DOMAIN, title="Meltem", source="user")
+        entry.add_to_hass(hass)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass, config_entry=entry, client=client, rooms=[room], max_requests_per_second=1000
+        )
+        coordinator.data = {"unit_1": RoomState(target_level=20)}
+        coordinator._room_failures["unit_1"] = 2
+        coordinator._startup_jobs = []
+        for job in coordinator._jobs:
+            job.next_due = 0.0 if job.key == "status" else float("inf")
+        coordinator._last_read_started = None
+
+        try:
+            coordinator.data = await coordinator._async_update_data()
+
+            assert [event.address for event in unit.read_events] == [REGISTER_RF_COMM_STATUS]
+            assert coordinator._room_failures["unit_1"] == 2
+            assert coordinator._backoff_seconds is None
+        finally:
+            await coordinator.async_shutdown()
+            client.shutdown()
+
+    async def test_gateway_rf_status_does_not_make_an_unreadable_room_reachable(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.device.transport.async_sleep", AsyncMock()
+        )
+        link = MockModbusConnection()
+        unit = link.for_unit(2)
+        unit.fail_read(REGISTER_ERROR_STATUS, IllegalDataAddressError())
+        unit.holding[REGISTER_RF_COMM_STATUS] = 0
+        client = MeltemModbusClient(link.for_unit, port="/dev/test", max_requests_per_second=1000)
+        entry = MockConfigEntry(domain=DOMAIN, title="Meltem", source="user")
+        entry.add_to_hass(hass)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass, config_entry=entry, client=client, rooms=[_ROOM_1], max_requests_per_second=1000
+        )
+        coordinator.data = {"unit_1": RoomState(target_level=20)}
+        coordinator._startup_jobs = []
+
+        try:
+            for _ in range(3):
+                for job in coordinator._jobs:
+                    job.next_due = 0.0 if job.key == "status" else float("inf")
+                coordinator._last_read_started = None
+                coordinator.data = await coordinator._async_update_data()
+
+            assert not coordinator.room_available("unit_1")
+            assert coordinator._backoff_seconds is None
+            assert coordinator._consecutive_transport_failures == 0
+        finally:
+            await coordinator.async_shutdown()
+            client.shutdown()
+
+    async def test_partial_group_skip_preserves_health_but_counts_actual_answers(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.device.transport.async_sleep", AsyncMock()
+        )
+        link = MockModbusConnection()
+        unit = link.for_unit(2)
+        unit.holding[41000] = [0, 0, 0, 0, 0, 0]
+        unit.fail_read(REGISTER_SUPPLY_AIR_TEMPERATURE, AcknowledgeError())
+        room = RoomConfig(
+            key="unit_1",
+            name="Unit 1",
+            profile="ii_f",
+            slave=2,
+            supported_entity_keys=frozenset(supported_entity_keys_for_profile("ii_f")),
+        )
+        client = MeltemModbusClient(link.for_unit, port="/dev/test", max_requests_per_second=1000)
+        entry = MockConfigEntry(domain=DOMAIN, title="Meltem", source="user")
+        entry.add_to_hass(hass)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass, config_entry=entry, client=client, rooms=[room], max_requests_per_second=1000
+        )
+        coordinator.data = {"unit_1": RoomState(target_level=20)}
+        coordinator._startup_jobs = []
+
+        async def _poll() -> None:
+            for job in coordinator._jobs:
+                job.next_due = 0.0 if job.key == "temperature" else float("inf")
+            coordinator._last_read_started = None
+            coordinator.data = await coordinator._async_update_data()
+
+        try:
+            await _poll()
+            health = coordinator.safe_data["unit_1"].read_health_for("temperature")
+            reads_before = len(unit.read_events)
+            for _ in range(3):
+                coordinator._on_transport_failure()
+            coordinator._room_failures["unit_1"] = 2
+            await _poll()
+
+            assert REGISTER_SUPPLY_AIR_TEMPERATURE not in [
+                event.address for event in unit.read_events[reads_before:]
+            ]
+            assert coordinator.safe_data["unit_1"].read_health_for("temperature") == health
+            assert coordinator._backoff_seconds is None
+            assert coordinator._consecutive_transport_failures == 0
+            assert "unit_1" not in coordinator._room_failures
+        finally:
+            await coordinator.async_shutdown()
+            client.shutdown()
+
+    async def test_partial_temperature_read_proves_the_gateway_and_room_answered(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, clock: SimpleNamespace
+    ) -> None:
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.device.transport.async_sleep", AsyncMock()
+        )
+        link = MockModbusConnection()
+        unit = link.for_unit(2)
+        unit.holding[41000] = [0, 0, 0, 0, 0, 0]
+        unit.fail_read(REGISTER_SUPPLY_AIR_TEMPERATURE, ModbusTimeoutError("silent"))
+        outcomes: list[str] = []
+        room = RoomConfig(
+            key="unit_1",
+            name="Unit 1",
+            profile="ii_f",
+            slave=2,
+            supported_entity_keys=frozenset(supported_entity_keys_for_profile("ii_f")),
+        )
+        client = MeltemModbusClient(
+            link.for_unit,
+            port="/dev/test",
+            max_requests_per_second=1000,
+            on_request=outcomes.append,
+        )
+        entry = MockConfigEntry(domain=DOMAIN, title="Meltem", source="user")
+        entry.add_to_hass(hass)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass, config_entry=entry, client=client, rooms=[room], max_requests_per_second=1000
+        )
+        coordinator.data = {"unit_1": RoomState(target_level=20)}
+        coordinator._startup_jobs = []
+
+        try:
+            for _ in range(3):
+                for job in coordinator._jobs:
+                    job.next_due = 0.0 if job.key == "temperature" else float("inf")
+                coordinator._last_read_started = None
+                coordinator.data = await coordinator._async_update_data()
+                clock.now += 1
+
+            assert outcomes == ["success", "no_answer", "no_answer", "success", "success"] * 3
+            state = coordinator.safe_data["unit_1"]
+            assert state.exhaust_temperature == 0.0
+            assert state.read_health_for("temperature").last_error_timed_out
+            assert state.read_health_for("temperature").consecutive_failures == 3
+            assert coordinator._consecutive_transport_failures == 0
+            assert coordinator._backoff_seconds is None
+            assert coordinator.room_available("unit_1")
+
+            unit.fail_read(REGISTER_SUPPLY_AIR_TEMPERATURE, None)
+            for job in coordinator._jobs:
+                job.next_due = 0.0 if job.key == "temperature" else float("inf")
+            coordinator._last_read_started = None
+            coordinator.data = await coordinator._async_update_data()
+            assert coordinator.safe_data["unit_1"].read_health_for("temperature").last_error is None
+        finally:
+            await coordinator.async_shutdown()
+            client.shutdown()
+
     async def test_mixed_rf_failures_skips_outage_and_recovery(
         self, hass: HomeAssistant, clock: SimpleNamespace
     ) -> None:
@@ -1978,6 +2168,14 @@ class TestReadOneJob:
         )
 
         assert not RoomState().with_read_health("flow", failed_read).has_data
+        outcome = ReadJobOutcome(
+            completed_at=dt_util.utcnow(),
+            attempted_groups=frozenset({"flow"}),
+            answered=False,
+            value_groups=frozenset(),
+            unit_success_groups=frozenset(),
+        )
+        assert not RoomState(last_read_job=outcome).has_data
 
     def test_failed_but_never_read_group_is_not_reported_as_healthy(
         self,

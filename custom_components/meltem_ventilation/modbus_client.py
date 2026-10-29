@@ -73,6 +73,7 @@ from .modbus_helpers import (
 from .models import (
     GatewayRfStatistics,
     ReadHealth,
+    ReadJobOutcome,
     RefreshPlan,
     RoomConfig,
     RoomState,
@@ -128,6 +129,10 @@ class _ReadJob:
     timeouts: set[str] = field(default_factory=set)
     # Set once the unit timed out; the rest of the job is skipped then.
     silent_error: ModbusError | None = None
+    had_answer: bool = False
+    attempted_groups: set[str] = field(default_factory=set)
+    value_groups: set[str] = field(default_factory=set)
+    unit_success_groups: set[str] = field(default_factory=set)
 
     def skip(self, groups: tuple[str, ...]) -> None:
         """Keep existing health unchanged when a component is backed off."""
@@ -380,15 +385,24 @@ class MeltemModbusClient:
         async with self._gateway_operation(f"reading room {room.key}"):
             device = self._room_device(room)
             job = _ReadJob()
+            answered_before = self._policy.answered_requests
             due = _due_fields(room, refresh_plan)
             updated = await self._poll(device, _due_reads(due), job, slave=room.slave)
             state = replace(previous_state, **_fresh_values(device, due, updated, job))
             if refresh_plan.refresh_airflow:
                 block = await self._read_mode_block(room, device, job)
                 state = _apply_mode_read(room, state, block)
+            job.had_answer = self._policy.answered_requests > answered_before
             return replace(
                 state,
                 group_read_health=_updated_read_health(room, previous_state, refresh_plan, job),
+                last_read_job=ReadJobOutcome(
+                    completed_at=dt_util.utcnow(),
+                    attempted_groups=frozenset(job.attempted_groups),
+                    answered=job.had_answer,
+                    value_groups=frozenset(job.value_groups),
+                    unit_success_groups=frozenset(job.unit_success_groups),
+                ),
             )
 
     async def read_balanced_target_readback(self, room: RoomConfig) -> int | None:
@@ -435,6 +449,8 @@ class MeltemModbusClient:
             active_reads[component] = groups
         if not active_reads:
             return set()
+        for groups in active_reads.values():
+            job.attempted_groups.update(groups)
 
         try:
             report = await device.async_poll(list(active_reads))
@@ -453,6 +469,8 @@ class MeltemModbusClient:
             if error is None:
                 if component in report.updated:
                     self._component_backoff.clear((slave, component))
+                    if component != "rf_comm_status":
+                        job.unit_success_groups.update(groups)
                 continue
             job.record_error(groups, error)
             if isinstance(error, NO_ANSWER_ERRORS):
@@ -580,6 +598,7 @@ class MeltemModbusClient:
             return None
 
         status = device.mode_status
+        job.attempted_groups.update(_MODE_GROUPS)
         try:
             await status.async_update()
         except ModbusConnectionError:
@@ -593,6 +612,7 @@ class MeltemModbusClient:
             return None
 
         self._mode_backoff.clear(key)
+        job.unit_success_groups.update(_MODE_GROUPS)
         mode = cast(int, status.mode)
         current_level = cast(int, status.current_level)
         if mode == MODE_SENSOR_CONTROL:
@@ -745,11 +765,12 @@ def _fresh_values(
             value -= 0x10000
         if name == "rf_fault_status":
             values[name] = None if value == 0xFFFF else bool(value)
-            continue
-        if name == "value_error_status":
+        elif name == "value_error_status":
             values[name] = bool(value) if value in (0, 1) else None
-            continue
-        values[name] = bool(value) if name in _FLAG_FIELDS else value
+        else:
+            values[name] = bool(value) if name in _FLAG_FIELDS else value
+        if values[name] is not None and name != "rf_comm_status":
+            job.value_groups.add(source.group)
     return values
 
 

@@ -63,6 +63,7 @@ class TransportPolicy:
         self._quiet_since = time.monotonic()
         self._last_answer_at: float | None = None
         self._last_answer_timestamp: float | None = None
+        self._answered_requests = 0
         self._last_read_answer: dict[int, float] = {}
         self._link_recycles = 0
         self._request_lock = asyncio.Lock()
@@ -82,6 +83,12 @@ class TransportPolicy:
         """Reject requests still waiting for a read slot."""
 
         self._closed = True
+
+    @property
+    def answered_requests(self) -> int:
+        """Return the number of requests that received a valid response."""
+
+        return self._answered_requests
 
     async def _wait_for_read_slot(self) -> None:
         while self._last_read_finished is not None and not self._closed:
@@ -226,6 +233,7 @@ class TransportPolicy:
         return result
 
     def _link_answered(self) -> None:
+        self._answered_requests += 1
         self._consecutive_timeouts = 0
         self._quiet_since = self._last_answer_at = time.monotonic()
         self._last_answer_timestamp = datetime.now(UTC).timestamp()
