@@ -14,7 +14,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.util import dt as dt_util
-from modbus_connection import IllegalDataAddressError, ModbusProtocolError, ModbusTimeoutError
+from modbus_connection import (
+    AcknowledgeError,
+    IllegalDataAddressError,
+    ModbusProtocolError,
+    ModbusTimeoutError,
+)
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
 from custom_components.meltem_ventilation.const import (
@@ -588,6 +593,63 @@ class TestMeasuredValues:
 
 
 class TestReadHealth:
+    async def test_acknowledged_airflow_reads_back_off_without_touching_health(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, AcknowledgeError())
+
+        first = await _read_flow(client)
+        first_flow_health = first.read_health_for("flow")
+        first_airflow_reads = _reads(unit).count((REGISTER_EXTRACT_AIR_FLOW, 2))
+        assert first_airflow_reads == 1
+
+        second = await _read_flow(client, first)
+
+        assert _reads(unit).count((REGISTER_EXTRACT_AIR_FLOW, 2)) == first_airflow_reads
+        assert _reads(unit).count((REGISTER_MODE_STATUS, 3)) == 2
+        second_flow_health = second.read_health_for("flow")
+        assert second_flow_health == first_flow_health
+        assert second_flow_health.consecutive_failures == 1
+
+    async def test_acknowledged_airflow_backoff_grows_and_clears_after_success(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, AcknowledgeError())
+
+        first = await _read_flow(client)
+        key = (2, "airflow")
+        backoff = client._component_backoff
+        backoff.until[key] = time.monotonic() - 1
+
+        second = await _read_flow(client, first)
+
+        assert backoff.failures[key] == 2
+        assert backoff.until[key] - time.monotonic() > 19
+
+        backoff.until[key] = time.monotonic() - 1
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, None)
+
+        recovered = await _read_flow(client, second)
+
+        assert key not in backoff.failures
+        assert key not in backoff.until
+        assert recovered.read_health_for("flow").consecutive_failures == 0
+        assert recovered.read_health_for("flow").last_error is None
+
+    async def test_other_modbus_exceptions_do_not_back_off_airflow_reads(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        _seed(unit, mode=[MODE_MANUAL, 60, 0, 0, 0])
+        unit.fail_read(REGISTER_EXTRACT_AIR_FLOW, _REJECTED)
+
+        first = await _read_flow(client)
+        await _read_flow(client, first)
+
+        assert _reads(unit).count((REGISTER_EXTRACT_AIR_FLOW, 2)) == 2
+        assert not client._component_backoff.failures
+
     async def test_airflow_health_tracks_failure_and_recovery(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
@@ -635,8 +697,15 @@ class TestReadHealth:
         assert health.consecutive_failures == 0
         assert health.last_error is None
 
+        unit.fail_read(REGISTER_HUMIDITY_STARTING_POINT, AcknowledgeError())
+        refused = await client.read_room_state(_F, recovered, _CONTROL_SETTINGS)
+        key = (2, "control_settings")
+        assert client._component_backoff.is_active(key)
+
+        unit.fail_read(REGISTER_HUMIDITY_STARTING_POINT, None)
         assert await client.write_control_setting(_F, "humidity_starting_point", 70) == 70
-        confirmed = await client.read_room_state(_F, recovered, _CONTROL_SETTINGS)
+        assert not client._component_backoff.is_active(key)
+        confirmed = await client.read_room_state(_F, refused, _CONTROL_SETTINGS)
         assert confirmed.humidity_starting_point == 70
 
     @pytest.mark.parametrize("error_type", [ModbusTimeoutError, ModbusProtocolError])
@@ -962,11 +1031,13 @@ class TestModeReadBackoff:
         _reject_mode_status_read(unit)
 
         first = await _read_flow(client)
+        first_health = first.read_health_for("flow_control")
         second = await _read_flow(client, first)
 
         assert first.target_level == 30
         assert second.target_level == 30
         assert _reads(unit).count((REGISTER_MODE_STATUS, 3)) == 1
+        assert second.read_health_for("flow_control") == first_health
 
     async def test_backed_off_status_is_retried_after_the_pause(
         self, client: MeltemModbusClient, unit: MockModbusUnit
@@ -1009,14 +1080,14 @@ class TestModeReadBackoff:
         key = (2, "mode_status")
         client._mode_backoff.failures[key] = 1024
 
-        client._mode_backoff.mark_failure(key, MeltemModbusError("read failed"))
+        client._mode_backoff.mark_failure(key)
 
         assert client._mode_backoff.failures[key] == 5
         assert client._mode_backoff.is_active(key)
 
     async def test_successful_write_clears_the_backoff(self, client: MeltemModbusClient) -> None:
         key = (2, "mode_status")
-        client._mode_backoff.mark_failure(key, MeltemModbusError("no"))
+        client._mode_backoff.mark_failure(key)
 
         await client.write_level(_PLAIN, 40)
 

@@ -9,13 +9,18 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
-from modbus_connection import IllegalDataAddressError, ModbusProtocolError, ModbusTimeoutError
+from modbus_connection import (
+    AcknowledgeError,
+    IllegalDataAddressError,
+    ModbusProtocolError,
+    ModbusTimeoutError,
+)
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit, WriteEvent
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -31,6 +36,7 @@ from custom_components.meltem_ventilation.coordinator import (
     UNREAD_GROUP_RETRY_SECONDS,
     MeltemDataUpdateCoordinator,
 )
+from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemModbusError,
@@ -965,7 +971,7 @@ class TestStartupWithRealClient:
             await coordinator.async_shutdown()
             client.shutdown()
 
-    async def test_mode_refusal_is_not_hidden_by_successful_startup_flow(
+    async def test_mode_refusal_is_not_recounted_during_startup_backoff(
         self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, clock: SimpleNamespace
     ) -> None:
         link = MockModbusConnection()
@@ -1000,8 +1006,11 @@ class TestStartupWithRealClient:
         assert coordinator.last_update_success
         assert coordinator.safe_data["unit_1"].supply_air_flow == 30
         assert coordinator.read_group_available("unit_1", "flow")
-        assert coordinator.read_group_stale("unit_1", "flow_control") is True
-        assert MeltemDataHealthBinarySensor(coordinator, _ROOM_1).is_on is True
+        mode_health = coordinator.safe_data["unit_1"].read_health_for("flow_control")
+        assert mode_health.consecutive_failures == 1
+        assert mode_health.last_error is not None
+        assert coordinator.read_group_stale("unit_1", "flow_control") is None
+        assert MeltemDataHealthBinarySensor(coordinator, _ROOM_1).is_on is False
         client.shutdown()
 
     @pytest.mark.parametrize(
@@ -1343,6 +1352,38 @@ class TestPostWriteRefresh:
 
 
 class TestReadOneJob:
+    async def test_backed_off_component_does_not_add_failed_group_counts(
+        self, hass: HomeAssistant
+    ) -> None:
+        link = MockModbusConnection()
+        unit = link.for_unit(_ROOM_1.slave)
+        unit.holding[41020] = [30, 30]
+        unit.fail_read(41020, AcknowledgeError())
+        client = MeltemModbusClient(link.for_unit, port="/dev/test")
+        entry = MockConfigEntry(domain=DOMAIN, title="Meltem", version=1, source="user")
+        entry.add_to_hass(hass)
+        cumulative = CumulativeDiagnostics(MagicMock(), None)
+        coordinator = MeltemDataUpdateCoordinator(
+            hass,
+            config_entry=entry,
+            client=client,
+            rooms=[_ROOM_1],
+            max_requests_per_second=2.0,
+            cumulative_diagnostics=cumulative,
+        )
+
+        first = await coordinator._read_one_job({}, _due_job("flow"))
+        first_health = first["unit_1"].read_health_for("flow")
+        assert cumulative.failed_read_groups == 1
+        failures_after_attempt = cumulative.request_failures
+
+        second = await coordinator._read_one_job(first, _due_job("flow"))
+
+        assert cumulative.failed_read_groups == 1
+        assert cumulative.request_failures == failures_after_attempt
+        assert second["unit_1"].read_health_for("flow") == first_health
+        client.shutdown()
+
     async def test_successful_read_merges_state(
         self,
         hass: HomeAssistant,

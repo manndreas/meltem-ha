@@ -204,9 +204,16 @@ instance per gateway link):
 | other `ModbusExceptionError` | no retry; resets the counter |
 | `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS` timeouts in a row, across all units, and no answer at all for `TRANSPORT_LINK_QUIET_SECONDS` | `disconnect()`; the next request reopens the link, and a new quiet window starts |
 
-An exception response usually means that the register is not available in
-the unit's current state, so retrying it would only add bus load. The setup
-probes follow the same rules as the runtime client.
+An exception response is not retried immediately by the transport. For a
+polled component, `AcknowledgeError` (`0x05`) starts a per-slave/component
+backoff of 10, 20, 40, then at most 60 seconds. The next due read retries the
+same register block; a successful block read clears its backoff. Other
+exception codes do not start this component backoff. The separate current-mode
+status read retains its existing 30-to-300-second exception backoff. While a
+component is backed off, its cached values and read health are left unchanged;
+the skipped poll is not counted as another failed read group. Other components
+and rooms continue polling. The setup probes follow the transport retry rules
+above, not the runtime component backoff.
 
 The quiet window keeps silent units from recycling a link their neighbours
 still answer on, also when two silent units or two jobs of one silent unit

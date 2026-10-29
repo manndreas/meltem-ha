@@ -260,7 +260,9 @@ same scheduled job succeeds, only the failed group is counted. **Write command
 issues** counts a command once if it fails to send, has a mismatching readback,
 or remains unconfirmed; later status changes for the same command do not count
 it again. Attributes identify affected rooms, groups, issue types, and command
-keys.
+keys. A component skipped during its `0x05` backoff keeps its previous read
+health and does not add another failed-group count until the next actual read
+attempt.
 
 Counters are stored per config entry and include `period_started_at`. They are
 saved periodically and flushed when the entry unloads or Home Assistant stops.

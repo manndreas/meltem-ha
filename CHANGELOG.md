@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.6.2
+
+- Back off repeated Modbus `0x05` responses per unit and register block to
+  reduce redundant polling while a device recovers, then resume normal polling
+  after a successful read.
+- Keep cached values and read health unchanged while a block is backed off, so
+  skipped polls do not inflate failed read-group diagnostics.
+
 ## 4.6.1
 
 - Add persistent cumulative diagnostic counters for Modbus request attempts and

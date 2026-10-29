@@ -20,6 +20,7 @@ from typing import Any, cast
 
 from homeassistant.util import dt as dt_util
 from modbus_connection import (
+    AcknowledgeError,
     ModbusConnectionError,
     ModbusError,
     ModbusExceptionError,
@@ -83,6 +84,9 @@ _LOGGER = logging.getLogger(__name__)
 _OPTIONAL_READ_BACKOFF_START_SECONDS = 30.0
 _OPTIONAL_READ_BACKOFF_MAX_SECONDS = 300.0
 _OPTIONAL_READ_BACKOFF_MAX_FAILURES = 5
+_COMPONENT_READ_BACKOFF_START_SECONDS = 10.0
+_COMPONENT_READ_BACKOFF_MAX_SECONDS = 60.0
+_COMPONENT_READ_BACKOFF_MAX_FAILURES = 4
 
 _MODE_GROUPS: tuple[str, ...] = ("flow_control", "intensive")
 _MODE_ENTITY_KEYS: tuple[str, ...] = ("operation_mode", "preset_mode", "intensive")
@@ -119,10 +123,16 @@ class _ReadJob:
     """Read errors of one room read, per read-health group."""
 
     errors: dict[str, str] = field(default_factory=dict)
+    skipped_groups: set[str] = field(default_factory=set)
     # Groups with no valid answer, rather than an exception response from the unit.
     timeouts: set[str] = field(default_factory=set)
     # Set once the unit timed out; the rest of the job is skipped then.
     silent_error: ModbusError | None = None
+
+    def skip(self, groups: tuple[str, ...]) -> None:
+        """Keep existing health unchanged when a component is backed off."""
+
+        self.skipped_groups.update(groups)
 
     def record_error(self, groups: tuple[str, ...], error: Exception | str) -> None:
         """Keep the first swallowed error of each affected group."""
@@ -137,9 +147,11 @@ class _ReadJob:
 class _ReadBackoff:
     """Growing pause per ``(slave, component)`` for reads a unit refuses."""
 
+    start_seconds: float = _OPTIONAL_READ_BACKOFF_START_SECONDS
+    max_seconds: float = _OPTIONAL_READ_BACKOFF_MAX_SECONDS
+    max_failures: int = _OPTIONAL_READ_BACKOFF_MAX_FAILURES
     failures: dict[_BackoffKey, int] = field(default_factory=dict)
     until: dict[_BackoffKey, float] = field(default_factory=dict)
-    errors: dict[_BackoffKey, str] = field(default_factory=dict)
 
     def is_active(self, key: _BackoffKey) -> bool:
         """Return whether the read is still paused."""
@@ -152,21 +164,19 @@ class _ReadBackoff:
             return False
         return True
 
-    def mark_failure(self, key: _BackoffKey, error: Exception) -> None:
+    def mark_failure(self, key: _BackoffKey) -> None:
         """Pause the read twice as long as last time, up to the maximum."""
 
-        failures = min(self.failures.get(key, 0) + 1, _OPTIONAL_READ_BACKOFF_MAX_FAILURES)
+        failures = min(self.failures.get(key, 0) + 1, self.max_failures)
         self.failures[key] = failures
-        self.errors[key] = str(error)
         self.until[key] = time.monotonic() + min(
-            _OPTIONAL_READ_BACKOFF_MAX_SECONDS,
-            _OPTIONAL_READ_BACKOFF_START_SECONDS * 2 ** (failures - 1),
+            self.max_seconds,
+            self.start_seconds * 2 ** (failures - 1),
         )
 
     def clear(self, key: _BackoffKey) -> None:
         self.failures.pop(key, None)
         self.until.pop(key, None)
-        self.errors.pop(key, None)
 
     def clear_slave(self, slave: int) -> None:
         for key in [key for key in self.failures if key[0] == slave]:
@@ -209,6 +219,11 @@ class MeltemModbusClient:
             self.update_request_rate(max_requests_per_second)
         self._units: dict[int, ModbusUnit] = {}
         self._devices: dict[tuple[int, str], MeltemRoomDevice] = {}
+        self._component_backoff = _ReadBackoff(
+            start_seconds=_COMPONENT_READ_BACKOFF_START_SECONDS,
+            max_seconds=_COMPONENT_READ_BACKOFF_MAX_SECONDS,
+            max_failures=_COMPONENT_READ_BACKOFF_MAX_FAILURES,
+        )
         # Avoid repeatedly polling a status block that a unit refuses.
         self._mode_backoff = _ReadBackoff()
         self._shut_down = False
@@ -366,7 +381,7 @@ class MeltemModbusClient:
             device = self._room_device(room)
             job = _ReadJob()
             due = _due_fields(room, refresh_plan)
-            updated = await self._poll(device, _due_reads(due), job)
+            updated = await self._poll(device, _due_reads(due), job, slave=room.slave)
             state = replace(previous_state, **_fresh_values(device, due, updated, job))
             if refresh_plan.refresh_airflow:
                 block = await self._read_mode_block(room, device, job)
@@ -398,6 +413,8 @@ class MeltemModbusClient:
         device: MeltemRoomDevice,
         reads: dict[str, tuple[str, ...]],
         job: _ReadJob,
+        *,
+        slave: int,
     ) -> set[str]:
         """Read the due components and record failures per health group.
 
@@ -409,20 +426,41 @@ class MeltemModbusClient:
 
         if not reads:
             return set()
+        active_reads: dict[str, tuple[str, ...]] = {}
+        for component, groups in reads.items():
+            key = (slave, component)
+            if self._component_backoff.is_active(key):
+                job.skip(groups)
+                continue
+            active_reads[component] = groups
+        if not active_reads:
+            return set()
+
         try:
-            report = await device.async_poll(list(reads))
+            report = await device.async_poll(list(active_reads))
+        except ModbusConnectionError:
+            for component in active_reads:
+                self._component_backoff.clear((slave, component))
+            raise
         except NO_ANSWER_ERRORS as err:
             job.silent_error = err
-            for groups in reads.values():
+            for component, groups in active_reads.items():
+                self._component_backoff.clear((slave, component))
                 job.record_error(groups, err)
             return set()
-        for component, groups in reads.items():
+        for component, groups in active_reads.items():
             error = report.failed.get(component)
             if error is None:
+                if component in report.updated:
+                    self._component_backoff.clear((slave, component))
                 continue
             job.record_error(groups, error)
             if isinstance(error, NO_ANSWER_ERRORS):
                 job.silent_error = error
+            if isinstance(error, AcknowledgeError):
+                self._component_backoff.mark_failure((slave, component))
+            else:
+                self._component_backoff.clear((slave, component))
         return report.updated
 
     # ------------------------------------------------------------------
@@ -500,6 +538,8 @@ class MeltemModbusClient:
         stepped = normalize_control_setting(setting_key, value)
         async with self._gateway_operation(f"writing control setting for room {room.key}"):
             await self._room_device(room).control_settings.write(setting_key, stepped)
+        # Allow the coordinator's immediate confirmation read after this write.
+        self._component_backoff.clear((room.slave, "control_settings"))
         return stepped
 
     async def _write_mode_registers(
@@ -536,10 +576,7 @@ class MeltemModbusClient:
 
         key = (room.slave, "mode_status")
         if self._mode_backoff.is_active(key):
-            job.record_error(
-                _MODE_GROUPS,
-                self._mode_backoff.errors.get(key, "Read is temporarily backed off"),
-            )
+            job.skip(_MODE_GROUPS)
             return None
 
         status = device.mode_status
@@ -551,7 +588,7 @@ class MeltemModbusClient:
             if isinstance(err, NO_ANSWER_ERRORS):
                 job.silent_error = err
             elif isinstance(err, ModbusExceptionError):
-                self._mode_backoff.mark_failure(key, err)
+                self._mode_backoff.mark_failure(key)
             job.record_error(_MODE_GROUPS, err)
             return None
 
@@ -731,12 +768,12 @@ def _updated_read_health(
             continue
 
         error = job.errors.get(group_key)
-        if error is None:
+        if error is not None:
+            group_health[group_key] = previous_state.read_health_for(group_key).failed(
+                now, error, timed_out=group_key in job.timeouts
+            )
+        elif group_key not in job.skipped_groups:
             group_health[group_key] = ReadHealth(last_attempt=now, last_successful_read=now)
-            continue
-        group_health[group_key] = previous_state.read_health_for(group_key).failed(
-            now, error, timed_out=group_key in job.timeouts
-        )
     return tuple(sorted(group_health.items()))
 
 
