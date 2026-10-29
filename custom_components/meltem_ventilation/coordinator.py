@@ -197,6 +197,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         # Only timeouts and lost links count towards the gateway backoff; a unit
         # that answers with an exception response proves the link works.
         self._last_job_link_failure = False
+        self._last_job_attempted = False
         self._consecutive_transport_failures = 0
         self._backoff_seconds: float | None = None
         self._room_failures: dict[str, int] = {}
@@ -682,6 +683,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 self._last_read_started = now
                 self._last_job_error = None
                 self._last_job_link_failure = False
+                self._last_job_attempted = False
                 updated_data = await self._read_one_job(self.safe_data or self._startup_states, job)
                 await self._async_read_gateway_uptime_due()
                 await self._async_read_gateway_utc_clock_due()
@@ -701,7 +703,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 # so success has to be derived from the recorded job failure.
                 if self._last_job_link_failure:
                     self._on_transport_failure()
-                else:
+                elif self._last_job_attempted:
                     self._on_transport_success()
                 # The coordinator notifies the listeners once the new data is set.
                 self._confirm_pending_writes(updated_data, notify=False)
@@ -1338,6 +1340,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             _LOGGER.debug("Failed to read room %s for job %s: %s", room.key, job.key, err)
             error = self._last_job_error = err
             self._last_job_link_failure = True
+            self._last_job_attempted = True
             self._room_failures[room.key] = self._room_failures.get(room.key, 0) + 1
             refreshed_state = read_health.record_read_failures(
                 previous_state,
@@ -1346,11 +1349,16 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 err,
             )
         else:
+            self._last_job_attempted = read_health.job_read_attempted(
+                room, refreshed_state, job.refresh_plan, read_started_at
+            )
             failure = read_health.job_read_failure(
                 room, refreshed_state, job.refresh_plan, read_started_at
             )
             error = self._last_job_error = None if failure is None else failure.error
-            self._last_job_link_failure = failure is not None and failure.link_failure
+            self._last_job_link_failure = read_health.job_read_unanswered(
+                room, refreshed_state, job.refresh_plan, read_started_at
+            )
             if failure is not None:
                 _LOGGER.debug("Failed to read room %s for job %s: %s", room.key, job.key, error)
                 optional_rejection = not failure.link_failure and all(

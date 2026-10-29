@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 from modbus_connection import (
     ClientClosedError,
+    GatewayPathUnavailableError,
     GatewayTargetError,
     IllegalDataAddressError,
     ModbusConnectionError,
@@ -90,8 +91,13 @@ async def _run_failing(
 class TestRetry:
     @pytest.mark.parametrize(
         "error",
-        [_SILENT, ModbusProtocolError("garbled"), GatewayTargetError()],
-        ids=["timeout", "protocol", "silent-unit-behind-the-gateway"],
+        [
+            _SILENT,
+            ModbusProtocolError("garbled"),
+            GatewayPathUnavailableError(),
+            GatewayTargetError(),
+        ],
+        ids=["timeout", "protocol", "gateway-path-unavailable", "silent-unit-behind-the-gateway"],
     )
     async def test_an_unanswered_request_is_retried_once(
         self, policy: TransportPolicy, unit: AsyncMock, error: Exception

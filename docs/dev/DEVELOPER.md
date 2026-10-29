@@ -621,12 +621,18 @@ unavailable rather than showing frozen values:
 A unit's change to unavailable and its recovery are each logged once at info
 level. The check runs after every read job of that unit, so availability
 queries from entities, diagnostics, or system health have no side effects. A
-job whose primary read groups swallowed their Modbus errors still counts as a
-failed job (`read_health.job_read_failure`), and only when every failed group
-timed out (`ReadHealth.last_error_timed_out`) does it count towards the gateway
-backoff. Bridge-local `40101` (`REGISTER_RF_COMM_STATUS`) responses do not
-count as a unit read answer in `TransportPolicy`, so a silent unit cannot
-appear reachable through gateway status reads.
+job whose attempted primary read groups all swallowed their Modbus errors
+still counts as a failed job (`read_health.job_read_failure`); groups skipped
+by component backoff do not mask failures from the groups actually attempted.
+Gateway backoff counts a job only when every attempted group received no valid
+answer (timeout or protocol error, recorded in `ReadHealth.last_error_timed_out`),
+including a secondary mode read when the primary airflow group is skipped. Any
+group that answers keeps the link healthy.
+Once any room has data, a job with no attempted groups neither increments nor
+clears the transport failure streak. With no room data at all, the startup
+failure still backs off. Bridge-local `40101` (`REGISTER_RF_COMM_STATUS`)
+responses do not count as a unit read answer in `TransportPolicy`, so a silent
+unit cannot appear reachable through gateway status reads.
 
 ### Temperatures are not identical conceptually
 
@@ -780,6 +786,8 @@ and every entity platform, including:
   gateway errors
 - setup and unload through Home Assistant's real `modbus` integration on an
   in-memory link, including the release of the port
+- a Home Assistant fan service call through the entity, coordinator, and
+  in-memory link, including successful readback and a rejected write
 - gateway-backed discovery via `43901` / `43902..`
 - minimal setup-time capability probing
 - balanced airflow derivation and per-profile scaling
@@ -787,12 +795,19 @@ and every entity platform, including:
 - `NaN` and out-of-range sentinel filtering for temperature and air-quality reads
 - scheduler job construction and due-job selection
 - coordinator write-then-refresh behavior, optimistic state, transport backoff
+- mixed RF read failures, skipped backed-off registers, and recovery, plus
+  read-health freshness and availability boundaries
 - setup metadata repair, profile-aware entity cleanup, and serial unload
   synchronization
 - control-setting range and manufacturer-step normalization
 - config-flow helper functions for defaults and room mapping
 - entity creation per model profile across all platforms
 - the link settings in `tools/_link.py` against `const.py`
+
+The in-memory link does not establish physical gateway behavior; live
+validation and its safety rules remain in
+[HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) and
+[LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md).
 
 CI also runs `mypy` (configured in `pyproject.toml`) against the Home
 Assistant version the test harness installs, Pyright on `custom_components`, `tests` and `tools`,

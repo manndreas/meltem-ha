@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
     ConfigEntryError,
@@ -20,8 +21,8 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import UNDEFINED
-from modbus_connection import ClientClosedError, ModbusTimeoutError
-from modbus_connection.mock import MockModbusConnection
+from modbus_connection import ClientClosedError, IllegalDataValueError, ModbusTimeoutError
+from modbus_connection.mock import MockModbusConnection, WriteEvent
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.meltem_ventilation import (
@@ -37,7 +38,13 @@ from custom_components.meltem_ventilation.const import (
     CONF_ROOMS,
     DOMAIN,
     FIXED_TIMEOUT,
+    MODE_UNBALANCED,
     PLATFORMS,
+    REGISTER_APPLY,
+    REGISTER_CURRENT_LEVEL,
+    REGISTER_EXTRACT_AIR_TARGET_LEVEL,
+    REGISTER_MODE,
+    REGISTER_MODE_STATUS,
 )
 from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
 from custom_components.meltem_ventilation.modbus_helpers import (
@@ -533,6 +540,103 @@ class TestSharedModbusConnection:
             return link
 
         return patch("homeassistant.components.modbus.connection.ModbusConnection", _connection)
+
+    @pytest.mark.parametrize("write_fails", [False, True], ids=("confirmed", "rejected"))
+    async def test_fan_service_writes_and_reconciles_through_the_shared_link(
+        self, hass: HomeAssistant, write_fails: bool
+    ) -> None:
+        links: list[MockModbusConnection] = []
+        entry = _entry(hass, options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0})
+
+        with self._patch_link(links):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            coordinator = entry.runtime_data.coordinator
+            unit = links[0].for_unit(2)
+            writes: list[WriteEvent] = []
+
+            def _apply_write(event: WriteEvent) -> None:
+                writes.append(event)
+                if event.address == REGISTER_APPLY:
+                    values = {write.address: int(write.values[0]) for write in writes}
+                    unit.holding[REGISTER_MODE_STATUS] = [
+                        values[REGISTER_MODE],
+                        values[REGISTER_CURRENT_LEVEL],
+                        values[REGISTER_EXTRACT_AIR_TARGET_LEVEL],
+                    ]
+
+            unit.on_write(_apply_write)
+            if write_fails:
+                unit.fail_write(REGISTER_CURRENT_LEVEL, IllegalDataValueError())
+
+            registry = er.async_get(hass)
+            supply_id = registry.async_get_entity_id(
+                Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_supply_level"
+            )
+            extract_id = registry.async_get_entity_id(
+                Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_extract_level"
+            )
+            assert supply_id is not None
+            assert extract_id is not None
+            initial = hass.states.get(supply_id)
+            assert initial is not None
+            assert initial.attributes["percentage"] == 30
+
+            async def _set_supply() -> None:
+                await hass.services.async_call(
+                    "fan",
+                    "set_percentage",
+                    {"entity_id": supply_id, "percentage": 60},
+                    blocking=True,
+                )
+
+            if write_fails:
+                with pytest.raises(HomeAssistantError):
+                    await _set_supply()
+            else:
+                await _set_supply()
+            await hass.async_block_till_done()
+
+            if write_fails:
+                assert [(event.address, event.values[0]) for event in writes] == [
+                    (REGISTER_MODE, MODE_UNBALANCED)
+                ]
+                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "failed"
+                supply = hass.states.get(supply_id)
+                assert supply is not None
+                assert supply.attributes["percentage"] == 30
+            else:
+                assert [(event.address, event.values[0]) for event in writes] == [
+                    (REGISTER_MODE, MODE_UNBALANCED),
+                    (REGISTER_CURRENT_LEVEL, 120),
+                    (REGISTER_EXTRACT_AIR_TARGET_LEVEL, 60),
+                    (REGISTER_APPLY, 0),
+                ]
+                assert all(event.function_code == 0x06 for event in writes)
+                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "pending"
+                supply = hass.states.get(supply_id)
+                extract = hass.states.get(extract_id)
+                assert supply is not None and extract is not None
+                assert supply.attributes["percentage"] == 60
+                assert extract.attributes["percentage"] == 30
+                assert supply.attributes["level_source"] == "pending"
+
+                coordinator._startup_jobs = []
+                for job in coordinator._jobs:
+                    job.next_due = 0.0 if job.key == "flow" else float("inf")
+                coordinator._last_read_started = None
+                await coordinator.async_refresh()
+                await hass.async_block_till_done()
+
+                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
+                supply = hass.states.get(supply_id)
+                extract = hass.states.get(extract_id)
+                assert supply is not None and extract is not None
+                assert supply.attributes["percentage"] == 60
+                assert extract.attributes["percentage"] == 30
+                assert supply.attributes["level_source"] == "target"
+
+            assert await hass.config_entries.async_unload(entry.entry_id)
 
     async def test_unload_releases_the_link(self, hass: HomeAssistant) -> None:
         links: list[MockModbusConnection] = []

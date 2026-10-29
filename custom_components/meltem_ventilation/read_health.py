@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 from typing import NamedTuple
 
@@ -9,7 +10,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import AIRFLOW_STALE_AFTER_SECONDS, READ_FAILURE_THRESHOLD, READ_GROUP_ENTITY_KEYS
 from .modbus_helpers import MeltemModbusError
-from .models import RefreshPlan, RoomConfig, RoomState
+from .models import ReadHealth, RefreshPlan, RoomConfig, RoomState
 from .polling import READ_GROUP_INTERVAL_SECONDS
 
 
@@ -99,7 +100,7 @@ def mode_read_since(state: RoomState, written_at: datetime) -> bool:
 
 
 class JobReadFailure(NamedTuple):
-    """A job whose primary read groups all failed without raising."""
+    """A job whose attempted primary read groups all failed without raising."""
 
     error: MeltemModbusError
     # Every failed group timed out or was refused by the link, not by the unit.
@@ -112,21 +113,53 @@ def job_read_failure(
     refresh_plan: RefreshPlan,
     read_started_at: datetime,
 ) -> JobReadFailure | None:
-    """Return the failure when a job's primary read groups all failed without raising."""
+    """Return the failure when all attempted primary groups failed."""
 
-    groups = _job_read_groups(room, refresh_plan)
-    failed = [
-        health
-        for group_key in groups
-        if (health := state.read_health_for(group_key)).last_error is not None
-        and health.last_attempt is not None
-        and health.last_attempt >= read_started_at
-    ]
-    if not groups or len(failed) != len(groups):
+    attempted = _attempted_read_health(
+        room, state, _job_read_groups(room, refresh_plan), read_started_at
+    )
+    if not attempted or any(health.last_error is None for health in attempted):
         return None
     return JobReadFailure(
-        MeltemModbusError(str(failed[0].last_error)),
-        link_failure=all(health.last_error_timed_out for health in failed),
+        MeltemModbusError(str(attempted[0].last_error)),
+        link_failure=all(health.last_error_timed_out for health in attempted),
+    )
+
+
+def job_read_attempted(
+    room: RoomConfig,
+    state: RoomState,
+    refresh_plan: RefreshPlan,
+    read_started_at: datetime,
+) -> bool:
+    """Return whether any supported group was actually read during this job."""
+
+    return bool(_attempted_read_health(room, state, refresh_plan.read_groups(), read_started_at))
+
+
+def job_read_unanswered(
+    room: RoomConfig,
+    state: RoomState,
+    refresh_plan: RefreshPlan,
+    read_started_at: datetime,
+) -> bool:
+    """Return whether every group actually attempted received no valid answer."""
+
+    attempted = _attempted_read_health(room, state, refresh_plan.read_groups(), read_started_at)
+    return bool(attempted) and all(
+        health.last_error is not None and health.last_error_timed_out for health in attempted
+    )
+
+
+def _attempted_read_health(
+    room: RoomConfig, state: RoomState, groups: Iterable[str], read_started_at: datetime
+) -> tuple[ReadHealth, ...]:
+    return tuple(
+        health
+        for group_key in groups
+        if room.supports_any(READ_GROUP_ENTITY_KEYS[group_key])
+        and (health := state.read_health_for(group_key)).last_attempt is not None
+        and health.last_attempt >= read_started_at
     )
 
 

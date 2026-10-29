@@ -12,6 +12,8 @@
   after a successful read.
 - Keep cached values and read health unchanged while a block is backed off, so
   skipped polls do not inflate failed read-group diagnostics.
+- Count timeouts from attempted register groups even when other groups are
+  paused, and preserve gateway backoff when a whole polling job is skipped.
 
 ## 4.6.1
 

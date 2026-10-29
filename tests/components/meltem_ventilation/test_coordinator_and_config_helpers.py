@@ -361,11 +361,10 @@ class TestCoordinatorResilience:
             info.assert_called_once()
             warning.assert_not_called()
 
-            with patch.object(
-                client,
-                "read_room_state",
-                new=AsyncMock(return_value=RoomState(target_level=30)),
-            ):
+            async def _recover(*_args: object) -> RoomState:
+                return _with_fresh_read_groups(RoomState(target_level=30), "flow")
+
+            with patch.object(client, "read_room_state", side_effect=_recover):
                 states = await coordinator._read_one_job(states, job)
                 states = await coordinator._read_one_job(states, job)
 
