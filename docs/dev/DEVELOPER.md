@@ -832,7 +832,10 @@ Current limitation:
 
 The product registers `40002` / `40011` / `40021`
 ([MELTEM.md](MELTEM.md#product-registers-and-readable-islands)) are the best
-current path to improve this.
+current path to improve this. The [app catalog](APP_CATALOG.md#product-entries)
+provides a matching M-WRG-II identifier and an unverified M-WRG candidate.
+The integration displays these as hints and device model IDs but does not use
+them to select a profile.
 
 That means:
 

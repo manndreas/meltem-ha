@@ -102,7 +102,10 @@ To remove the config entry and uninstall the integration, follow the
 The profile list shows each unit's App setup code when available. Match it to
 the code below the DataMatrix on the unit label to identify which Modbus
 address belongs to each physical unit. Profile selection still uses the model
-information on the type plate.
+information on the type plate. For known product IDs, the setup preview also
+shows a series and product identifier from the app catalog; the older-series
+mapping has not yet been verified on hardware. Existing units with a known ID
+show the identifier in their device details.
 
 Units are listed by their Modbus address and initially named `Unit 1`, `Unit 2`
 and so on. Each unit appears as its own entry under the gateway on the

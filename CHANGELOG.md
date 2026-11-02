@@ -30,6 +30,9 @@
 
 ### Improvements (5.0.0)
 
+- Show known app-catalog product identifiers in unit device details and setup
+  previews. The selected profile remains unchanged; the older M-WRG mapping
+  has not yet been verified on hardware.
 - Combine supply-air temperature and air-quality readings into fewer gateway
   requests on units with humidity, CO2, or VOC sensors.
 - Reduce repeated requests when a unit returns a temporary error. Normal polling

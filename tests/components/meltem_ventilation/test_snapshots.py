@@ -9,6 +9,7 @@ import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant.common import MockConfigEntry, snapshot_platform
@@ -182,4 +183,26 @@ async def test_diagnostics(
     entry = await setup_entry([Platform.SENSOR])
 
     assert await async_get_config_entry_diagnostics(hass, entry) == snapshot
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_device_registry_refreshes_catalog_model_id(
+    hass: HomeAssistant, setup_entry: SetupEntry
+) -> None:
+    entry = await setup_entry([Platform.SENSOR])
+    registry = dr.async_get(hass)
+    device = registry.async_get_device_by_identifier((DOMAIN, "slave_2"), entry.entry_id)
+    assert device is not None
+    assert (device.model_id, device.hw_version) == ("VMD-22RPS44", "116852")
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    (unit,) = entry.subentries.values()
+    hass.config_entries.async_update_subentry(entry, unit, data={**unit.data, "product_id": 123456})
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    device = registry.async_get_device_by_identifier((DOMAIN, "slave_2"), entry.entry_id)
+    assert device is not None
+    assert (device.model_id, device.hw_version) == (None, "123456")
+    assert device.model == "M-WRG-II (O/VOC-AUL)"
     assert await hass.config_entries.async_unload(entry.entry_id)

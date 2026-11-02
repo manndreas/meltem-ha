@@ -450,12 +450,31 @@ class TestConfigFlowUser:
         assert result.get("step_id") == "profiles"
         assert list(_flow_schema(result).schema.keys()) == ["slave_2", "slave_3"]
         details = _flow_placeholders(result)["unit_details"]
-        assert "ID 116852 | CO2" in details
+        assert "ID 116852 | App: M-WRG-II (VMD-22RPS44) | CO2" in details
         for unit in (gateway, co2_unit):
             assert unit.required_timeout == FIXED_TIMEOUT
             assert unit.message_spacing == REQUEST_GAP_SECONDS
         # The silent unit is given up after its first unanswered probe.
         assert len(gateway_link.for_unit(3).read_events) == 1
+
+    async def test_catalog_series_is_only_a_hint_in_profile_selection(
+        self, hass: HomeAssistant, gateway_link: MockModbusConnection
+    ) -> None:
+        gateway_link.for_unit(DEFAULT_GATEWAY_DEVICE_ID).holding.update({43901: 1, 43902: [2]})
+        unit = gateway_link.for_unit(2)
+        unit.holding.update({40002: [116819 & 0xFFFF, 116819 >> 16]})
+        for register in (41006, 41007, 41011, 41013):
+            unit.fail_read(register, IllegalDataAddressError())
+
+        with _patch_resolve():
+            result = await _async_submit_port(hass)
+            assert _flow_schema(result)({}) == {"slave_2": "ii_plain"}
+            assert (
+                "ID 116819 | App: M-WRG (VMD-22RES22)" in _flow_placeholders(result)["unit_details"]
+            )
+            result = await _async_submit_profiles(hass, result, {"slave_2": "s_plain"})
+
+        assert _units(_flow_entry(result))[0].data["profile"] == "s_plain"
 
     async def test_user_step_scans_and_probes_on_one_link(
         self, hass: HomeAssistant, gateway_link: MockModbusConnection

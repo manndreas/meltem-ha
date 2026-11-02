@@ -127,6 +127,28 @@ TARGET_OPTIMISTIC_SECONDS = 15.0
 
 
 @dataclass(frozen=True, slots=True)
+class ProductMetadata:
+    """App catalog information, not a complete physical unit profile."""
+
+    series: str
+    model_id: str
+
+
+PRODUCT_ID_M_WRG = 116819
+PRODUCT_ID_M_WRG_II = 116852
+PRODUCT_METADATA: dict[int, ProductMetadata] = {
+    PRODUCT_ID_M_WRG: ProductMetadata("M-WRG", "VMD-22RES22"),
+    PRODUCT_ID_M_WRG_II: ProductMetadata("M-WRG-II", "VMD-22RPS44"),
+}
+
+
+def product_metadata(product_id: int | None) -> ProductMetadata | None:
+    """Look up an app catalog entry without guessing unknown product IDs."""
+
+    return PRODUCT_METADATA.get(product_id) if product_id is not None else None
+
+
+@dataclass(frozen=True, slots=True)
 class ProfileMetadata:
     """User-facing and protocol-relevant facts about one supported unit family."""
 

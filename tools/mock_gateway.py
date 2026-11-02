@@ -13,6 +13,8 @@ from custom_components.meltem_ventilation.const import (
     MODE_SENSOR_CONTROL,
     MODE_UNBALANCED,
     PRESET_MODE_CODE_INTENSIVE,
+    PRODUCT_ID_M_WRG,
+    PRODUCT_ID_M_WRG_II,
     PROFILE_METADATA,
     REGISTER_APP_SETUP_CODE,
     REGISTER_APPLY,
@@ -115,7 +117,8 @@ def _unit_registers(profile: str, app_setup_code: int) -> dict[int, int]:
         for address in range(start, end + 1)
     }
     capabilities = PROFILE_METADATA[profile].capabilities
-    registers.update(_word_swapped_u32(REGISTER_PRODUCT_ID, 116852))
+    product_id = PRODUCT_ID_M_WRG if profile.startswith("s_") else PRODUCT_ID_M_WRG_II
+    registers.update(_word_swapped_u32(REGISTER_PRODUCT_ID, product_id))
     registers[REGISTER_APP_SETUP_CODE] = app_setup_code
     registers[REGISTER_APP_SETUP_CODE + 1] = 0
     registers[REGISTER_HUMIDITY_EXTRACT_AIR] = 48 if "humidity" in capabilities else 0xFFFF

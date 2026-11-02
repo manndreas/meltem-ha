@@ -252,7 +252,7 @@ class TestDetectSlaveDetails:
 
         assert result == UnitProbeResult(
             profile="fc_voc",
-            preview="R-Code R000001 | ID 116852 | VOC",
+            preview="R-Code R000001 | ID 116852 | App: M-WRG-II (VMD-22RPS44) | VOC",
             product_id=116852,
             app_setup_code="R000001",
         )
@@ -274,7 +274,9 @@ class TestDetectSlaveDetails:
 
         result = await detect_slave_details(unit)
 
-        assert result == UnitProbeResult("plain", "ID 116852 | basic", 116852)
+        assert result == UnitProbeResult(
+            "plain", "ID 116852 | App: M-WRG-II (VMD-22RPS44) | basic", 116852
+        )
 
     async def test_an_unreadable_app_setup_code_does_not_fail_profile_detection(
         self, unit: MockModbusUnit
@@ -286,7 +288,9 @@ class TestDetectSlaveDetails:
 
         result = await detect_slave_details(unit)
 
-        assert result == UnitProbeResult("plain", "ID 116852 | basic", 116852)
+        assert result == UnitProbeResult(
+            "plain", "ID 116852 | App: M-WRG-II (VMD-22RPS44) | basic", 116852
+        )
 
     async def test_app_setup_code_timeout_does_not_fail_profile_detection(
         self, unit: MockModbusUnit
@@ -298,7 +302,26 @@ class TestDetectSlaveDetails:
 
         result = await detect_slave_details(unit)
 
-        assert result == UnitProbeResult("plain", "ID 116852 | basic", 116852)
+        assert result == UnitProbeResult(
+            "plain", "ID 116852 | App: M-WRG-II (VMD-22RPS44) | basic", 116852
+        )
+
+    @pytest.mark.parametrize(
+        ("product_id", "preview"),
+        [
+            (116819, "ID 116819 | App: M-WRG (VMD-22RES22) | basic"),
+            (116852, "ID 116852 | App: M-WRG-II (VMD-22RPS44) | basic"),
+            (123456, "ID 123456 | basic"),
+        ],
+    )
+    async def test_product_catalog_only_adds_a_preview(
+        self, unit: MockModbusUnit, product_id: int, preview: str
+    ) -> None:
+        unit.holding[REGISTER_PRODUCT_ID] = [product_id & 0xFFFF, product_id >> 16]
+        for register in _CAPABILITY_REGISTERS:
+            unit.fail_read(register, IllegalDataAddressError())
+
+        assert await detect_slave_details(unit) == UnitProbeResult("plain", preview, product_id)
 
     async def test_implausible_values_do_not_count_as_capabilities(
         self, unit: MockModbusUnit

@@ -49,12 +49,15 @@ Status: open
 Finding:
 
 - `40002 PRODUCT_ID` is read and shown as a raw value in the device
-  information.
-- A mapping to concrete model names is not known.
+  information. The app catalog suggests series and product identifiers for two
+  values; the M-WRG-II entry also matches the observed product name.
+- The older-series entry has not been checked on hardware, and a mapping to
+  concrete model variants is not known. See [APP_CATALOG.md](APP_CATALOG.md).
 
 Next step:
 
-- Collect values from more units before guessing a decoding.
+- Collect values and type-plate details from more units, especially M-WRG-S,
+  before inferring series or variants automatically.
 - The manufacturer documents contain neither `116852` nor `VMD-22RPS44`; the
   article numbers do not match, see `docs/dev/reference/models.md`.
 

@@ -38,6 +38,7 @@ from .const import (
     TRANSPORT_DISCONNECT_AFTER_TIMEOUTS,
     TRANSPORT_LINK_QUIET_SECONDS,
     TRANSPORT_RETRY_DELAY_SECONDS,
+    product_metadata,
 )
 from .device import MeltemGateway, MeltemProbe, PolicyUnit, TransportPolicy
 from .device.transport import RequestOutcome
@@ -226,7 +227,7 @@ def _discovery_failed(err: ModbusError, unit: ModbusUnit, port: str, what: str) 
 #  Setup-time profile detection
 # ---------------------------------------------------------------------------
 
-# Read in this order by the setup probe; the product ID only feeds the preview.
+# Read in this order by the setup probe; the product ID does not determine capabilities.
 _PROBE_COMPONENTS = (
     "product_id",
     "humidity_extract_air",
@@ -296,6 +297,8 @@ async def detect_slave_details(unit: ModbusUnit) -> UnitProbeResult:
     preview_parts = [f"R-Code {app_setup_code}"] if app_setup_code is not None else []
     if product_id is not None:
         preview_parts.append(f"ID {product_id}")
+        if product := product_metadata(product_id):
+            preview_parts.append(f"App: {product.series} ({product.model_id})")
     preview_parts.append(capability_preview)
     preview = " | ".join(preview_parts)
     return UnitProbeResult(

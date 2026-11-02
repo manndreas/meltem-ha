@@ -137,6 +137,9 @@ All six tested `M-WRG-II` units returned the same product registers:
 - `40021 RECEIVED_PRODUCT_ID -> 116852 (0x0001C874)`
 
 These registers are the most promising basis for telling the series apart.
+The [app catalog](APP_CATALOG.md#product-entries) independently lists the same
+ID and name for M-WRG-II and suggests another entry for M-WRG-S; the latter
+has not been verified on local hardware.
 
 Other diagnostic registers that returned stable values:
 

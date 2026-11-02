@@ -33,6 +33,10 @@ port:
 .venv/bin/python -m tools.mock_gateway --units 2:ii_plain,3:s_fc --port 55020
 ```
 
+The simulated product IDs follow the app catalog: `116852` for `ii_*` and
+`116819` for `s_*`. The latter remains unconfirmed on real hardware; the
+simulation is not evidence that an M-WRG-S unit reports that value.
+
 In Home Assistant, add the integration with **RTU over TCP**, host
 `127.0.0.1`, and the selected port. Select the matching profile for each unit.
 The simulator prints each Modbus read and write; `Ctrl+C` stops it.

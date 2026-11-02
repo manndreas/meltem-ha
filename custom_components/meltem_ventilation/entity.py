@@ -21,6 +21,7 @@ from .const import (
     ENTITY_PROFILES,
     GATEWAY_NAME,
     INTEGRATION_NAME,
+    product_metadata,
     profile_label,
 )
 from .coordinator import MeltemDataUpdateCoordinator
@@ -147,10 +148,12 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo:
+        product = product_metadata(self.room.product_id)
         info = DeviceInfo(
             identifiers=room_identifiers(self.room),
             manufacturer="Meltem",
             model=profile_label(self.room.profile),
+            model_id=product.model_id if product is not None else None,
             name=f"{INTEGRATION_NAME} {self.room.name}",
             hw_version=self._hw_version,
             sw_version=self._sw_version,

@@ -17,6 +17,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.json import ExtendedJSONEncoder
 from pytest_homeassistant.common import MockConfigEntry
@@ -32,6 +33,7 @@ from custom_components.meltem_ventilation.const import (
     NETWORK_TIMEOUT,
     REGISTER_CO2_STARTING_POINT,
     REGISTER_MODE_STATUS,
+    REGISTER_PRODUCT_ID,
     SUBENTRY_TYPE_UNIT,
 )
 from custom_components.meltem_ventilation.diagnostics import (
@@ -114,6 +116,24 @@ def test_parse_units_reads_the_documented_default() -> None:
     assert parse_units(DEFAULT_UNITS) == {2: "ii_fc_voc", 3: "ii_f"}
 
 
+@pytest.mark.parametrize(
+    ("profile", "product_id"),
+    [
+        ("s_plain", 116819),
+        ("s_f", 116819),
+        ("s_fc", 116819),
+        ("ii_plain", 116852),
+        ("ii_f", 116852),
+        ("ii_fc", 116852),
+        ("ii_fc_voc", 116852),
+    ],
+)
+def test_mock_product_id_matches_simulated_series(profile: str, product_id: int) -> None:
+    gateway = RtuTcpMockGateway({2: profile})
+    registers = gateway.registers[2]
+    assert registers[REGISTER_PRODUCT_ID] | registers[REGISTER_PRODUCT_ID + 1] << 16 == product_id
+
+
 async def test_mock_gateway_serves_discovery_profiles_and_committed_writes(
     hass: HomeAssistant, socket_enabled: None
 ) -> None:
@@ -191,12 +211,24 @@ async def test_end_to_end_setup_entities_diagnostics_options_and_reconfigure(
             },
         )
         assert flow["step_id"] == "profiles"
+        placeholders = flow.get("description_placeholders")
+        assert placeholders is not None
+        assert "ID 116852 | App: M-WRG-II (VMD-22RPS44)" in placeholders["unit_details"]
         flow = await hass.config_entries.flow.async_configure(
             flow["flow_id"], {"slave_2": "ii_fc_voc"}
         )
         entry = flow["result"]
         await hass.async_block_till_done()
         assert entry.state is ConfigEntryState.LOADED
+        device = dr.async_get(hass).async_get_device_by_identifier(
+            (DOMAIN, "slave_2"), entry.entry_id
+        )
+        assert device is not None
+        assert (device.model, device.model_id, device.hw_version) == (
+            "M-WRG-II (O/VOC-AUL)",
+            "VMD-22RPS44",
+            "116852",
+        )
 
         entities = er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
         assert {entity.domain for entity in entities} >= {

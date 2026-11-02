@@ -249,6 +249,7 @@ class TestSensorEntityCreation:
         assert "Living Room" in name
         assert info.sw_version == "42"
         assert info.hw_version == "116852"
+        assert info.model_id == "VMD-22RPS44"
         assert info.serial_number is UNDEFINED
         assert info.via_device_id == "gateway-device"
 
@@ -271,6 +272,28 @@ class TestSensorEntityCreation:
             (DOMAIN, "app_setup_code:R000001"),
         }
         assert info.serial_number is UNDEFINED
+
+    @pytest.mark.parametrize(
+        ("product_id", "model_id"),
+        [
+            (116819, "VMD-22RES22"),
+            (116852, "VMD-22RPS44"),
+            (123456, None),
+            (None, None),
+        ],
+    )
+    def test_device_info_preserves_profile_and_raw_product_id(
+        self, product_id: int | None, model_id: str | None
+    ) -> None:
+        room = RoomConfig(
+            key="unit_1", name="Living Room", profile="s_fc", slave=2, product_id=product_id
+        )
+        sensor = MeltemSensorEntity(_coordinator(), room, _SENSORS["exhaust_temperature"])
+
+        info = sensor.device_info
+        assert info.model == "M-WRG-S (-FC)"
+        assert info.model_id == model_id
+        assert info.hw_version == (str(product_id) if product_id is not None else None)
 
     @pytest.mark.parametrize(
         ("key", "device_class", "unit"),
