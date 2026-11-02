@@ -12,6 +12,7 @@ Related documents:
 - `docs/dev/HARDWARE_BACKLOG.md`: review findings that need a live gateway before
   they can be decided
 - `docs/dev/LIVE_GATEWAY_TESTS.md`: how to measure them
+- `docs/dev/MOCK_GATEWAY.md`: how to run software-only RTU-over-TCP smoke tests
 - `docs/dev/SETTING_RE_BACKLOG.md`: parked reverse engineering of app settings
 
 ## Safety and liability

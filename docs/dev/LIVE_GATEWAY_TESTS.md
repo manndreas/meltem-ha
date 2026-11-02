@@ -15,6 +15,10 @@ Tests that need a person (app, power switch, USB cable, keypad) are listed
 separately in [H](#h--tests-that-need-a-person). The agent prepares them,
 asks for the one physical step, and measures.
 
+For setup and runtime checks without physical hardware, use the
+[local mock gateway](MOCK_GATEWAY.md). It does not validate any live hardware
+assumptions or replace this plan.
+
 ## How to use this plan
 
 1. Work through the phases in order: [P](#p--preparation) →
