@@ -27,6 +27,11 @@ PLATFORMS: list[Platform] = [
 
 CONF_MAX_REQUESTS_PER_SECOND = "max_requests_per_second"
 CONF_PORT = "port"
+CONF_CONNECTION_TYPE = "connection_type"
+CONF_HOST = "host"
+CONF_NETWORK_PORT = "network_port"
+CONNECTION_SERIAL = "serial"
+CONNECTION_RTU_OVER_TCP = "rtu_over_tcp"
 # Only in config entries before version 2, which stored the units in their data.
 CONF_ROOMS = "rooms"
 
@@ -38,6 +43,7 @@ CONF_SLAVE = "slave"
 CONF_PROFILE = "profile"
 
 DEFAULT_PORT = "/dev/ttyACM0"
+DEFAULT_NETWORK_PORT = 5020
 DEFAULT_GATEWAY_DEVICE_ID = 1
 DEFAULT_SCAN_SLAVE_START = 2
 DEFAULT_SCAN_SLAVE_END = 16

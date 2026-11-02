@@ -32,10 +32,6 @@ from .const import (
     CONTROL_SETTING_LIMITS,
     CONTROL_SETTING_REGISTERS,
     DEFAULT_GATEWAY_DEVICE_ID,
-    FIXED_BAUDRATE,
-    FIXED_BYTESIZE,
-    FIXED_PARITY,
-    FIXED_STOPBITS,
     FIXED_TIMEOUT,
     PROFILE_METADATA,
     REQUEST_GAP_SECONDS,
@@ -45,6 +41,7 @@ from .const import (
 )
 from .device import MeltemGateway, MeltemProbe, PolicyUnit, TransportPolicy
 from .device.transport import RequestOutcome
+from .gateway_connection import SerialGatewayConnection
 from .models import UnitProbeResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -102,13 +99,7 @@ def resolve_preferred_port_path(port: str) -> str:
 def build_serial_params(port: str) -> ModbusSerialParams:
     """Return the fixed serial link parameters of the Meltem gateway."""
 
-    return ModbusSerialParams(
-        device=port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
-    )
+    return SerialGatewayConnection(port).modbus_params()
 
 
 def new_transport_policy(

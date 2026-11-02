@@ -40,9 +40,13 @@ from custom_components.meltem_ventilation import (
 )
 from custom_components.meltem_ventilation.const import (
     BASE_SUPPORTED_ENTITY_KEYS,
+    CONF_CONNECTION_TYPE,
+    CONF_HOST,
     CONF_MAX_REQUESTS_PER_SECOND,
+    CONF_NETWORK_PORT,
     CONF_PORT,
     CONF_ROOMS,
+    CONNECTION_RTU_OVER_TCP,
     DOMAIN,
     FIXED_TIMEOUT,
     MODE_MANUAL,
@@ -204,6 +208,28 @@ def setup_mocks(hass: HomeAssistant) -> Iterator[_SetupMocks]:
 
 
 class TestAsyncSetupEntry:
+    async def test_network_setup_builds_rtu_socket_client(
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks
+    ) -> None:
+        entry = _entry(hass)
+        data = {
+            CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+            CONF_HOST: "bridge.local",
+            CONF_NETWORK_PORT: 5020,
+        }
+        hass.config_entries.async_update_entry(entry, data=data)
+        with patch.object(
+            entry,
+            "async_create_background_task",
+            side_effect=lambda _hass, coro, _name, **_kwargs: coro.close(),
+        ):
+            assert await async_setup_entry(hass, entry)
+        unit_factory = setup_mocks.client_cls.call_args.args[0]
+        assert unit_factory.args[2].device == "socket://bridge.local:5020"
+        assert unit_factory.args[2].framer == "rtu"
+        setup_mocks.resolve_port.assert_not_called()
+        assert entry.runtime_data.setup_snapshot[CONF_HOST] == "bridge.local"
+
     async def test_setup_creates_coordinator_and_forwards_platforms(
         self,
         hass: HomeAssistant,

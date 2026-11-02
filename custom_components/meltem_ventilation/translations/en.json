@@ -1,25 +1,45 @@
 {
   "title": "Meltem Modbus",
+  "selector": {
+    "connection_type": {
+      "options": {
+        "serial": "USB serial",
+        "rtu_over_tcp": "RTU over TCP"
+      }
+    }
+  },
   "config": {
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB. The integration then scans the configured units and asks for the exact profile of each detected unit.",
+        "description": "Set up the M-WRG-GW and its units in the Meltem app first. Choose USB serial or raw RTU over TCP. Network connections have no encryption or authentication; use a trusted local network only.",
         "data": {
-          "port": "Serial port"
+          "connection_type": "Connection type",
+          "port": "Serial port",
+          "host": "Bridge hostname or IP address",
+          "network_port": "Bridge TCP port"
         },
         "data_description": {
-          "port": "Serial device path of the M-WRG-GW gateway connected to this Home Assistant host over USB."
+          "connection_type": "Choose the connection used to reach the gateway.",
+          "port": "Device path for USB serial connections; ignored for TCP.",
+          "host": "Hostname or IP address for RTU over TCP; ignored for USB serial.",
+          "network_port": "TCP port for the raw RTU bridge; ignored for USB serial."
         }
       },
       "reconfigure": {
-        "title": "Change serial port",
-        "description": "Update the serial port of the M-WRG-GW gateway. The integration reloads afterwards.",
+        "title": "Change gateway connection",
+        "description": "Change the gateway connection. Network connections have no encryption or authentication; use a trusted local network only. The integration reloads afterwards.",
         "data": {
-          "port": "Serial port"
+          "connection_type": "Connection type",
+          "port": "Serial port",
+          "host": "Bridge hostname or IP address",
+          "network_port": "Bridge TCP port"
         },
         "data_description": {
-          "port": "Select the new serial device path for the M-WRG-GW gateway. The port is checked before it is saved."
+          "connection_type": "Choose the connection used to reach the gateway.",
+          "port": "Device path for USB serial connections; ignored for TCP.",
+          "host": "Hostname or IP address for RTU over TCP; ignored for USB serial.",
+          "network_port": "TCP port for the raw RTU bridge; ignored for USB serial."
         }
       },
       "confirm_usb": {
@@ -73,8 +93,9 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to the Meltem gateway.",
+      "invalid_connection": "Enter a valid serial device path or network hostname and TCP port.",
       "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant.",
-      "port_in_use": "Another integration already uses this serial port with different serial settings.",
+      "port_in_use": "Another integration already uses this connection with different settings.",
       "unknown": "Unexpected error. Check the Home Assistant log for details."
     },
     "abort": {
@@ -232,7 +253,7 @@
         "name": "Modbus slave ID"
       },
       "modbus_device_path": {
-        "name": "Modbus device path"
+        "name": "Modbus endpoint"
       },
       "app_setup_code": {
         "name": "App setup code"
@@ -407,10 +428,10 @@
       "message": "The minimum level ({minimum} %) of {unit} must not be above its maximum level ({maximum} %)."
     },
     "gateway_unavailable": {
-      "message": "Could not connect to the Meltem gateway via serial port {port}. Check its USB connection and access permissions."
+      "message": "Could not connect to the Meltem gateway via {port}. Check the connection and, for USB, access permissions."
     },
     "port_in_use": {
-      "message": "The serial port is already in use with different serial settings."
+      "message": "The gateway connection is already in use with different settings."
     },
     "gateway_communication_failed": {
       "message": "Communication with the Meltem gateway failed. Check the USB connection and serial port."

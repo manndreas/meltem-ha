@@ -1,25 +1,45 @@
 {
   "title": "Meltem Modbus",
+  "selector": {
+    "connection_type": {
+      "options": {
+        "serial": "USB-seriell",
+        "rtu_over_tcp": "RTU über TCP"
+      }
+    }
+  },
   "config": {
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "Ein M-WRG-GW Gateway ist erforderlich. Es muss bereits mit allen unterstützten Meltem M-WRG Geräten in der Meltem App eingerichtet und per USB mit dem Home-Assistant-Rechner verbunden sein. Die Integration scannt danach die eingerichteten Geräte und fragt das genaue Profil jedes erkannten Geräts ab.",
+        "description": "Richte das M-WRG-GW und seine Geräte zuerst in der Meltem-App ein. Wähle USB-seriell oder rohes RTU über TCP. Netzwerkverbindungen sind weder verschlüsselt noch authentifiziert; verwende ausschließlich ein vertrauenswürdiges lokales Netzwerk.",
         "data": {
-          "port": "Serieller Port"
+          "connection_type": "Verbindungstyp",
+          "port": "Serieller Port",
+          "host": "Hostname oder IP-Adresse der Bridge",
+          "network_port": "TCP-Port der Bridge"
         },
         "data_description": {
-          "port": "Gerätepfad des per USB mit diesem Home-Assistant-Rechner verbundenen M-WRG-GW Gateways."
+          "connection_type": "Wähle die Verbindung zum Gateway.",
+          "port": "Gerätepfad für USB-serielle Verbindungen; wird bei TCP ignoriert.",
+          "host": "Hostname oder IP-Adresse für RTU über TCP; wird bei USB-seriell ignoriert.",
+          "network_port": "TCP-Port der RTU-Bridge; wird bei USB-seriell ignoriert."
         }
       },
       "reconfigure": {
-        "title": "Seriellen Port ändern",
-        "description": "Aktualisiere den seriellen Port des M-WRG-GW Gateways. Die Integration wird danach neu geladen.",
+        "title": "Gateway-Verbindung ändern",
+        "description": "Ändere die Gateway-Verbindung. Netzwerkverbindungen sind weder verschlüsselt noch authentifiziert; verwende ausschließlich ein vertrauenswürdiges lokales Netzwerk. Die Integration wird danach neu geladen.",
         "data": {
-          "port": "Serieller Port"
+          "connection_type": "Verbindungstyp",
+          "port": "Serieller Port",
+          "host": "Hostname oder IP-Adresse der Bridge",
+          "network_port": "TCP-Port der Bridge"
         },
         "data_description": {
-          "port": "Wähle den neuen Gerätepfad des M-WRG-GW Gateways. Der Port wird vor dem Speichern geprüft."
+          "connection_type": "Wähle die Verbindung zum Gateway.",
+          "port": "Gerätepfad für USB-serielle Verbindungen; wird bei TCP ignoriert.",
+          "host": "Hostname oder IP-Adresse für RTU über TCP; wird bei USB-seriell ignoriert.",
+          "network_port": "TCP-Port der RTU-Bridge; wird bei USB-seriell ignoriert."
         }
       },
       "confirm_usb": {
@@ -73,8 +93,9 @@
     },
     "error": {
       "cannot_connect": "Verbindung zum Meltem-Gateway fehlgeschlagen.",
+      "invalid_connection": "Gib einen gültigen seriellen Gerätepfad oder Netzwerk-Hostnamen und TCP-Port ein.",
       "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest.",
-      "port_in_use": "Eine andere Integration verwendet diesen seriellen Port bereits mit anderen seriellen Einstellungen.",
+      "port_in_use": "Eine andere Integration verwendet diese Verbindung bereits mit anderen Einstellungen.",
       "unknown": "Unerwarteter Fehler. Details stehen im Home-Assistant-Log."
     },
     "abort": {
@@ -232,7 +253,7 @@
         "name": "Modbus-Slave-ID"
       },
       "modbus_device_path": {
-        "name": "Modbus-Gerätepfad"
+        "name": "Modbus-Endpunkt"
       },
       "app_setup_code": {
         "name": "App-Setup-Code"
@@ -407,10 +428,10 @@
       "message": "Die Mindeststufe ({minimum} %) von {unit} darf nicht über der Höchststufe ({maximum} %) liegen."
     },
     "gateway_unavailable": {
-      "message": "Die Verbindung zum Meltem-Gateway über den seriellen Anschluss {port} ist fehlgeschlagen. Prüfe die USB-Verbindung und die Zugriffsrechte."
+      "message": "Die Verbindung zum Meltem-Gateway über {port} ist fehlgeschlagen. Prüfe die Verbindung und bei USB die Zugriffsrechte."
     },
     "port_in_use": {
-      "message": "Der serielle Anschluss wird bereits mit anderen Einstellungen verwendet."
+      "message": "Die Gateway-Verbindung wird bereits mit anderen Einstellungen verwendet."
     },
     "gateway_communication_failed": {
       "message": "Die Kommunikation mit dem Meltem-Gateway ist fehlgeschlagen. Prüfe die USB-Verbindung und den seriellen Anschluss."

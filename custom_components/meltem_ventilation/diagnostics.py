@@ -9,8 +9,9 @@ from typing import Any, cast
 from homeassistant.components.diagnostics import REDACTED, async_redact_data
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_PORT
+from .const import CONF_HOST, CONF_PORT
 from .cumulative_diagnostics import CumulativeDiagnostics
+from .gateway_connection import RtuTcpGatewayConnection, gateway_connection_from_data
 from .models import (
     MeltemIntegrationConfigEntry,
     MeltemRuntimeData,
@@ -19,7 +20,7 @@ from .models import (
 )
 from .units import unit_subentries
 
-TO_REDACT: set[str] = {CONF_PORT}
+TO_REDACT: set[str] = {CONF_PORT, CONF_HOST}
 # Codes are formatted as R plus six uppercase hex digits, so that form is redacted
 # even inside other text; any other casing only as a separate word, which keeps
 # ordinary words such as "ReadBack" intact.
@@ -108,7 +109,8 @@ async def async_get_config_entry_diagnostics(
         )
 
     coordinator = runtime_data.coordinator
-    port = str(entry.data[CONF_PORT])
+    connection = gateway_connection_from_data(entry.data)
+    port = connection.host if isinstance(connection, RtuTcpGatewayConnection) else connection.port
     transport = coordinator.client.transport_diagnostics()
     cumulative = getattr(coordinator, "cumulative_diagnostics", None)
     cumulative_snapshot = (

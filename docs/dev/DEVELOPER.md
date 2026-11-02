@@ -49,8 +49,8 @@ These are the most important practical findings from the latest hardware tests:
 - room entities stay unavailable until the first poll returns at least one
   state value
 - unloading shuts the client down for good, so a late post-write readback
-  cannot reach the link; Home Assistant's `modbus` integration closes the
-  serial port once the entry has released its units
+  cannot reach the link; Home Assistant's `modbus` integration releases the
+  serial or TCP connection once the entry has released its units
 - since `4.0.0` all of this runs over Home Assistant's shared Modbus
   connection (tmodbus) instead of an own pymodbus client; partial live
   tmodbus-vs-pymodbus results and remaining post-release validation are tracked
@@ -123,8 +123,8 @@ field to unknown. Hardware observations are recorded in [MELTEM.md](MELTEM.md).
 
 ## Scope
 
-The integration currently targets Meltem M-WRG units behind an
-`M-WRG-GW` gateway over Modbus RTU via USB.
+The integration targets Meltem M-WRG units behind an `M-WRG-GW` gateway over
+Modbus RTU via USB or a raw RTU-over-TCP bridge.
 
 Supported series/profiles:
 
@@ -143,8 +143,8 @@ Current working assumption:
 - the `M-WRG-GW` gateway is not meaningfully controllable via a local LAN API
 - the Meltem mobile app communicates with Meltem's internet services rather
   than directly with a local gateway API for normal control flows
-- local Home Assistant integration should therefore continue to treat USB /
-  serial Modbus as the primary supported path
+- local Home Assistant integration should use Modbus RTU, directly over USB
+  serial or through a raw RTU-over-TCP bridge
 
 Observed basis for that assumption:
 
@@ -156,9 +156,9 @@ Observed basis for that assumption:
 
 Practical consequence:
 
-- further reverse engineering effort is better spent on USB / serial Modbus
-  behavior or, if ever needed, on the app's cloud traffic rather than on the
-  gateway's local network interface
+- further reverse engineering effort is better spent on Modbus RTU behavior
+  or, if ever needed, on the app's cloud traffic rather than on the gateway's
+  local network API
 
 ## Gateway and Modbus behavior
 
@@ -182,20 +182,24 @@ Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
 - `async_get_unit(hass, entry, params, unit_id)` at runtime; the units are
   released when the entry unloads, and the link closes after the last holder
 - `async_get_temporary_unit(hass, params, unit_id)` in the config flow
+- `gateway_connection.py` interprets existing entries without a connection
+  type as serial and builds parameters for serial or raw RTU-over-TCP links
 - the backend is always tmodbus via `modbus-connection`; HA `2026.11.0` pins
   `modbus-connection` `4.12.7`. Version `4.12.3` first added `require_timeout`
   and the device-modelling framework used here; the integration's minimum
   dependency is aligned with the supported HA baseline
-- link parameters are fixed in `build_serial_params`: 19200 baud, 8E1, RTU
-- another integration that uses the same port with other link settings makes
-  setup fail with `ConfigEntryError` (config flow: `port_in_use`)
+- serial parameters from `build_serial_params` are fixed at 19200 baud, 8E1,
+  RTU; network parameters use `socket://host:port` with RTU framing
+- another integration that uses the same endpoint with incompatible link
+  settings makes setup fail with `ConfigEntryError` (config flow:
+  `port_in_use`)
 - every unit asks for `set_message_spacing(REQUEST_GAP_SECONDS)` and
   `require_timeout(FIXED_TIMEOUT)` before its first request (`prepare_unit`);
   both are floors, so another consumer of the same port can only raise them.
   A YAML hub with `timeout: 3` on the same port would make every silent unit
   cost 3 s per attempt instead of 0.8 s
 - the config flow reads the unit list and probes every unit on one temporary
-  link, so the port is opened once per step
+  link, so the endpoint is opened once per step
 
 Register blocks are `Component`s in `device/components.py`. Each one pins
 `register_ranges` to a block benchmarked on the gateway (`Temperatures` reads
@@ -865,7 +869,8 @@ Writes convert from UI airflow to raw Modbus values:
 
 Important setup behavior:
 
-- the serial port must remain editable even if USB discovery pre-fills it
+- the connection type and endpoint are editable; USB discovery still
+  pre-fills the serial device path
 - users need to select the exact model profile manually
 - setup previews are best-effort only
 - the setup probe is intentionally minimal and reads product/capability
@@ -880,7 +885,8 @@ Known UX caveat:
 
 ## Config entries, units, and profile changes
 
-Since config entry version `2.1`, the entry data holds only the serial port;
+Since config entry version `2.1`, the entry data holds the gateway connection
+(a serial port for existing entries, or a transport type, host and TCP port);
 every unit is a config subentry of type `unit` (`units.py`). Its title is the
 unit's initial name, its unique ID is the Modbus address, and its data holds
 the room key, address, profile, and the identity values of the setup probe.
@@ -902,7 +908,7 @@ because Home Assistant `2026.11` keeps device identifiers unique per config
 entry. Units of a second gateway therefore no longer collide with the first;
 lifting `single_config_entry` is a separate product decision.
 
-An update listener reloads the entry when the port or the unit subentries
+An update listener reloads the entry when the gateway connection or unit subentries
 differ from what setup used (`_setup_snapshot`). A new request rate applies
 without a reload, and a rescan that changes several units schedules one reload.
 Flows that change a loaded entry therefore finish with `async_update_and_abort`
@@ -933,8 +939,9 @@ upgrades. Remove and re-add the config entry only when its stored data is
 actually corrupt or when debugging a setup problem that cannot be reproduced
 otherwise. Removing only the gateway device does not reset the config entry.
 
-The serial port is changed with the reconfigure flow, which checks the new
-port before saving it.
+The gateway connection is changed with the reconfigure flow, which checks the
+new endpoint before saving it. Network endpoint identity uses the normalized
+hostname or IP address and port; switching transports preserves the entry ID.
 
 A unit device also carries its app setup code as an identifier
 (`identifiers.room_identifiers`). When units change addresses, for example
@@ -1066,7 +1073,7 @@ If something breaks:
    ```
 
 3. Confirm scan results.
-4. Confirm the correct serial port is used.
+4. Confirm the correct connection type and endpoint are configured.
 5. Confirm the correct model profiles were chosen.
 6. Only then investigate individual register behavior.
 

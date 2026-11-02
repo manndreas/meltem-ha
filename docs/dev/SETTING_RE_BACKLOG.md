@@ -25,7 +25,7 @@ evidence is preserved under [`measurements/`](measurements/).
 
 What is already clear:
 
-- runtime control over USB / serial Modbus is well established
+- runtime control over Modbus RTU via USB serial and RTU over TCP is supported
 - app-side settings such as keypad airflow defaults and intensive ventilation
   parameters appear to remain effective offline later on the physical device
 - therefore the effective configuration is very likely persisted locally

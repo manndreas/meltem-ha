@@ -1741,7 +1741,7 @@
     'state': 'unknown',
   })
 # ---
-# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_modbus_device_path-entry]
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_modbus_endpoint-entry]
   EntityRegistryEntrySnapshot({
     'aliases': list([
       None,
@@ -1755,7 +1755,7 @@
     'disabled_by': None,
     'domain': 'sensor',
     'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
-    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_modbus_device_path',
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_modbus_endpoint',
     'has_entity_name': True,
     'hidden_by': None,
     'icon': None,
@@ -1763,12 +1763,12 @@
     'labels': set({
     }),
     'name': None,
-    'object_id_base': 'Modbus device path',
+    'object_id_base': 'Modbus endpoint',
     'options': dict({
     }),
     'original_device_class': None,
     'original_icon': None,
-    'original_name': 'Modbus device path',
+    'original_name': 'Modbus endpoint',
     'platform': 'meltem_ventilation',
     'previous_unique_id': None,
     'suggested_object_id': None,
@@ -1778,13 +1778,13 @@
     'unit_of_measurement': None,
   })
 # ---
-# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_modbus_device_path-state]
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_modbus_endpoint-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
-      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Modbus device path',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Modbus endpoint',
     }),
     'context': <ANY>,
-    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_modbus_device_path',
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_modbus_endpoint',
     'last_changed': <ANY>,
     'last_reported': <ANY>,
     'last_updated': <ANY>,

@@ -30,8 +30,13 @@ from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.config_flow import MeltemVentilationConfigFlow
 from custom_components.meltem_ventilation.const import (
+    CONF_CONNECTION_TYPE,
+    CONF_HOST,
     CONF_MAX_REQUESTS_PER_SECOND,
+    CONF_NETWORK_PORT,
     CONF_PORT,
+    CONNECTION_RTU_OVER_TCP,
+    CONNECTION_SERIAL,
     DEFAULT_GATEWAY_DEVICE_ID,
     DEFAULT_MAX_REQUESTS_PER_SECOND,
     DOMAIN,
@@ -237,6 +242,62 @@ def _attach_coordinator(entry: MockConfigEntry, **methods: Any) -> SimpleNamespa
 
 
 class TestConfigFlowUser:
+    async def test_network_setup_scans_with_raw_rtu_parameters(
+        self, hass: HomeAssistant, gateway_link: MockModbusConnection
+    ) -> None:
+        params_seen = []
+
+        @asynccontextmanager
+        async def record_unit(hass, params, unit_id):
+            params_seen.append(params)
+            yield gateway_link.for_unit(unit_id)
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        with (
+            _patch_scan([2]),
+            _patch_detect(),
+            patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=record_unit),
+        ):
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                    CONF_HOST: "Bridge.Local.",
+                    CONF_NETWORK_PORT: 5020,
+                },
+            )
+        assert result.get("step_id") == "profiles"
+        assert all(params.device == "socket://bridge.local:5020" for params in params_seen)
+        assert all(params.framer == "rtu" for params in params_seen)
+        assert params_seen
+        result = await _async_submit_profiles(hass, result, {"slave_2": "ii_plain"})
+        entry = _flow_entry(result)
+        assert entry.unique_id == "rtu-over-tcp://bridge.local:5020"
+        assert entry.data == {
+            CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+            CONF_HOST: "bridge.local",
+            CONF_NETWORK_PORT: 5020,
+        }
+
+    async def test_invalid_network_host_is_preserved_for_correction(
+        self, hass: HomeAssistant
+    ) -> None:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "bad host",
+                CONF_NETWORK_PORT: 5020,
+            },
+        )
+        assert result.get("errors") == {"base": "invalid_connection"}
+        assert _flow_schema(result)({})[CONF_HOST] == "bad host"
+
     async def test_user_step_shows_form(self, hass: HomeAssistant) -> None:
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -282,7 +343,7 @@ class TestConfigFlowUser:
         assert result.get("type") == FlowResultType.FORM
         assert result.get("errors") == {"base": expected}
         # The form offers the entered port again, not the default.
-        assert _flow_schema(result)({}) == {CONF_PORT: "/dev/ttyUSB7"}
+        assert _flow_schema(result)({})[CONF_PORT] == "/dev/ttyUSB7"
         result = await _async_retry_user_flow(hass, result["flow_id"])
         assert result.get("type") == FlowResultType.CREATE_ENTRY
         assert _flow_entry(result).unique_id == _STABLE_PORT
@@ -552,6 +613,33 @@ def entry_fixture(hass: HomeAssistant) -> MockConfigEntry:
 
 
 class TestOptionsFlow:
+    async def test_rescan_network_entry_reuses_coordinator(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        data = {
+            CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+            CONF_HOST: "bridge.local",
+            CONF_NETWORK_PORT: 5020,
+        }
+        hass.config_entries.async_update_entry(entry, data=data)
+        coordinator = _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2]),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", "ID 2 | basic", product_id=2)
+            ),
+        )
+        with patch(f"{_PATCHES_BASE}.resolve_preferred_port_path") as resolve:
+            result = await _async_open_option(hass, entry, "rescan_units")
+            result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"], {"slave_2": "ii_plain"}
+            )
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert dict(entry.data) == data
+        coordinator.async_discover_gateway_units.assert_awaited_once()
+        resolve.assert_not_called()
+
     async def test_options_init_shows_menu(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
@@ -1157,6 +1245,99 @@ class TestUnitSubentryFlow:
 
 
 class TestReconfigureFlow:
+    async def test_switch_transport_preserves_entry_and_subentries(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry_id = entry.entry_id
+        subentry_ids = set(entry.subentries)
+        registry = er.async_get(hass)
+        entity = registry.async_get_or_create(
+            "fan",
+            DOMAIN,
+            room_entity_unique_id(entry.entry_id, "unit_1", "supply_level"),
+            config_entry=entry,
+            config_subentry_id=next(iter(subentry_ids)),
+        )
+        with (
+            _patch_validate_ok(),
+            _patch_resolve_unchanged(),
+            patch.object(hass.config_entries, "async_schedule_reload"),
+        ):
+            result = await entry.start_reconfigure_flow(hass)
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                    CONF_HOST: "Bridge.Local.",
+                    CONF_NETWORK_PORT: 5020,
+                },
+            )
+            assert result.get("reason") == "reconfigure_successful"
+            assert entry.unique_id == "rtu-over-tcp://bridge.local:5020"
+            assert entry.data == {
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "bridge.local",
+                CONF_NETWORK_PORT: 5020,
+            }
+            assert entry.entry_id == entry_id
+            assert set(entry.subentries) == subentry_ids
+            assert registry.async_get(entity.entity_id) == entity
+            result = await entry.start_reconfigure_flow(hass)
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {CONF_CONNECTION_TYPE: CONNECTION_SERIAL, CONF_PORT: "/dev/ttyACM1"},
+            )
+        assert result.get("reason") == "reconfigure_successful"
+        assert entry.data == {CONF_PORT: "/dev/ttyACM1"}
+        assert entry.unique_id == "/dev/ttyACM1"
+        assert entry.entry_id == entry_id
+        assert set(entry.subentries) == subentry_ids
+        assert registry.async_get(entity.entity_id) == entity
+
+    async def test_failed_network_reconfigure_does_not_change_entry(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        original_data = dict(entry.data)
+        with patch(
+            f"{_PATCHES_BASE}.read_gateway_node_count",
+            new=AsyncMock(side_effect=MeltemConnectionError("bridge offline")),
+        ):
+            result = await entry.start_reconfigure_flow(hass)
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                    CONF_HOST: "bridge.local",
+                    CONF_NETWORK_PORT: 5020,
+                },
+            )
+        assert result.get("errors") == {"base": "cannot_connect"}
+        assert dict(entry.data) == original_data
+
+    async def test_switch_to_duplicate_network_endpoint_aborts(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        MockConfigEntry(
+            domain=DOMAIN,
+            unique_id="rtu-over-tcp://bridge.local:5020",
+            data={
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "bridge.local",
+                CONF_NETWORK_PORT: 5020,
+            },
+        ).add_to_hass(hass)
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "BRIDGE.LOCAL.",
+                CONF_NETWORK_PORT: 5020,
+            },
+        )
+        assert result.get("reason") == "already_configured"
+        assert entry.data[CONF_PORT] == _STABLE_PORT
+
     async def test_reconfigure_of_a_loaded_entry_leaves_the_reload_to_its_listener(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:

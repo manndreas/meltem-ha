@@ -35,6 +35,7 @@ from .flow_helpers import (
     profiles_form,
     unit_details,
 )
+from .gateway_connection import SerialGatewayConnection, gateway_connection_from_data
 from .modbus_helpers import MeltemModbusError
 from .models import MeltemRuntimeData, UnitProbeResult
 from .units import unit_data, unit_rooms, unit_subentries, unit_subentry_data
@@ -201,7 +202,9 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                     data=unit_data(room),
                     unique_id=str(room[CONF_SLAVE]),
                 )
-        if resolve_port:
+        if resolve_port and isinstance(
+            gateway_connection_from_data(entry.data), SerialGatewayConnection
+        ):
             port = await async_resolve_port(self.hass, entry.data[CONF_PORT])
             self.hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_PORT: port})
         return self.async_create_entry(title="", data=self._options_payload())
@@ -229,7 +232,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         # Reuse the live client so a rescan does not race a second serial connection.
         if (coordinator := self._coordinator) is None:
             return "cannot_connect"
-        port = self.config_entry.data[CONF_PORT]
+        port = gateway_connection_from_data(self.config_entry.data).unique_id
         try:
             slaves = await coordinator.async_discover_gateway_units()
         except MeltemModbusError:

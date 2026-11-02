@@ -18,7 +18,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.json import ExtendedJSONEncoder, JSONEncoder
 from pytest_homeassistant.common import MockConfigEntry
 
-from custom_components.meltem_ventilation.const import CONF_PORT, CONF_ROOMS, DOMAIN
+from custom_components.meltem_ventilation.const import (
+    CONF_CONNECTION_TYPE,
+    CONF_HOST,
+    CONF_NETWORK_PORT,
+    CONF_PORT,
+    CONF_ROOMS,
+    CONNECTION_RTU_OVER_TCP,
+    DOMAIN,
+)
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
 from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
 from custom_components.meltem_ventilation.diagnostics import (
@@ -106,6 +114,37 @@ def _dump(diagnostics: dict[str, Any]) -> str:
 
 
 class TestDiagnostics:
+    @pytest.mark.parametrize("with_runtime", [False, True])
+    async def test_network_host_is_redacted(self, hass: HomeAssistant, with_runtime: bool) -> None:
+        entry = _entry(hass, with_runtime=with_runtime)
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "private-bridge.local",
+                CONF_NETWORK_PORT: 5020,
+            },
+        )
+        if with_runtime:
+            coordinator = entry.runtime_data.coordinator
+            coordinator.last_job_error = MeltemModbusError("socket://private-bridge.local:5020")
+            coordinator.async_discover_gateway_units.side_effect = MeltemModbusError(
+                "private-bridge.local is unavailable"
+            )
+            coordinator.last_room_errors = {
+                "unit_1": RoomReadError(
+                    "private-bridge.local failed", datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+                )
+            }
+            coordinator.safe_data = {
+                "unit_1": RoomState().with_read_health(
+                    "flow", ReadHealth(last_error="private-bridge.local failed")
+                )
+            }
+        result = await async_get_config_entry_diagnostics(hass, entry)
+        assert "private-bridge.local" not in _dump(result)
+        assert result["entry"]["data"][CONF_HOST] == REDACTED
+
     @pytest.mark.parametrize("with_runtime", [False, True])
     async def test_setup_codes_are_redacted_everywhere_without_mutating_sources(
         self, hass: HomeAssistant, with_runtime: bool
@@ -362,6 +401,24 @@ class TestDiagnostics:
 
 
 class TestSystemHealth:
+    async def test_redacts_network_host_in_errors(self, hass: HomeAssistant) -> None:
+        entry = _entry(hass)
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "private-bridge.local",
+                CONF_NETWORK_PORT: 5020,
+            },
+        )
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        entry.runtime_data.coordinator.last_job_error = MeltemModbusError(
+            "socket://private-bridge.local:5020"
+        )
+        info = await system_health_info(hass)
+        assert "private-bridge.local" not in str(info)
+        assert info["last_job_error"] == f"socket://{REDACTED}:5020"
+
     async def test_reports_nothing_without_entries(self, hass: HomeAssistant) -> None:
         assert await system_health_info(hass) == {"loaded_entries": 0}
 

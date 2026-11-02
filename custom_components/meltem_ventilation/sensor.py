@@ -33,9 +33,6 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import (
-    CONF_PORT,
-)
 from .coordinator import MeltemDataUpdateCoordinator
 from .entity import (
     MeltemEntity,
@@ -45,6 +42,7 @@ from .entity import (
     async_add_room_entities,
     room_has_entity,
 )
+from .gateway_connection import gateway_connection_from_data
 from .modbus_helpers import MeltemModbusError
 from .models import (
     MeltemIntegrationConfigEntry,
@@ -726,10 +724,10 @@ class MeltemModbusSlaveSensor(MeltemEntity, SensorEntity):
 
 
 class MeltemModbusDevicePathSensor(MeltemGatewayBaseEntity, SensorEntity):
-    """Representation of the serial device path for one config entry."""
+    """Representation of the gateway connection for one config entry."""
 
     entity_description = MODBUS_DEVICE_PATH_DESCRIPTION
 
     def __init__(self, entry: MeltemIntegrationConfigEntry) -> None:
         super().__init__(entry.entry_id, self.entity_description.key)
-        self._attr_native_value = entry.data[CONF_PORT]
+        self._attr_native_value = gateway_connection_from_data(entry.data).unique_id

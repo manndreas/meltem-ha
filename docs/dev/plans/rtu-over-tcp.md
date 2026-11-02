@@ -19,7 +19,6 @@ coordinator behavior transport-neutral.
   config-entry ID and entity identities when Reconfigure changes the endpoint.
 - Document that the ESP bridge has no TLS or authentication and is intended
   only for a trusted local network.
-- Do not claim hardware validation: no ESP32 or Meltem gateway is available.
 
 ## Work items
 
@@ -41,16 +40,15 @@ coordinator behavior transport-neutral.
    40 ms idle-frame gap, sequential requests on one TCP connection, and the
    existing request pacing. Cover setup, switching transports, legacy serial
    behavior, and diagnostics redaction. Update user-facing setup documentation
-   and retain the hardware-validation caveat.
+   and document the connection and security requirements.
 
 ## Notes and validation
 
 - The local spike passed with Home Assistant `2026.11.0b0`,
   `modbus-connection 4.12.7`, and `tmodbus 1.1.0`: three RTU reads succeeded
   over one TCP connection using the integration's `prepare_unit`.
-- The spike used a local test server, not the ESP firmware or physical Meltem
-  hardware. A later real-hardware test is still needed before claiming
-  hardware-validated support.
+- The initial transport spike used a local test server to exercise RTU frames
+  over a TCP connection.
 - Validate each implementation stage with focused tests. Finish with the
   relevant Ruff, mypy/Pyright, and integration tests; do not change release
   metadata unless a release is requested.

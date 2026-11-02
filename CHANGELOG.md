@@ -15,6 +15,9 @@
 
 ### New Features (5.0.0)
 
+- Connect to the gateway over raw Modbus RTU over TCP by entering a bridge
+  hostname or IP address and port (default `5020`). Reconfigure can switch
+  between USB serial and RTU over TCP without replacing the integration entry.
 - Add a unit that was paired in the Meltem app after the initial setup with
   **Add unit** on the integration page, and delete a single unit together with
   its device and entities.

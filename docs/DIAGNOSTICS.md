@@ -55,7 +55,7 @@ successful unit response.
 
 **Days until filter change** and **Read health** are enabled by default.
 **Operating hours**, **RF communication status**, **Modbus slave ID**, and
-**Modbus device path** remain disabled by default. **App setup code** is also
+**Modbus endpoint** remain disabled by default. **App setup code** is also
 disabled by default; enabling it reads the two identity registers `40000..40001`
 once for that entity load and exposes the R-code printed below the unit's
 DataMatrix. This is an app-setup identifier, not the manufacturer's serial
@@ -110,7 +110,7 @@ airflow are refused until a fresh mode read is available.
 
 ### Diagnostics download privacy
 
-The diagnostics download redacts the configured serial port and R-codes,
+The diagnostics download redacts the configured serial port or network host and R-codes,
 including R-codes in legacy unit previews and error messages. This does not
 change the saved configuration, device registry, or optional app setup code
 entity. Review any download before sharing it because other contextual data,
