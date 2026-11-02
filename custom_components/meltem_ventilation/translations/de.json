@@ -21,9 +21,9 @@
         },
         "data_description": {
           "connection_type": "Wähle die Verbindung zum Gateway.",
-          "port": "Gerätepfad für USB-serielle Verbindungen; wird bei TCP ignoriert.",
-          "host": "Hostname oder IP-Adresse für RTU über TCP; wird bei USB-seriell ignoriert.",
-          "network_port": "TCP-Port der RTU-Bridge; wird bei USB-seriell ignoriert."
+          "port": "Gerätepfad für die USB-serielle Verbindung.",
+          "host": "Hostname oder IP-Adresse der RTU-over-TCP-Bridge.",
+          "network_port": "TCP-Port der RTU-Bridge."
         }
       },
       "reconfigure": {
@@ -37,9 +37,9 @@
         },
         "data_description": {
           "connection_type": "Wähle die Verbindung zum Gateway.",
-          "port": "Gerätepfad für USB-serielle Verbindungen; wird bei TCP ignoriert.",
-          "host": "Hostname oder IP-Adresse für RTU über TCP; wird bei USB-seriell ignoriert.",
-          "network_port": "TCP-Port der RTU-Bridge; wird bei USB-seriell ignoriert."
+          "port": "Gerätepfad für die USB-serielle Verbindung.",
+          "host": "Hostname oder IP-Adresse der RTU-over-TCP-Bridge.",
+          "network_port": "TCP-Port der RTU-Bridge."
         }
       },
       "confirm_usb": {

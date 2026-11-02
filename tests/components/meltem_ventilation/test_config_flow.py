@@ -9,7 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant import config_entries
+from homeassistant import config_entries, data_entry_flow
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigEntryState,
@@ -22,6 +22,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.field_visibility import is_field_visible
 from homeassistant.helpers.service_info.usb import UsbServiceInfo
 from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection
@@ -84,6 +85,24 @@ def _flow_schema(result: ConfigFlowResult | SubentryFlowResult) -> Schema:
     schema = result.get("data_schema")
     assert schema is not None
     return schema
+
+
+def _assert_connection_visibility(result: ConfigFlowResult) -> None:
+    markers = {
+        marker.schema: marker
+        for marker in _flow_schema(result).schema
+        if isinstance(marker, data_entry_flow.Optional)
+    }
+    assert set(markers) == {CONF_PORT, CONF_HOST, CONF_NETWORK_PORT}
+    for connection_type, visible in (
+        (CONNECTION_SERIAL, {CONF_PORT}),
+        (CONNECTION_RTU_OVER_TCP, {CONF_HOST, CONF_NETWORK_PORT}),
+    ):
+        for name, marker in markers.items():
+            assert marker.visible is not None
+            assert is_field_visible(marker.visible, {CONF_CONNECTION_TYPE: connection_type}) == (
+                name in visible
+            )
 
 
 def _units(entry: ConfigEntry) -> list[ConfigSubentry]:
@@ -255,6 +274,7 @@ class TestConfigFlowUser:
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
+        _assert_connection_visibility(result)
         with (
             _patch_scan([2]),
             _patch_detect(),
@@ -265,7 +285,7 @@ class TestConfigFlowUser:
                 {
                     CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
                     CONF_HOST: "Bridge.Local.",
-                    CONF_NETWORK_PORT: 5020,
+                    CONF_PORT: 123,
                 },
             )
         assert result.get("step_id") == "profiles"
@@ -297,6 +317,34 @@ class TestConfigFlowUser:
         )
         assert result.get("errors") == {"base": "invalid_connection"}
         assert _flow_schema(result)({})[CONF_HOST] == "bad host"
+        _assert_connection_visibility(result)
+
+    async def test_missing_network_host_shows_error(self, hass: HomeAssistant) -> None:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP}
+        )
+        assert result.get("errors") == {"base": "invalid_connection"}
+
+    async def test_serial_setup_ignores_hidden_network_fields(self, hass: HomeAssistant) -> None:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        with _patch_scan([2]), _patch_detect(), _patch_resolve():
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_SERIAL,
+                    CONF_PORT: _PORT,
+                    CONF_HOST: 123,
+                    CONF_NETWORK_PORT: -1,
+                },
+            )
+        assert result.get("step_id") == "profiles"
+        result = await _async_submit_profiles(hass, result, {"slave_2": "ii_plain"})
+        assert _flow_entry(result).data == {CONF_PORT: _STABLE_PORT}
 
     async def test_user_step_shows_form(self, hass: HomeAssistant) -> None:
         result = await hass.config_entries.flow.async_init(
@@ -1264,6 +1312,7 @@ class TestReconfigureFlow:
             patch.object(hass.config_entries, "async_schedule_reload"),
         ):
             result = await entry.start_reconfigure_flow(hass)
+            _assert_connection_visibility(result)
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"],
                 {
@@ -1283,9 +1332,14 @@ class TestReconfigureFlow:
             assert set(entry.subentries) == subentry_ids
             assert registry.async_get(entity.entity_id) == entity
             result = await entry.start_reconfigure_flow(hass)
+            _assert_connection_visibility(result)
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"],
-                {CONF_CONNECTION_TYPE: CONNECTION_SERIAL, CONF_PORT: "/dev/ttyACM1"},
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_SERIAL,
+                    CONF_PORT: "/dev/ttyACM1",
+                    CONF_NETWORK_PORT: -1,
+                },
             )
         assert result.get("reason") == "reconfigure_successful"
         assert entry.data == {CONF_PORT: "/dev/ttyACM1"}
@@ -1308,11 +1362,16 @@ class TestReconfigureFlow:
                 {
                     CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
                     CONF_HOST: "bridge.local",
-                    CONF_NETWORK_PORT: 5020,
+                    CONF_NETWORK_PORT: 15020,
                 },
             )
         assert result.get("errors") == {"base": "cannot_connect"}
         assert dict(entry.data) == original_data
+        _assert_connection_visibility(result)
+        defaults = _flow_schema(result)({})
+        assert defaults[CONF_CONNECTION_TYPE] == CONNECTION_RTU_OVER_TCP
+        assert defaults[CONF_HOST] == "bridge.local"
+        assert defaults[CONF_NETWORK_PORT] == 15020
 
     async def test_switch_to_duplicate_network_endpoint_aborts(
         self, hass: HomeAssistant, entry: MockConfigEntry

@@ -9,6 +9,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, cast
 
 import probatio as vol
+from homeassistant import data_entry_flow
 from homeassistant.components.modbus import async_get_temporary_unit
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -112,10 +113,20 @@ def connection_schema(
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
-            vol.Optional(CONF_PORT, default=values.get(CONF_PORT, serial_port)): str,
-            vol.Optional(CONF_HOST, default=values.get(CONF_HOST, host)): str,
-            vol.Optional(
-                CONF_NETWORK_PORT, default=values.get(CONF_NETWORK_PORT, network_port)
+            data_entry_flow.Optional(
+                CONF_PORT,
+                default=values.get(CONF_PORT, serial_port),
+                visible={"field": CONF_CONNECTION_TYPE, "value": CONNECTION_SERIAL},
+            ): str,
+            data_entry_flow.Optional(
+                CONF_HOST,
+                default=values.get(CONF_HOST, host),
+                visible={"field": CONF_CONNECTION_TYPE, "value": CONNECTION_RTU_OVER_TCP},
+            ): str,
+            data_entry_flow.Optional(
+                CONF_NETWORK_PORT,
+                default=values.get(CONF_NETWORK_PORT, network_port),
+                visible={"field": CONF_CONNECTION_TYPE, "value": CONNECTION_RTU_OVER_TCP},
             ): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
         }
     )

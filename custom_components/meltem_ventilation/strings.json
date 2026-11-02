@@ -21,9 +21,9 @@
         },
         "data_description": {
           "connection_type": "Choose the connection used to reach the gateway.",
-          "port": "Device path for USB serial connections; ignored for TCP.",
-          "host": "Hostname or IP address for RTU over TCP; ignored for USB serial.",
-          "network_port": "TCP port for the raw RTU bridge; ignored for USB serial."
+          "port": "Device path for the USB serial connection.",
+          "host": "Hostname or IP address of the RTU-over-TCP bridge.",
+          "network_port": "TCP port for the raw RTU bridge."
         }
       },
       "reconfigure": {
@@ -37,9 +37,9 @@
         },
         "data_description": {
           "connection_type": "Choose the connection used to reach the gateway.",
-          "port": "Device path for USB serial connections; ignored for TCP.",
-          "host": "Hostname or IP address for RTU over TCP; ignored for USB serial.",
-          "network_port": "TCP port for the raw RTU bridge; ignored for USB serial."
+          "port": "Device path for the USB serial connection.",
+          "host": "Hostname or IP address of the RTU-over-TCP bridge.",
+          "network_port": "TCP port for the raw RTU bridge."
         }
       },
       "confirm_usb": {
