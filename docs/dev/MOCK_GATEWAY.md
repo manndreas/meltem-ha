@@ -55,9 +55,18 @@ trusted network.
    register write appears in the terminal.
 4. Download diagnostics. The configured host should be redacted. Check the
    integration's System Health page and the gateway and unit entities.
-5. Change the request rate in the options. Try **Add unit** by selecting only
-   unit 2 in the initial setup, then add unit 3 afterwards. Also try a rescan
-   or profile change.
+5. Change the request rate in the options. To test **Add unit**, initially
+   start the mock with only unit 2:
+
+   ```bash
+   .venv/bin/python -m tools.mock_gateway --port 5020 --units 2:ii_fc_voc
+   ```
+
+   After setup, stop it and restart on the same port with
+   `--units 2:ii_fc_voc,3:ii_f`. Allow the integration to reconnect before
+   adding unit 3; after an unanswered request it can take five seconds before
+   the gateway link is retried.
+   Also try a rescan or profile change.
 6. To exercise bridge replacement, start the simulator with `--single-client`
    and reconfigure the loaded entry from `127.0.0.1` to `localhost` using the
    same port. The old connection must be released before the new endpoint is
@@ -66,7 +75,8 @@ trusted network.
 ## Failure scenarios
 
 - `--no-units`: the gateway responds but reports no units; setup should show
-  `no_devices_found`.
+  `no_devices_found`. Restart it without `--no-units` on a reachable port and
+  retry setup to verify recovery.
 - `--silent-unit 3`: drop all requests to unit 3 while the gateway remains
   online. Requests to that unit will time out; the gateway and unit 2 remain
   reachable. Setup probes can take up to the configured network timeout.
