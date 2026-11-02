@@ -469,9 +469,24 @@
       "step": {
         "user": {
           "title": "Meltem M-WRG Gerät hinzufügen",
-          "description": "Das Gateway meldet {device_count} Geräte, die noch nicht eingerichtet sind. Wähle die Modbus-Adresse des Geräts, das du hinzufügen möchtest.\n\n{unit_details}",
+          "description": "Das Gateway meldet {device_count} Geräte, die noch nicht eingerichtet sind. Wähle die Modbus-Adresse und das genaue Modellprofil des Geräts, das du hinzufügen möchtest. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.\n\n{unit_details}",
           "data": {
-            "slave": "Modbus-Adresse"
+            "slave": "Modbus-Adresse",
+            "slave_2": "Profil",
+            "slave_3": "Profil",
+            "slave_4": "Profil",
+            "slave_5": "Profil",
+            "slave_6": "Profil",
+            "slave_7": "Profil",
+            "slave_8": "Profil",
+            "slave_9": "Profil",
+            "slave_10": "Profil",
+            "slave_11": "Profil",
+            "slave_12": "Profil",
+            "slave_13": "Profil",
+            "slave_14": "Profil",
+            "slave_15": "Profil",
+            "slave_16": "Profil"
           },
           "data_description": {
             "slave": "Modbus-Adresse des hinzuzufügenden Geräts, wie oben aufgeführt."

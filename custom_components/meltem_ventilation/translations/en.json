@@ -469,9 +469,24 @@
       "step": {
         "user": {
           "title": "Add a Meltem M-WRG unit",
-          "description": "The gateway reports {device_count} units that are not set up yet. Choose the Modbus address of the unit to add.\n\n{unit_details}",
+          "description": "The gateway reports {device_count} units that are not set up yet. Choose the Modbus address and exact model profile of the unit to add. Check the unit label; detected sensors are only a hint.\n\n{unit_details}",
           "data": {
-            "slave": "Modbus address"
+            "slave": "Modbus address",
+            "slave_2": "Profile",
+            "slave_3": "Profile",
+            "slave_4": "Profile",
+            "slave_5": "Profile",
+            "slave_6": "Profile",
+            "slave_7": "Profile",
+            "slave_8": "Profile",
+            "slave_9": "Profile",
+            "slave_10": "Profile",
+            "slave_11": "Profile",
+            "slave_12": "Profile",
+            "slave_13": "Profile",
+            "slave_14": "Profile",
+            "slave_15": "Profile",
+            "slave_16": "Profile"
           },
           "data_description": {
             "slave": "Modbus address of the unit to add, as listed above."

@@ -20,7 +20,8 @@
   between USB serial and RTU over TCP without replacing the integration entry.
 - Add a unit that was paired in the Meltem app after the initial setup with
   **Add unit** on the integration page, and delete a single unit together with
-  its device and entities.
+  its device and entities. When several units are available, select the
+  address and profile in the same form.
 - Show a repair notice when the gateway reports units that are not set up in
   Home Assistant. The gateway's unit list is checked hourly. An ignored notice
   stays ignored when the integration reloads.

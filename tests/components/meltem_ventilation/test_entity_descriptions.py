@@ -28,6 +28,8 @@ from custom_components.meltem_ventilation.condition import (
 )
 from custom_components.meltem_ventilation.const import (
     ALL_PROFILES,
+    DEFAULT_SCAN_SLAVE_END,
+    DEFAULT_SCAN_SLAVE_START,
     DOMAIN,
     OPERATION_MODE_INACTIVE,
     PRESET_MODE_OPTIONS,
@@ -401,6 +403,13 @@ class TestTranslations:
         translations = _load_json(_COMPONENT_DIR / "translations" / f"{language}.json")
 
         assert _flatten_keys(translations) == _flatten_keys(_load_json(_STRINGS))
+
+    @pytest.mark.parametrize("language", ["en", "de"])
+    def test_add_unit_profile_fields_are_translated(self, language: str) -> None:
+        translations = _load_json(_COMPONENT_DIR / "translations" / f"{language}.json")
+        labels = translations["config_subentries"]["unit"]["step"]["user"]["data"]
+        for slave in range(DEFAULT_SCAN_SLAVE_START, DEFAULT_SCAN_SLAVE_END + 1):
+            assert labels[f"slave_{slave}"]
 
     def test_all_config_flow_fields_have_descriptions(self) -> None:
         strings = _load_json(_STRINGS)

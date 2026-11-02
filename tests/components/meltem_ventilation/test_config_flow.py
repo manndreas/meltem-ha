@@ -8,6 +8,7 @@ from types import MappingProxyType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import probatio
 import pytest
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.config_entries import (
@@ -18,8 +19,9 @@ from homeassistant.config_entries import (
     SubentryFlowResult,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.field_visibility import is_field_visible
@@ -1176,15 +1178,30 @@ class TestUnitSubentryFlow:
             "app_setup_code": "R000002",
         }
 
-    async def test_several_new_units_ask_for_the_address_first(
-        self, hass: HomeAssistant, entry: MockConfigEntry
+    @pytest.mark.parametrize(
+        ("slave", "submitted_profile", "expected_profile"),
+        [
+            pytest.param("3", None, "ii_f", id="first-default"),
+            pytest.param("4", None, "ii_fc", id="second-default"),
+            pytest.param("3", "s_plain", "s_plain", id="explicit-profile"),
+        ],
+    )
+    async def test_several_new_units_choose_address_and_profile_together(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        slave: str,
+        submitted_profile: str | None,
+        expected_profile: str,
     ) -> None:
         entry.mock_state(hass, ConfigEntryState.LOADED)
         _attach_coordinator(
             entry,
             async_discover_gateway_units=AsyncMock(return_value=[2, 3, 4]),
             async_probe_slave_details=AsyncMock(
-                side_effect=lambda slave: UnitProbeResult("plain", f"ID {slave} | basic")
+                side_effect=lambda slave: UnitProbeResult(
+                    {3: "f", 4: "fc"}[slave], f"ID {slave} | sensor"
+                )
             ),
         )
 
@@ -1192,18 +1209,79 @@ class TestUnitSubentryFlow:
 
         assert result.get("step_id") == "user"
         assert _flow_placeholders(result)["device_count"] == "2"
+        assert "Hardware ID 3" in _flow_placeholders(result)["unit_details"]
+        assert "Hardware ID 4" in _flow_placeholders(result)["unit_details"]
+        markers = {
+            marker.schema: marker
+            for marker in _flow_schema(result).schema
+            if isinstance(marker, data_entry_flow.Required)
+        }
+        assert set(markers) == {"slave_3", "slave_4"}
+        for selected in ("3", "4"):
+            for name, marker in markers.items():
+                assert marker.visible is not None
+                assert is_field_visible(marker.visible, {"slave": selected}) == (
+                    name == f"slave_{selected}"
+                )
+                assert not is_field_visible(marker.visible, {})
+
+        schema = _flow_schema(result)
+        serialized = probatio.to_field_list(schema, custom_serializer=cv.custom_serializer)
+        assert isinstance(serialized, list)
+        data_entry_flow.add_visible_conditions_to_serialized_schema(schema, serialized)
+        fields = {field["name"]: field for field in serialized}
+        assert fields["slave_3"]["visible"] == {"field": "slave", "value": "3"}
+        assert fields["slave_3"]["default"] == "ii_f"
+        assert fields["slave_4"]["visible"] == {"field": "slave", "value": "4"}
+        assert fields["slave_4"]["default"] == "ii_fc"
+
+        hidden_slave = "4" if slave == "3" else "3"
+        user_input = {"slave": slave, f"slave_{hidden_slave}": "invalid-hidden-profile"}
+        if submitted_profile is not None:
+            user_input[f"slave_{slave}"] = submitted_profile
+        result = await hass.config_entries.subentries.async_configure(result["flow_id"], user_input)
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert [unit.unique_id for unit in _units(entry)] == ["2", slave]
+        assert _units(entry)[1].data["key"] == f"slave_{slave}"
+        assert _units(entry)[1].data["profile"] == expected_profile
+        assert _units(entry)[1].data["preview"] == f"ID {slave} | sensor"
+
+    async def test_several_new_units_require_valid_selection(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3, 4]),
+            async_probe_slave_details=AsyncMock(return_value=UnitProbeResult("plain", "basic")),
+        )
+        result = await _async_start_add_unit(hass, entry)
+        for user_input in ({}, {"slave": "5"}, {"slave": "3", "slave_3": "invalid"}):
+            with pytest.raises(InvalidData):
+                await hass.config_entries.subentries.async_configure(result["flow_id"], user_input)
+        assert [unit.unique_id for unit in _units(entry)] == ["2"]
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"slave": "4", "slave_4": "ii_fc"}
+        )
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert _units(entry)[1].data["profile"] == "ii_fc"
+
+    async def test_several_new_units_use_fallback_after_probe_failure(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3, 4]),
+            async_probe_slave_details=AsyncMock(side_effect=MeltemConnectionError("no answer")),
+        )
+        result = await _async_start_add_unit(hass, entry)
         result = await hass.config_entries.subentries.async_configure(
             result["flow_id"], {"slave": "4"}
         )
-        assert result.get("step_id") == "profile"
-        assert _flow_placeholders(result)["slave"] == "4"
-        result = await hass.config_entries.subentries.async_configure(
-            result["flow_id"], {"profile": "ii_plain"}
-        )
-
         assert result.get("type") == FlowResultType.CREATE_ENTRY
-        assert [unit.unique_id for unit in _units(entry)] == ["2", "4"]
-        assert _units(entry)[1].data["key"] == "slave_4"
+        assert _units(entry)[1].data["profile"] == "ii_plain"
 
     async def test_an_added_unit_gets_a_key_no_unit_uses(
         self, hass: HomeAssistant, entry: MockConfigEntry
