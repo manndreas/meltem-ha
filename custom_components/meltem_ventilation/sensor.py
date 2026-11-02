@@ -34,20 +34,16 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
-    ALL_PROFILES,
-    CO2_PROFILES,
     CONF_PORT,
-    DOMAIN,
-    HUMIDITY_PROFILES,
-    VOC_PROFILES,
 )
 from .coordinator import MeltemDataUpdateCoordinator
 from .entity import (
     MeltemEntity,
+    MeltemGatewayBaseEntity,
     MeltemGatewayEntity,
     MeltemRoomDiagnosticEntity,
-    gateway_device_info,
-    room_supports_entity,
+    async_add_room_entities,
+    room_has_entity,
 )
 from .modbus_helpers import MeltemModbusError
 from .models import (
@@ -61,41 +57,26 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
-class _MeltemSensorDescriptionBase(SensorEntityDescription):
-    """Expose Home Assistant's dynamically generated description fields to type checkers."""
-
-    key: str
-    device_class: SensorDeviceClass | None = None
-    entity_category: EntityCategory | None = None
-    entity_registry_enabled_default: bool = True
-    native_unit_of_measurement: str | None = None
-    state_class: SensorStateClass | None = None
-    suggested_display_precision: int | None = None
-    translation_key: str | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class MeltemSensorDescription(_MeltemSensorDescriptionBase):
+class MeltemSensorDescription(SensorEntityDescription):
     """Describe a Meltem sensor."""
 
     value_fn: Callable[[RoomState], int | float | None]
-    supported_profiles: frozenset[str] = ALL_PROFILES
 
 
-MODBUS_SLAVE_ID_DESCRIPTION = _MeltemSensorDescriptionBase(
+MODBUS_SLAVE_ID_DESCRIPTION = SensorEntityDescription(
     key="modbus_slave_id",
     entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
 )
 
-MODBUS_DEVICE_PATH_DESCRIPTION = _MeltemSensorDescriptionBase(
+MODBUS_DEVICE_PATH_DESCRIPTION = SensorEntityDescription(
     key="modbus_device_path",
     translation_key="modbus_device_path",
     entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
 )
 
-APP_SETUP_CODE_DESCRIPTION = _MeltemSensorDescriptionBase(
+APP_SETUP_CODE_DESCRIPTION = SensorEntityDescription(
     key="app_setup_code",
     entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
@@ -103,7 +84,7 @@ APP_SETUP_CODE_DESCRIPTION = _MeltemSensorDescriptionBase(
 
 
 @dataclass(frozen=True, kw_only=True)
-class MeltemGatewaySensorDescription(_MeltemSensorDescriptionBase):
+class MeltemGatewaySensorDescription(SensorEntityDescription):
     """Describe a locally derived gateway diagnostic."""
 
     value_fn: Callable[[MeltemDataUpdateCoordinator], int | float | datetime | None]
@@ -259,7 +240,7 @@ GATEWAY_SENSOR_DESCRIPTIONS: tuple[MeltemGatewaySensorDescription, ...] = (
 )
 
 CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = tuple(
-    _MeltemSensorDescriptionBase(
+    SensorEntityDescription(
         key=key,
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -303,8 +284,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         suggested_display_precision=1,
-        # Only the -F and -FC variants carry this sensor, see docs/dev/reference/models.md.
-        supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.outdoor_air_temperature,
     ),
     MeltemSensorDescription(
@@ -313,7 +292,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         suggested_display_precision=1,
-        supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.extract_air_temperature,
     ),
     MeltemSensorDescription(
@@ -322,7 +300,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         suggested_display_precision=1,
-        supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.supply_air_temperature,
     ),
     MeltemSensorDescription(
@@ -330,7 +307,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         device_class=SensorDeviceClass.HUMIDITY,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=PERCENTAGE,
-        supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.humidity_extract_air,
     ),
     MeltemSensorDescription(
@@ -338,7 +314,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         device_class=SensorDeviceClass.HUMIDITY,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=PERCENTAGE,
-        supported_profiles=HUMIDITY_PROFILES,
         value_fn=lambda state: state.humidity_supply_air,
     ),
     MeltemSensorDescription(
@@ -346,7 +321,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         device_class=SensorDeviceClass.CO2,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
-        supported_profiles=CO2_PROFILES,
         value_fn=lambda state: state.co2_extract_air,
     ),
     MeltemSensorDescription(
@@ -354,7 +328,6 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
-        supported_profiles=VOC_PROFILES,
         value_fn=lambda state: state.voc_supply_air,
     ),
     MeltemSensorDescription(
@@ -420,7 +393,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
 )
 
 
-GATEWAY_UPTIME_DESCRIPTION = _MeltemSensorDescriptionBase(
+GATEWAY_UPTIME_DESCRIPTION = SensorEntityDescription(
     key="gateway_uptime",
     device_class=SensorDeviceClass.DURATION,
     native_unit_of_measurement=UnitOfTime.DAYS,
@@ -431,7 +404,7 @@ GATEWAY_UPTIME_DESCRIPTION = _MeltemSensorDescriptionBase(
 )
 
 
-GATEWAY_UTC_CLOCK_DESCRIPTION = _MeltemSensorDescriptionBase(
+GATEWAY_UTC_CLOCK_DESCRIPTION = SensorEntityDescription(
     key="gateway_utc_clock",
     device_class=SensorDeviceClass.TIMESTAMP,
     entity_category=EntityCategory.DIAGNOSTIC,
@@ -439,7 +412,7 @@ GATEWAY_UTC_CLOCK_DESCRIPTION = _MeltemSensorDescriptionBase(
 )
 
 
-GATEWAY_CONNECTED_DEVICES_DESCRIPTION = _MeltemSensorDescriptionBase(
+GATEWAY_CONNECTED_DEVICES_DESCRIPTION = SensorEntityDescription(
     key="gateway_connected_devices",
     state_class=SensorStateClass.MEASUREMENT,
     suggested_display_precision=0,
@@ -448,7 +421,7 @@ GATEWAY_CONNECTED_DEVICES_DESCRIPTION = _MeltemSensorDescriptionBase(
 
 
 ROOM_DIAGNOSTIC_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
-    _MeltemSensorDescriptionBase(
+    SensorEntityDescription(
         key="last_successful_update",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -483,29 +456,27 @@ async def async_setup_entry(
         MeltemCumulativeGatewayDiagnosticSensor(coordinator, entry.entry_id, description)
         for description in CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS
     )
-    entities.extend(
-        MeltemModbusSlaveSensor(coordinator, room)
-        for room in coordinator.rooms
-        if room_supports_entity(room, MODBUS_SLAVE_ID_DESCRIPTION.key)
-    )
-    entities.extend(
-        MeltemRoomAppSetupCodeSensor(coordinator, room)
-        for room in coordinator.rooms
-        if room_supports_entity(room, APP_SETUP_CODE_DESCRIPTION.key)
-    )
-    entities.extend(
-        MeltemSensorEntity(coordinator, room, description)
-        for room in coordinator.rooms
-        for description in SENSOR_DESCRIPTIONS
-        if room_supports_entity(room, description.key, description.supported_profiles)
-    )
-    entities.extend(
-        MeltemRoomDiagnosticSensor(coordinator, room, description)
-        for room in coordinator.rooms
-        for description in ROOM_DIAGNOSTIC_DESCRIPTIONS
-        if room.supports(description.key)
-    )
     async_add_entities(entities)
+
+    def entities_of(room: RoomConfig) -> list[SensorEntity]:
+        room_entities: list[SensorEntity] = []
+        if room_has_entity(room, MODBUS_SLAVE_ID_DESCRIPTION.key):
+            room_entities.append(MeltemModbusSlaveSensor(coordinator, room))
+        if room_has_entity(room, APP_SETUP_CODE_DESCRIPTION.key):
+            room_entities.append(MeltemRoomAppSetupCodeSensor(coordinator, room))
+        room_entities.extend(
+            MeltemSensorEntity(coordinator, room, description)
+            for description in SENSOR_DESCRIPTIONS
+            if room_has_entity(room, description.key)
+        )
+        room_entities.extend(
+            MeltemRoomDiagnosticSensor(coordinator, room, description)
+            for description in ROOM_DIAGNOSTIC_DESCRIPTIONS
+            if room_has_entity(room, description.key)
+        )
+        return room_entities
+
+    async_add_room_entities(coordinator, async_add_entities, entities_of)
 
 
 class MeltemSensorEntity(MeltemEntity, SensorEntity):
@@ -613,14 +584,18 @@ class MeltemRoomDiagnosticSensor(MeltemRoomDiagnosticEntity, SensorEntity):
         return self.coordinator.last_successful_room_update(self.room.key)
 
 
-class MeltemRoomAppSetupCodeSensor(MeltemRoomDiagnosticEntity, SensorEntity):
+class MeltemRoomAppSetupCodeSensor(MeltemEntity, SensorEntity):
     """Read the app setup code once, only while the diagnostic is enabled."""
 
     entity_description = APP_SETUP_CODE_DESCRIPTION
 
     def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
         super().__init__(coordinator, room, self.entity_description.key)
-        self._setup_code: str | None = None
+        self._setup_code: str | None = room.app_setup_code
+
+    @property
+    def available(self) -> bool:
+        return True
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -633,12 +608,14 @@ class MeltemRoomAppSetupCodeSensor(MeltemRoomDiagnosticEntity, SensorEntity):
 
     async def _async_read_setup_code(self) -> None:
         try:
-            self._setup_code = await self.coordinator.async_read_room_app_setup_code(self.room.key)
+            setup_code = await self.coordinator.async_read_room_app_setup_code(self.room.key)
         except asyncio.CancelledError:
             raise
         except MeltemModbusError as err:
             _LOGGER.debug("Optional app setup code read failed for %s: %s", self.room.key, err)
             return
+        if setup_code is not None or self._setup_code is None:
+            self._setup_code = setup_code
         self.async_write_ha_state()
 
     @property
@@ -695,10 +672,8 @@ class MeltemGatewayDiagnosticSensor(MeltemGatewayEntity, SensorEntity):
         return None
 
 
-class MeltemCumulativeGatewayDiagnosticSensor(SensorEntity):
+class MeltemCumulativeGatewayDiagnosticSensor(MeltemGatewayBaseEntity, SensorEntity):
     """Expose persisted counters without writing a recorder state per Modbus job."""
-
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -706,11 +681,9 @@ class MeltemCumulativeGatewayDiagnosticSensor(SensorEntity):
         entry_id: str,
         description: SensorEntityDescription,
     ) -> None:
+        super().__init__(entry_id, description.key)
         self.coordinator = coordinator
         self.entity_description = description
-        self._attr_unique_id = f"{DOMAIN}_{entry_id}_{description.key}"
-        self._attr_translation_key = description.key
-        self._attr_device_info = gateway_device_info(entry_id)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -752,13 +725,11 @@ class MeltemModbusSlaveSensor(MeltemEntity, SensorEntity):
         self._attr_native_value = room.slave
 
 
-class MeltemModbusDevicePathSensor(SensorEntity):
+class MeltemModbusDevicePathSensor(MeltemGatewayBaseEntity, SensorEntity):
     """Representation of the serial device path for one config entry."""
 
     entity_description = MODBUS_DEVICE_PATH_DESCRIPTION
-    _attr_has_entity_name = True
 
     def __init__(self, entry: MeltemIntegrationConfigEntry) -> None:
-        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_modbus_device_path"
-        self._attr_device_info = gateway_device_info(entry.entry_id)
+        super().__init__(entry.entry_id, self.entity_description.key)
         self._attr_native_value = entry.data[CONF_PORT]

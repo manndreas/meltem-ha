@@ -2,6 +2,7 @@
 
 Without request options it reads current mode status at 41100 x3, followed by
 the write-side mode registers for comparison.
+Failed requests do not stop the remaining requests, but make the exit code 1.
 """
 
 from __future__ import annotations
@@ -145,7 +146,7 @@ async def main() -> int:
             f"  {label:<14} ok={tally.ok}/{args.rounds}  "
             f"total={tally.total_ms:.1f} ms  {errors}".rstrip()
         )
-    return 0
+    return 1 if any(tally.errors for tally in tallies.values()) else 0
 
 
 if __name__ == "__main__":

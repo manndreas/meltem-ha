@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import MeltemDataUpdateCoordinator
-from .entity import MeltemEntity, room_supports_entity
+from .entity import MeltemEntity, async_add_room_entities, room_has_entity
 from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, RoomConfig
 
 # The coordinator serializes all gateway access itself.
@@ -29,10 +29,12 @@ async def async_setup_entry(
     runtime_data: MeltemRuntimeData = entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    async_add_entities(
-        MeltemIntensiveSwitch(coordinator, room)
-        for room in coordinator.rooms
-        if room_supports_entity(room, "intensive")
+    async_add_room_entities(
+        coordinator,
+        async_add_entities,
+        lambda room: (
+            [MeltemIntensiveSwitch(coordinator, room)] if room_has_entity(room, "intensive") else []
+        ),
     )
 
 

@@ -17,9 +17,13 @@ from .models import (
     RoomConfig,
     RoomState,
 )
+from .units import unit_subentries
 
 TO_REDACT: set[str] = {CONF_PORT}
-_SETUP_CODE = re.compile(r"R[0-9A-Fa-f]{6}|(?<![A-Za-z0-9])r[0-9A-Fa-f]{6}(?![A-Za-z0-9])")
+# Codes are formatted as R plus six uppercase hex digits, so that form is redacted
+# even inside other text; any other casing only as a separate word, which keeps
+# ordinary words such as "ReadBack" intact.
+_SETUP_CODE = re.compile(r"R[0-9A-F]{6}|(?<![A-Za-z0-9])[Rr][0-9A-Fa-f]{6}(?![A-Za-z0-9])")
 
 
 def _redact_setup_codes(value: Any) -> Any:
@@ -52,9 +56,19 @@ def _serialize_entry(entry: MeltemIntegrationConfigEntry) -> dict[str, Any]:
         "entry_id": entry.entry_id,
         "title": entry.title,
         "version": entry.version,
+        "minor_version": entry.minor_version,
         "state": str(entry.state),
         "data": async_redact_data(dict(entry.data), TO_REDACT),
         "options": async_redact_data(dict(entry.options), TO_REDACT),
+        "units": [
+            {
+                "subentry_id": subentry.subentry_id,
+                "title": subentry.title,
+                "unique_id": subentry.unique_id,
+                "data": dict(subentry.data),
+            }
+            for subentry in unit_subentries(entry)
+        ],
     }
 
 
@@ -73,9 +87,10 @@ def _serialize_room(room: RoomConfig) -> dict[str, Any]:
 
 def _serialize_room_state(state: RoomState, port: str) -> dict[str, Any]:
     data = asdict(state)
-    data.pop("last_read_job")
     for _group_key, health in data["group_read_health"]:
         health["last_error"] = redact_port(health["last_error"], port)
+        # A monotonic clock reading means nothing outside this process.
+        del health["last_success_monotonic"]
     return data
 
 
@@ -115,11 +130,8 @@ async def async_get_config_entry_diagnostics(
                 "entry": _serialize_entry(entry),
                 "coordinator": {
                     "last_update_success": coordinator.last_update_success,
-                    "update_interval_seconds": (
-                        coordinator.update_interval.total_seconds()
-                        if coordinator.update_interval is not None
-                        else None
-                    ),
+                    "next_poll_delay_seconds": round(coordinator.next_poll_delay, 3),
+                    "poll_scheduled": coordinator.poll_scheduled,
                     "configured_room_count": len(coordinator.rooms),
                     "state_room_count": coordinator.state_room_count,
                     "gateway_units": gateway_units,
@@ -131,6 +143,13 @@ async def async_get_config_entry_diagnostics(
                         if last_job_error is not None
                         else None
                     ),
+                    "last_room_errors": {
+                        room_key: {
+                            "error": redact_port(room_error.message, port),
+                            "at": room_error.at.isoformat(),
+                        }
+                        for room_key, room_error in coordinator.last_room_errors.items()
+                    },
                     "unavailable_rooms": [
                         room.key
                         for room in coordinator.rooms

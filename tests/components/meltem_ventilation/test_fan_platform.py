@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,13 +14,15 @@ from custom_components.meltem_ventilation.fan import (
 )
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
 
+from .common import mock_coordinator
+
 _ROOM = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 # s-series units top out at 97 m3/h instead of 100.
 _ROOM_S = replace(_ROOM, profile="s_plain")
 
 
 def _coordinator(levels: tuple[int | None, int | None] = (40, 40)) -> MagicMock:
-    coordinator = MagicMock()
+    coordinator = mock_coordinator()
     coordinator.rooms = [_ROOM]
     coordinator.hass = None
     coordinator.last_update_success = True
@@ -28,7 +30,6 @@ def _coordinator(levels: tuple[int | None, int | None] = (40, 40)) -> MagicMock:
     coordinator.effective_levels.return_value = levels
     coordinator.level_source.return_value = None
     coordinator.level_write_fallback.return_value = None
-    coordinator.async_set_direction_level = AsyncMock()
     coordinator.safe_data = {"unit_1": RoomState(target_level=40, operation_mode="manual")}
     return coordinator
 

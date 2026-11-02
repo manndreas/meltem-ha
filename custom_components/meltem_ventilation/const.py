@@ -8,7 +8,7 @@ register addresses, and which entities exist on which platform.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
 
 from homeassistant.const import Platform
 
@@ -27,7 +27,15 @@ PLATFORMS: list[Platform] = [
 
 CONF_MAX_REQUESTS_PER_SECOND = "max_requests_per_second"
 CONF_PORT = "port"
+# Only in config entries before version 2, which stored the units in their data.
 CONF_ROOMS = "rooms"
+
+# Every unit is a config subentry of this type.
+SUBENTRY_TYPE_UNIT = "unit"
+# Keys of a unit subentry's data; its title is the unit's initial name.
+CONF_UNIT_KEY = "key"
+CONF_SLAVE = "slave"
+CONF_PROFILE = "profile"
 
 DEFAULT_PORT = "/dev/ttyACM0"
 DEFAULT_GATEWAY_DEVICE_ID = 1
@@ -96,13 +104,15 @@ FILTER_REFRESH_SECONDS = 3600
 AIRFLOW_STALE_AFTER_SECONDS = 30
 READ_FAILURE_THRESHOLD = 3
 
-WRITE_SETTLE_SECONDS = 1.5
+# The status map already shows a committed mode write at the first read (HW-2),
+# so this is a margin; the regular polls confirm a write the readback misses.
+WRITE_SETTLE_SECONDS = 0.5
+# Not measured: no -F or -FC unit was available for HW-2.
+CONTROL_SETTING_SETTLE_SECONDS = 1.5
 WRITE_CONFIRMATION_TIMEOUT_SECONDS = 30.0
 # Older write outcomes stay visible as attributes but no longer flag data health.
 WRITE_HEALTH_RETENTION_SECONDS = 600.0
 TARGET_OPTIMISTIC_SECONDS = 15.0
-POST_WRITE_REFRESH_RETRIES = 2
-POST_WRITE_REFRESH_INTERVAL_SECONDS = 2.5
 
 # ---------------------------------------------------------------------------
 #  Unit profiles
@@ -199,6 +209,9 @@ OPERATION_MODE_INACTIVE = "inactive"
 OPERATION_MODE_OFF = "off"
 OPERATION_MODE_MANUAL = "manual"
 OPERATION_MODE_UNBALANCED = "unbalanced"
+OPERATION_MODE_HUMIDITY_CONTROL = "humidity_control"
+OPERATION_MODE_CO2_CONTROL = "co2_control"
+OPERATION_MODE_AUTOMATIC = "automatic"
 # Modes in which the user sets the airflow directly.
 DIRECT_OPERATION_MODES: tuple[str, ...] = (
     OPERATION_MODE_OFF,
@@ -216,9 +229,9 @@ MODE_AUTOMATIC_VALUE = 16
 
 # Sensor-control selectors written to REGISTER_CURRENT_LEVEL.
 SENSOR_MODE_TO_RAW_VALUE: dict[str, int] = {
-    "humidity_control": MODE_HUMIDITY_CONTROL_VALUE,
-    "co2_control": MODE_CO2_CONTROL_VALUE,
-    "automatic": MODE_AUTOMATIC_VALUE,
+    OPERATION_MODE_HUMIDITY_CONTROL: MODE_HUMIDITY_CONTROL_VALUE,
+    OPERATION_MODE_CO2_CONTROL: MODE_CO2_CONTROL_VALUE,
+    OPERATION_MODE_AUTOMATIC: MODE_AUTOMATIC_VALUE,
 }
 RAW_VALUE_TO_SENSOR_MODE: dict[int, str] = {
     value: mode for mode, value in SENSOR_MODE_TO_RAW_VALUE.items()
@@ -238,12 +251,15 @@ DIRECTION_SUPPLY = "supply"
 DIRECTION_EXTRACT = "extract"
 
 # Where the airflow shown by a fan entity comes from.
-LEVEL_SOURCE_PENDING = "pending"
-LEVEL_SOURCE_TARGET = "target"
-LEVEL_SOURCE_MEASURED = "measured"
+type LevelSource = Literal["pending", "target", "measured"]
+LEVEL_SOURCE_PENDING: Final = "pending"
+LEVEL_SOURCE_TARGET: Final = "target"
+LEVEL_SOURCE_MEASURED: Final = "measured"
 
-LEVEL_WRITE_FALLBACK_BALANCED = "both_directions_balanced_manual"
-LEVEL_WRITE_FALLBACK_UNKNOWN_MODE = "unknown_mode_overridden"
+# How a fan write filled in what the unit did not report.
+type LevelWriteFallback = Literal["both_directions_balanced_manual", "unknown_mode_overridden"]
+LEVEL_WRITE_FALLBACK_BALANCED: Final = "both_directions_balanced_manual"
+LEVEL_WRITE_FALLBACK_UNKNOWN_MODE: Final = "unknown_mode_overridden"
 
 # ---------------------------------------------------------------------------
 #  Modbus registers
@@ -257,6 +273,16 @@ REGISTER_RF_COMM_STATUS = 40101
 REGISTER_RF_FAULT_STATUS = 40103
 REGISTER_VALUE_ERROR_STATUS = 40104
 REGISTER_RF_SIGNAL_STRENGTH = 40109
+
+BRIDGE_RF_REGISTERS: frozenset[int] = frozenset(
+    {
+        REGISTER_RF_LAST_SEEN_AGE,
+        REGISTER_RF_COMM_STATUS,
+        REGISTER_RF_FAULT_STATUS,
+        REGISTER_VALUE_ERROR_STATUS,
+        REGISTER_RF_SIGNAL_STRENGTH,
+    }
+)
 
 # On the tested M-WRG-GW gateway, 41000 and 41004 are effectively swapped
 # compared to the unit manual. We map the logical sensor names to the values
@@ -367,6 +393,10 @@ READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
     "control_settings": frozenset(CONTROL_SETTING_REGISTERS),
 }
 
+OPTIONAL_DIAGNOSTIC_READ_GROUPS: frozenset[str] = frozenset(
+    {"rf_last_seen", "rf_signal", "rf_fault", "value_error", "fan_hours"}
+)
+
 BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
     {
         "exhaust_temperature",
@@ -439,3 +469,25 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
     **dict.fromkeys(("operation_mode", "preset_mode"), Platform.SELECT),
     "intensive": Platform.SWITCH,
 }
+
+# Entities that only units with the matching hardware carry; every other entity
+# key exists on every profile. ``entity.room_has_entity`` applies this for the
+# platforms and the registry cleanup alike.
+ENTITY_PROFILES: dict[str, frozenset[str]] = {
+    "operation_mode": SENSOR_CONTROL_PROFILES,
+    # Only the -F and -FC variants carry these sensors, see docs/dev/reference/models.md.
+    "outdoor_air_temperature": HUMIDITY_PROFILES,
+    "extract_air_temperature": HUMIDITY_PROFILES,
+    "supply_air_temperature": HUMIDITY_PROFILES,
+    "humidity_extract_air": HUMIDITY_PROFILES,
+    "humidity_supply_air": HUMIDITY_PROFILES,
+    "co2_extract_air": CO2_PROFILES,
+    "voc_supply_air": VOC_PROFILES,
+    **{
+        key: HUMIDITY_PROFILES if key.startswith("humidity_") else CO2_PROFILES
+        for key in CONTROL_SETTING_REGISTERS
+    },
+}
+
+# Diagnostic of the airflow reads and write outcomes, present while a unit has airflow.
+DATA_HEALTH_ENTITY_KEY = "data_health"

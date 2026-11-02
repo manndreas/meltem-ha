@@ -22,7 +22,7 @@ from modbus_connection import (
     ModbusUnit,
 )
 
-from ..const import REGISTER_RF_COMM_STATUS, TRANSPORT_READ_RECOVERY_SECONDS
+from ..const import BRIDGE_RF_REGISTERS, TRANSPORT_READ_RECOVERY_SECONDS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ class TransportPolicy:
                     raise
                 result = await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
 
-            if is_read and (not args or args[0] != REGISTER_RF_COMM_STATUS):
+            if is_read and (not args or args[0] not in BRIDGE_RF_REGISTERS):
                 self._unanswered_reads.pop(unit_id, None)
                 self._last_read_answer[unit_id] = time.monotonic()
             return result

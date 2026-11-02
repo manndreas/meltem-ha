@@ -6,7 +6,7 @@ the Python tools also run on Linux/POSIX from the repository root with
 `.venv/bin/python` and a port such as `/dev/ttyACM0` or `/dev/serial/by-id/...`.
 Adapt only the shell-specific loops, paths, and process-control commands. The
 plan checks the hardware assumptions the integration relies on and works through
-the open items in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) (HW-1 to HW-7),
+the open items in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) (HW-1 to HW-9),
 [SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md), and [TODO.md](TODO.md). HW-7
 is the [post-release validation checklist](#hw-7--post-release-tmodbus-validation)
 for the tmodbus transport introduced in `4.0.0`.
@@ -54,7 +54,8 @@ asks for the one physical step, and measures.
   - `42000..42005` within the documented limits; [W-15](#w-15--control-settings)
     names the one exception
 - **Mode writes end with `41132 = 0`.** Only [W-6](#w-6--41132-commit-latch)
-  delays it on purpose, and still writes it at the end.
+  and [W-19](#w-19--staged-registers-and-a-later-partial-commit) delay it on
+  purpose, and still write it at the end.
 - **Function codes:** `0x03`, `0x04`, `0x06`. For [G-6](#g-6--other-function-codes)
   also `0x08` with sub-function `0` (return query data), `0x11` (report server
   ID) and `0x2B/0x0E` (read device identification). Never any other `0x08`
@@ -578,7 +579,8 @@ Run R on every unit unless the test says otherwise.
 
 ### T-8 — Wider block reads (optional)
 
-- **Checks:** groundwork for wider block reads ([TODO-4](TODO.md#todo-4--wider-block-reads)).
+- **Checks:** groundwork for wider block reads (`TODO-4`, see
+  [MELTEM.md](MELTEM.md#request-pacing-and-block-reads)).
   Not part of HW-7 post-release validation. The `register_ranges` stay
   unchanged until a benchmark backs a change.
 - **Type:** R
@@ -633,6 +635,28 @@ Run R on every unit unless the test says otherwise.
   they are not timeouts or link failures. If they prevent the proposed
   threshold, report the soak as transport-stable but not a full pass.
 
+### T-11 — Scheduler timing in the test harness
+
+- **Checks:** HW-9: successive function-`0x03` requests keep at least
+  `1 / rate` apart while the coordinator schedules its own ticks, also across
+  live rate changes and a reload.
+- **Type:** R, about 12 minutes
+- **Run:** a throwaway test in `$out\scripts\` that runs the real config flow
+  on the port (accepting the detected profiles), so the entry polls through the
+  real `modbus` integration. Attach a handler to `tmodbus.raw_traffic` at
+  `DEBUG` that stamps every frame with `time.perf_counter()`, and log markers
+  for every rate change. Phases: the default rate after setup (150 s); 2
+  requests/s through the options flow while polling runs (150 s); 3 requests/s
+  followed by `async_reload` (150 s); 1 request/s (90 s); 4 requests/s
+  (60 s). Export the diagnostics, then unload; P-3 must succeed afterwards.
+- **Pass:** no interval between two `0x03` requests of the entry below
+  `1 / rate` minus 1 ms of the rate in force; after a change, at most the one
+  request already waiting for its slot keeps the old spacing. Record the
+  answer-to-request gaps below `0.1 s` with their cause, the first airflow
+  value per unit after setup and reload, and every exception response. The
+  config flow's scan is paced by the request gap only and is evaluated
+  separately.
+
 ## W — Writes on a released test unit
 
 Only on slaves released in [P-4](#p-4--ask-the-person-once), one unit at a
@@ -643,6 +667,10 @@ Notes on the tools:
 
 - `--room-index` of `benchmark_integration_like` is the 1-based position in
   its `rooms:` output, not the slave address. The write modes require it.
+- `benchmark_integration_like` uses the integration's request gap and request
+  rate by default (`--gap 0.1`, `--rate 4`), and its raw register snapshots
+  share the client's rate limit and read quarantine. Runs before `5.0.0` used
+  `--gap 0.3` and no rate limit; pass `--gap 0.3 --rate 0` to compare with them.
 - The write modes of `benchmark_integration_like` restore with a balanced
   manual write. A unit that was in a preset, unbalanced, or sensor mode must be
   restored from the snapshot ([Appendix A](#appendix-a--restoring-a-unit)).
@@ -684,8 +712,9 @@ Notes on the tools:
 
 ### W-2 — Settle delay sweep
 
-- **Checks:** `WRITE_SETTLE_SECONDS = 1.5` and `refresh_attempts=2`
-  (HW-2 measurement 1, candidates A and C).
+- **Checks:** the settle delay before the readback of a write and whether one
+  readback is enough (HW-2 measurement 1, candidates A and C). W-20 measures
+  the same for mode writes through the coordinator.
 - **Type:** W
 - **Run:**
 
@@ -955,6 +984,61 @@ Notes on the tools:
   scheduler's read failures, timeouts, and link recycles. Restore from the
   snapshot and compare the after-capture.
 
+### W-19 — Staged registers and a later partial commit
+
+- **Checks:** HW-8: whether a commit that only writes `41123/41124` also
+  applies `41120..41122` staged by an interrupted command, and whether staged
+  registers expire.
+- **Type:** W
+- **Run:**
+  1. Record `41020/41021` and `41100..41102`.
+  2. Stage an unbalanced command without its commit:
+     `write_registers --write 41120=4 --write 41121=<raw of current − 10 m³/h> --write 41122=<raw of current>`.
+  3. Switch intensive on: `write_registers --write 41123=3 --write 41124=227 --write 41132=0`.
+     Read `41020/41021` and `41100..41102` every 2 s for 30 s.
+  4. Switch intensive off: `write_registers --write 41123=0 --write 41124=0 --write 41132=0`.
+     Read the same registers every 2 s for 60 s.
+  5. Restore from the snapshot and wait 10 s.
+  6. Repeat step 2, wait 5 minutes, then `write_registers --write 41132=0`
+     alone. Read the same registers every 2 s for 60 s.
+  7. Restore from the snapshot.
+- **Pass:** informational, decides HW-8: the staged unbalanced airflow
+  becomes active after step 3 or 4 points to candidate B or C; it does not to
+  candidate A. Step 6 shows whether staged registers expire. Record which
+  commit applied the staged values, and the status values before and after.
+- **Restore:** never leave intensive running; end with the snapshot state.
+
+### W-20 — Readback timing of mode writes
+
+- **Checks:** how soon after a mode write the coordinator's readback confirms
+  it, for quick modes, intensive on and off, and leaving a quick mode
+  (HW-2 candidates A and C).
+- **Type:** W, about 5 minutes
+- **Run:** a throwaway test in `$out\scripts\` that sets up the entry with
+  polling switched off (`pref_disable_polling`) and reads every unit once with
+  the full plan. Set the coordinator's settle delay to `0` and repeat its
+  immediate readback back to back until the write is confirmed, at 10
+  requests/s. Wrap the client's read and write methods to log start, end, and
+  the decoded state. Write 12 s apart: LOW, intensive on, intensive off, leave
+  the quick mode, MEDIUM, HIGH (or end on the snapshot's quick mode); three
+  repetitions.
+- **Pass:** informational. Record per write the number of readbacks until
+  confirmation and the time after the write call. A write that needs a second
+  readback argues against candidate C.
+
+### W-21 — Mode-write readback with interleaved traffic
+
+- **Checks:** whether reads of the other units during the settle window
+  disturb the write or the other units (HW-2 candidate B, follow-up to W-3).
+- **Type:** W on the test unit, R on all other units
+- **Run:** as W-20 at 4 requests/s with a settle delay of `1.5 s`. A second
+  task reads the airflow plan of the other units in turn, with 0.5 s pauses.
+  A lock held only for each write sequence and each room read, not for the
+  waits in between, lets these reads into the settle window.
+- **Pass:** every write is confirmed by the same readback as in W-20, and the
+  reads of the other units have no failures and no latency outliers inside the
+  settle windows compared with outside.
+
 ## H — Tests that need a person
 
 The agent prepares the measurement, asks for exactly one action, measures, and
@@ -1096,7 +1180,8 @@ repeats if needed.
 ### H-9 — Real Home Assistant instance
 
 - **Checks:** HW-7 measurements 6 and 7 in a real installation; HW-6 measurement 2
-  (log comparison with the previous release).
+  (log comparison with the previous release); HW-9 (poll timing of the own
+  scheduler).
 - **Run:** the person installs the branch on HA `2026.11` or newer on a Linux host with
   the gateway attached and shares the logs and the diagnostics download. The
   agent checks: setup with USB discovery; `port_in_use` with a second Modbus
@@ -1129,6 +1214,10 @@ repeats if needed.
   4. Check that ongoing airflow polls and all slow first-pass jobs progress,
      with no new transport errors. Lower rates may lengthen the scan; record
      actual freshness rather than assuming the target intervals are met.
+  5. For HW-9, change the request rate in the options while polling runs, and
+     check that the new spacing starts with the next request and that no
+     request breaks the old or the new minimum interval. T-11 runs the same
+     check in the test harness.
   The motivating observation is recorded once in
   [MELTEM.md](MELTEM.md#home-assistant-restart-on-2026-10-08). The revised
   behavior is covered by in-memory tests, not yet verified on the live host.
@@ -1148,7 +1237,7 @@ incomparable.
 | 1. Benchmarks | latency and timeout rate against the pymodbus baseline | T-1, T-2, T-3, T-4 |
 | 2. Powered-off unit | timeout or code 10/11, requests per job, unwanted `disconnect()` | G-5, T-5, H-1 |
 | 3. Mode status map | block/single parity and M-WRG-S validation (HW-4) | R-12, H-2 |
-| 4. Writes | write confirmation via the exact `41121` readback, settle time, lock duration (HW-2) | W-1, W-2, W-3, W-6, W-17 |
+| 4. Writes | write confirmation via the exact `41121` readback, settle time, lock duration (HW-2) | W-1, W-2, W-3, W-6, W-17, W-20, W-21 |
 | 5. Busy | does the gateway answer code 6, and for how long | T-6 |
 | 6. Link lifecycle | USB replug, reload, unload release and reopen the port | T-7, T-9, H-3, H-9 |
 | 7. Soak | 24 hours of operation with all units | T-10, H-9 |

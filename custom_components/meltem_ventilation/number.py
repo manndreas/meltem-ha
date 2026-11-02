@@ -26,9 +26,9 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CO2_PROFILES, CONTROL_SETTING_LIMITS, HUMIDITY_PROFILES
+from .const import CONTROL_SETTING_LIMITS
 from .coordinator import MeltemDataUpdateCoordinator
-from .entity import MeltemEntity, room_supports_entity
+from .entity import MeltemEntity, async_add_room_entities, room_has_entity
 from .models import (
     MeltemIntegrationConfigEntry,
     RoomConfig,
@@ -40,15 +40,10 @@ from .models import (
 class MeltemControlSettingNumberDescription(NumberEntityDescription):
     """Describe one writable humidity/CO2 control setting."""
 
-    supported_profiles: frozenset[str]
     value_fn: Callable[[RoomState], int | None]
 
 
-def _control_setting(
-    key: str,
-    supported_profiles: frozenset[str],
-    unit: str = PERCENTAGE,
-) -> MeltemControlSettingNumberDescription:
+def _control_setting(key: str, unit: str = PERCENTAGE) -> MeltemControlSettingNumberDescription:
     """Describe one control setting within the manufacturer's limits."""
 
     minimum, maximum, step = CONTROL_SETTING_LIMITS[key]
@@ -58,19 +53,18 @@ def _control_setting(
         native_max_value=maximum,
         native_step=step,
         native_unit_of_measurement=unit,
-        supported_profiles=supported_profiles,
         # Setting keys double as RoomState field names.
         value_fn=attrgetter(key),
     )
 
 
 CONTROL_SETTING_DESCRIPTIONS: tuple[MeltemControlSettingNumberDescription, ...] = (
-    _control_setting("humidity_starting_point", HUMIDITY_PROFILES),
-    _control_setting("humidity_min_level", HUMIDITY_PROFILES),
-    _control_setting("humidity_max_level", HUMIDITY_PROFILES),
-    _control_setting("co2_starting_point", CO2_PROFILES, UnitOfRatio.PARTS_PER_MILLION),
-    _control_setting("co2_min_level", CO2_PROFILES),
-    _control_setting("co2_max_level", CO2_PROFILES),
+    _control_setting("humidity_starting_point"),
+    _control_setting("humidity_min_level"),
+    _control_setting("humidity_max_level"),
+    _control_setting("co2_starting_point", UnitOfRatio.PARTS_PER_MILLION),
+    _control_setting("co2_min_level"),
+    _control_setting("co2_max_level"),
 )
 
 
@@ -86,11 +80,14 @@ async def async_setup_entry(
     """Set up Meltem number entities."""
 
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(
-        MeltemControlSettingNumber(coordinator, room, description)
-        for room in coordinator.rooms
-        for description in CONTROL_SETTING_DESCRIPTIONS
-        if room_supports_entity(room, description.key, description.supported_profiles)
+    async_add_room_entities(
+        coordinator,
+        async_add_entities,
+        lambda room: (
+            MeltemControlSettingNumber(coordinator, room, description)
+            for description in CONTROL_SETTING_DESCRIPTIONS
+            if room_has_entity(room, description.key)
+        ),
     )
 
 

@@ -34,9 +34,13 @@ def _install_homeassistant_stub() -> None:
     """Provide the tiny Home Assistant surface needed by the loaded modules."""
 
     homeassistant_module = type(sys)("homeassistant")
+    config_entries_module = type(sys)("homeassistant.config_entries")
     const_module = type(sys)("homeassistant.const")
     util_module = type(sys)("homeassistant.util")
     dt_module = type(sys)("homeassistant.util.dt")
+
+    class ConfigEntry[T]:
+        pass
 
     class Platform:
         SENSOR = "sensor"
@@ -46,12 +50,15 @@ def _install_homeassistant_stub() -> None:
         FAN = "fan"
         SWITCH = "switch"
 
+    config_entries_module.ConfigEntry = ConfigEntry
     const_module.Platform = Platform
     dt_module.utcnow = lambda: datetime.now(UTC)
     util_module.dt = dt_module
+    homeassistant_module.config_entries = config_entries_module
     homeassistant_module.const = const_module
     homeassistant_module.util = util_module
     sys.modules.setdefault("homeassistant", homeassistant_module)
+    sys.modules.setdefault("homeassistant.config_entries", config_entries_module)
     sys.modules.setdefault("homeassistant.const", const_module)
     sys.modules.setdefault("homeassistant.util", util_module)
     sys.modules.setdefault("homeassistant.util.dt", dt_module)
@@ -79,6 +86,9 @@ modbus_client = importlib.import_module(f"{PACKAGE}.modbus_client")
 
 FIXED_TIMEOUT = const.FIXED_TIMEOUT
 MODEL_PROFILES: tuple[str, ...] = const.MODEL_PROFILES
+# Defaults follow the integration, so a run measures what Home Assistant does.
+DEFAULT_GAP_SECONDS: float = const.REQUEST_GAP_SECONDS
+DEFAULT_MAX_REQUESTS_PER_SECOND: float = const.DEFAULT_MAX_REQUESTS_PER_SECOND
 
 RefreshPlan = models.RefreshPlan
 RoomConfig = models.RoomConfig
@@ -124,6 +134,8 @@ async def discover_rooms(
     connection: ModbusConnection,
     port: str,
     profiles: Mapping[int, str] | None = None,
+    *,
+    gap: float = DEFAULT_GAP_SECONDS,
 ) -> list[RoomConfig]:
     """Discover configured rooms and probe their supported keys.
 
@@ -136,11 +148,18 @@ async def discover_rooms(
     policy = new_transport_policy()
     rooms: list[RoomConfig] = []
     try:
-        gateway = prepare_unit(connection.for_unit(GATEWAY_DEVICE_ID), GATEWAY_DEVICE_ID, policy)
-        slaves = await discover_gateway_nodes(gateway, port, start=2, end=16)
+        gateway = prepare_unit(
+            connection.for_unit(GATEWAY_DEVICE_ID), GATEWAY_DEVICE_ID, policy, message_spacing=gap
+        )
+        slaves = await discover_gateway_nodes(
+            gateway,
+            port,
+            start=const.DEFAULT_SCAN_SLAVE_START,
+            end=const.DEFAULT_SCAN_SLAVE_END,
+        )
         for index, slave in enumerate(slaves, start=1):
             probe_result = await detect_slave_details(
-                prepare_unit(connection.for_unit(slave), slave, policy)
+                prepare_unit(connection.for_unit(slave), slave, policy, message_spacing=gap)
             )
             profile = profiles.get(slave) or PROFILE_BY_DETECTED_SUFFIX.get(
                 probe_result.profile, "ii_plain"
@@ -204,7 +223,12 @@ def record(
 
 
 def _airflow(state: RoomState) -> int | None:
-    return state.target_level or state.supply_air_flow
+    """Return the target airflow, or the measured supply airflow without a target.
+
+    A target of 0 (unit off) is a valid target, not a missing one.
+    """
+
+    return state.target_level if state.target_level is not None else state.supply_air_flow
 
 
 async def run_cycles(
@@ -222,9 +246,8 @@ async def run_cycles(
         for label, plan in plans.items():
             for room in rooms:
                 start = time.perf_counter()
-                read_started_at = datetime.now(UTC)
                 try:
-                    states[room.key] = await client.read_room_state(
+                    states[room.key], outcome = await client.read_room(
                         room, states.get(room.key, RoomState()), plan
                     )
                 except Exception as err:
@@ -232,13 +255,11 @@ async def run_cycles(
                         samples, room.slave, label, start, f"{type(err).__name__}: {err}", ok=False
                     )
                 else:
-                    state = states[room.key]
+                    # Only this read's errors count, not old ones of skipped groups.
                     failures = [
-                        f"{group}: {health.last_error}"
+                        f"{group}: {outcome.errors[group]}"
                         for group in plan.read_groups()
-                        if (health := state.read_health_for(group)).last_attempt is not None
-                        and health.last_attempt >= read_started_at
-                        and health.last_error is not None
+                        if group in outcome.errors
                     ]
                     record(samples, room.slave, label, start, "; ".join(failures), ok=not failures)
     return samples
@@ -307,7 +328,6 @@ async def _restore_after_write(
 
 async def run_write_refresh(
     client: MeltemModbusClient,
-    connection: ModbusConnection,
     room: RoomConfig,
     delta: int,
     settle_seconds: float,
@@ -316,7 +336,8 @@ async def run_write_refresh(
 ) -> list[Sample]:
     """Write one balanced airflow target, poll until applied, then restore."""
 
-    unit = connection.for_unit(room.slave)
+    # Raw reads share the client's rate limit and quarantine, like the integration.
+    unit = client.unit_for(room.slave)
     baseline_state, baseline_flow = await _read_baseline(client, room)
     target_flow = max(0, baseline_flow + delta)
     samples: list[Sample] = []
@@ -405,7 +426,6 @@ async def run_write_idle_check(
 
 async def run_write_observe(
     client: MeltemModbusClient,
-    connection: ModbusConnection,
     room: RoomConfig,
     delta: int,
     observe_seconds: float,
@@ -413,7 +433,7 @@ async def run_write_observe(
 ) -> list[Sample]:
     """Write once, then observe several candidate readback registers over time."""
 
-    unit = connection.for_unit(room.slave)
+    unit = client.unit_for(room.slave)
 
     async def single(address: int) -> int | None:
         registers = await read_or_none(unit, address, 1)
@@ -456,7 +476,6 @@ async def run_write_observe(
 
 async def run_airflow_long_observe(
     client: MeltemModbusClient,
-    connection: ModbusConnection,
     room: RoomConfig,
     target: int,
     observe_seconds: float,
@@ -466,7 +485,7 @@ async def run_airflow_long_observe(
     """Write one target, read only airflow sparsely for a longer period, then restore."""
 
     read_flow_block = partial(
-        read_or_none, connection.for_unit(room.slave), const.REGISTER_EXTRACT_AIR_FLOW, 2
+        read_or_none, client.unit_for(room.slave), const.REGISTER_EXTRACT_AIR_FLOW, 2
     )
     samples: list[Sample] = []
 
@@ -490,7 +509,6 @@ async def run_airflow_long_observe(
 async def run_mode(
     args: argparse.Namespace,
     client: MeltemModbusClient,
-    connection: ModbusConnection,
     rooms: list[RoomConfig],
 ) -> list[Sample]:
     """Run the experiment that ``--mode`` selects."""
@@ -504,7 +522,6 @@ async def run_mode(
     if args.mode == "write_refresh":
         return await run_write_refresh(
             client,
-            connection,
             room,
             args.delta,
             args.settle_seconds,
@@ -515,11 +532,10 @@ async def run_mode(
         return await run_write_idle_check(client, room, args.delta, args.idle_seconds)
     if args.mode == "write_observe":
         return await run_write_observe(
-            client, connection, room, args.delta, args.observe_seconds, args.sample_interval
+            client, room, args.delta, args.observe_seconds, args.sample_interval
         )
     return await run_airflow_long_observe(
         client,
-        connection,
         room,
         args.target,
         args.observe_seconds,
@@ -530,7 +546,19 @@ async def run_mode(
 
 def parse_args() -> argparse.Namespace:
     parser = tool_parser("Run integration-like polling loops against a Meltem gateway.")
-    parser.add_argument("--gap", type=float, default=0.3)
+    parser.add_argument(
+        "--gap",
+        type=float,
+        default=DEFAULT_GAP_SECONDS,
+        help="Pause between requests in seconds (default: the integration's %(default)s).",
+    )
+    parser.add_argument(
+        "--rate",
+        type=float,
+        default=DEFAULT_MAX_REQUESTS_PER_SECOND,
+        help="Maximum read requests per second, 0 for no limit "
+        "(default: the integration's %(default)s).",
+    )
     parser.add_argument("--cycles", type=int, default=2)
     parser.add_argument("--mode", choices=MODES, default="scheduler")
     parser.add_argument(
@@ -563,26 +591,29 @@ def parse_args() -> argparse.Namespace:
 async def main() -> int:
     args = parse_args()
 
-    # prepare_unit reads the spacing from its module when it sets a unit up.
-    setattr(modbus_helpers, "REQUEST_GAP_SECONDS", args.gap)
-
     # The first request opens the link, after every unit asked for its
     # timeout, just like the shared connection in Home Assistant.
     connection = open_connection(args.port)
     try:
-        rooms = await discover_rooms(connection, args.port, dict(args.profile))
+        rooms = await discover_rooms(connection, args.port, dict(args.profile), gap=args.gap)
         print_rooms(rooms)
         if args.mode in SINGLE_ROOM_MODES and not 1 <= args.room_index <= len(rooms):
             print(f"ERROR: --room-index must be between 1 and {len(rooms)}")
             return 2
         print(f"mode: {args.mode}")
         print(f"gap: {args.gap}s")
+        print(f"rate: {args.rate or 'unlimited'} req/s")
         print(f"timeout: {FIXED_TIMEOUT}s")
         print(f"cycles: {args.cycles}")
         print()
 
-        client = MeltemModbusClient(connection.for_unit, port=args.port)
-        samples = await run_mode(args, client, connection, rooms)
+        client = MeltemModbusClient(
+            connection.for_unit,
+            port=args.port,
+            max_requests_per_second=args.rate or None,
+            message_spacing=args.gap,
+        )
+        samples = await run_mode(args, client, rooms)
     finally:
         await connection.close()
 

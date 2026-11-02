@@ -33,7 +33,7 @@ from custom_components.meltem_ventilation.const import (
     PRESET_MODE_OPTIONS,
     SENSOR_OPERATION_MODES,
 )
-from custom_components.meltem_ventilation.entity import room_supports_entity
+from custom_components.meltem_ventilation.entity import room_entity_platforms, room_has_entity
 from custom_components.meltem_ventilation.models import RoomConfig
 from custom_components.meltem_ventilation.number import (
     CONTROL_SETTING_DESCRIPTIONS,
@@ -87,7 +87,7 @@ def _room(profile: str = "ii_plain", supported: set[str] | None = None) -> RoomC
 
 def _supports(room: RoomConfig, key: str) -> bool:
     """Return whether the entity with this description key exists for the room."""
-    return room_supports_entity(room, key, _DESCRIPTIONS[key].supported_profiles)
+    return room_has_entity(room, key)
 
 
 def _load_json(path: Path) -> dict:
@@ -174,13 +174,42 @@ class TestRoomSupportsEntity:
         key: str,
         expected: bool,
     ) -> None:
-        assert room_supports_entity(_room(supported=supported), key) is expected
+        # The -FC profile carries every entity, so only the stored keys filter here.
+        assert room_has_entity(_room("ii_fc", supported), key) is expected
 
     @pytest.mark.parametrize("profile", sorted(ALL_PROFILES))
     def test_binary_sensors_apply_to_every_profile(self, profile: str) -> None:
         room = _room(profile)
 
         assert all(_supports(room, key) for key in _keys(BINARY_SENSOR_DESCRIPTIONS))
+
+    @pytest.mark.parametrize(
+        ("profile", "expected"),
+        [("ii_plain", False), ("s_f", True), ("ii_fc", True), ("ii_fc_voc", True)],
+    )
+    def test_sensor_control_modes_need_a_sensor_profile(self, profile: str, expected: bool) -> None:
+        assert room_has_entity(_room(profile), "operation_mode") is expected
+
+    @pytest.mark.parametrize(
+        ("supported", "expected"),
+        [
+            ({"supply_air_flow"}, True),
+            ({"extract_air_flow"}, True),
+            ({"exhaust_temperature"}, False),
+        ],
+    )
+    def test_data_health_follows_the_airflow_entities(
+        self, supported: set[str], expected: bool
+    ) -> None:
+        assert room_has_entity(_room("ii_plain", supported), "data_health") is expected
+
+    @pytest.mark.parametrize("profile", sorted(ALL_PROFILES))
+    def test_entity_platforms_list_exactly_the_entities_a_room_has(self, profile: str) -> None:
+        room = _room(profile)
+        platforms = room_entity_platforms(room)
+
+        assert {key for key in platforms if _supports(room, key)} == set(platforms)
+        assert "data_health" in platforms
 
 
 # ---------------------------------------------------------------------------

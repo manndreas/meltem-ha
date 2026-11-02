@@ -34,6 +34,7 @@ class CumulativeDiagnostics:
     def __init__(self, store: Store[dict[str, Any]], stored: Mapping[str, Any] | None) -> None:
         self._store = store
         self._last_save_scheduled_at: float | None = None
+        self._save_pending = False
         data = stored if isinstance(stored, Mapping) else {}
         self._period_started_at = self._valid_timestamp(data.get("period_started_at"))
 
@@ -196,14 +197,23 @@ class CumulativeDiagnostics:
     def _schedule_save(self) -> None:
         now = time.monotonic()
         if (
-            self._last_save_scheduled_at is not None
+            self._save_pending
+            and self._last_save_scheduled_at is not None
             and now - self._last_save_scheduled_at < SAVE_INTERVAL_SECONDS
         ):
             return
-        self._last_save_scheduled_at = now
-        self._store.async_delay_save(self._stored_data, SAVE_DELAY_SECONDS)
+        delay = SAVE_DELAY_SECONDS
+        if self._last_save_scheduled_at is not None:
+            delay = max(
+                SAVE_DELAY_SECONDS,
+                SAVE_INTERVAL_SECONDS - (now - self._last_save_scheduled_at),
+            )
+        self._last_save_scheduled_at = now + delay - SAVE_DELAY_SECONDS
+        self._save_pending = True
+        self._store.async_delay_save(self._stored_data, delay)
 
     def _stored_data(self) -> dict[str, Any]:
+        self._save_pending = False
         return {
             "period_started_at": self._period_started_at,
             "transport": {

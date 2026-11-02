@@ -238,7 +238,7 @@ can be changed via Modbus (`42007..42009`).
 
 - **"Startbits: 8"**: printed in both manuals. Read it as 8 data bits.
 - **`M-WRG-S` scaling example**: the printed examples imply `raw / 2`.
-  `modbus_client._scale_airflow_to_raw` uses `level × 200 / max_airflow`, which
+  `mode_codec.scale_airflow_to_raw` uses `level × 200 / max_airflow`, which
   gives raw `82` for 40 m³/h instead of the printed `80`. Unverified on
   hardware.
 - **CO2 starting point range**: Modbus `42003` allows `500..1200` ppm. The

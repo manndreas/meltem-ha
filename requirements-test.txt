@@ -11,3 +11,5 @@ pymodbus==3.13.1
 ruff==0.17.1
 # Type-check against the Home Assistant release above.
 mypy==2.4.0
+# Coverage gate of the CI test run; the threshold is in pyproject.toml.
+pytest-cov==7.1.0

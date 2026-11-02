@@ -171,7 +171,7 @@ session.
 | Item | What the documents say | Details |
 | --- | --- | --- |
 | HW-1 intensive registers after power-off | Intensive ventilation ends on its own after a configurable duration (ID 12, 0-240 min, default 15) and resumes the previous program. Register behaviour is not documented. | [functions.md](functions.md#ventilation-programs-and-default-airflows), [device-parameters.md](device-parameters.md) |
-| HW-2 write settle time | Gateway and units communicate over 868.3 MHz radio. No timing guidance beyond the RTU frame rules. | [gateway.md](gateway.md), [modbus.md](modbus.md#frame-requirements) |
+| HW-2 write settle time | Gateway and units communicate over 868.3 MHz radio. No timing guidance beyond the RTU frame rules. Observed: [MELTEM.md](../MELTEM.md#target-readback-and-measured-airflow). | [gateway.md](gateway.md), [modbus.md](modbus.md#frame-requirements) |
 | HW-3 encoding above 200 | Supply-only and extract-only airflows are stored device parameters (IDs 42-47; `M-WRG-II` defaults 50 / 0). No raw encoding is documented. | [device-parameters.md](device-parameters.md) |
 | HW-4 five-register mode block | Reading `41120..41124` is not documented at all. | [modbus.md](modbus.md#not-documented) |
 | TODO 1 shortcut configuration | The app stores airflows for "Abluftbetrieb" / "Zuluftbetrieb"; InControl uses IDs 42-47. | [app.md](app.md), [device-parameters.md](device-parameters.md) |

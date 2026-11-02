@@ -88,8 +88,9 @@ same `BRDG-02EM23` model.
 - a request gap of `0.1 s` was stable; no gap at all inflated latency heavily
   without improving reliability
 - setup scans are sensitive to short timeouts
-- stable block reads: airflow `41020..41021`, status `41016..41018`, and
-  temperatures `41002..41005` plus a separate `41009`
+- stable block reads: airflow `41020..41021`, status `41016..41018`,
+  temperatures `41000..41005`, and air quality plus supply temperature
+  `41006..41011` (`41006..41013` on `O/VOC-AUL`)
 - over tmodbus (since `4.0.0`), simple reads took about `16 ms` on average,
   slightly faster than with the earlier pymodbus client (`18.6..19.5 ms`)
 - in the one request-gap sweep, gaps of `0.05..0.3 s` passed, while gap `0`
@@ -98,12 +99,32 @@ same `BRDG-02EM23` model.
 - a 24-hour read-only soak with six units saw no transport timeouts, protocol
   errors, Busy answers, or link recycles
 - reading another unit while a write settles caused no failures, but raised
-  read latency from about `16 ms` to up to `134 ms`
+  read latency from about `16 ms` to up to `134 ms` (W-3 on 2026-10-02); a
+  repeat with mode writes and the integration's own client (W-21 on
+  2026-11-02) saw no latency change at all: median `44.0 ms` inside the settle
+  windows against `43.9 ms` outside
+- the integration's own scheduler kept successive reads at least `1 / rate`
+  apart at 1, 2, 3, and 4 requests/s, including live rate changes and a reload
+  (T-11 on 2026-11-02); the request gap of `0.1 s` is not kept across a link
+  change, where `52..60 ms` passed without effect
+- wider block-read benchmarks (T-8 on 2026-11-02, 30 rounds per variant across
+  slaves `4`, `6`, and `7`) passed 30/30 for `41000..41013`, `41016..41021`,
+  `40100..40104`, `41030..41033`, and `40000..40003`. Each single block read
+  averaged `45.4..45.9 ms` wire time (`~151 ms` wall time including the `0.1 s`
+  request gap), matching single-register latency and cutting wall time of the
+  four-request split reads (`~601..604 ms`) by 75%. During the initial RF
+  warm-up after gateway connection, slave `3` returned `0x05` (`Acknowledge`)
+  on `41000..41005`, `41006`, `41009..41011`, and `41016..41021` while already
+  answering `41007..41008`, `41012..41013` (`32767`), `40100..40104`,
+  `41030..41034`, and `41100..41102`.
 
 The benchmark, gap-sweep, and soak runs are written up under
 [HW-7](HARDWARE_BACKLOG.md#hw-7--validate-the-tmodbus-transport-on-the-real-gateway),
-the interleaved-traffic run (W-3) under
-[HW-2](HARDWARE_BACKLOG.md#partial-measurement-on-2026-10-02).
+the interleaved-traffic runs under
+[HW-2](HARDWARE_BACKLOG.md#partial-measurement-on-2026-10-02) (W-3) and
+[HW-2](HARDWARE_BACKLOG.md#w-20-and-w-21-on-2026-11-02) (W-21), and the
+scheduler timing under
+[HW-9](HARDWARE_BACKLOG.md#t-11-harness-run-on-2026-11-02).
 
 ## Identity and readable registers
 
@@ -206,10 +227,9 @@ The broad scan covered `40000..49999`; it did not exhaustively scan
 `51150..51151`, and `52000..52010` were targeted setting captures, and those
 words showed substantial drift. They should not be treated as direct settings
 or expanded into a blind full-range scan without a specific hypothesis.
-Registers `30000` and `30002` appear in the manufacturer documentation, but
-their bus readability and function code have not been verified. The planned
-read-only probe is [R-8](LIVE_GATEWAY_TESTS.md); that plan explicitly forbids
-writing either register.
+A read-only probe of `30000..30002` on slave `4` on 2026-11-02 ([R-8](LIVE_GATEWAY_TESTS.md#r-8--setting-registers-30000--30002))
+returned `IllegalDataAddressError` (`0x02`) for holding-register reads (`0x03`)
+and `IllegalFunctionError` (`0x01`) for input-register reads (`0x04`).
 
 ### Read-only spot-check of pyairios candidates (2026-10-21)
 
@@ -642,9 +662,16 @@ slave `4` was confirmed as M-WRG-II by the person during this run. This does
 not validate M-WRG-S. The gateway product ID was `116852` on each node.
 
 In a separate check while the user had intensive ventilation active on slave
-`4`, FC03 `41100×3` returned `[0, 0, 0]` in 16.6 ms. This matches the active
-pattern decoded by the integration and confirms intensive-state detection on
-this M-WRG-II unit for that operating state. It does not validate M-WRG-S or
+`4`, FC03 `41100×3` returned `[0, 0, 0]` in 16.6 ms. Starting intensive over
+Modbus (`41123=3`, `41124=227`, `41132=0`) in W-8 on 2026-11-02 produced the
+same `[0, 0, 0]` status and `80/80 m³/h` airflow. Writing off without clearing
+`41123/41124` left the override running, whereas clearing `41123/41124` in the
+same commit stopped the unit; writing a manual target during intensive updated
+the base registers underneath the override, and starting one direction from off
+(`W-12`) was accepted directly by the hardware. Details are under
+[HW-1](HARDWARE_BACKLOG.md#w-8-measurement-on-2026-11-02) and
+[HW-5](HARDWARE_BACKLOG.md#w-12-measurement-on-2026-11-02).
+This does not validate M-WRG-S or
 expose the configured intensive airflow/duration. The separate T-10
 observation on slave `5` used the set-side `41120..41124` block and was
 uncontrolled; it is not needed as evidence for this status-map result.
@@ -775,12 +802,17 @@ behind the target:
 - the target readback therefore comes before measured convergence and never
   proves that the fans have reached the new airflow; the integration does not
   confirm writes from `41020/41021`
+- the status map `41100..41102` showed a committed quick mode, intensive
+  change, or return to manual about 0.15 s after the `41132` commit, at the
+  first read; 36 of 36 such writes on six M-WRG-II units were confirmed by
+  that read, with or without a settle delay (W-20 and W-21 on 2026-11-02)
 
 The individual runs are written up under
 [HW-2](HARDWARE_BACKLOG.md#hw-2--writes-block-the-whole-gateway-for-several-seconds),
-including [W-17](HARDWARE_BACKLOG.md#w-17-home-assistant-write-confirmation-on-2026-10-14)
-and the
-[Home Assistant airflow-lag cycles](HARDWARE_BACKLOG.md#follow-up-airflow-lag-through-home-assistant-on-2026-10-14);
+including [W-17](HARDWARE_BACKLOG.md#w-17-home-assistant-write-confirmation-on-2026-10-14),
+the
+[Home Assistant airflow-lag cycles](HARDWARE_BACKLOG.md#follow-up-airflow-lag-through-home-assistant-on-2026-10-14),
+and [W-20 and W-21](HARDWARE_BACKLOG.md#w-20-and-w-21-on-2026-11-02);
 the 2026-10-09 W-1 run is under
 [HW-7](HARDWARE_BACKLOG.md#follow-up-measurements-on-2026-10-09).
 

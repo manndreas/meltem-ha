@@ -15,7 +15,7 @@ from typing import Any
 
 from homeassistant.components.fan import FanEntity
 from homeassistant.components.fan.const import FanEntityFeature
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util.percentage import (
     percentage_to_ranged_value,
@@ -30,7 +30,7 @@ from .const import (
     profile_max_airflow,
 )
 from .coordinator import MeltemDataUpdateCoordinator
-from .entity import MeltemEntity, room_supports_entity
+from .entity import MeltemEntity, async_add_room_entities, room_has_entity
 from .models import MeltemIntegrationConfigEntry, RoomConfig
 
 DEFAULT_TURN_ON_PERCENTAGE = 50
@@ -47,11 +47,14 @@ async def async_setup_entry(
     """Set up Meltem fan entities."""
 
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(
-        MeltemDirectionalFanEntity(coordinator, room, direction)
-        for room in coordinator.rooms
-        for direction in (DIRECTION_SUPPLY, DIRECTION_EXTRACT)
-        if room_supports_entity(room, f"{direction}_level")
+    async_add_room_entities(
+        coordinator,
+        async_add_entities,
+        lambda room: (
+            MeltemDirectionalFanEntity(coordinator, room, direction)
+            for direction in (DIRECTION_SUPPLY, DIRECTION_EXTRACT)
+            if room_has_entity(room, f"{direction}_level")
+        ),
     )
 
 
@@ -138,8 +141,9 @@ class MeltemDirectionalFanEntity(MeltemEntity, FanEntity):
         )
         await self.coordinator.async_set_direction_level(self.room.key, self._direction, level)
 
+    @callback
     def _handle_coordinator_update(self) -> None:
-        if percentage := self.percentage:
+        if self.coordinator.room_updated(self.room.key) and (percentage := self.percentage):
             self._last_on_percentage = percentage
         super()._handle_coordinator_update()
 

@@ -17,6 +17,8 @@ from .const import (
     OPERATION_MODE_UNBALANCED,
     PRESET_MODE_TO_RAW_CODE,
     SENSOR_OPERATION_MODES,
+    LevelSource,
+    LevelWriteFallback,
 )
 from .models import RoomConfig, RoomState
 from .read_health import group_fresh
@@ -90,10 +92,11 @@ def target_levels(state: RoomState, *, airflow_is_fresh: bool) -> LevelPair:
     return None, None
 
 
-def reported_levels(state: RoomState) -> tuple[LevelPair | None, str | None]:
+def reported_levels(state: RoomState) -> tuple[LevelPair | None, LevelSource | None]:
     """Return the supply/extract pair the unit reports and whether it is a target."""
 
     airflow_is_fresh = group_fresh(state, "flow")
+    source: LevelSource
     if not group_fresh(state, "flow_control") or state.operation_mode is None:
         if not airflow_is_fresh:
             return None, None
@@ -131,10 +134,10 @@ def plan_direction_write(
     room: RoomConfig,
     state: RoomState,
     levels: LevelPair,
-    source: str | None,
+    source: LevelSource | None,
     direction: str,
     level: int,
-) -> tuple[tuple[int, int] | int, str | None]:
+) -> tuple[tuple[int, int] | int, LevelWriteFallback | None]:
     """Plan a directional fan write as either one balanced level or a pair."""
 
     supply, extract = levels
@@ -167,7 +170,9 @@ def plan_direction_write(
         # Measured airflow jitters around one balanced target.
         other = round((supply + extract) / 2)
 
-    fallback = LEVEL_WRITE_FALLBACK_UNKNOWN_MODE if operation_mode is None else None
+    fallback: LevelWriteFallback | None = (
+        LEVEL_WRITE_FALLBACK_UNKNOWN_MODE if operation_mode is None else None
+    )
     starting_from_off = operation_mode == OPERATION_MODE_OFF
     leaving_sensor_control = level > 0 and operation_mode in SENSOR_OPERATION_MODES
     if levels_balanced(level, other) or starting_from_off or leaving_sensor_control:

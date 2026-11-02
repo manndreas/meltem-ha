@@ -4,17 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigEntryState,
+    ConfigFlowResult,
+    ConfigSubentry,
+    SubentryFlowResult,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.service_info.usb import UsbServiceInfo
 from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection
@@ -25,23 +32,25 @@ from custom_components.meltem_ventilation.config_flow import MeltemVentilationCo
 from custom_components.meltem_ventilation.const import (
     CONF_MAX_REQUESTS_PER_SECOND,
     CONF_PORT,
-    CONF_ROOMS,
     DEFAULT_GATEWAY_DEVICE_ID,
     DEFAULT_MAX_REQUESTS_PER_SECOND,
     DOMAIN,
     FIXED_TIMEOUT,
     REQUEST_GAP_SECONDS,
+    SUBENTRY_TYPE_UNIT,
 )
+from custom_components.meltem_ventilation.identifiers import room_entity_unique_id
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
 )
 from custom_components.meltem_ventilation.models import UnitProbeResult
+from custom_components.meltem_ventilation.units import unit_subentry_data
 
 # ---------------------------------------------------------------------------
 #  Helpers
 # ---------------------------------------------------------------------------
 
-_PATCHES_BASE = "custom_components.meltem_ventilation.config_flow"
+_PATCHES_BASE = "custom_components.meltem_ventilation.flow_helpers"
 _PORT = "/dev/ttyACM0"
 _STABLE_PORT = "/dev/serial/by-id/test"
 _USB_DISCOVERY = UsbServiceInfo(
@@ -66,13 +75,17 @@ def _flow_entry(result: ConfigFlowResult) -> ConfigEntry:
     return entry
 
 
-def _flow_schema(result: ConfigFlowResult) -> Schema:
+def _flow_schema(result: ConfigFlowResult | SubentryFlowResult) -> Schema:
     schema = result.get("data_schema")
     assert schema is not None
     return schema
 
 
-def _flow_placeholders(result: ConfigFlowResult) -> Mapping[str, str]:
+def _units(entry: ConfigEntry) -> list[ConfigSubentry]:
+    return sorted(entry.subentries.values(), key=lambda subentry: subentry.data["slave"])
+
+
+def _flow_placeholders(result: ConfigFlowResult | SubentryFlowResult) -> Mapping[str, str]:
     placeholders = result.get("description_placeholders")
     assert placeholders is not None
     return placeholders
@@ -241,7 +254,8 @@ class TestConfigFlowUser:
             domain=DOMAIN,
             title="Existing Meltem gateway",
             unique_id=_STABLE_PORT,
-            data={CONF_PORT: _STABLE_PORT, CONF_ROOMS: []},
+            data={CONF_PORT: _STABLE_PORT},
+            version=2,
         ).add_to_hass(hass)
 
         with _patch_resolve():
@@ -263,10 +277,12 @@ class TestConfigFlowUser:
         self, hass: HomeAssistant, error: Exception, expected: str
     ) -> None:
         with _patch_scan_error(error), _patch_resolve():
-            result = await _async_submit_port(hass)
+            result = await _async_submit_port(hass, "/dev/ttyUSB7")
 
         assert result.get("type") == FlowResultType.FORM
         assert result.get("errors") == {"base": expected}
+        # The form offers the entered port again, not the default.
+        assert _flow_schema(result)({}) == {CONF_PORT: "/dev/ttyUSB7"}
         result = await _async_retry_user_flow(hass, result["flow_id"])
         assert result.get("type") == FlowResultType.CREATE_ENTRY
         assert _flow_entry(result).unique_id == _STABLE_PORT
@@ -391,17 +407,20 @@ class TestConfigFlowProfiles:
 
         assert result.get("type") == FlowResultType.CREATE_ENTRY
         assert result.get("title") == "Meltem Gateway M-WRG-GW"
-        data = _flow_data(result)
-        assert data[CONF_PORT] == _STABLE_PORT
-        assert CONF_MAX_REQUESTS_PER_SECOND not in data
-        rooms = data[CONF_ROOMS]
-        assert len(rooms) == 1
-        assert rooms[0]["profile"] == "ii_fc"
-        assert rooms[0]["slave"] == 2
-        assert rooms[0]["product_id"] == 116852
-        assert rooms[0]["app_setup_code"] == "R000001"
+        assert _flow_data(result) == {CONF_PORT: _STABLE_PORT}
         entry = _flow_entry(result)
-        assert (entry.version, entry.minor_version) == (1, 4)
+        (unit,) = _units(entry)
+        assert unit.subentry_type == SUBENTRY_TYPE_UNIT
+        assert (unit.title, unit.unique_id) == ("Unit 1", "2")
+        assert dict(unit.data) == {
+            "key": "slave_2",
+            "slave": 2,
+            "profile": "ii_fc",
+            "preview": "R-Code R000001 | ID 116852 | CO2",
+            "product_id": 116852,
+            "app_setup_code": "R000001",
+        }
+        assert (entry.version, entry.minor_version) == (2, 1)
         assert entry.options == {}
         assert entry.unique_id == _STABLE_PORT
 
@@ -413,10 +432,9 @@ class TestConfigFlowProfiles:
             )
 
         assert result.get("type") == FlowResultType.CREATE_ENTRY
-        rooms = _flow_data(result)[CONF_ROOMS]
-        assert len(rooms) == 2
-        assert rooms[0]["profile"] == "ii_plain"
-        assert rooms[1]["profile"] == "ii_f"
+        units = _units(_flow_entry(result))
+        assert [unit.data["profile"] for unit in units] == ["ii_plain", "ii_f"]
+        assert [unit.title for unit in units] == ["Unit 1", "Unit 2"]
 
     async def test_profiles_step_uses_stable_field_keys_regardless_of_language(
         self, hass: HomeAssistant
@@ -428,7 +446,7 @@ class TestConfigFlowProfiles:
             result = await _async_submit_profiles(hass, result, {"slave_2": "ii_fc"})
 
         assert result.get("type") == FlowResultType.CREATE_ENTRY
-        assert _flow_data(result)[CONF_ROOMS][0]["profile"] == "ii_fc"
+        assert _units(_flow_entry(result))[0].data["profile"] == "ii_fc"
 
     async def test_usb_flow_shows_unit_previews_in_the_description(
         self, hass: HomeAssistant
@@ -498,12 +516,9 @@ class TestConfigFlowEndToEnd:
             )
 
         assert result.get("type") == FlowResultType.CREATE_ENTRY
-        data = _flow_data(result)
-        assert data[CONF_PORT] == "/dev/serial/by-id/stable"
-        assert CONF_MAX_REQUESTS_PER_SECOND not in data
-        assert len(data[CONF_ROOMS]) == 2
-        assert data[CONF_ROOMS][0]["profile"] == "ii_fc_voc"
-        assert data[CONF_ROOMS][1]["profile"] == "ii_fc"
+        assert _flow_data(result) == {CONF_PORT: "/dev/serial/by-id/stable"}
+        units = _units(_flow_entry(result))
+        assert [unit.data["profile"] for unit in units] == ["ii_fc_voc", "ii_fc"]
 
 
 # ---------------------------------------------------------------------------
@@ -516,22 +531,20 @@ def entry_fixture(hass: HomeAssistant) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Meltem",
-        data={
-            CONF_PORT: _STABLE_PORT,
-            CONF_MAX_REQUESTS_PER_SECOND: 2.0,
-            CONF_ROOMS: [
+        data={CONF_PORT: _STABLE_PORT},
+        options={},
+        subentries_data=[
+            unit_subentry_data(
                 {
                     "key": "unit_1",
                     "name": "Unit 1",
                     "slave": 2,
                     "profile": "ii_plain",
                     "preview": "ID 2 | basic",
-                    "supported_entity_keys": ["level"],
                 }
-            ],
-        },
-        options={},
-        version=1,
+            )
+        ],
+        version=2,
         source="user",
     )
     entry.add_to_hass(hass)
@@ -552,10 +565,6 @@ class TestOptionsFlow:
         """A retrying entry has no runtime_data, but options must stay usable."""
         assert not hasattr(entry, "runtime_data")
 
-        edit_profiles = await _async_open_option(hass, entry, "edit_profiles")
-        assert edit_profiles.get("step_id") == "edit_profiles"
-        assert "Hardware ID 2 | basic" in _flow_placeholders(edit_profiles)["unit_details"]
-
         result = await _async_open_option(hass, entry, "rescan_units")
         rescan = await hass.config_entries.options.async_configure(result["flow_id"], {})
         assert rescan.get("step_id") == "rescan_units"
@@ -568,26 +577,299 @@ class TestOptionsFlow:
                 return_value=UnitProbeResult("plain", "ID 2 | basic", product_id=2)
             ),
         )
-        with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload:
-            rescan = await hass.config_entries.options.async_configure(rescan["flow_id"], {})
-            assert rescan.get("step_id") == "profiles"
-            rescan = await hass.config_entries.options.async_configure(
-                rescan["flow_id"], {"slave_2": "ii_plain"}
-            )
+        rescan = await hass.config_entries.options.async_configure(rescan["flow_id"], {})
+        assert rescan.get("step_id") == "profiles"
+        rescan = await hass.config_entries.options.async_configure(
+            rescan["flow_id"], {"slave_2": "ii_f"}
+        )
 
         assert rescan.get("type") == FlowResultType.CREATE_ENTRY
         assert coordinator.async_discover_gateway_units.await_count == 1
-        mock_reload.assert_awaited_once_with(entry.entry_id)
+        assert _units(entry)[0].data["profile"] == "ii_f"
 
-    async def test_options_edit_profiles_without_units_returns_to_rescan(
+    async def test_rescan_drops_a_stored_code_that_another_unit_now_reports(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
-        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_ROOMS: []})
+        (unit_1,) = _units(entry)
+        hass.config_entries.async_update_subentry(
+            entry, unit_1, data={**unit_1.data, "app_setup_code": "R0000AA"}
+        )
+        hass.config_entries.async_add_subentry(
+            entry,
+            ConfigSubentry(
+                data=MappingProxyType(
+                    {**unit_1.data, "key": "unit_2", "slave": 3, "app_setup_code": "R0000BB"}
+                ),
+                subentry_type=SUBENTRY_TYPE_UNIT,
+                title="Unit 2",
+                unique_id="3",
+            ),
+        )
+        probes = {
+            # The unit now at address 2 cannot be probed and would keep its old code.
+            2: MeltemConnectionError("probe failed"),
+            3: UnitProbeResult("plain", "R-Code R0000AA", app_setup_code="R0000AA"),
+        }
 
-        result = await _async_open_option(hass, entry, "edit_profiles")
+        async def _probe(slave: int) -> UnitProbeResult:
+            result = probes[slave]
+            if isinstance(result, Exception):
+                raise result
+            return result
 
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3]),
+            async_probe_slave_details=AsyncMock(side_effect=_probe),
+        )
+        result = await _async_open_option(hass, entry, "rescan_units")
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"slave_2": "ii_plain", "slave_3": "ii_plain"}
+        )
+        # Unit 2 (R0000BB) is reported nowhere anymore, so its removal needs a confirmation.
+        assert result.get("step_id") == "confirm_remove"
+        assert _flow_placeholders(result)["removed_units"] == (
+            "- **3**: Unit 2, Hardware ID 2 | basic"
+        )
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        codes = {unit.data["slave"]: unit.data.get("app_setup_code") for unit in _units(entry)}
+        assert codes == {2: None, 3: "R0000AA"}
+
+    async def test_rescan_drops_an_ambiguous_stored_code_that_another_unit_reports(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        (unit_1,) = _units(entry)
+        hass.config_entries.async_update_subentry(
+            entry, unit_1, data={**unit_1.data, "app_setup_code": "R0000AA"}
+        )
+        hass.config_entries.async_add_subentry(
+            entry,
+            ConfigSubentry(
+                data=MappingProxyType(
+                    {**unit_1.data, "key": "unit_2", "slave": 3, "app_setup_code": "R0000AA"}
+                ),
+                subentry_type=SUBENTRY_TYPE_UNIT,
+                title="Unit 2",
+                unique_id="3",
+            ),
+        )
+        probes = {
+            2: MeltemConnectionError("probe failed"),
+            3: UnitProbeResult("plain", "R-Code R0000AA", app_setup_code="R0000AA"),
+        }
+
+        async def _probe(slave: int) -> UnitProbeResult:
+            result = probes[slave]
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3]),
+            async_probe_slave_details=AsyncMock(side_effect=_probe),
+        )
+        result = await _async_open_option(hass, entry, "rescan_units")
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"slave_2": "ii_plain", "slave_3": "ii_plain"}
+        )
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        codes = {unit.data["slave"]: unit.data.get("app_setup_code") for unit in _units(entry)}
+        assert codes == {2: None, 3: "R0000AA"}
+
+    async def test_rescan_follows_units_that_moved_or_swapped_addresses_by_setup_code(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        (unit_1,) = _units(entry)
+        hass.config_entries.async_update_subentry(
+            entry,
+            unit_1,
+            data={**unit_1.data, "profile": "ii_fc", "app_setup_code": "R0000AA"},
+        )
+        unit_2 = ConfigSubentry(
+            data=MappingProxyType(
+                {
+                    "key": "unit_2",
+                    "slave": 3,
+                    "profile": "ii_f",
+                    "app_setup_code": "R0000BB",
+                }
+            ),
+            subentry_type=SUBENTRY_TYPE_UNIT,
+            title="Unit 2",
+            unique_id="3",
+        )
+        hass.config_entries.async_add_subentry(entry, unit_2)
+        registry = dr.async_get(hass)
+        device_1 = registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, "unit_1")},
+            name="Meltem Modbus Unit 1",
+        )
+        registry.async_update_device(device_1.id, name_by_user="Bathroom")
+        probes = {
+            2: UnitProbeResult("f", "R-Code R0000BB | humidity", app_setup_code="R0000BB"),
+            8: UnitProbeResult("fc", "R-Code R0000AA | CO2", app_setup_code="R0000AA"),
+        }
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 8]),
+            async_probe_slave_details=AsyncMock(side_effect=probes.__getitem__),
+        )
+
+        result = await _async_open_option(hass, entry, "rescan_units")
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+
+        assert result.get("step_id") == "profiles"
+        assert (
+            "- **8**: Bathroom, R-Code R0000AA | CO2" in _flow_placeholders(result)["unit_details"]
+        )
+        assert _flow_schema(result)({}) == {"slave_2": "ii_f", "slave_8": "ii_fc"}
+
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"slave_2": "ii_f", "slave_8": "ii_fc"}
+        )
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        by_slave = {unit.data["slave"]: unit for unit in _units(entry)}
+        assert set(by_slave) == {2, 8}
+        assert by_slave[2].subentry_id == unit_2.subentry_id
+        assert (by_slave[2].unique_id, by_slave[2].title, by_slave[2].data["key"]) == (
+            "2",
+            "Unit 2",
+            "unit_2",
+        )
+        assert by_slave[8].subentry_id == unit_1.subentry_id
+        assert (by_slave[8].unique_id, by_slave[8].title, by_slave[8].data["key"]) == (
+            "8",
+            "Unit 1",
+            "unit_1",
+        )
+
+    async def test_rescan_keeps_registries_when_a_unit_moves_to_an_unused_address(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        (unit,) = _units(entry)
+        hass.config_entries.async_update_subentry(
+            entry, unit, data={**unit.data, "app_setup_code": "R0000AA"}
+        )
+        devices = dr.async_get(hass)
+        entities = er.async_get(hass)
+        device = devices.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            config_subentry_id=unit.subentry_id,
+            identifiers={(DOMAIN, "unit_1"), (DOMAIN, "app_setup_code:R0000AA")},
+            name="Unit 1",
+        )
+        devices.async_update_device(device.id, name_by_user="Bathroom")
+        fan = entities.async_get_or_create(
+            "fan",
+            DOMAIN,
+            room_entity_unique_id(entry.entry_id, "unit_1", "supply_level"),
+            config_entry=entry,
+            config_subentry_id=unit.subentry_id,
+            device_id=device.id,
+        )
+        entities.async_update_entity(
+            fan.entity_id, name="Bathroom supply", disabled_by=er.RegistryEntryDisabler.USER
+        )
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[3]),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", "R-Code R0000AA", app_setup_code="R0000AA")
+            ),
+        )
+
+        result = await _async_open_option(hass, entry, "rescan_units")
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+        assert _flow_schema(result)({}) == {"slave_3": "ii_plain"}
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"slave_3": "ii_plain"}
+        )
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        (moved,) = _units(entry)
+        assert moved.subentry_id == unit.subentry_id
+        assert moved.unique_id == "3"
+        assert moved.data["key"] == "unit_1"
+        assert moved.data["slave"] == 3
+        retained_device = devices.async_get(device.id)
+        assert retained_device is not None
+        assert retained_device.config_subentry_id == unit.subentry_id
+        assert retained_device.name_by_user == "Bathroom"
+        retained_fan = entities.async_get(fan.entity_id)
+        assert retained_fan is not None
+        assert retained_fan.id == fan.id
+        assert retained_fan.unique_id == fan.unique_id
+        assert retained_fan.config_subentry_id == unit.subentry_id
+        assert retained_fan.name == "Bathroom supply"
+        assert retained_fan.disabled_by is er.RegistryEntryDisabler.USER
+
+    async def test_rescan_removes_units_the_gateway_no_longer_reports(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        dr.async_get(hass).async_update_device(
+            dr.async_get(hass)
+            .async_get_or_create(
+                config_entry_id=entry.entry_id, identifiers={(DOMAIN, "unit_1")}, name="Unit 1"
+            )
+            .id,
+            name_by_user="Bathroom",
+        )
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[3]),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", "ID 3 | basic", product_id=3)
+            ),
+        )
+
+        result = await _async_open_option(hass, entry, "rescan_units")
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"slave_3": "ii_plain"}
+        )
+
+        # Nothing is removed before the user confirms the named units.
         assert result.get("type") == FlowResultType.FORM
-        assert result.get("step_id") == "rescan_units"
+        assert result.get("step_id") == "confirm_remove"
+        assert _flow_placeholders(result) == {
+            "removed_count": "1",
+            "removed_units": "- **2**: Bathroom, Hardware ID 2 | basic",
+        }
+        assert [unit.data["key"] for unit in _units(entry)] == ["unit_1"]
+
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        (unit,) = _units(entry)
+        assert (unit.unique_id, unit.title, unit.data["key"]) == ("3", "Unit 1", "slave_3")
+
+    async def test_rescan_without_removed_units_saves_right_away(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3]),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", "ID 3 | basic", product_id=3)
+            ),
+        )
+
+        result = await _async_open_option(hass, entry, "rescan_units")
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"slave_2": "ii_plain", "slave_3": "ii_plain"}
+        )
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert [unit.data["slave"] for unit in _units(entry)] == [2, 3]
 
     @pytest.mark.parametrize(
         ("error", "slaves", "expected"),
@@ -620,15 +902,14 @@ class TestOptionsFlow:
 
         coordinator.async_discover_gateway_units.side_effect = None
         coordinator.async_discover_gateway_units.return_value = [2]
-        with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload:
-            result = await hass.config_entries.options.async_configure(result["flow_id"], {})
-            assert result.get("step_id") == "profiles"
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"], {"slave_2": "ii_plain"}
-            )
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+        assert result.get("step_id") == "profiles"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"slave_2": "ii_plain"}
+        )
 
         assert result.get("type") == FlowResultType.CREATE_ENTRY
-        mock_reload.assert_awaited_once_with(entry.entry_id)
+        assert _units(entry)[0].data["preview"] == "ID 2 | basic"
 
     async def test_options_request_rate_reloads_without_a_coordinator(
         self, hass: HomeAssistant, entry: MockConfigEntry
@@ -673,58 +954,201 @@ class TestOptionsFlow:
         coordinator.update_request_rate.assert_called_once_with(5.0)
         mock_reload.assert_not_awaited()
 
-    async def test_options_edit_profiles_updates_existing_rooms(
+
+# ---------------------------------------------------------------------------
+#  Unit subentry flow
+# ---------------------------------------------------------------------------
+
+
+async def _async_start_add_unit(hass: HomeAssistant, entry: MockConfigEntry) -> SubentryFlowResult:
+    return await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_UNIT), context={"source": config_entries.SOURCE_USER}
+    )
+
+
+class TestUnitSubentryFlow:
+    async def test_adding_a_unit_needs_a_loaded_gateway(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
+        result = await _async_start_add_unit(hass, entry)
+
+        assert result.get("type") == FlowResultType.ABORT
+        assert result.get("reason") == "entry_not_loaded"
+
+    @pytest.mark.parametrize(
+        ("discover", "reason"),
+        [
+            pytest.param(
+                AsyncMock(side_effect=MeltemConnectionError("offline")),
+                "cannot_connect",
+                id="gateway-error",
+            ),
+            pytest.param(AsyncMock(return_value=[2]), "no_new_units", id="all-set-up"),
+        ],
+    )
+    async def test_adding_a_unit_aborts_without_a_new_unit(
+        self, hass: HomeAssistant, entry: MockConfigEntry, discover: AsyncMock, reason: str
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        probe = AsyncMock()
+        _attach_coordinator(
+            entry, async_discover_gateway_units=discover, async_probe_slave_details=probe
+        )
+
+        result = await _async_start_add_unit(hass, entry)
+
+        assert result.get("type") == FlowResultType.ABORT
+        assert result.get("reason") == reason
+        probe.assert_not_awaited()
+
+    async def test_a_single_new_unit_goes_straight_to_its_profile(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
         probe = AsyncMock(
             return_value=UnitProbeResult(
-                "fc",
-                "R-Code R000001 | ID 99 | CO2",
-                product_id=99,
-                app_setup_code="R000001",
+                "fc", "R-Code R000002 | ID 7 | CO2", product_id=7, app_setup_code="R000002"
             )
         )
-        _attach_coordinator(entry, async_probe_slave_details=probe)
-
-        with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as mock_reload:
-            result = await _async_open_option(hass, entry, "edit_profiles")
-            result = await hass.config_entries.options.async_configure(
-                result["flow_id"], {"slave_2": "ii_fc"}
-            )
-
-        assert result.get("type") == FlowResultType.CREATE_ENTRY
-        mock_reload.assert_awaited_once_with(entry.entry_id)
-        # Showing and submitting the form must not probe the unit twice.
-        assert probe.await_count == 1
-        assert entry.data[CONF_ROOMS][0]["profile"] == "ii_fc"
-        assert entry.data[CONF_ROOMS][0]["preview"] == "R-Code R000001 | ID 99 | CO2"
-        assert entry.data[CONF_ROOMS][0]["product_id"] == 99
-        assert entry.data[CONF_ROOMS][0]["app_setup_code"] == "R000001"
-        # Entities follow from the profile on load, so stale stored keys are dropped.
-        assert "supported_entity_keys" not in entry.data[CONF_ROOMS][0]
-
-    async def test_options_edit_profiles_shows_the_device_name_from_the_registry(
-        self, hass: HomeAssistant, entry: MockConfigEntry
-    ) -> None:
         _attach_coordinator(
             entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3]),
+            async_probe_slave_details=probe,
+        )
+
+        result = await _async_start_add_unit(hass, entry)
+
+        assert result.get("step_id") == "profile"
+        assert _flow_placeholders(result)["slave"] == "3"
+        assert "Hardware ID 7 | CO2" in _flow_placeholders(result)["unit_details"]
+        assert _flow_schema(result)({}) == {"profile": "ii_fc"}
+        probe.assert_awaited_once_with(3)
+
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"profile": "ii_fc"}
+        )
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        added = next(unit for unit in _units(entry) if unit.unique_id == "3")
+        assert added.title == "Unit 2"
+        assert dict(added.data) == {
+            "key": "slave_3",
+            "slave": 3,
+            "profile": "ii_fc",
+            "preview": "R-Code R000002 | ID 7 | CO2",
+            "product_id": 7,
+            "app_setup_code": "R000002",
+        }
+
+    async def test_several_new_units_ask_for_the_address_first(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3, 4]),
             async_probe_slave_details=AsyncMock(
-                return_value=UnitProbeResult("fc", "ID 99 | CO2", product_id=99)
+                side_effect=lambda slave: UnitProbeResult("plain", f"ID {slave} | basic")
             ),
         )
 
+        result = await _async_start_add_unit(hass, entry)
+
+        assert result.get("step_id") == "user"
+        assert _flow_placeholders(result)["device_count"] == "2"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"slave": "4"}
+        )
+        assert result.get("step_id") == "profile"
+        assert _flow_placeholders(result)["slave"] == "4"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"profile": "ii_plain"}
+        )
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert [unit.unique_id for unit in _units(entry)] == ["2", "4"]
+        assert _units(entry)[1].data["key"] == "slave_4"
+
+    async def test_an_added_unit_gets_a_key_no_unit_uses(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        (unit_1,) = _units(entry)
+        # A unit that moved from address 3 keeps its key after a rescan.
+        hass.config_entries.async_add_subentry(
+            entry,
+            ConfigSubentry(
+                data=MappingProxyType({**unit_1.data, "key": "slave_3", "slave": 5}),
+                subentry_type=SUBENTRY_TYPE_UNIT,
+                title="Unit 2",
+                unique_id="5",
+            ),
+        )
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3, 5]),
+            async_probe_slave_details=AsyncMock(side_effect=MeltemConnectionError("no answer")),
+        )
+
+        result = await _async_start_add_unit(hass, entry)
+        assert _flow_schema(result)({}) == {"profile": "ii_plain"}
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"profile": "ii_plain"}
+        )
+
+        added = next(unit for unit in _units(entry) if unit.unique_id == "3")
+        assert added.title == "Unit 3"
+        assert dict(added.data) == {"key": "slave_3_2", "slave": 3, "profile": "ii_plain"}
+
+    async def test_reconfigure_changes_the_profile_of_one_unit(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        (unit,) = _units(entry)
         registry = dr.async_get(hass)
         device = registry.async_get_or_create(
             config_entry_id=entry.entry_id,
             identifiers={(DOMAIN, "unit_1")},
             name="Meltem Modbus Unit 1",
         )
-        registry.async_update_device(device.id, name_by_user="Bad")
+        registry.async_update_device(device.id, name_by_user="Bathroom")
 
-        result = await _async_open_option(hass, entry, "edit_profiles")
+        result = await entry.start_subentry_reconfigure_flow(hass, unit.subentry_id)
 
-        assert result.get("step_id") == "edit_profiles"
-        assert _flow_placeholders(result)["unit_details"] == ("- **2**: Bad, Hardware ID 99 | CO2")
+        assert result.get("step_id") == "reconfigure"
+        assert _flow_placeholders(result)["unit"] == "Bathroom"
+        assert _flow_placeholders(result)["unit_details"] == (
+            "- **2**: Bathroom, Hardware ID 2 | basic"
+        )
+        assert _flow_schema(result)({}) == {"profile": "ii_plain"}
+        with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
+            result = await hass.config_entries.subentries.async_configure(
+                result["flow_id"], {"profile": "ii_fc"}
+            )
+
+        assert result.get("type") == FlowResultType.ABORT
+        assert result.get("reason") == "reconfigure_successful"
+        assert dict(_units(entry)[0].data) == {**unit.data, "profile": "ii_fc"}
+        # Without a loaded entry there is no update listener to reload it.
+        mock_reload.assert_called_once_with(entry.entry_id)
+
+    async def test_reconfigure_of_a_loaded_entry_leaves_the_reload_to_its_listener(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        (unit,) = _units(entry)
+        listener = AsyncMock()
+        entry.add_update_listener(listener)
+
+        result = await entry.start_subentry_reconfigure_flow(hass, unit.subentry_id)
+        with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
+            result = await hass.config_entries.subentries.async_configure(
+                result["flow_id"], {"profile": "ii_f"}
+            )
+            await hass.async_block_till_done()
+
+        assert result.get("reason") == "reconfigure_successful"
+        assert _units(entry)[0].data["profile"] == "ii_f"
+        mock_reload.assert_not_called()
+        listener.assert_awaited_once_with(hass, entry)
 
 
 # ---------------------------------------------------------------------------
@@ -733,6 +1157,24 @@ class TestOptionsFlow:
 
 
 class TestReconfigureFlow:
+    async def test_reconfigure_of_a_loaded_entry_leaves_the_reload_to_its_listener(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        listener = AsyncMock()
+        entry.add_update_listener(listener)
+        with (
+            _patch_validate_ok(),
+            _patch_resolve_unchanged(),
+            patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
+        ):
+            result = await _async_reconfigure(hass, entry, "/dev/ttyACM1")
+            await hass.async_block_till_done()
+
+        assert result.get("reason") == "reconfigure_successful"
+        assert entry.data[CONF_PORT] == "/dev/ttyACM1"
+        mock_reload.assert_not_called()
+        listener.assert_awaited_once_with(hass, entry)
+
     async def test_reconfigure_updates_the_port_and_reloads(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:

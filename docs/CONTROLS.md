@@ -17,7 +17,8 @@ A new fan value is shown immediately. The `level_source` attribute identifies
 whether the displayed airflow is a `pending` write, a confirmed `target`, or
 `measured` airflow. Turning on a fan that is already running changes nothing,
 so it does not end a running sensor mode. Turning on a stopped direction
-restores its last speed. If the opposite direction cannot be read, a non-zero
+restores the speed it last had since Home Assistant started; after a restart
+it starts at 50 %. If the opposite direction cannot be read, a non-zero
 value is applied to both directions, and switching off a single direction is
 refused instead of stopping the whole unit.
 

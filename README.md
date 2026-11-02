@@ -23,11 +23,15 @@ gateways, Home Assistant hosts, or other connected equipment.
 - app-style quick modes, sensor-driven control modes and an intensive
   ventilation switch
 - writable humidity and CO2 control thresholds for supported profiles
-- gateway fault and filter-change overviews, measured airflow totals, connection
-  diagnostics and optional communication-quality sensors
-- per-unit reachability, last command status, last successful update and measured
-  airflow balance; optional experimental gateway uptime
+- gateway connected-device count, measured airflow totals and delta, connection
+  diagnostics, and optional RF, uptime, UTC clock, and communication-quality sensors
+- per-unit reachability, read health, last successful update, measured airflow
+  balance, and optional RF, fan-hour, and app-setup-code diagnostics
 - automation triggers and conditions for a due filter change
+- each unit as its own entry under the gateway, with **Add unit** and a
+  per-unit profile change
+- repair notices for units the gateway reports but Home Assistant does not have
+  yet, and for sensors of the selected profile that report no value
 - USB discovery for the Meltem gateway
 
 ## Controls
@@ -94,8 +98,19 @@ address belongs to each physical unit. Profile selection still uses the model
 information on the type plate.
 
 Units are listed by their Modbus address and initially named `Unit 1`, `Unit 2`
-and so on. Rename them like any other Home Assistant device; the new name is
-also shown when you edit the profiles later.
+and so on. Each unit appears as its own entry under the gateway on the
+integration page. Rename them like any other Home Assistant device; the new
+name is also shown when you change a profile later.
+
+### Units
+
+- **Add unit** on the integration page adds a unit that was paired in the
+  Meltem app after the initial setup. Home Assistant shows a repair notice when
+  the gateway reports such a unit.
+- **Reconfigure** on a unit changes its profile. The integration reloads
+  afterwards.
+- Deleting a unit removes its device and entities. A later **Scan for new
+  units** adds it again if the gateway still reports it.
 
 ## Supported profiles
 
@@ -123,10 +138,10 @@ Open the integration options via `Settings` -> `Devices & Services` -> `Meltem M
 - **Change request rate** — adjust the shared read-request cap (default
   **4 requests per second**, configurable from **0.5 to 10**). See
   [polling and diagnostics](./docs/DIAGNOSTICS.md) for details.
-- **Change profiles for existing units** — reassign profiles without rescanning
-  the gateway
-- **Scan for new units** — discover units that were added to the gateway after
-  the initial setup
+- **Scan for new units** — read the unit list from the gateway again: new units
+  are added and moved units are updated; the profiles of all units can be
+  changed in the same step. Units the gateway no longer reports are listed for
+  confirmation before they are removed together with their devices
 
 To move the gateway to another serial port, choose `Reconfigure` in the menu
 of the integration entry. The new port is checked before it is saved.
@@ -139,12 +154,12 @@ number of configured units. See the
 [diagnostics guide](./docs/DIAGNOSTICS.md) for refresh intervals, read health,
 availability, and log collection.
 
-The gateway device groups fault and filter-change counts and total measured
-supply/extract airflow across configured units. Each unit also exposes its
-reachability, last command status, and airflow balance. Communication quality,
-the last successful update timestamp, and experimental gateway uptime can be
-enabled in the entity settings. Uptime adds optional register reads and is not
-yet suitable for restart detection; other new diagnostics reuse existing data.
+The gateway device exposes the connected-device count, Modbus connection status,
+and total measured supply, extract, and delta airflow across configured units.
+Each unit also exposes its reachability, read health, and airflow balance.
+Communication quality, cumulative Modbus counters, RF diagnostics, the last
+successful update timestamp, the app setup code, gateway uptime, and the
+gateway UTC clock can be enabled in the entity settings.
 
 ## Troubleshooting
 

@@ -13,6 +13,15 @@ Home Assistant config entry before uninstalling the integration files.
 Home Assistant unloads the integration, its entities, and its connection to
 the gateway. You do not need to remove the entities individually.
 
+## Remove a single unit
+
+Each unit is listed as its own entry under the gateway on the **Meltem
+Modbus** integration page. Open the menu of that unit and select **Delete**.
+Home Assistant removes the unit's device and entities and reloads the
+integration; the other units keep running. If the gateway still reports the
+unit, Home Assistant shows a repair notice, and **Add unit** or **Scan for new
+units** adds it again.
+
 ## Uninstall the integration
 
 If you installed the integration through the Marketplace, open **Settings** >

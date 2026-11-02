@@ -172,6 +172,18 @@ class Temperatures(Component):
     exhaust_temperature = _float32(REGISTER_EXHAUST_AIR_TEMPERATURE)
 
 
+class AirQuality(Component):
+    """Extract air humidity/CO2, supply air temperature, and supply air humidity/VOC."""
+
+    register_ranges = ((REGISTER_HUMIDITY_EXTRACT_AIR, REGISTER_VOC_SUPPLY_AIR),)
+
+    humidity_extract_air = raw_register(REGISTER_HUMIDITY_EXTRACT_AIR)
+    co2_extract_air = raw_register(REGISTER_CO2_EXTRACT_AIR)
+    supply_air_temperature = _float32(REGISTER_SUPPLY_AIR_TEMPERATURE)
+    humidity_supply_air = raw_register(REGISTER_HUMIDITY_SUPPLY_AIR)
+    voc_supply_air = raw_register(REGISTER_VOC_SUPPLY_AIR)
+
+
 class SupplyTemperature(Component):
     """Supply air temperature."""
 

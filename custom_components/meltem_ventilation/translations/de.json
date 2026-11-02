@@ -85,10 +85,9 @@
     "step": {
       "init": {
         "title": "Meltem Modbus konfigurieren",
-        "description": "Wähle aus, ob du die Abfragerate ändern, Profile bestehender Geräte ändern oder nach neuen Geräten suchen möchtest.",
+        "description": "Wähle aus, ob du die Abfragerate ändern oder das Gateway nach neuen, verschobenen oder entfernten Geräten durchsuchen möchtest. Das Profil eines einzelnen Geräts änderst du über „Neu konfigurieren“ an diesem Gerät.",
         "menu_options": {
           "edit_request_rate": "Abfragerate ändern",
-          "edit_profiles": "Profile bestehender Geräte ändern",
           "rescan_units": "Nach neuen Geräten suchen"
         }
       },
@@ -102,47 +101,13 @@
           "max_requests_per_second": "Maximale Rate einzelner Modbus-Leseanfragen über alle Geräte hinweg, einschließlich Wiederholungen und Rücklesungen nach Schreibvorgängen. Auch Abfragejobs starten höchstens mit dieser Rate; Schreibsequenzen folgen ihren separaten Hardware-Zeitabständen."
         }
       },
-      "edit_profiles": {
-        "title": "Profile bestehender Geräte ändern",
-        "description": "Aktualisiere das ausgewählte Profil für jedes eingerichtete Meltem M-WRG Gerät.\n\n{unit_details}",
-        "data": {
-          "slave_2": "Gerät an Modbus-Adresse 2",
-          "slave_3": "Gerät an Modbus-Adresse 3",
-          "slave_4": "Gerät an Modbus-Adresse 4",
-          "slave_5": "Gerät an Modbus-Adresse 5",
-          "slave_6": "Gerät an Modbus-Adresse 6",
-          "slave_7": "Gerät an Modbus-Adresse 7",
-          "slave_8": "Gerät an Modbus-Adresse 8",
-          "slave_9": "Gerät an Modbus-Adresse 9",
-          "slave_10": "Gerät an Modbus-Adresse 10",
-          "slave_11": "Gerät an Modbus-Adresse 11",
-          "slave_12": "Gerät an Modbus-Adresse 12",
-          "slave_13": "Gerät an Modbus-Adresse 13",
-          "slave_14": "Gerät an Modbus-Adresse 14",
-          "slave_15": "Gerät an Modbus-Adresse 15",
-          "slave_16": "Gerät an Modbus-Adresse 16"
-        },
-        "data_description": {
-          "slave_2": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_3": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_4": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_5": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_6": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_7": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_8": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_9": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_10": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_11": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_12": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_13": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_14": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_15": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_16": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis."
-        }
-      },
       "rescan_units": {
         "title": "Nach neuen Meltem M-WRG Geräten suchen",
-        "description": "Scanne das Meltem-Gateway nach eingerichteten Meltem M-WRG Geräten und aktualisiere die gespeicherten Profile."
+        "description": "Scanne das Meltem-Gateway nach eingerichteten Meltem M-WRG Geräten und aktualisiere die gespeicherten Profile. Geräte, die das Gateway nicht mehr meldet, werden nach deiner Bestätigung samt ihren Geräteeinträgen entfernt."
+      },
+      "confirm_remove": {
+        "title": "Geräte entfernen",
+        "description": "Das Gateway meldet {removed_count} der eingerichteten Geräte nicht mehr. Mit Absenden werden sie samt Geräteeinträgen, Entitäten und Entitätseinstellungen entfernt:\n\n{removed_units}\n\nIst ein Gerät nur ausgeschaltet oder außer Funkreichweite, schließe diesen Dialog stattdessen und scanne später erneut."
       },
       "profiles": {
         "title": "Erkannte Meltem M-WRG Geräte",
@@ -423,6 +388,7 @@
       "state_units": "Geräte mit Live-Status",
       "last_update_success": "Letzte Aktualisierung erfolgreich",
       "last_job_error": "Letzter Abfragefehler",
+      "last_unit_errors": "Letzter Lesefehler je Gerät",
       "unavailable_units": "Aktuell nicht verfügbare Geräte",
       "stale_read_groups": "Veraltete Datengruppen"
     }
@@ -448,6 +414,75 @@
     },
     "gateway_communication_failed": {
       "message": "Die Kommunikation mit dem Meltem-Gateway ist fehlgeschlagen. Prüfe die USB-Verbindung und den seriellen Anschluss."
+    }
+  },
+  "issues": {
+    "missing_humidity_extract_air": {
+      "title": "{unit}: Abluftfeuchte wird nicht gemeldet",
+      "description": "Das Profil {profile} von {unit} enthält einen Abluft-Feuchtesensor, das Gerät meldet aber weiterhin keinen Messwert. Der Sensor zeigt deshalb „Unbekannt“.\n\nPrüfe, ob das gewählte Profil zum Typenschild des Geräts passt, und konfiguriere das Gerät andernfalls neu. Ist das Profil richtig, ist der Sensor möglicherweise defekt. Diese Meldung verschwindet, sobald das Gerät wieder einen Wert meldet."
+    },
+    "missing_humidity_supply_air": {
+      "title": "{unit}: Zuluftfeuchte wird nicht gemeldet",
+      "description": "Das Profil {profile} von {unit} enthält einen Zuluft-Feuchtesensor, das Gerät meldet aber weiterhin keinen Messwert. Der Sensor zeigt deshalb „Unbekannt“.\n\nPrüfe, ob das gewählte Profil zum Typenschild des Geräts passt, und konfiguriere das Gerät andernfalls neu. Ist das Profil richtig, ist der Sensor möglicherweise defekt. Diese Meldung verschwindet, sobald das Gerät wieder einen Wert meldet."
+    },
+    "missing_co2_extract_air": {
+      "title": "{unit}: Abluft-CO2 wird nicht gemeldet",
+      "description": "Das Profil {profile} von {unit} enthält einen Abluft-CO2-Sensor, das Gerät meldet aber weiterhin keinen Messwert. Der Sensor zeigt deshalb „Unbekannt“.\n\nPrüfe, ob das gewählte Profil zum Typenschild des Geräts passt, und konfiguriere das Gerät andernfalls neu. Ist das Profil richtig, ist der Sensor möglicherweise defekt. Diese Meldung verschwindet, sobald das Gerät wieder einen Wert meldet."
+    },
+    "missing_voc_supply_air": {
+      "title": "{unit}: Zuluft-VOC wird nicht gemeldet",
+      "description": "Das Profil {profile} von {unit} enthält einen Zuluft-VOC-Sensor, das Gerät meldet aber weiterhin keinen Messwert. Der Sensor zeigt deshalb „Unbekannt“.\n\nPrüfe, ob das gewählte Profil zum Typenschild des Geräts passt, und konfiguriere das Gerät andernfalls neu. Ist das Profil richtig, ist der Sensor möglicherweise defekt. Diese Meldung verschwindet, sobald das Gerät wieder einen Wert meldet."
+    },
+    "new_units_found": {
+      "title": "Das Meltem-Gateway meldet Geräte, die nicht eingerichtet sind",
+      "description": "Das Gateway meldet {count} Meltem M-WRG Geräte, die Home Assistant noch nicht kennt, an Modbus-Adresse {addresses}.\n\nUm sie hinzuzufügen, öffne die Integration Meltem Modbus und wähle **Gerät hinzufügen**, oder starte in ihren Optionen **Nach neuen Geräten suchen**. Das Profil lässt sich nicht zuverlässig erkennen, deshalb wählst du es anhand des Typenschilds jedes Geräts aus. Diese Meldung verschwindet, sobald jedes vom Gateway gemeldete Gerät eingerichtet ist."
+    }
+  },
+  "config_subentries": {
+    "unit": {
+      "entry_type": "Meltem M-WRG Gerät",
+      "initiate_flow": {
+        "user": "Gerät hinzufügen",
+        "reconfigure": "Profil ändern"
+      },
+      "step": {
+        "user": {
+          "title": "Meltem M-WRG Gerät hinzufügen",
+          "description": "Das Gateway meldet {device_count} Geräte, die noch nicht eingerichtet sind. Wähle die Modbus-Adresse des Geräts, das du hinzufügen möchtest.\n\n{unit_details}",
+          "data": {
+            "slave": "Modbus-Adresse"
+          },
+          "data_description": {
+            "slave": "Modbus-Adresse des hinzuzufügenden Geräts, wie oben aufgeführt."
+          }
+        },
+        "profile": {
+          "title": "Profil des Geräts an Modbus-Adresse {slave}",
+          "description": "Wähle das genaue Modellprofil des neuen Geräts. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.\n\n{unit_details}",
+          "data": {
+            "profile": "Profil"
+          },
+          "data_description": {
+            "profile": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält."
+          }
+        },
+        "reconfigure": {
+          "title": "Profil von {unit} ändern",
+          "description": "Wähle das genaue Modellprofil des Geräts. Prüfe das Typenschild; die Integration wird danach neu geladen.\n\n{unit_details}",
+          "data": {
+            "profile": "Profil"
+          },
+          "data_description": {
+            "profile": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält."
+          }
+        }
+      },
+      "abort": {
+        "entry_not_loaded": "Das Meltem-Gateway ist nicht geladen. Geräte lassen sich nur hinzufügen, solange es verbunden ist.",
+        "cannot_connect": "Verbindung zum Meltem-Gateway fehlgeschlagen.",
+        "no_new_units": "Das Gateway meldet keine Geräte, die noch nicht eingerichtet sind. Füge das Gerät zuerst in der Meltem-App hinzu.",
+        "already_configured": "Dieses Gerät ist bereits eingerichtet."
+      }
     }
   }
 }

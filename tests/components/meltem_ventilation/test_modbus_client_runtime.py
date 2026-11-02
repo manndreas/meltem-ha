@@ -354,7 +354,13 @@ class TestWriteLevel:
             pytest.param(
                 _ROOM,
                 0,
-                [(REGISTER_MODE, MODE_OFF), (REGISTER_CURRENT_LEVEL, 0), (REGISTER_APPLY, 0)],
+                [
+                    (REGISTER_PRESET_MODE, 0),
+                    (REGISTER_PRESET_VALUE, 0),
+                    (REGISTER_MODE, MODE_OFF),
+                    (REGISTER_CURRENT_LEVEL, 0),
+                    (REGISTER_APPLY, 0),
+                ],
                 id="zero-switches-the-unit-off",
             ),
             pytest.param(
@@ -577,6 +583,8 @@ class TestWriteOperatingMode:
         await client.write_operating_mode(_ROOM, "off", 60, 40)
 
         assert _written(events) == [
+            (REGISTER_PRESET_MODE, 0),
+            (REGISTER_PRESET_VALUE, 0),
             (REGISTER_MODE, MODE_OFF),
             (REGISTER_CURRENT_LEVEL, 0),
             (REGISTER_APPLY, 0),
@@ -661,6 +669,38 @@ class TestWritePresetMode:
     async def test_unknown_preset_is_rejected(self, client: MeltemModbusClient) -> None:
         with pytest.raises(MeltemModbusError, match="Unsupported preset mode"):
             await client.write_preset_mode(_ROOM, "turbo")
+
+    async def test_a_commit_over_staged_registers_is_logged(
+        self,
+        client: MeltemModbusClient,
+        link: MockModbusConnection,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        unit = link.for_unit(_ROOM.slave)
+        events = _writes(link, _ROOM)
+        unit.fail_write(REGISTER_EXTRACT_AIR_TARGET_LEVEL, IllegalDataValueError())
+        with pytest.raises(MeltemModbusError):
+            await client.write_unbalanced_levels(_ROOM, 60, 40)
+        unit.fail_write(REGISTER_EXTRACT_AIR_TARGET_LEVEL, None)
+
+        await client.clear_intensive(_ROOM)
+
+        # The command itself is unchanged; only the log shows the staged registers.
+        assert _written(events)[-3:] == [
+            (REGISTER_PRESET_MODE, 0),
+            (REGISTER_PRESET_VALUE, 0),
+            (REGISTER_APPLY, 0),
+        ]
+        warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "clearing intensive mode also applies" in warnings[0].getMessage()
+        assert "current_level, extract_target_level, mode" in warnings[0].getMessage()
+
+        caplog.clear()
+        await client.write_unbalanced_levels(_ROOM, 30, 50)
+        await client.clear_intensive(_ROOM)
+
+        assert not [record for record in caplog.records if record.levelname == "WARNING"]
 
 
 class TestWriteControlSetting:

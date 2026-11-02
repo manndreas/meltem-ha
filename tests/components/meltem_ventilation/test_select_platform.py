@@ -14,18 +14,17 @@ from custom_components.meltem_ventilation.select import (
     MeltemPresetModeSelect,
 )
 
+from .common import mock_coordinator
+
 _ROOM = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc", slave=2)
 
 
 def _coordinator(state: RoomState) -> MagicMock:
-    coordinator = MagicMock()
+    coordinator = mock_coordinator()
     coordinator.last_update_success = True
     coordinator.room_available.return_value = True
     coordinator.read_group_fresh.return_value = True
     coordinator.optimistic_preset_mode.return_value = None
-    coordinator.async_set_operation_mode = AsyncMock()
-    coordinator.async_set_preset_mode = AsyncMock()
-    coordinator.async_clear_preset_mode = AsyncMock()
     coordinator.safe_data = {"unit_1": state}
     return coordinator
 

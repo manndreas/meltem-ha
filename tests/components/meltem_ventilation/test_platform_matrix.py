@@ -13,6 +13,7 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import EntityCategory, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
@@ -28,11 +29,20 @@ from custom_components.meltem_ventilation.const import (
     MODEL_PROFILES,
     PLATFORMS,
     READ_GROUP_ENTITY_KEYS,
+    WRITE_CONFIRMATION_TIMEOUT_SECONDS,
+    WRITE_HEALTH_RETENTION_SECONDS,
 )
 from custom_components.meltem_ventilation.modbus_helpers import (
     supported_entity_keys_for_profile,
 )
-from custom_components.meltem_ventilation.models import GatewayRfStatistics, ReadHealth, RoomState
+from custom_components.meltem_ventilation.models import (
+    GatewayRfStatistics,
+    ReadHealth,
+    ReadJobOutcome,
+    RoomRead,
+    RoomState,
+)
+from custom_components.meltem_ventilation.units import unit_subentry_data
 
 type SetupProfile = Callable[..., Awaitable[str]]
 
@@ -124,7 +134,7 @@ def _entries(hass: HomeAssistant, entry_id: str) -> list[er.RegistryEntry]:
 
 def _unit_entity_keys(hass: HomeAssistant, entry_id: str) -> dict[Platform, set[str]]:
     """Return the entity keys of unit_1, grouped by platform."""
-    prefix = f"{DOMAIN}_unit_1_"
+    prefix = f"{DOMAIN}_{entry_id}_unit_1_"
     created: dict[Platform, set[str]] = {platform: set() for platform in PLATFORMS}
     for entity in _entries(hass, entry_id):
         if entity.unique_id.startswith(prefix):
@@ -169,31 +179,39 @@ def setup_profile_fixture(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) 
         AsyncMock(),
     )
     monkeypatch.setattr(
-        "custom_components.meltem_ventilation.MeltemModbusClient.read_room_state",
-        AsyncMock(return_value=RoomState()),
+        "custom_components.meltem_ventilation.MeltemModbusClient.read_room",
+        AsyncMock(return_value=RoomRead(RoomState(), ReadJobOutcome())),
     )
 
-    async def _setup(profile: str, room_count: int = 1) -> str:
-        entry = MockConfigEntry(
-            domain=DOMAIN,
-            title="Meltem",
-            data={
-                CONF_PORT: "/dev/ttyACM0",
-                CONF_ROOMS: [
-                    {
-                        "key": f"unit_{room_number}",
-                        "name": f"Unit {room_number}",
-                        "slave": room_number + 1,
-                        "profile": profile,
-                        "preview": "ID 1 | basic",
-                        "supported_entity_keys": supported_entity_keys_for_profile(profile),
-                    }
-                    for room_number in range(1, room_count + 1)
-                ],
-            },
-            version=1,
-            source="user",
-        )
+    async def _setup(profile: str, room_count: int = 1, *, legacy: bool = False) -> str:
+        rooms = [
+            {
+                "key": f"unit_{room_number}",
+                "name": f"Unit {room_number}",
+                "slave": room_number + 1,
+                "profile": profile,
+                "preview": "ID 1 | basic",
+            }
+            for room_number in range(1, room_count + 1)
+        ]
+        if legacy:
+            # Version 1 stored the units in the entry data; setup migrates it.
+            entry = MockConfigEntry(
+                domain=DOMAIN,
+                title="Meltem",
+                data={CONF_PORT: "/dev/ttyACM0", CONF_ROOMS: rooms},
+                version=1,
+                source="user",
+            )
+        else:
+            entry = MockConfigEntry(
+                domain=DOMAIN,
+                title="Meltem",
+                data={CONF_PORT: "/dev/ttyACM0"},
+                subentries_data=[unit_subentry_data(room) for room in rooms],
+                version=2,
+                source="user",
+            )
         entry.add_to_hass(hass)
 
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -210,6 +228,28 @@ async def test_profile_creates_the_expected_entities(
     entry_id = await setup_profile(profile)
 
     assert _unit_entity_keys(hass, entry_id) == _expected(profile)
+
+
+@pytest.mark.parametrize("profile", MODEL_PROFILES)
+async def test_unit_entities_keep_their_registry_entries_across_reloads(
+    hass: HomeAssistant, setup_profile: SetupProfile, profile: str
+) -> None:
+    """The registry cleanup and the platforms must agree on every entity of a unit.
+
+    Otherwise setup would delete and recreate entities on every start, and the
+    user's entity settings would be lost each time.
+    """
+    entry_id = await setup_profile(profile)
+    registry = er.async_get(hass)
+    before = {entity.unique_id: entity.id for entity in _entries(hass, entry_id)}
+
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
+
+    assert {entity.unique_id: entity.id for entity in _entries(hass, entry_id)} == before
+    assert registry.async_get_entity_id(
+        "binary_sensor", DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_data_health"
+    )
 
 
 @pytest.mark.parametrize("profile", MODEL_PROFILES)
@@ -257,10 +297,11 @@ async def test_diagnostic_connection_entities_are_created_once_and_disabled(
     )
 
 
+@pytest.mark.parametrize("legacy", [False, True])
 async def test_unit_devices_hang_off_the_gateway_device(
-    hass: HomeAssistant, setup_profile: SetupProfile
+    hass: HomeAssistant, setup_profile: SetupProfile, legacy: bool
 ) -> None:
-    entry_id = await setup_profile("ii_plain", room_count=2)
+    entry_id = await setup_profile("ii_plain", room_count=2, legacy=legacy)
 
     registry = dr.async_get(hass)
     gateway = registry.async_get_device_by_identifier((DOMAIN, entry_id), entry_id)
@@ -272,10 +313,23 @@ async def test_unit_devices_hang_off_the_gateway_device(
     ]
     assert len(units) == 2
     assert all(device.via_device_id == gateway.id for device in units)
-    # The entry was created as 1.1 and migrated on setup.
-    migrated_entry = hass.config_entries.async_get_entry(entry_id)
-    assert migrated_entry is not None
-    assert migrated_entry.minor_version == 4
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    assert (entry.version, entry.minor_version) == (2, 1)
+    # Every unit device belongs to its own subentry, the gateway to the entry itself.
+    assert {device.config_subentry_id for device in units} == set(entry.subentries)
+    assert gateway.config_subentry_id is None
+    for unit in entry.subentries.values():
+        unit_entities = [
+            entity
+            for entity in _entries(hass, entry_id)
+            if entity.config_subentry_id == unit.subentry_id
+        ]
+        assert unit_entities
+        assert all(
+            entity.unique_id.startswith(f"{DOMAIN}_{entry_id}_{unit.data['key']}_")
+            for entity in unit_entities
+        )
 
 
 async def test_entity_states_follow_every_coordinator_update(
@@ -288,10 +342,10 @@ async def test_entity_states_follow_every_coordinator_update(
     coordinator = entry.runtime_data.coordinator
     registry = er.async_get(hass)
     sensor_id = registry.async_get_entity_id(
-        Platform.SENSOR, DOMAIN, f"{DOMAIN}_unit_1_exhaust_temperature"
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_exhaust_temperature"
     )
     problem_id = registry.async_get_entity_id(
-        Platform.BINARY_SENSOR, DOMAIN, f"{DOMAIN}_unit_1_error_status"
+        Platform.BINARY_SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_error_status"
     )
     assert sensor_id is not None
     assert problem_id is not None
@@ -378,9 +432,7 @@ async def test_gateway_diagnostics_are_created_once_on_the_gateway(
 ) -> None:
     entry_id = await setup_profile("ii_plain", room_count=2)
     prefix = f"{DOMAIN}_{entry_id}_"
-    entities = [
-        entity for entity in _entries(hass, entry_id) if entity.unique_id.startswith(prefix)
-    ]
+    entities = [entity for entity in _entries(hass, entry_id) if entity.config_subentry_id is None]
 
     assert {entity.unique_id.removeprefix(prefix) for entity in entities} == set(
         GATEWAY_ENTITY_PLATFORM_BY_KEY
@@ -425,26 +477,25 @@ async def test_gateway_connected_devices_activation_and_unload(
         Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_gateway_connected_devices"
     )
     assert entity_id is not None
-    assert entry.runtime_data.coordinator._gateway_connected_devices_enabled
+    assert entry.runtime_data.coordinator.optional_gateway_reads["connected_devices"].enabled
     registry.async_update_entity(entity_id, disabled_by=er.RegistryEntryDisabler.USER)
     assert await hass.config_entries.async_reload(entry_id)
     await hass.async_block_till_done()
-    assert not entry.runtime_data.coordinator._gateway_connected_devices_enabled
+    assert not entry.runtime_data.coordinator.optional_gateway_reads["connected_devices"].enabled
     registry.async_update_entity(entity_id, disabled_by=None)
     assert await hass.config_entries.async_reload(entry_id)
     await hass.async_block_till_done()
     coordinator = entry.runtime_data.coordinator
-    assert coordinator._gateway_connected_devices_enabled
-    async with coordinator._gateway_lock:
-        await coordinator._async_read_gateway_connected_devices_due()
+    assert coordinator.optional_gateway_reads["connected_devices"].enabled
+    await coordinator.optional_gateway_reads["connected_devices"].async_read_if_due()
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     state = hass.states.get(entity_id)
     assert state is not None
     assert state.state == "6"
     assert await hass.config_entries.async_unload(entry_id)
-    assert not coordinator._gateway_connected_devices_enabled
-    assert coordinator._gateway_connected_devices_task is None
+    assert not coordinator.optional_gateway_reads["connected_devices"].enabled
+    assert not coordinator.optional_gateway_reads["connected_devices"].reading
 
 
 @pytest.mark.parametrize(
@@ -462,7 +513,7 @@ async def test_gateway_rf_activation_updates_and_unload(
     entry_id = await setup_profile("ii_plain")
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry is not None
-    assert not entry.runtime_data.coordinator._gateway_rf_statistics_consumers
+    assert not entry.runtime_data.coordinator.optional_gateway_reads["rf_statistics"].consumers
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id(Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_{key}")
     assert entity_id is not None
@@ -470,9 +521,8 @@ async def test_gateway_rf_activation_updates_and_unload(
     assert await hass.config_entries.async_reload(entry_id)
     await hass.async_block_till_done()
     coordinator = entry.runtime_data.coordinator
-    assert coordinator._gateway_rf_statistics_consumers == {key}
-    async with coordinator._gateway_lock:
-        await coordinator._async_read_gateway_rf_statistics_due()
+    assert coordinator.optional_gateway_reads["rf_statistics"].consumers == {key}
+    await coordinator.optional_gateway_reads["rf_statistics"].async_read_if_due()
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     state = hass.states.get(entity_id)
@@ -482,8 +532,8 @@ async def test_gateway_rf_activation_updates_and_unload(
     if "load" in key:
         assert state.attributes["unit_of_measurement"] == "%"
     assert await hass.config_entries.async_unload(entry_id)
-    assert not coordinator._gateway_rf_statistics_consumers
-    assert coordinator._gateway_rf_statistics_task is None
+    assert not coordinator.optional_gateway_reads["rf_statistics"].consumers
+    assert not coordinator.optional_gateway_reads["rf_statistics"].reading
 
 
 @pytest.mark.parametrize("key", ["rf_fault_status", "value_error_status"])
@@ -493,7 +543,7 @@ async def test_room_rf_error_diagnostics_follow_updates(
     entry_id = await setup_profile("ii_plain")
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id(
-        Platform.BINARY_SENSOR, DOMAIN, f"{DOMAIN}_unit_1_{key}"
+        Platform.BINARY_SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_{key}"
     )
     assert entity_id is not None
     registry.async_update_entity(entity_id, disabled_by=None)
@@ -523,7 +573,8 @@ async def test_optional_gateway_activation_and_unload(
     entry_id = await setup_profile("ii_plain")
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry is not None
-    assert not getattr(entry.runtime_data.coordinator, f"_{key}_enabled")
+    read_key = key.removeprefix("gateway_")
+    assert not entry.runtime_data.coordinator.optional_gateway_reads[read_key].enabled
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id(Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_{key}")
     assert entity_id is not None
@@ -531,10 +582,10 @@ async def test_optional_gateway_activation_and_unload(
     assert await hass.config_entries.async_reload(entry_id)
     await hass.async_block_till_done()
     coordinator = entry.runtime_data.coordinator
-    assert getattr(coordinator, f"_{key}_enabled")
+    assert coordinator.optional_gateway_reads[read_key].enabled
     assert await hass.config_entries.async_unload(entry_id)
-    assert not getattr(coordinator, f"_{key}_enabled")
-    assert getattr(coordinator, f"_{key}_task") is None
+    assert not coordinator.optional_gateway_reads[read_key].enabled
+    assert not coordinator.optional_gateway_reads[read_key].reading
 
 
 @pytest.mark.parametrize(
@@ -555,7 +606,9 @@ async def test_optional_room_diagnostics_follow_updates(
 ) -> None:
     entry_id = await setup_profile("ii_plain")
     registry = er.async_get(hass)
-    entity_id = registry.async_get_entity_id(Platform.SENSOR, DOMAIN, f"{DOMAIN}_unit_1_{key}")
+    entity_id = registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_{key}"
+    )
     assert entity_id is not None
     registered = registry.async_get(entity_id)
     assert registered is not None
@@ -587,7 +640,7 @@ async def test_app_setup_code_reads_only_when_enabled(
     assert entry is not None
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id(
-        Platform.SENSOR, DOMAIN, f"{DOMAIN}_unit_1_app_setup_code"
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_app_setup_code"
     )
     assert entity_id is not None
     registered = registry.async_get(entity_id)
@@ -607,6 +660,38 @@ async def test_app_setup_code_reads_only_when_enabled(
     assert await hass.config_entries.async_unload(entry_id)
 
 
+async def test_app_setup_code_keeps_stored_code_when_runtime_read_fails(
+    hass: HomeAssistant, setup_profile: SetupProfile, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
+
+    entry_id = await setup_profile("ii_plain")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    (unit,) = entry.subentries.values()
+    hass.config_entries.async_update_subentry(
+        entry, unit, data={**unit.data, "app_setup_code": "R123456"}
+    )
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_app_setup_code"
+    )
+    assert entity_id is not None
+    registry.async_update_entity(entity_id, disabled_by=None)
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.MeltemModbusClient.async_read_room_app_setup_code",
+        AsyncMock(side_effect=MeltemModbusError("read failed")),
+    )
+
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == "R123456"
+    assert await hass.config_entries.async_unload(entry_id)
+
+
 async def test_room_connectivity_updates_without_reads_and_stops_after_unload(
     hass: HomeAssistant, setup_profile: SetupProfile
 ) -> None:
@@ -615,10 +700,10 @@ async def test_room_connectivity_updates_without_reads_and_stops_after_unload(
     assert entry is not None
     coordinator = entry.runtime_data.coordinator
     await coordinator.async_shutdown()
-    coordinator.client.read_room_state.reset_mock()
+    coordinator.client.read_room.reset_mock()
     registry = er.async_get(hass)
     connectivity_id = registry.async_get_entity_id(
-        Platform.BINARY_SENSOR, DOMAIN, f"{DOMAIN}_unit_1_connectivity"
+        Platform.BINARY_SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_connectivity"
     )
     assert connectivity_id is not None
     now = dt_util.utcnow()
@@ -631,18 +716,94 @@ async def test_room_connectivity_updates_without_reads_and_stops_after_unload(
     assert connectivity_state is not None
     assert connectivity_state.state == "on"
 
-    coordinator._room_failures["unit_1"] = 3
+    coordinator.room_runtime("unit_1").read_failures = 3
     async_fire_time_changed(hass, now + timedelta(seconds=31))
     await hass.async_block_till_done()
     connectivity_state = hass.states.get(connectivity_id)
     assert connectivity_state is not None
     assert connectivity_state.state == "off"
-    coordinator.client.read_room_state.assert_not_awaited()
+    coordinator.client.read_room.assert_not_awaited()
     assert await hass.config_entries.async_unload(entry_id)
     with patch.object(coordinator, "room_available") as availability:
         async_fire_time_changed(hass, now + timedelta(seconds=42))
         await hass.async_block_till_done()
         availability.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("scenario", "threshold", "initial", "expected"),
+    [
+        ("stale_flow", 30, "off", "on"),
+        ("write_timeout", WRITE_CONFIRMATION_TIMEOUT_SECONDS, "off", "on"),
+        ("write_retention", WRITE_HEALTH_RETENTION_SECONDS, "on", "off"),
+    ],
+)
+async def test_read_health_updates_without_reads_and_stops_after_unload(
+    hass: HomeAssistant,
+    setup_profile: SetupProfile,
+    freezer: FrozenDateTimeFactory,
+    scenario: str,
+    threshold: float,
+    initial: str,
+    expected: str,
+) -> None:
+    entry_id = await setup_profile("ii_plain")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    coordinator = entry.runtime_data.coordinator
+    await coordinator.async_shutdown()
+    coordinator.client.read_room.reset_mock()
+    entity_id = er.async_get(hass).async_get_entity_id(
+        Platform.BINARY_SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_data_health"
+    )
+    assert entity_id is not None
+    now = dt_util.utcnow()
+    group = "flow" if scenario == "stale_flow" else "hours"
+    state = RoomState(supply_air_flow=40, extract_air_flow=40, operating_hours=1).with_read_health(
+        group, ReadHealth(last_attempt=now, last_successful_read=now)
+    )
+    if scenario != "stale_flow":
+        coordinator.write_confirmations.record_pending("unit_1", "operation_mode", "manual")
+        if scenario == "write_retention":
+            coordinator.write_confirmations.set_status(
+                "unit_1", "operation_mode", "failed", error="write failed"
+            )
+    coordinator.async_set_updated_data({"unit_1": state})
+    await hass.async_block_till_done()
+    health = hass.states.get(entity_id)
+    assert health is not None
+    assert health.state == initial
+
+    for seconds, expected_state in ((threshold, initial), (threshold + 10, expected)):
+        later = now + timedelta(seconds=seconds)
+        freezer.move_to(later)
+        async_fire_time_changed(hass, later)
+        await hass.async_block_till_done()
+        health = hass.states.get(entity_id)
+        assert health is not None
+        assert health.state == expected_state
+        if scenario == "stale_flow":
+            assert health.attributes["flow"]["stale"] is (expected_state == "on")
+        elif scenario == "write_timeout":
+            assert health.attributes["writes"]["operation_mode"]["status"] == (
+                "pending" if expected_state == "off" else "unconfirmed"
+            )
+    coordinator.client.read_room.assert_not_awaited()
+
+    coordinator.last_update_success = False
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    health = hass.states.get(entity_id)
+    assert health is not None
+    assert health.state == expected
+
+    assert await hass.config_entries.async_unload(entry_id)
+    with patch.object(coordinator, "data_health_stale") as stale:
+        later = now + timedelta(seconds=threshold + 20)
+        freezer.move_to(later)
+        async_fire_time_changed(hass, later)
+        await hass.async_block_till_done()
+        stale.assert_not_called()
 
 
 async def test_gateway_answer_timestamp_survives_outage_without_reads(
@@ -665,7 +826,7 @@ async def test_gateway_answer_timestamp_survives_outage_without_reads(
     assert entry is not None
     coordinator = entry.runtime_data.coordinator
     await coordinator.async_shutdown()
-    coordinator.client.read_room_state.reset_mock()
+    coordinator.client.read_room.reset_mock()
     coordinator.last_update_success = False
 
     now = dt_util.utcnow()
@@ -696,7 +857,7 @@ async def test_gateway_answer_timestamp_survives_outage_without_reads(
         assert answer_state is not None
         assert connectivity_state.state == "off"
         assert answer_state.state == now.replace(microsecond=0).isoformat()
-        coordinator.client.read_room_state.assert_not_awaited()
+        coordinator.client.read_room.assert_not_awaited()
 
         assert await hass.config_entries.async_unload(entry_id)
         diagnostics.reset_mock()

@@ -45,7 +45,7 @@ These are the most important practical findings from the latest hardware tests:
   removed for airflow writes
 - short read failures preserve the previous state, but a unit that keeps
   failing or stays silent is marked unavailable instead of showing frozen
-  values
+  values; a single unanswered read only pauses the unit's reads
 - room entities stay unavailable until the first poll returns at least one
   state value
 - unloading shuts the client down for good, so a late post-write readback
@@ -58,24 +58,35 @@ These are the most important practical findings from the latest hardware tests:
 
 ## Runtime overview entities
 
-Gateway and room diagnostics use cached coordinator state and local ten-second
-entity timers, removed on entity unload. Their availability does not follow a
-failed coordinator update: a disconnected state and the last read timestamp
-must remain visible. Room reachability is unknown until its first read attempt.
-The timestamp is the latest successful supported group for that room only.
+Gateway and room diagnostics, including Read health, use cached coordinator
+state and one shared ten-second timer per coordinator. Entities unregister
+their callbacks on unload; the last one removes the timer. Their availability
+does not follow a failed coordinator update: a disconnected state and the last
+read timestamp must remain visible. Room reachability is unknown until its
+first read attempt. The timestamp is the latest successful supported group for
+that room only.
 
 `WriteConfirmations` keeps outcomes per room and write key for internal
 read-health evaluation. Confirmation deadlines and recent failed or
 unconfirmed writes remain available through Read health without an additional
 entity or poll. Raw transport errors are not exposed as entity attributes.
 
+Everything else the coordinator tracks for one unit between reads and writes
+is a `RoomRuntime` (`room_runtime.py`, `coordinator.room_runtime(key)`): the
+run of failed read jobs, the last read error, whether its unavailability was
+logged, the target-read failure streak, the mode-group health of an interrupted
+flow write, and the fallback of the last fan write. Pending display values stay
+in the `OptimisticOverlay` instances and write outcomes in
+`WriteConfirmations`.
+
 Gateway measured flow totals use room and read-group
 availability. Missing contributors make the native total unknown, with
 `complete` and `unknown_units` attributes. They
 must not silently show partial totals or substitute optimistic fan values.
 Per-room balance belongs to the existing flow health group and adds no read.
-All new IDs belong in the platform maps in `const.py` so registry pruning keeps
-user customizations on reload.
+All new IDs belong in the platform maps in `const.py`, and hardware-specific
+ones in `ENTITY_PROFILES`, so `entity.room_has_entity` creates them and
+registry pruning keeps user customizations on reload.
 
 `TransportPolicy` keeps a bounded rolling 300-second deque of individual
 request attempts. Each retry is a separate sample. Response-time measurements
@@ -187,10 +198,12 @@ Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
   link, so the port is opened once per step
 
 Register blocks are `Component`s in `device/components.py`. Each one pins
-`register_ranges` to exactly the block the pymodbus client read, so the gateway
-sees the same requests in the same order. `tests/components/meltem_ventilation/test_modbus_client.py`
-checks this with the mock's `read_events`. Do not merge blocks without a
-benchmark on the real gateway.
+`register_ranges` to a block benchmarked on the gateway (`Temperatures` reads
+`41000..41005` and `AirQuality` reads `41006..41011` or `41006..41013` in one
+request alongside `Temperatures`, validated in T-8).
+`tests/components/meltem_ventilation/test_modbus_client.py` checks the request
+shapes with the mock's `read_events`. Do not merge blocks without a benchmark
+on the real gateway.
 
 The retry rules live in `device/transport.py` (`TransportPolicy`, one shared
 instance per gateway link):
@@ -209,8 +222,11 @@ the policy pauses further reads of that unit for `TRANSPORT_READ_RECOVERY_SECOND
 (5 s). It does not immediately retry or send a synchronization request. During
 the pause, skipped jobs do not change read health or failure counters. After
 the pause, the next scheduled read is attempted; a further failure starts a new
-pause. The coordinator keeps an affected room unavailable until a successful
-unit read, not merely until the pause expires. Writes and other unit IDs are not
+pause. The pause only affects scheduling: the values cached before the
+unanswered read were valid, so the coordinator does not make the room
+unavailable for it. Availability follows the failure threshold and the silence
+limit described in [Per-unit availability on read failures](#per-unit-availability-on-read-failures),
+so one lost telegram does not flap every entity of the unit. Writes and other unit IDs are not
 blocked. A gateway-unit timeout also delays its diagnostic and discovery reads;
 Home Assistant retries a failed initial setup through its normal backoff.
 
@@ -225,7 +241,11 @@ stale answers remain possible. See HW-7.
 
 An exception response is not retried immediately by the transport. For a
 polled component, `AcknowledgeError` (`0x05`) starts a per-slave/component
-backoff of 10, 20, 40, then at most 60 seconds. The next due read retries the
+backoff of 10, 20, 40, then at most 60 seconds. Optional room diagnostics
+(`fan_motor_hours` and the `401xx` RF registers) apply the same component
+backoff on any `ModbusExceptionError`, including `IllegalDataAddressError`
+(`0x02`), and do not mark `data_health` stale while they have never succeeded.
+The next due read retries the
 same register block; a successful block read clears its backoff. Other
 exception codes do not start this component backoff. The separate current-mode
 status read retains its existing 30-to-300-second exception backoff. While a
@@ -335,8 +355,9 @@ Current design:
   discovery, probes, polling, and post-write readbacks on the runtime client;
   option changes update the policy as well as the scheduler without a reload
 - post-write readbacks still wait for a job-start slot; writes do not consume
-  read slots or receive extra pacing, and `REQUEST_GAP_SECONDS`, register
-  ranges, retry counts, write order, and settle delays are unchanged
+  read slots or receive extra pacing, and the read limit leaves
+  `REQUEST_GAP_SECONDS`, register ranges, retry counts, and write order as
+  they were
 - setup starts a background refresh as before; startup uses the existing
   compact jobs instead of a full scan of all rooms in one coordinator refresh
 - the first pass reads airflow for each supported room first, followed by
@@ -355,9 +376,29 @@ Current design:
   for an hour. The growing delay bounds the extra reads per group to a few.
 - shutdown rejects reads still waiting for a rate slot; cancellation releases
   the policy lock without sending the waiting request
-- Home Assistant's `DataUpdateCoordinator` schedules the next refresh from
-  `int(loop.time())`, so sub-second intervals would fire up to a second early;
-  the coordinator adds the current fractional loop second to compensate
+- the coordinator plans its own poll ticks: it passes no `update_interval` to
+  Home Assistant's `DataUpdateCoordinator`, and every tick (`async_poll`)
+  schedules the next one with `async_call_later` from `next_poll_delay`. The
+  wake-up time is therefore exact, and a new request rate, a newly enabled
+  optional read, or the end of a write readback moves a waiting tick at once
+  instead of after the old interval. Earlier releases tuned `update_interval`
+  and compensated Home Assistant's whole-second alignment, which relied on an
+  internal detail of Home Assistant. The gateway-facing pace is unchanged: the
+  transport's read slot and `REQUEST_GAP_SECONDS` still space every request,
+  so a tick can only start a request when the request-rate cap allows it.
+  Because the integration schedules itself, it also honours what Home
+  Assistant's own scheduling did: no tick starts once Home Assistant is
+  stopping (entries are not unloaded on stop), and with "Enable polling for
+  updates" turned off only the first tick and user-requested refreshes run.
+  [HW-9](HARDWARE_BACKLOG.md#t-11-harness-run-on-2026-11-02) checked the
+  resulting timing on the gateway: no read broke `1 / rate`, also across live
+  rate changes and a reload, so the wake-up needs no extra margin
+- the optional gateway values (uptime, UTC clock, device count, RF statistics,
+  and the unit list for the new-unit repair issue) are `OptionalGatewayRead`
+  instances (`gateway_reads.py`): read in the poll tick under the gateway lock while at least one
+  consumer needs them, and cancelled when the last consumer goes away; the
+  unit list has an internal consumer and waits five minutes before its first
+  read; `coordinator.optional_gateway_reads` exposes them
 - one job can perform several grouped or optional Modbus reads, each subject
   to the shared read limit and the link's minimum `REQUEST_GAP_SECONDS`
 - airflow-level writes rely on the normal scheduler for later readback instead
@@ -404,8 +445,13 @@ the read. Non-finite decoded values (`NaN`/`Inf` floats) also preserve the last
 cached value and mark their read group as failed. A successful read in another
 group does not clear that failure. Out-of-range hardware sentinels such as
 `239` or `32767` on humidity, CO2, and VOC registers (`PLAUSIBLE_RANGES`) only
-mean that one sensor reports nothing: that field keeps its last value and is
-logged at debug level, while the rest of the group stays healthy.
+mean that one sensor reports nothing: that field becomes unknown instead of
+keeping a value that no longer tracks the room, it is logged at debug level,
+and the rest of the group stays healthy. When a sensor of the selected profile
+reports such a placeholder `MISSING_SENSOR_ISSUE_AFTER_READS` times in a row
+(about three minutes), `missing_sensors.py` raises a non-persistent repair
+issue for that unit and sensor; it suggests checking the profile and
+disappears with the next real value, on reload, or on restart.
 Expected groups are derived from each room's supported entities, so a register
 that a device profile does not expose is not reported as a failed read. The
 group-to-entity mapping lives in `const.READ_GROUP_ENTITY_KEYS` and
@@ -461,6 +507,26 @@ also updates the entities. All overlays (airflow levels, quick mode, and
 intensive) only settle against a read of their own group that succeeded after
 the write; a matching cached value from before the write leaves them pending.
 
+"After the write" is decided without the wall clock. Each write, overlay,
+interrupted flow write, and fan-write fallback keeps the read health its group
+had when the write was sent. Reads and writes share the gateway lock, so only
+a later read changes that health; a read counts as later exactly when the
+group's health differs from that baseline (`read_health.read_since`,
+`mode_read_since`, `WriteConfirmation.baseline`). Comparing timestamps instead
+refused fan changes after the system clock was set back, until it caught up
+again. The freshness limits of the read groups use the monotonic clock as well
+(`ReadHealth.last_success_monotonic`, `read_health.read_too_old`), so a forward
+jump, such as the first NTP sync of a host without a real-time clock, does not
+make every group stale until its next read. Wall-clock times are still used for
+the confirmation timeout, the health retention, and the displayed times.
+
+`MeltemModbusClient.read_room` returns the new state together with a
+`ReadJobOutcome`: the groups it attempted and recorded, their errors, whether
+any request got an answer, and which groups yielded values from the unit
+itself. The coordinator judges a job only by that outcome; `RoomState` holds
+values and read health only. `read_room_state` returns just the state for
+callers that do not need the outcome, such as the gateway tools.
+
 Selecting inactive sensor control is decided under the gateway lock. It is a
 no-op only when a fresh mode read already reports off, manual, or unbalanced
 operation. Otherwise it writes manual mode using the known airflow, so a stale
@@ -483,23 +549,31 @@ mode/submode values, so routine polling does not read the write-side
 An intensive status (`0/0`, observed, or `3/227`, community decode) hides the
 base mode. The client then keeps the last known operating mode, targets, and
 quick mode and only sets `intensive_active`. After a restart during intensive
-ventilation these values stay unknown until the override ends. An airflow or
-operating-mode write does not clear the intensive registers, so a readback
-that still reports intensive cannot show it: the write is recorded as
+ventilation these values stay unknown until the override ends. A non-zero
+airflow or operating-mode write does not clear the intensive registers, so a
+readback that still reports intensive cannot show it: the write is recorded as
 `unverifiable`, which does not flag `data_health`. Unlike `confirmed` or
 `superseded` it is not final; the first readback after the override ends
 confirms or mismatches it. A balanced airflow write needs the `41121` read for
 that, so it is only judged within `WRITE_HEALTH_RETENTION_SECONDS` of the
-write. A quick-mode write clears the intensive registers, so a remaining
-intensive status is judged as a normal mismatch.
+write. Power-off writes (`write_level(0)` and `write_operating_mode("off")`)
+and quick-mode writes clear `41123/41124` in the same commit so an active
+intensive override cannot keep the fans running after the unit is switched off
+(see [HW-1](HARDWARE_BACKLOG.md#w-8-measurement-on-2026-11-02)).
 
 The set-register block `41120..41124` is used for writes; the only read is
 the single-register confirmation read of `41121` described under
 [Target readback and measured airflow](#target-readback-and-measured-airflow).
-`41132` is still written last as the apply latch.
+`41132` is still written last as the apply latch. Registers written before an
+interrupted command stay staged until the next `41132`; the client remembers
+them per unit and logs a warning when a later command's commit would also
+apply some it does not write again. Whether that commit really applies them is
+open ([HW-8](HARDWARE_BACKLOG.md#hw-8--an-interrupted-mode-command-leaves-staged-registers-for-the-next-commit)).
 
 Write errors reach the UI as translated `HomeAssistantError`s (`exceptions` in
-`strings.json`) instead of an "Unknown error".
+`strings.json`) instead of an "Unknown error". Only Modbus errors and Home
+Assistant errors, such as a port conflict, count as a failed write; any other
+exception is a programming error and propagates unchanged.
 
 ## Directional fan writes
 
@@ -510,7 +584,7 @@ both fans) therefore build on each other's pending value instead of on the
 stale cache. A fan command queued behind a preset or operating-mode change
 resolves the opposite airflow after that change and its readback finish, not
 before it waits for the bus. Internal `_locked` helpers require the caller to
-hold this lock; the write sequences and settle windows remain unchanged.
+hold this lock; the write sequences remain unchanged.
 
 While an airflow pair is pending, it also determines whether the unit is off,
 balanced, or unbalanced. Starting from off or leaving sensor control therefore
@@ -541,7 +615,17 @@ profile, including a `--profile` override, just as they do in the integration.
 
 An integration-like polling sample fails when a due group reports an error
 from that read, even when the runtime client swallowed the Modbus exception.
-Errors left over from an earlier, skipped group do not count toward the sample.
+The errors come from the read's own `ReadJobOutcome`, so errors left over from
+an earlier, skipped group do not count toward the sample.
+
+`benchmark_integration_like` uses the integration's request gap and request
+rate unless `--gap` or `--rate` says otherwise, and reads its raw register
+snapshots through `MeltemModbusClient.unit_for`, so they share the client's
+rate limit and read quarantine and cannot pick up a late reply to an
+unanswered request. The tool loads the integration modules without Home
+Assistant through a small stub; `test_benchmark_runs_without_home_assistant`
+runs it in a separate process with Home Assistant blocked, because the test
+session itself always has the real package loaded.
 
 Every write experiment attempts its airflow restore on normal completion,
 exceptions, or cancellation, including a failed initial write that may have
@@ -623,6 +707,29 @@ codes `227..230` keep their separate mode meanings. W-17 confirmed this path
 on an M-WRG-II unit; see
 [W-17 in HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md#w-17-home-assistant-write-confirmation-on-2026-10-14).
 
+### Readback after mode writes
+
+Operating-mode, quick-mode, and intensive writes read their group back once,
+`WRITE_SETTLE_SECONDS` (`0.5 s`) after the commit, while the coordinator still
+holds the gateway lock. Control settings wait `CONTROL_SETTING_SETTLE_SECONDS`
+(`1.5 s`). A write this readback does not confirm stays `mismatch` or
+`unconfirmed`, and the regular polls of its group can still confirm it.
+Balanced and unbalanced airflow writes have no immediate readback.
+
+Until `5.0.0` mode writes waited `1.5 s` and read back up to twice, 2.5 s
+apart, so a write held the lock for up to about 5.5 s and several quick-mode
+commands in a row could leave every unit unpolled for longer than the 30 s
+freshness limit. HW-2 measured on six M-WRG-II units that the status map
+`41100..41102` shows the committed state at the first read, 36 of 36 times,
+and that reads of other units during the settle window change nothing. The
+delay was therefore shortened and the second readback dropped (candidates A
+and C); `0.5 s` is a margin for units and radio conditions that were not
+measured. Releasing the lock during the wait (candidate B) is backed by the
+same data but buys at most that half second. Control settings exist only on
+`-F` and `-FC` units, none of which was available, so their delay is
+unchanged. See
+[HW-2](HARDWARE_BACKLOG.md#decision-and-validation-on-2026-11-02).
+
 ### Per-unit availability on read failures
 
 When the gateway is unplugged or otherwise unavailable, the integration keeps
@@ -655,13 +762,30 @@ value. The job outcome separately tracks actual attempts and valid responses,
 including exception responses before a retry. This avoids classifying the whole
 gateway as unanswered merely because another block in the same group timed out.
 It also recognizes successful reads when a different block in that group is
-paused, without rewriting the group's cached read health. A bridge-local RF
-communication-status value alone does not clear a room's failure streak.
+paused, without rewriting the group's cached read health. Bridge-local RF
+registers (`40100`, `40101`, `40103`, `40104`, `40109`) alone do not clear a
+room's failure streak.
 Once any room has data, a job with no attempted groups neither increments nor
 clears the transport failure streak. With no room data at all, the startup
-failure still backs off. Bridge-local `40101` (`REGISTER_RF_COMM_STATUS`)
+failure still backs off. Bridge-local `401xx` (`BRIDGE_RF_REGISTERS`)
 responses do not count as a unit read answer in `TransportPolicy`, so a silent
-unit cannot appear reachable through gateway status reads.
+unit cannot appear reachable through gateway status or RF diagnostic reads.
+
+The most recent failed job of each unit is kept with its time
+(`coordinator.last_room_errors`) and shown in the diagnostics download and on
+the system-health page. `last_job_error` only reflects the most recent job of
+any unit, so with several units a unit that keeps failing would show there
+only now and then.
+
+### Listener updates per unit
+
+A read job changes the state of one unit only, so the listener update after it
+skips the entities of every other unit (`coordinator.room_updated`); gateway
+entities always update. An update after a failed coordinator update, and
+updates from overlays and write outcomes, still reach every entity. Diagnostics
+that age without a read, such as connectivity and the last Modbus answer, share
+one 10-second timer (`async_add_diagnostic_listener`) instead of one per
+entity.
 
 ### Temperatures are not identical conceptually
 
@@ -746,29 +870,63 @@ Important setup behavior:
 - setup previews are best-effort only
 - the setup probe is intentionally minimal and reads product/capability
   registers only
+- the config, options, and subentry flows share discovery, probing, and the
+  profile form in `flow_helpers.py`
 
 Known UX caveat:
 
 - previews may be missing if the setup probe times out or a register does not
   answer quickly enough
 
-## Existing config entries and profile changes
+## Config entries, units, and profile changes
+
+Since config entry version `2.1`, the entry data holds only the serial port;
+every unit is a config subentry of type `unit` (`units.py`). Its title is the
+unit's initial name, its unique ID is the Modbus address, and its data holds
+the room key, address, profile, and the identity values of the setup probe.
+Home Assistant shows each unit as its own entry under the gateway, with
+**Add unit** (`subentry_flow.MeltemUnitSubentryFlow.async_step_user`) and
+**Reconfigure** for the profile (`async_step_reconfigure`). The options flow
+(`options_flow.py`) keeps the request rate and **Scan for new units**, which adds, updates, and removes unit subentries in one
+step. Before it removes units the gateway no longer reports, the
+`confirm_remove` step names them; closing the dialog keeps them. Deleting a
+unit subentry lets Home Assistant remove its device and
+entities.
+
+The entities and the device of a unit belong to its subentry: the platforms
+add them per unit with `config_subentry_id` (`entity.async_add_room_entities`).
+Entity unique IDs are unique per integration, not per entry, so they include
+the entry ID (`identifiers.room_entity_unique_id`); gateway entities already
+did. Device identifiers stay `(DOMAIN, room key)` plus the app setup code,
+because Home Assistant `2026.11` keeps device identifiers unique per config
+entry. Units of a second gateway therefore no longer collide with the first;
+lifting `single_config_entry` is a separate product decision.
+
+An update listener reloads the entry when the port or the unit subentries
+differ from what setup used (`_setup_snapshot`). A new request rate applies
+without a reload, and a rescan that changes several units schedules one reload.
+Flows that change a loaded entry therefore finish with `async_update_and_abort`
+and leave the reload to the listener; for an entry that is not loaded they
+reload directly.
 
 Setup never probes the gateway for entity metadata:
 
-- each room's entities follow from its profile alone, derived on load, so
-  entries from older releases gain new entities without a rewrite; entity
-  keys that releases before `4.0.0` stored with a room are ignored, because
-  probe-detected keys beyond the profile scheduled reads the unit cannot
-  answer, and new or edited rooms no longer store them
-- one-time schema changes run in `async_migrate_entry` (config entry `1.2`
-  renamed the airflow-only `airflow_data_stale` entity to `data_health`)
-- changing to a profile with fewer capabilities removes registry entities that
-  the new profile no longer creates
-- globally removed entities from older releases are handled by the same
-  platform-aware registry cleanup
-- devices of units that a rescan no longer reports are removed on setup; unit
-  devices are linked to the gateway device via `via_device_id`
+- each unit's entities follow from its profile alone, derived on load, so
+  entries from older releases gain new entities without a rewrite
+- `entity.room_has_entity` is the only rule for which entity a unit has; the
+  platforms create exactly those, and setup removes registry entries of every
+  other one (`_async_remove_unsupported_entities`), so a profile with fewer
+  capabilities loses its extra entities and user settings of the remaining
+  ones survive reloads
+- one-time schema changes run in `async_migrate_entry` (`migration.py`): `1.2` renamed the
+  airflow-only `airflow_data_stale` entity to `data_health`, `1.3` moved the
+  request rate to the options, `1.4` moved identity values out of the preview,
+  and `2.1` moved every unit into a subentry, gave unit entities entry-scoped
+  unique IDs, and moved the entities and devices to their subentries with all
+  user settings; entity keys that releases before `4.0.0` stored with a unit
+  are dropped then
+- devices of units no longer configured are removed on setup; unit devices are
+  linked to the gateway device via `via_device_id`
 
 A fresh setup should therefore not be needed for normal profile changes or
 upgrades. Remove and re-add the config entry only when its stored data is
@@ -776,14 +934,35 @@ actually corrupt or when debugging a setup problem that cannot be reproduced
 otherwise. Removing only the gateway device does not reset the config entry.
 
 The serial port is changed with the reconfigure flow, which checks the new
-port before saving it and reloads the entry; the options only hold the request
-rate and the unit profiles.
+port before saving it.
 
-Only one gateway can be set up (`single_config_entry`). Room keys, device
-identifiers, and entity unique IDs are derived from the Modbus address alone,
-so a second gateway with units at the same addresses would collide. The
-per-port unique ID still lets USB discovery and the manual setup recognise the
-same gateway.
+A unit device also carries its app setup code as an identifier
+(`identifiers.room_identifiers`). When units change addresses, for example
+after being paired to the gateway again, a rescan stores each code with its new
+address. Setup then removes codes a device no longer reports before the
+platforms load, because Home Assistant rejects device info whose identifiers
+belong to another device and drops every entity of that unit. A rescan also
+drops a stored code of a unit it could not probe when another unit now reports
+that code, and a code stored for several units identifies none of them until
+the next rescan.
+
+### Repair issues
+
+- `new_units.py`: the coordinator reads the gateway's unit list about five
+  minutes after startup and then hourly, as an `OptionalGatewayRead` without an
+  entity consumer, and raises `new_units_found` while the gateway reports
+  addresses that have no unit subentry. The profile cannot be detected
+  reliably, so units are never added without the user.
+- `missing_sensors.py`: see
+  [Read health and write confirmation](#read-health-and-write-confirmation).
+
+Both are non-persistent and linked to the config entry, so Home Assistant
+removes them with the entry. Unloading the entry keeps them: deleting an issue
+would also delete the user's "Ignore", and reloads are frequent (every unit
+change or rescan). Instead, the first unit-list check after a start updates or
+removes the new-unit issue, and `MissingSensorIssues.restore` deletes
+missing-sensor issues of units or sensors that are no longer configured and
+takes over the active ones until a reading decides about them.
 
 ## USB discovery
 
@@ -836,7 +1015,13 @@ and every entity platform, including:
   was applied, cancellation, and a complete subsequent write sequence
 - control-setting range and manufacturer-step normalization
 - config-flow helper functions for defaults and room mapping
-- entity creation per model profile across all platforms
+- the unit subentry flows, the migration to subentries, and the reload on unit
+  changes
+- entity creation per model profile across all platforms, and that every unit
+  entity keeps its registry entry across reloads
+- snapshots of every entity and of the diagnostics download
+  (`test_snapshots.py`; regenerate with `pytest --snapshot-update` after an
+  intended change and review the diff)
 - the link settings in `tools/_link.py` against `const.py`
 
 On POSIX, the separate RTU protocol tests connect the real tmodbus client to a
@@ -855,6 +1040,12 @@ They are skipped on Windows. Neither simulator establishes physical gateway
 behavior; live validation and its safety rules remain in
 [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) and
 [LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md).
+
+The platform tests use `common.mock_coordinator()`, a `create_autospec` of
+the coordinator, so a renamed or removed coordinator member fails them. The
+scheduler tests drive single steps of a real coordinator through the helpers in
+`common.py` (`run_job`, `run_tick`, `skip_startup`, `allow_next_read`), the one
+place that reaches into its internals for that.
 
 CI also runs `mypy` (configured in `pyproject.toml`) against the Home
 Assistant version the test harness installs, Pyright on `custom_components`, `tests` and `tools`,

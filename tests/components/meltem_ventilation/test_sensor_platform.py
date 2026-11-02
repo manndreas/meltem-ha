@@ -38,6 +38,8 @@ from custom_components.meltem_ventilation.sensor import (
     MeltemSensorEntity,
 )
 
+from .common import TEST_ENTRY_ID, mock_coordinator
+
 # ---------------------------------------------------------------------------
 #  Helpers
 # ---------------------------------------------------------------------------
@@ -55,7 +57,7 @@ _GATEWAY_SENSORS = {description.key: description for description in GATEWAY_SENS
 
 
 def _coordinator(state: RoomState | None = None) -> MagicMock:
-    coordinator = MagicMock(spec=MeltemDataUpdateCoordinator)
+    coordinator = mock_coordinator()
     coordinator.last_update_success = True
     coordinator.room_available.return_value = True
     coordinator.read_group_for_entity.side_effect = (
@@ -125,6 +127,7 @@ class TestSensorEntityCreation:
         )
 
         assert entity.unique_id == f"{DOMAIN}_sensor-entry_gateway_modbus_failures_total"
+        assert entity.should_poll is False
         assert entity.native_value == 1
         assert entity.state_class is SensorStateClass.TOTAL_INCREASING
         assert entity.entity_category is EntityCategory.DIAGNOSTIC
@@ -208,7 +211,7 @@ class TestSensorEntityCreation:
     def test_modbus_slave_sensor_metadata_and_value(self) -> None:
         entity = MeltemModbusSlaveSensor(_coordinator(), _ROOM)
 
-        assert entity.unique_id == f"{DOMAIN}_unit_1_modbus_slave_id"
+        assert entity.unique_id == f"{DOMAIN}_{TEST_ENTRY_ID}_unit_1_modbus_slave_id"
         assert entity.native_value == 2
         assert entity.entity_category is EntityCategory.DIAGNOSTIC
         assert entity.entity_registry_enabled_default is False
@@ -221,6 +224,7 @@ class TestSensorEntityCreation:
         entity = MeltemModbusDevicePathSensor(entry)
 
         assert entity.unique_id == f"{DOMAIN}_{entry.entry_id}_modbus_device_path"
+        assert entity.should_poll is False
         assert entity.native_value == "/dev/serial/by-id/test-gateway"
         assert entity.entity_category is EntityCategory.DIAGNOSTIC
         assert entity.entity_registry_enabled_default is False
@@ -228,7 +232,7 @@ class TestSensorEntityCreation:
     def test_identity_follows_the_description(self) -> None:
         sensor = _sensor("extract_air_flow")
 
-        assert sensor.unique_id == f"{DOMAIN}_unit_1_extract_air_flow"
+        assert sensor.unique_id == f"{DOMAIN}_{TEST_ENTRY_ID}_unit_1_extract_air_flow"
         assert sensor.translation_key == "extract_air_flow"
         assert sensor.has_entity_name is True
 
@@ -347,6 +351,22 @@ class TestSensorEntityCreation:
             sensor._handle_coordinator_update()
 
         registry.async_update_device.assert_not_called()
+
+    @pytest.mark.parametrize("updated", [False, True])
+    def test_update_for_another_unit_is_skipped(self, hass: HomeAssistant, updated: bool) -> None:
+        coordinator = _coordinator(RoomState(software_version=42))
+        coordinator.room_updated.return_value = updated
+        sensor = MeltemSensorEntity(coordinator, _ROOM, _SENSORS["exhaust_temperature"])
+        sensor.hass = hass
+
+        with patch(
+            "homeassistant.helpers.update_coordinator.BaseCoordinatorEntity"
+            "._handle_coordinator_update"
+        ) as write_state:
+            sensor._handle_coordinator_update()
+
+        coordinator.room_updated.assert_called_once_with("unit_1")
+        assert write_state.called is updated
 
 
 # ---------------------------------------------------------------------------

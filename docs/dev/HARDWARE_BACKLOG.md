@@ -31,7 +31,7 @@ the decision into `docs/dev/DEVELOPER.md` and the measured behaviour into
 ## HW-1 — Intensive shadow registers survive a power-off write
 
 Priority: medium
-Status: open
+Status: resolved (Candidate A implemented after W-8 on 2026-11-02)
 Affected code: `modbus_client.write_operating_mode`, `modbus_client.write_level`
 
 ### Observation
@@ -114,17 +114,58 @@ Tests: [W-8](LIVE_GATEWAY_TESTS.md#w-8--intensive-and-power-off),
 Preference before measurement: **C** if only the Home Assistant state is wrong,
 **A** if the device really keeps the override latched.
 
+### W-8 measurement on 2026-11-02
+
+On slave `4` (M-WRG-II, software `2326`), starting from baseline HIGH
+(`41100..41102 = [3, 230, 0]`, measured airflow `60/60 m³/h`, set registers
+unreadable before the first write):
+
+- **Run A (prior power-off sequence):** writing `41123=3`, `41124=227`,
+  `41132=0` switched `41100..41102` to `[0, 0, 0]` (`intensive_active=True`)
+  and raised measured airflow to `80/80 m³/h` within 5 s, with `41123×2`
+  reading back `[3, 227]`. Writing `41120=1`, `41121=0`, `41132=0` then changed
+  `41120×2` to `[1, 0]`, but `41123×2` stayed `[3, 227]`, `41100..41102` stayed
+  `[0, 0, 0]`, and measured airflow remained `80/80 m³/h` at 5 s, 30 s, and
+  60 s. The unit did not stop.
+- **Run B (Candidate A — clear intensive on power-off):** writing `41123=0`,
+  `41124=0`, `41120=1`, `41121=0`, `41132=0` in one commit immediately changed
+  `41100..41102` to `[1, 0, 0]` (`operation_mode="off"`, `intensive_active=False`,
+  `target_level=0`) and `41123×2` to `[0, 0]` at 5 s; measured airflow reached
+  `0/0 m³/h` by 30 s and stayed `0/0` at 60 s.
+- **Run C (manual write during intensive):** starting intensive (`80/80 m³/h`,
+  `41100..41102 = [0, 0, 0]`) and then writing `41120=3`, `41121=80`, `41132=0`
+  updated `41120×2` to `[3, 80]` while keeping the intensive override active
+  (`41100..41102 = [0, 0, 0]`, `80/80 m³/h` at 5 s and 30 s). Clearing only
+  the intensive registers (`41123=0`, `41124=0`, `41132=0`) then transitioned
+  `41100..41102` to `[3, 204, 0]` and measured airflow to `40/40 m³/h` within
+  15 s.
+- **Step 6 (verification with Candidate A applied in `MeltemModbusClient`):**
+  `client.write_preset_mode(room, "intensive")` produced `[0, 0, 0]` and
+  `80/80 m³/h`; `client.write_level(room, 0)` cleared `41123/41124` and set
+  `41100..41102 = [1, 0, 0]` at 5 s and `0/0 m³/h` by 30 s. Restoring HIGH
+  (`client.write_preset_mode(room, "high")`) returned `41100..41102 = [3, 230, 0]`,
+  `60/60 m³/h`, and `41016 = 0` at 15 s and after two minutes. Once all five
+  registers `41120..41124` had been written at least once in the session, the
+  five-register read `41120×5` also answered (`[3, 230, 80, 0, 0]`).
+
+**Decision:** Candidate **A** is implemented in `write_level(0)` and the `off`
+branch of `write_operating_mode`. Non-zero manual and unbalanced writes leave
+`41123/41124` untouched so base-mode changes made during intensive ventilation
+take effect when the override ends.
+
 ---
 
 ## HW-2 — Writes block the whole gateway for several seconds
 
 Priority: medium
-Status: open
+Status: resolved (candidates A and C, 2026-11-02)
 Affected code: `coordinator.async_set_operation_mode`,
 `coordinator.async_set_preset_mode`, `coordinator.async_activate_intensive`,
 `coordinator.async_deactivate_intensive`
 
 ### Observation (HW-2)
+
+Before `5.0.0`:
 
 ```python
 async with self._gateway_lock:                    # lock held from here
@@ -179,7 +220,9 @@ no timing guidance beyond the RTU frame rules. See
 Tests: [W-1](LIVE_GATEWAY_TESTS.md#w-1--balanced-write-status-readback-and-airflow-lag),
 [W-2](LIVE_GATEWAY_TESTS.md#w-2--settle-delay-sweep),
 [W-3](LIVE_GATEWAY_TESTS.md#w-3--settle-delay-with-interleaved-traffic),
-[W-6](LIVE_GATEWAY_TESTS.md#w-6--41132-commit-latch).
+[W-6](LIVE_GATEWAY_TESTS.md#w-6--41132-commit-latch),
+[W-20](LIVE_GATEWAY_TESTS.md#w-20--readback-timing-of-mode-writes),
+[W-21](LIVE_GATEWAY_TESTS.md#w-21--mode-write-readback-with-interleaved-traffic).
 
 ### Partial measurement on 2026-10-02
 
@@ -402,6 +445,69 @@ delay. Local raw log and captures, not archived:
 `all_known-slave4-20261014-155722-before-W18-six-slave-load.json`, and
 `all_known-slave4-20261014-160332-after-W18-six-slave-load.json`.
 
+### W-20 and W-21 on 2026-11-02
+
+Six M-WRG-II units (slaves `2..7`, all detected as `ii_plain`, product ID
+`116852`) behind the gateway on a Windows development machine; test unit
+slave `4`, baseline HIGH (`41120..41124=[3,230,80,0,0]`, measured
+`60/60 m3/h`, `41016=0`). Both runs drove the coordinator's real write methods
+in the Home Assistant test harness (HA `2026.11.0`, `modbus-connection 4.12.7`,
+tmodbus `1.1.0`) with polling switched off, and repeated the immediate readback
+back to back until the coordinator confirmed the write. Each repetition wrote,
+12 s apart: LOW, intensive on, intensive off, leave the quick mode (manual at
+the current airflow), MEDIUM, HIGH; three repetitions per run.
+
+- **W-20, settle `0 s`, 10 requests/s, no other traffic:** all 18 writes were
+  confirmed by the first readback, which ended 0.29–0.31 s after the write
+  call returned. The status map `41100..41102` already held the new mode,
+  quick mode, or intensive state about 0.15 s after the `41132` commit was
+  acknowledged. Write sequences took 0.34–0.76 s. The measured airflow
+  `41020/41021` still showed the previous level in every first readback.
+- **W-21, settle `1.5 s`, 4 requests/s, other units read during every wait:**
+  a second task read the airflow plan (`41020×2`, `41100×3`) of the other five
+  units in turn, with 0.5 s pauses. A lock held only for each write sequence
+  and each read let these reads into the settle window, as candidate B would.
+  All 18 writes were again confirmed by the first readback, 1.91–1.93 s after
+  the write call. All 236 reads of the other units succeeded; the 36 that fell
+  into a settle window took median 375 ms (p95 454 ms) against 351 ms
+  (p95 603 ms) outside, and single requests answered in median 44.0 ms inside
+  against 43.9 ms outside. Unlike W-3 on 2026-10-02, the interleaved traffic
+  did not raise the gateway's response time. No exception responses,
+  timeouts, or link recycles.
+- **Restore:** the last step restored HIGH. The after-capture differed from the
+  before-capture only in the `511xx` shadow counters; `41016=0`, `60/60`, and
+  status `[3,230,0]`.
+
+The confirmation therefore does not depend on the settle delay: the status map
+reflects the commit at once, and the measured airflow lags by seconds either
+way. Local raw logs and captures, not archived: `m2-isolated-events.jsonl`,
+`m2-interleaved-events.jsonl`,
+`all_known-slave4-20261102-162030-before-W20.json`, and
+`all_known-slave4-20261102-163106-after-W21.json`.
+
+### Decision and validation on 2026-11-02
+
+Candidates A and C are implemented in `5.0.0`. Mode writes (operating mode,
+quick mode, intensive) wait `WRITE_SETTLE_SECONDS = 0.5` instead of `1.5 s`;
+the half second is a margin for units and radio conditions that were not
+measured, not a measured need. They read back once; a write the readback does
+not confirm stays `mismatch` or `unconfirmed`, and the regular airflow polls
+can still confirm it. Control settings keep `1.5 s`
+(`CONTROL_SETTING_SETTLE_SECONDS`), because only `-F` and `-FC` units have
+them and none was available. Candidate B is backed by W-21 but not needed: the
+lock is now held for about 1.5 s per mode write instead of up to about 5.5 s,
+so six quick-mode commands in a row pause polling for about 10 s, well within
+the 30-second airflow freshness limit.
+
+Validation with the shipped code, normal polling of all six units at
+4 requests/s, and two repetitions of the six writes 15 s apart: 12/12 writes
+were confirmed by the single readback. The coordinator call took median
+1.51 s, at most 2.19 s including the wait for a running poll job. The airflow
+job of every other unit kept its 10 s cadence, with a largest gap of 13.7 s.
+No exception responses, timeouts, or link recycles; transport success 100%.
+The restore was verified as above. Local raw log, not archived:
+`m2-validate-events.jsonl`.
+
 ### Candidate solutions (HW-2)
 
 - **A — shorten `WRITE_SETTLE_SECONDS`.** If the measurement shows the unit
@@ -417,13 +523,19 @@ delay. Local raw log and captures, not archived:
 
 Preference before measurement: **A**, then **C**, and only then consider **B**.
 
+A code review on 2026-11-02 recommended **B** with a lock per unit, because
+several quick-mode commands in a row (for example from one automation for
+every unit) could keep all units unpolled for longer than the 30-second
+airflow freshness limit. W-20 and W-21 settled it with **A** and **C**, see
+[the decision](#decision-and-validation-on-2026-11-02).
+
 ---
 
 ## HW-3 — Ambiguous encoding above `200` in the unbalanced target registers
 
 Priority: low
 Status: parked
-Affected code: `modbus_client._decode_target_level`
+Affected code: `mode_codec._decode_target_level`
 
 ### Observation (HW-3)
 
@@ -729,16 +841,17 @@ short-read availability after power loss.
   diagnostics only contain the decoded state. Verify with
   [W-13](LIVE_GATEWAY_TESTS.md#w-13--sensor-control-modes) on units with the
   matching sensors.
-- **Intensive status:** `0/0` was observed once for an app-started override
-  on slave `4`; `3/227` is only the community decode. Confirm the status for
-  an override started by the integration's own `41123/41124` write in W-8.
+- **Intensive status:** `0/0` was observed for both app-started and
+  integration-started (`41123=3`, `41124=227`) overrides on slave `4`
+  ([W-8 under HW-1](#w-8-measurement-on-2026-11-02)); `3/227` remains the
+  community decode.
 
 ---
 
 ## HW-5 — Turning a stopped unit on starts both directions
 
 Priority: informational
-Status: parked
+Status: resolved (measured in W-12 on 2026-11-02; Candidate A kept)
 Affected code: `coordinator.async_set_direction_level`
 
 ### Observation (HW-5)
@@ -764,7 +877,19 @@ Tests: [W-12](LIVE_GATEWAY_TESTS.md#w-12--single-direction-start-from-off).
 ### Candidate solutions (HW-5)
 
 - **A — keep the current behaviour.** Safe and documented.
-- **B — allow direct single-direction start** if the measurement shows the unit
+- **B — allow
+
+### W-12 measurement on 2026-11-02
+
+From a stopped state on slave `4` (`41100..41102 = [1, 0, 0]`, measured airflow
+`0/0 m³/h`), writing `41120=4`, `41121=0`, `41122=80`, `41132=0` was accepted
+immediately: at 10 s, 30 s, and 60 s, `41100..41102` reported `[4, 0, 204]`,
+`41120..41122` read `[4, 0, 80]`, and measured airflow was `40/0 m³/h`
+(extract `40 m³/h`, supply `0 m³/h`, `41016 = 0`). The hardware therefore
+accepts a direct one-sided start from off. Candidate **A** is intentionally
+kept because the two directional fan entities are the integration's primary
+on/off control and turning a stopped unit back on is documented to start both
+directions. direct single-direction start** if the measurement shows the unit
   accepts it.
 
 ---
@@ -773,7 +898,7 @@ Tests: [W-12](LIVE_GATEWAY_TESTS.md#w-12--single-direction-start-from-off).
 
 Priority: medium
 Status: open
-Affected code: `modbus_client._read_mode_group`, `device/transport.py`,
+Affected code: `modbus_client._read_mode_block`, `device/transport.py`,
 `coordinator._job_interval`
 
 ### Observation (HW-6)
@@ -1401,3 +1526,162 @@ success criteria.
   out of the mode backoff, if a powered-off unit answers that way.
 - **D — cap jobs and writes** with `asyncio.timeout` in the coordinator if the
   gateway sends code 6 and the 60 s retry blocks the UI.
+
+---
+
+## HW-8 — An interrupted mode command leaves staged registers for the next commit
+
+Priority: medium
+Status: open
+Affected code: `modbus_client._write_mode_registers`, `modbus_client.clear_intensive`,
+`modbus_client.write_preset_mode`
+
+### Observation (HW-8)
+
+Every mode command writes its set registers one at a time and commits them by
+writing `41132 = 0` last. When a register write fails after its retry, or the
+command is cancelled, the registers written so far stay staged without a
+commit. [W-6](#partial-measurement-on-2026-10-02) showed that staged
+`41120/41121` remain in place for at least 20 seconds and take effect with the
+next `41132` write.
+
+The next command decides what happens to that staged state:
+
+- Fan, operating-mode, and off commands write `41120` and `41121` again before
+  their commit, so they replace staged values in those registers. Only the
+  unbalanced command writes `41122`; a staged `41122` survives the others but
+  is only used in unbalanced mode, which always writes it again.
+- Intensive on and intensive off write only `41123/41124` before the commit.
+  After an interrupted airflow or mode command, that commit would also apply
+  the staged `41120..41122`, for example an unbalanced airflow the user never
+  confirmed.
+
+The client logs a warning when a commit also covers registers staged by an
+interrupted command, so the case is visible in the log. The commands
+themselves are unchanged.
+
+### Manufacturer documentation (HW-8)
+
+`41132` must be written last, and the unit takes over `41120..41132` only
+once it is written; see
+[reference/modbus.md](reference/modbus.md#write-order). Whether staged
+registers expire or are discarded is not documented.
+
+### Why this cannot be fixed blind (HW-8)
+
+1. It is unknown whether the unit drops staged registers after some time or
+   when a commit does not write them again. W-6 only shows that they survive
+   20 seconds.
+2. Rewriting the base registers before an intensive command needs values the
+   integration does not know reliably: the status map reports balanced
+   targets in the coarse app encoding, and writing those back would change the
+   airflow.
+3. Refusing intensive commands after an interrupted command would also block
+   ending an intensive override, which the user expects to work at any time.
+
+### What to measure (HW-8)
+
+1. Stage an unbalanced command without commit, then switch intensive on and
+   off with their usual sequences, and record whether the staged airflow
+   becomes active at either commit.
+2. Stage a command, wait five minutes, then commit with `41132` alone, to see
+   whether staged registers expire.
+
+Tests: [W-19](LIVE_GATEWAY_TESTS.md#w-19--staged-registers-and-a-later-partial-commit).
+
+### Candidate solutions (HW-8)
+
+- **A — no change** if staged registers expire quickly or a commit applies
+  only the registers its own command wrote.
+- **B — rewrite before an intensive command** the base registers of the last
+  airflow or mode command a readback confirmed, while registers are staged.
+- **C — refuse intensive on** while registers are staged, but keep intensive
+  off allowed, until a fan, mode, or off command has committed the base
+  registers again.
+
+---
+
+## HW-9 — Poll timing of the integration's own scheduler
+
+Priority: low
+Status: resolved (candidate A, 2026-11-02)
+Affected code: `coordinator.async_poll`, `coordinator._schedule_next_tick`,
+`polling.next_tick_seconds`
+
+### Observation (HW-9)
+
+Earlier releases handed each next delay to Home Assistant's
+`DataUpdateCoordinator` as `update_interval` and compensated its scheduling
+from whole loop seconds, so a tick fired up to half a second after the job was
+due. Since 5.0.0 the coordinator schedules every tick itself with
+`async_call_later`, which fires at the planned time. A new request rate or a
+newly enabled optional read also moves a tick that is already waiting.
+
+The gateway-facing pace is meant to be unchanged: the transport's read slot
+(`1 / rate`, by completion) and `REQUEST_GAP_SECONDS` still space every
+request, and a tick can only start a request when the coordinator's
+request-rate cap allows it.
+
+### Why this needs a live check (HW-9)
+
+1. Ticks now fire slightly earlier than before. In-memory tests prove the
+   planned delays and the request spacing, not how the gateway reacts to the
+   resulting rhythm.
+2. Changing the request rate in the options now takes effect within one tick
+   instead of after the old interval.
+
+### What to measure (HW-9)
+
+1. During the startup follow-up of H-9, check the function-`0x03` send
+   timestamps against the minimum `1 / rate` interval, as before.
+2. Change the request rate in the options while polling runs, and check that
+   the new spacing starts with the next request and that no request breaks the
+   old or the new minimum.
+
+Tests: [T-11](LIVE_GATEWAY_TESTS.md#t-11--scheduler-timing-in-the-test-harness),
+[H-9](LIVE_GATEWAY_TESTS.md#h-9--real-home-assistant-instance).
+
+### T-11 harness run on 2026-11-02
+
+The Home Assistant core of the test harness (HA `2026.11.0`) ran on the
+Windows development machine with the gateway and the six units of
+[W-20](#w-20-and-w-21-on-2026-11-02), read-only. The real config flow scanned
+the gateway and created the entry with six unit subentries (all detected as
+`ii_plain`). The entry then polled for ten minutes in five phases: the default
+4 requests/s after setup (150 s), 2 requests/s set through the options flow
+while polling ran (150 s), 3 requests/s followed by an entry reload (150 s),
+1 request/s (90 s), and 4 requests/s again (60 s). Every raw frame was logged
+with a `perf_counter` stamp.
+
+- All 1132 function-`0x03` requests were answered; no timeouts. Slaves `2`
+  and `4` answered `0x05` once each on `41027` (filter days) during the first
+  startup, the known single filter-block exception.
+- Spacing of successive read requests per phase, minimum / median:
+  4/s `288 / 304 ms`, 2/s `546 / 562 ms`, 3/s `378 / 394 ms`,
+  1/s `1041 / 1060 ms`, 4/s again `287 / 304 ms`. No interval broke
+  `1 / rate` (1 ms tolerance).
+- A new rate applied from the next request that was not yet waiting for its
+  slot. After `1 → 4`, the request already waiting kept the 1 s spacing
+  (`1062 ms`), and all following requests were spaced about `305 ms`. After
+  `3 → 1` the next interval was `1052 ms`.
+- The gap from an answer to the next request was at least 100 ms, except twice
+  at a link change: 60 ms between the config flow's last probe answer and the
+  entry's first request, and 52 ms between the late answer to a gateway read
+  that the reload cancelled and the reopened link's first request. Both
+  requests were answered normally. The config flow's scan itself is paced only
+  by the 100 ms request gap (about 150 ms per request), as intended.
+- The first airflow value of every unit arrived 0.6–4.0 s after setup at
+  4 requests/s, and 1.1–5.5 s after the reload at 3 requests/s.
+- The diagnostics at the end showed no consecutive timeouts, no link
+  recycles, 100% success, and a mean response time of 46 ms.
+
+This supports candidate A. The harness is not a separate Home Assistant
+installation; the remaining H-9 checks (USB discovery on the host, 24 hours of
+logs) stay with H-9. Local raw log, not archived: `hw9-events.jsonl`.
+
+### Candidate solutions (HW-9)
+
+- **A — no change** if the request spacing holds, which the transport is
+  meant to guarantee on its own.
+- **B — restore the late wake-up** by adding the former half-second margin to
+  `next_poll_delay`, if the gateway turns out to need more idle time.

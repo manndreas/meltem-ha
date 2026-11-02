@@ -15,8 +15,9 @@ from custom_components.meltem_ventilation.binary_sensor import (
     MeltemRoomConnectivitySensor,
 )
 from custom_components.meltem_ventilation.const import DOMAIN
-from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
+
+from .common import TEST_ENTRY_ID, mock_coordinator
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -34,7 +35,7 @@ _DESCRIPTIONS = {description.key: description for description in BINARY_SENSOR_D
 
 
 def _fake_coordinator(data: dict[str, RoomState] | None = None) -> MagicMock:
-    coordinator = MagicMock(spec=MeltemDataUpdateCoordinator)
+    coordinator = mock_coordinator()
     coordinator.data = data or {}
     type(coordinator).safe_data = property(
         lambda self: self.data if isinstance(self.data, dict) else {}
@@ -63,7 +64,7 @@ def _entity(coordinator: MagicMock, key: str) -> MeltemBinarySensorEntity:
 class TestBinarySensorEntityCreation:
     def test_unique_id_format(self) -> None:
         entity = _entity(_fake_coordinator(), "error_status")
-        assert entity.unique_id == f"{DOMAIN}_unit_1_error_status"
+        assert entity.unique_id == f"{DOMAIN}_{TEST_ENTRY_ID}_unit_1_error_status"
 
     def test_device_info(self) -> None:
         coordinator = _fake_coordinator(data={"unit_1": RoomState(software_version=7)})
@@ -87,7 +88,7 @@ class TestBinarySensorEntityCreation:
 
         entity = MeltemDataHealthBinarySensor(coordinator, _ROOM)
 
-        assert entity.unique_id == f"{DOMAIN}_unit_1_data_health"
+        assert entity.unique_id == f"{DOMAIN}_{TEST_ENTRY_ID}_unit_1_data_health"
         assert entity.is_on is True
         assert entity.available is True
         flow = entity.extra_state_attributes["flow"]
@@ -100,6 +101,17 @@ class TestBinarySensorEntityCreation:
         entity = MeltemDataHealthBinarySensor(_fake_coordinator(), _ROOM)
 
         assert {"flow", "flow_control", "intensive", "writes"} <= (entity._unrecorded_attributes)
+
+    @pytest.mark.parametrize("has_data", [False, True])
+    @pytest.mark.parametrize("update_success", [False, True])
+    def test_data_health_stays_available_without_successful_updates(
+        self, has_data: bool, update_success: bool
+    ) -> None:
+        coordinator = _fake_coordinator(data={"unit_1": RoomState()} if has_data else {})
+        coordinator.last_update_success = update_success
+        coordinator.room_available.return_value = False
+
+        assert MeltemDataHealthBinarySensor(coordinator, _ROOM).available is True
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +131,7 @@ class TestGatewayConnectivity:
         entity = MeltemRoomConnectivitySensor(coordinator, _ROOM)
         assert entity.available is True
         assert entity.is_on is connected
-        assert entity.unique_id == f"{DOMAIN}_unit_1_connectivity"
+        assert entity.unique_id == f"{DOMAIN}_{TEST_ENTRY_ID}_unit_1_connectivity"
 
     @pytest.mark.parametrize(
         ("age", "expected"), [(None, None), (0.0, True), (30.0, True), (30.1, False)]
@@ -154,6 +166,22 @@ class TestGatewayConnectivity:
         assert entity.is_on is True
 
 
+def _state_for_sensor(key: str, value: bool | None) -> RoomState:
+    if key == "error_status":
+        return RoomState(error_status=value)
+    if key == "frost_protection_active":
+        return RoomState(frost_protection_active=value)
+    if key == "filter_change_due":
+        return RoomState(filter_change_due=value)
+    if key == "rf_comm_status":
+        return RoomState(rf_comm_status=value)
+    if key == "rf_fault_status":
+        return RoomState(rf_fault_status=value)
+    if key == "value_error_status":
+        return RoomState(value_error_status=value)
+    raise AssertionError(f"Unexpected binary sensor key: {key}")
+
+
 class TestBinarySensorIsOn:
     @pytest.mark.parametrize("key", list(_DESCRIPTIONS))
     @pytest.mark.parametrize("value", [True, False, None])
@@ -170,22 +198,6 @@ class TestBinarySensorIsOn:
         with patch.object(entity, "async_write_ha_state"):
             entity._handle_coordinator_update()
         assert entity.is_on is True
-
-
-def _state_for_sensor(key: str, value: bool | None) -> RoomState:
-    if key == "error_status":
-        return RoomState(error_status=value)
-    if key == "frost_protection_active":
-        return RoomState(frost_protection_active=value)
-    if key == "filter_change_due":
-        return RoomState(filter_change_due=value)
-    if key == "rf_comm_status":
-        return RoomState(rf_comm_status=value)
-    if key == "rf_fault_status":
-        return RoomState(rf_fault_status=value)
-    if key == "value_error_status":
-        return RoomState(value_error_status=value)
-    raise AssertionError(f"Unexpected binary sensor key: {key}")
 
     def test_missing_room_returns_none(self) -> None:
         assert _entity(_fake_coordinator(data={}), "error_status").is_on is None

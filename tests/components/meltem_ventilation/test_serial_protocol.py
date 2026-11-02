@@ -23,7 +23,6 @@ from pytest_homeassistant.common import MockConfigEntry
 from custom_components.meltem_ventilation.const import (
     CONF_MAX_REQUESTS_PER_SECOND,
     CONF_PORT,
-    CONF_ROOMS,
     DOMAIN,
     MODE_MANUAL,
     MODE_UNBALANCED,
@@ -38,12 +37,16 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_MODE_STATUS,
     TRANSPORT_READ_RECOVERY_SECONDS,
 )
+from custom_components.meltem_ventilation.identifiers import room_entity_unique_id
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemModbusError,
     build_serial_params,
 )
 from custom_components.meltem_ventilation.models import RefreshPlan, RoomConfig, RoomState
+from custom_components.meltem_ventilation.units import unit_subentry_data
+
+from .common import allow_next_read, skip_startup
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Pseudo-terminals require POSIX")
 
@@ -474,7 +477,7 @@ async def test_late_reply_cannot_be_used_for_a_quarantined_unit(
         serial_gateway.late_response = None
         await asyncio.sleep(0)
         reads_before = list(serial_gateway.requests)
-        state = await client.read_room_state(
+        state, outcome = await client.read_room(
             room,
             RoomState(days_until_filter_change=25),
             RefreshPlan.only(refresh_filter_days=True),
@@ -487,8 +490,8 @@ async def test_late_reply_cannot_be_used_for_a_quarantined_unit(
         await connection.close()
 
     assert state.days_until_filter_change == 25
-    assert state.last_read_job is not None
-    assert not state.last_read_job.attempted_groups
+    assert not outcome.attempted_groups
+    assert not outcome.recorded_groups
     assert state.read_health_for("filter").last_successful_read is None
 
 
@@ -577,11 +580,14 @@ async def serial_hass_entry(
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Meltem",
-        data={
-            CONF_PORT: serial_gateway.device,
-            CONF_ROOMS: [{"key": "unit_1", "name": "Unit 1", "profile": "ii_plain", "slave": 2}],
-        },
+        data={CONF_PORT: serial_gateway.device},
         options={CONF_MAX_REQUESTS_PER_SECOND: 1000.0},
+        subentries_data=[
+            unit_subentry_data(
+                {"key": "unit_1", "name": "Unit 1", "profile": "ii_plain", "slave": 2}
+            )
+        ],
+        version=2,
         source="user",
     )
     entry.add_to_hass(hass)
@@ -598,7 +604,9 @@ async def test_home_assistant_fan_service_reaches_the_real_serial_client(
     hass: HomeAssistant, serial_gateway: _RtuGateway, serial_hass_entry: MockConfigEntry
 ) -> None:
     supply_id = er.async_get(hass).async_get_entity_id(
-        Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_supply_level"
+        Platform.FAN,
+        DOMAIN,
+        room_entity_unique_id(serial_hass_entry.entry_id, "unit_1", "supply_level"),
     )
     assert supply_id is not None
     initial = hass.states.get(supply_id)
@@ -638,10 +646,10 @@ async def test_home_assistant_fan_service_reaches_the_real_serial_client(
         }
     )
     coordinator = serial_hass_entry.runtime_data.coordinator
-    coordinator._startup_jobs = []
-    for job in coordinator._jobs:
+    skip_startup(coordinator)
+    for job in coordinator.poll_jobs:
         job.next_due = 0.0 if job.key == "flow" else float("inf")
-    coordinator._last_read_started = None
+    allow_next_read(coordinator)
     await coordinator.async_refresh()
     await hass.async_block_till_done()
     state = hass.states.get(supply_id)
@@ -654,7 +662,9 @@ async def test_home_assistant_fan_service_reports_and_recovers_from_rtu_write_re
     hass: HomeAssistant, serial_gateway: _RtuGateway, serial_hass_entry: MockConfigEntry
 ) -> None:
     supply_id = er.async_get(hass).async_get_entity_id(
-        Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_supply_level"
+        Platform.FAN,
+        DOMAIN,
+        room_entity_unique_id(serial_hass_entry.entry_id, "unit_1", "supply_level"),
     )
     assert supply_id is not None
     serial_gateway.actions.extend(("normal", "exception"))

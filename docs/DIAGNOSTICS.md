@@ -13,7 +13,8 @@ sequences retain their separate hardware timing.
 After a read receives no usable response, is interrupted, or loses its
 connection, further reads to that unit pause for five seconds. This recovery
 pause does not block writes or reads to other units. Polling resumes on its
-normal schedule, and the unit remains unavailable until a read succeeds. The
+normal schedule. A single unanswered read does not make the unit unavailable:
+its last values stay valid until the failure threshold below is reached. The
 pause reduces the chance that a delayed serial response is mistaken for a
 current value, but cannot eliminate it.
 
@@ -98,7 +99,10 @@ time during an outage; it does not promise that every group is current.
 unavailable. It turns on when a read group is stale (three consecutive failed
 read jobs or its stale interval has elapsed) or while a recent command has
 failed, mismatched, or remained unconfirmed. Its attributes show details per
-group and for recent commands.
+group and for recent commands. It refreshes locally every 10 seconds, without
+extra Modbus requests, so stale readings, confirmation deadlines, and expired
+command warnings are reflected even while polling is paused. Before any unit
+state is known, it reports unknown rather than unavailable.
 
 An interrupted command may already have reached the unit. It is marked
 unconfirmed, and direction or operating-mode changes that depend on the old
@@ -111,6 +115,31 @@ including R-codes in legacy unit previews and error messages. This does not
 change the saved configuration, device registry, or optional app setup code
 entity. Review any download before sharing it because other contextual data,
 such as unit names, may still be present.
+
+The download lists every unit under `entry.units` with its stored address,
+profile, and identity. Under `coordinator`, `next_poll_delay_seconds` is the
+time the scheduler waits after its current tick, and `poll_scheduled` shows
+that the next tick is planned.
+
+### Repair notices
+
+Home Assistant shows these notices under **Settings** → **Repairs**. A notice
+you ignore stays ignored across reloads of the integration. Notices that no
+longer apply, for example after a profile change, disappear with the next
+reload or check.
+
+- **The Meltem gateway reports units that are not set up**: about five minutes
+  after startup and then hourly, the integration reads the unit list from the
+  gateway (two small requests). A unit that is paired in the Meltem app but not
+  set up in Home Assistant raises this notice with its Modbus address. Add it
+  with **Add unit** on the integration page, or run **Scan for new units** in
+  the options. The notice disappears once every reported unit is set up.
+- **A sensor of a unit is not reported**: the selected profile includes a
+  humidity, CO2, or VOC sensor, but the unit reports that it has no reading
+  for about three minutes in a row. The sensor shows unknown meanwhile instead
+  of its last value. Check that the profile matches the type plate and change
+  it with **Reconfigure** on the unit; if it does, the sensor may be faulty.
+  The notice disappears with the next real value.
 
 ### Gateway diagnostics
 
@@ -130,7 +159,7 @@ The gateway device provides these overview and diagnostic entities:
 | Total airflow delta | Total supply minus total extract airflow in m³/h | Yes |
 | Mean response time | Mean successful request duration in milliseconds over the last 5 minutes | No |
 | Successful Modbus requests (5 min) | Successful attempts as a percentage of all attempts over the last 5 minutes | No |
-| Uptime | Gateway uptime, in seconds | No |
+| Uptime | Gateway uptime, in days | No |
 | UTC clock | Gateway UTC time as a timestamp | No |
 
 Except for the connected-device count, RF statistics, uptime, and UTC clock reads described
@@ -183,7 +212,9 @@ of that unit for five seconds; the next scheduled job then retries. A valid
 Modbus error reply proves gateway connectivity but counts as a failed operation.
 Cancellation and attempts refused because the client is closed are excluded.
 
-An affected room remains unavailable until a unit read succeeds. Home Assistant
+A room becomes unavailable only after three consecutive failed read jobs or
+more than 120 seconds without a unit answer, not after a single unanswered
+read. Home Assistant
 automatically retries a failed initial gateway setup. The five-second pause is
 not a guarantee that delayed replies have been discarded; other integrations
 sharing the connection are not blocked by this policy.
@@ -224,7 +255,7 @@ not `total_increasing`; the previous-hour bucket can fall as well as rise.
 The exact bucket-rollover timing has not been isolated on Meltem hardware.
 
 RF load uses low-word-first Float32 values displayed directly as percentages,
-following pyairios without multiplying by 100. Four decimal places keep small
+following pyairios without multiplying by 100. Two decimal places keep small
 loads visible. Non-finite or out-of-range percentages become unavailable
 without invalidating the counters or the other load value. The physical
 percentage calibration has not been independently verified for this Meltem
@@ -236,8 +267,9 @@ do so. These values do not prove that every room measurement is fresh; see the
 ### Gateway uptime
 
 Enabling **Uptime** adds one read of registers `41019..41020` on gateway address
-`1` about every 60 seconds. The 32-bit value is in seconds, with the low word at
-`41019`. The read shares the gateway lock and read-rate limit; scheduling,
+`1` about every 60 seconds. The 32-bit register value is in seconds, with the
+low word at `41019`, and the entity displays it in days with one decimal place.
+The read shares the gateway lock and read-rate limit; scheduling,
 retries, or backoff may delay it. Disabling the entity stops these reads, and an
 uptime failure does not make room data unavailable. After more than 180 seconds
 without a successful uptime read the sensor becomes unavailable.
@@ -304,6 +336,10 @@ spaced to 60 seconds to reduce its load on the shared link; other units
 continue to be polled. The unit becomes available automatically after a
 successful read. Check its power supply and radio link to the gateway. The
 **Read health** attributes and diagnostics download show which reads failed.
+Home Assistant's system information page lists the last read error of each
+unit with its time under **Last read error per unit**; the diagnostics
+download has the same under `last_room_errors`. Both keep the error of a unit
+that has recovered since, so check the time.
 
 ## Serial port shared with another integration
 

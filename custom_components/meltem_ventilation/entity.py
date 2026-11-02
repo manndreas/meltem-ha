@@ -5,23 +5,44 @@
 # pyright: reportIncompatibleVariableOverride=false
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from collections.abc import Callable, Iterable
 
+from homeassistant.const import Platform
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, GATEWAY_NAME, INTEGRATION_NAME, profile_label
+from .const import (
+    DATA_HEALTH_ENTITY_KEY,
+    ENTITY_PLATFORM_BY_KEY,
+    ENTITY_PROFILES,
+    GATEWAY_NAME,
+    INTEGRATION_NAME,
+    profile_label,
+)
 from .coordinator import MeltemDataUpdateCoordinator
+from .identifiers import (
+    gateway_entity_unique_id,
+    gateway_identifiers,
+    room_entity_unique_id,
+    room_identifiers,
+)
 from .models import EMPTY_ROOM_STATE, RoomConfig, RoomState
 
 
-def gateway_identifiers(entry_id: str) -> set[tuple[str, str]]:
-    """Return the stable identifier set for one gateway."""
+def async_add_room_entities(
+    coordinator: MeltemDataUpdateCoordinator,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    entities_of: Callable[[RoomConfig], Iterable[Entity]],
+) -> None:
+    """Add the entities of every unit to the config subentry the unit is stored in."""
 
-    return {(DOMAIN, entry_id)}
+    for room in coordinator.rooms:
+        if entities := list(entities_of(room)):
+            async_add_entities(entities, config_subentry_id=room.subentry_id)
 
 
 def gateway_device_info(entry_id: str, gateway_mac: str | None = None) -> DeviceInfo:
@@ -38,20 +59,29 @@ def gateway_device_info(entry_id: str, gateway_mac: str | None = None) -> Device
     return info
 
 
-def room_supports_entity(
-    room: RoomConfig,
-    entity_key: str,
-    profiles: frozenset[str] | None = None,
-) -> bool:
-    """Return whether an entity should exist for one room.
+def room_has_entity(room: RoomConfig, entity_key: str) -> bool:
+    """Return whether an entity exists for one room.
 
-    ``profiles`` additionally restricts the entity to the unit families that
-    carry the underlying hardware.
+    This is the only rule for it: the platforms create exactly these entities,
+    and setup removes registry entries of every other one.
     """
 
+    if entity_key == DATA_HEALTH_ENTITY_KEY:
+        return room.supports_any(("supply_air_flow", "extract_air_flow"))
+    profiles = ENTITY_PROFILES.get(entity_key)
     if profiles is not None and room.profile not in profiles:
         return False
     return room.supports(entity_key)
+
+
+def room_entity_platforms(room: RoomConfig) -> dict[str, Platform]:
+    """Return the platform of every entity one room has."""
+
+    return {
+        key: platform
+        for key, platform in ENTITY_PLATFORM_BY_KEY.items()
+        if room_has_entity(room, key)
+    }
 
 
 class MeltemLocalDiagnosticEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
@@ -63,27 +93,31 @@ class MeltemLocalDiagnosticEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        # One shared timer for all these entities instead of one per entity.
         self.async_on_remove(
-            async_track_time_interval(
-                self.hass, self._async_refresh_diagnostics, timedelta(seconds=10)
-            )
+            self.coordinator.async_add_diagnostic_listener(self.async_write_ha_state)
         )
 
-    @callback
-    def _async_refresh_diagnostics(self, now: datetime) -> None:
-        self.async_write_ha_state()
 
-
-class MeltemGatewayEntity(MeltemLocalDiagnosticEntity):
-    """Gateway diagnostics that remain visible when communication fails."""
+class MeltemGatewayBaseEntity(Entity):
+    """Base entity attached to the Meltem gateway device."""
 
     _attr_has_entity_name = True
+    _attr_should_poll = False
 
-    def __init__(self, coordinator: MeltemDataUpdateCoordinator, entry_id: str, key: str) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_{entry_id}_{key}"
+    def __init__(self, entry_id: str, key: str) -> None:
+        super().__init__()
+        self._attr_unique_id = gateway_entity_unique_id(entry_id, key)
         self._attr_translation_key = key
         self._attr_device_info = gateway_device_info(entry_id)
+
+
+class MeltemGatewayEntity(MeltemLocalDiagnosticEntity, MeltemGatewayBaseEntity):
+    """Gateway diagnostics that remain visible when communication fails."""
+
+    def __init__(self, coordinator: MeltemDataUpdateCoordinator, entry_id: str, key: str) -> None:
+        MeltemLocalDiagnosticEntity.__init__(self, coordinator)
+        MeltemGatewayBaseEntity.__init__(self, entry_id, key)
 
 
 class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
@@ -106,18 +140,15 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
         super().__init__(coordinator)
         self.room = room
         self._entity_key = object_key
-        self._attr_unique_id = f"{DOMAIN}_{room.key}_{object_key}"
+        self._attr_unique_id = room_entity_unique_id(coordinator.entry_id, room.key, object_key)
         self._attr_translation_key = translation_key or object_key
         self._hw_version = str(room.product_id) if room.product_id is not None else None
         self._exported_versions: tuple[str | None, str | None] = (None, None)
 
     @property
     def device_info(self) -> DeviceInfo:
-        identifiers = {(DOMAIN, self.room.key)}
-        if self.room.app_setup_code is not None:
-            identifiers.add((DOMAIN, f"app_setup_code:{self.room.app_setup_code}"))
         info = DeviceInfo(
-            identifiers=identifiers,
+            identifiers=room_identifiers(self.room),
             manufacturer="Meltem",
             model=profile_label(self.room.profile),
             name=f"{INTEGRATION_NAME} {self.room.name}",
@@ -148,26 +179,31 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
             self.room.key, read_group
         )
 
+    @callback
     def _handle_coordinator_update(self) -> None:
+        # A read job of another unit leaves this unit's values unchanged.
+        if not self.coordinator.room_updated(self.room.key):
+            return
         self._async_update_device_registry_versions()
         super()._handle_coordinator_update()
 
     def _async_update_device_registry_versions(self) -> None:
         """Push late-discovered version fields into the device registry."""
 
-        device = self.device_entry
-        if self.hass is None or device is None:
-            return
-
         sw_version, hw_version = versions = (self._sw_version, self._hw_version)
-        if versions == self._exported_versions:
+        # Checked first, since every entity of a unit runs this on every update of the unit.
+        if versions == self._exported_versions or self.hass is None:
+            return
+        device = self.device_entry
+        if device is None:
             return
 
         self._exported_versions = versions
-        if versions != (getattr(device, "sw_version", None), getattr(device, "hw_version", None)):
-            dr.async_get(self.hass).async_update_device(
-                device.id, sw_version=sw_version, hw_version=hw_version
-            )
+        if versions == (getattr(device, "sw_version", None), getattr(device, "hw_version", None)):
+            return
+        dr.async_get(self.hass).async_update_device(
+            device.id, sw_version=sw_version, hw_version=hw_version
+        )
 
 
 class MeltemRoomDiagnosticEntity(MeltemEntity, MeltemLocalDiagnosticEntity):

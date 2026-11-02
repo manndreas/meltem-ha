@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 from argparse import Namespace
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
@@ -19,6 +21,7 @@ from modbus_connection.tmodbus import ModbusConnection
 
 from custom_components.meltem_ventilation.const import (
     DEFAULT_GATEWAY_DEVICE_ID,
+    DEFAULT_MAX_REQUESTS_PER_SECOND,
     DEFAULT_PORT,
     FIXED_TIMEOUT,
     REGISTER_APPLY,
@@ -33,12 +36,19 @@ from custom_components.meltem_ventilation.modbus_helpers import (
     build_serial_params,
     supported_entity_keys_for_profile,
 )
-from custom_components.meltem_ventilation.models import ReadHealth, RoomConfig, RoomState
-from tools import _link, write_registers
+from custom_components.meltem_ventilation.models import (
+    ReadHealth,
+    ReadJobOutcome,
+    RoomConfig,
+    RoomRead,
+    RoomState,
+)
+from tools import _link, raw_requests, write_registers
 from tools import benchmark_integration_like as bil
 from tools._pymodbus_compat import install_pymodbus_unit_keyword_compat
 from tools.profile_register_reads import SPECS as PROFILE_READ_SPECS
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _MANUAL_80_SEQUENCE = ((REGISTER_MODE, 3), (REGISTER_CURRENT_LEVEL, 80), (REGISTER_APPLY, 0))
 
 
@@ -254,7 +264,8 @@ class TestIntegrationLikeBenchmark:
                 last_error="old error",
             ),
         )
-        with patch.object(client, "read_room_state", new=AsyncMock(return_value=state)):
+        read = RoomRead(state, ReadJobOutcome(attempted_groups=frozenset({"flow"})))
+        with patch.object(client, "read_room", new=AsyncMock(return_value=read)):
             samples = await bil.run_cycles(client, [room], 1, {"airflow": bil.AIRFLOW_PLAN})
 
         assert samples[0].ok is True
@@ -281,7 +292,7 @@ class TestIntegrationLikeBenchmark:
             patch.object(bil, "_observe", new=AsyncMock()),
             patch.object(bil.asyncio, "sleep", new=AsyncMock()),
         ):
-            await bil.run_mode(experiment_args, client, _benchmark_connection(link), [room])
+            await bil.run_mode(experiment_args, client, [room])
 
         assert [call.args[2:4] for call in write.call_args_list] == [(35, "write"), (30, "restore")]
 
@@ -309,7 +320,7 @@ class TestIntegrationLikeBenchmark:
             patch.object(bil.asyncio, "sleep", new=AsyncMock()),
             pytest.raises(type(error), match=str(error)),
         ):
-            await bil.run_mode(experiment_args, client, _benchmark_connection(link), [room])
+            await bil.run_mode(experiment_args, client, [room])
 
         assert [call.args[2:4] for call in write.call_args_list] == [(35, "write"), (30, "restore")]
 
@@ -335,7 +346,7 @@ class TestIntegrationLikeBenchmark:
             patch.object(bil.asyncio, "sleep", new=AsyncMock()),
             pytest.raises(bil.MeltemConnectionError, match="write failed"),
         ):
-            await bil.run_mode(experiment_args, client, _benchmark_connection(link), [room])
+            await bil.run_mode(experiment_args, client, [room])
 
         assert [call.args[2:4] for call in write.call_args_list] == [(35, "write"), (30, "restore")]
 
@@ -361,11 +372,122 @@ class TestIntegrationLikeBenchmark:
                 RuntimeError, match="observation failed" if phase_failed else "restore failed"
             ),
         ):
-            await bil.run_mode(experiment_args, client, _benchmark_connection(link), [room])
+            await bil.run_mode(experiment_args, client, [room])
 
         assert "ERROR: restoring airflow of slave 2 failed: RuntimeError: restore failed" in (
             capsys.readouterr().out
         )
+
+    def test_defaults_follow_the_integration(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "argv", ["benchmark_integration_like"])
+
+        args = bil.parse_args()
+
+        assert args.gap == REQUEST_GAP_SECONDS
+        assert args.rate == DEFAULT_MAX_REQUESTS_PER_SECOND
+
+    @pytest.mark.parametrize(
+        ("state", "expected"),
+        [
+            (RoomState(target_level=0, supply_air_flow=12), 0),
+            (RoomState(target_level=40, supply_air_flow=38), 40),
+            (RoomState(supply_air_flow=38), 38),
+        ],
+        ids=("off-target", "target", "measured-only"),
+    )
+    def test_airflow_keeps_a_target_of_zero(self, state: RoomState, expected: int) -> None:
+        assert bil._airflow(state) == expected
+
+    async def test_raw_snapshots_share_the_client_read_quarantine(
+        self, link: MockModbusConnection, room: RoomConfig
+    ) -> None:
+        client = bil.MeltemModbusClient(link.for_unit, port="mock-port")
+        unit = link.for_unit(room.slave)
+        unit.fail_read(REGISTER_MODE_STATUS, ModbusTimeoutError("late reply pending"))
+        await client.read_room(room, RoomState(), bil.AIRFLOW_PLAN)
+        reads_before = len(unit.read_events)
+
+        snapshot = await _link.read_or_none(client.unit_for(room.slave), 41020, 2)
+
+        # A raw read must not pick up the late reply of the unanswered request.
+        assert snapshot is None
+        assert len(unit.read_events) == reads_before
+
+
+def test_benchmark_runs_without_home_assistant() -> None:
+    """The tool brings its own Home Assistant stub; pytest always has the real one loaded."""
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys, runpy; sys.argv = ['benchmark_integration_like', '--help'];"
+            "sys.modules['homeassistant'] = None;"
+            "runpy.run_module('tools.benchmark_integration_like', run_name='__main__')",
+        ],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--rate" in result.stdout
+
+
+class TestRawRequests:
+    @pytest.mark.parametrize(
+        "failed_addresses",
+        [(), (REGISTER_MODE_STATUS,), (41020,), (REGISTER_MODE_STATUS, 41020)],
+        ids=("success", "first-fails", "second-fails", "all-fail"),
+    )
+    async def test_exit_code_reports_any_failed_request(
+        self, failed_addresses: tuple[int, ...], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        link = MockModbusConnection()
+        unit = link.for_unit(2)
+        unit.holding.update({REGISTER_MODE_STATUS: [3, 60, 0], 41020: [30, 30]})
+        for address in failed_addresses:
+            unit.fail_read(
+                address,
+                ModbusTimeoutError("timeout")
+                if address == REGISTER_MODE_STATUS
+                else IllegalDataAddressError(),
+            )
+
+        @asynccontextmanager
+        async def open_link(_port: str) -> AsyncIterator[MockModbusConnection]:
+            yield link
+
+        with (
+            patch.object(raw_requests, "open_link", open_link),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "raw_requests",
+                    "--slave",
+                    "2",
+                    "--read",
+                    f"{REGISTER_MODE_STATUS}:3",
+                    "--read",
+                    "41020:2",
+                    "--rounds",
+                    "2",
+                ],
+            ),
+        ):
+            assert await raw_requests.main() == (1 if failed_addresses else 0)
+
+        output = capsys.readouterr().out
+        summary = output.split("summary:\n", 1)[1]
+        for line, address in zip(summary.splitlines(), (REGISTER_MODE_STATUS, 41020), strict=True):
+            assert f"ok={0 if address in failed_addresses else 2}/2" in line
+        if REGISTER_MODE_STATUS in failed_addresses:
+            assert "ModbusTimeoutError=2" in summary
+        if 41020 in failed_addresses:
+            assert "IllegalDataAddressError=2" in summary
 
 
 class TestWriteRegisters:

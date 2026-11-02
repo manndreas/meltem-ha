@@ -17,6 +17,7 @@ from .const import (
     FILTER_REFRESH_SECONDS,
     FLOW_REFRESH_SECONDS,
     OPERATING_HOURS_REFRESH_SECONDS,
+    OPTIONAL_DIAGNOSTIC_READ_GROUPS,
     READ_GROUP_ENTITY_KEYS,
     STATUS_REFRESH_SECONDS,
     TEMPERATURE_REFRESH_SECONDS,
@@ -104,10 +105,23 @@ class PollJob:
         """Return whether a group of this job has no successful read yet."""
 
         state = states.get(self.room_key, EMPTY_ROOM_STATE)
-        return any(
-            room.supports_any(READ_GROUP_ENTITY_KEYS[group_key])
-            and state.read_health_for(group_key).last_successful_read is None
+        groups = tuple(
+            group_key
             for group_key in self.refresh_plan.read_groups()
+            if room.supports_any(READ_GROUP_ENTITY_KEYS[group_key])
+        )
+        primary_groups = tuple(
+            group_key for group_key in groups if group_key not in OPTIONAL_DIAGNOSTIC_READ_GROUPS
+        )
+        if primary_groups:
+            return any(
+                state.read_health_for(group_key).last_successful_read is None
+                for group_key in primary_groups
+            )
+        return any(
+            (health := state.read_health_for(group_key)).last_successful_read is None
+            and (health.last_attempt is None or health.last_error_timed_out)
+            for group_key in groups
         )
 
     def interval(
@@ -172,16 +186,13 @@ def next_tick_seconds(
     startup_pending: bool,
     tick_seconds: float,
     now: float,
-    loop_time: float,
 ) -> float:
     """Return the delay until the next scheduler wake-up."""
 
     if not jobs:
         return IDLE_TICK_SECONDS
     earliest_due = now if startup_pending else min(job.next_due for job in jobs)
-    seconds = max(tick_seconds, earliest_due - now)
-    # HA schedules from int(loop.time()), which would fire up to a second early.
-    return seconds + loop_time - math.floor(loop_time)
+    return max(tick_seconds, earliest_due - now)
 
 
 def backoff_seconds(consecutive_failures: int) -> float | None:

@@ -6,10 +6,10 @@ the coordinator, entities, and Modbus client can share a stable contract.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields, replace
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from homeassistant.config_entries import ConfigEntry
 
@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 
 # A mode or preset name, a level, a flag, or a supply/extract level pair.
 type WriteValue = str | int | bool | tuple[int, int]
+# Outcome of one write as judged by the readbacks after it.
+type WriteStatus = Literal[
+    "pending", "confirmed", "mismatch", "unconfirmed", "unverifiable", "failed", "superseded"
+]
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,6 +59,8 @@ class RoomConfig:
     supported_entity_keys: frozenset[str] | None = None
     product_id: int | None = None
     app_setup_code: str | None = None
+    # The config subentry the unit is stored in; its entities and device belong to it.
+    subentry_id: str | None = None
 
     def supports(self, entity_key: str) -> bool:
         """Return whether this unit has one entity."""
@@ -77,6 +83,8 @@ class ReadHealth:
     last_error: str | None = None
     # A timeout says nothing about the unit's answer, unlike an exception response.
     last_error_timed_out: bool = False
+    # ``time.monotonic()`` of the last successful read; ages it across wall-clock jumps.
+    last_success_monotonic: float | None = None
 
     def failed(self, attempted_at: datetime, error: str, *, timed_out: bool = False) -> ReadHealth:
         """Return this health after one more failed read."""
@@ -87,6 +95,7 @@ class ReadHealth:
             consecutive_failures=min(self.consecutive_failures + 1, READ_FAILURE_THRESHOLD),
             last_error=error,
             last_error_timed_out=timed_out,
+            last_success_monotonic=self.last_success_monotonic,
         )
 
 
@@ -95,13 +104,34 @@ EMPTY_READ_HEALTH = ReadHealth()
 
 @dataclass(slots=True, frozen=True)
 class ReadJobOutcome:
-    """Actual attempts and answers in the most recent room read."""
+    """What one room read sent, and how each read group of its plan fared.
 
-    completed_at: datetime
-    attempted_groups: frozenset[str]
-    answered: bool
-    value_groups: frozenset[str]
-    unit_success_groups: frozenset[str]
+    Only groups the room supports appear here.
+    """
+
+    # Groups a request was sent for, including ones skipped mid-read.
+    attempted_groups: frozenset[str] = frozenset()
+    # Groups whose read health this read updated, as a success or a failure.
+    recorded_groups: frozenset[str] = frozenset()
+    # First error of each recorded group that failed.
+    errors: Mapping[str, str] = field(default_factory=dict)
+    # Whether any request got a valid response, including an exception response.
+    answered: bool = False
+    # Groups that yielded a usable value from the unit itself.
+    value_groups: frozenset[str] = frozenset()
+    # Groups with a component the unit itself answered.
+    unit_success_groups: frozenset[str] = frozenset()
+    # Sensor fields that answered with a "no sensor" placeholder, and ones with a value.
+    missing_sensor_values: frozenset[str] = frozenset()
+    sensor_values: frozenset[str] = frozenset()
+
+
+@dataclass(slots=True, frozen=True)
+class RoomReadError:
+    """The most recent failed read job of one unit."""
+
+    message: str
+    at: datetime
 
 
 @dataclass(slots=True, frozen=True)
@@ -110,10 +140,13 @@ class WriteConfirmation:
 
     expected_value: WriteValue
     started_at: datetime
-    status: str = "pending"
+    status: WriteStatus = "pending"
     actual_value: WriteValue | None = None
     last_error: str | None = None
     issue_counted: bool = False
+    # Read health of the confirming group when the write was accepted. Only a
+    # later read changes it, so the order does not depend on the wall clock.
+    baseline: ReadHealth = EMPTY_READ_HEALTH
 
 
 @dataclass(slots=True, frozen=True)
@@ -160,7 +193,6 @@ class RoomState:
     co2_max_level: int | None = None
 
     group_read_health: tuple[tuple[str, ReadHealth], ...] = ()
-    last_read_job: ReadJobOutcome | None = field(default=None, compare=False, repr=False)
 
     @property
     def has_data(self) -> bool:
@@ -181,11 +213,16 @@ class RoomState:
 
 
 _ROOM_VALUE_FIELDS: tuple[str, ...] = tuple(
-    item.name
-    for item in fields(RoomState)
-    if item.name not in {"group_read_health", "last_read_job"}
+    item.name for item in fields(RoomState) if item.name != "group_read_health"
 )
 EMPTY_ROOM_STATE = RoomState()
+
+
+class RoomRead(NamedTuple):
+    """The state after one room read and what that read did."""
+
+    state: RoomState
+    outcome: ReadJobOutcome
 
 
 @dataclass(slots=True, frozen=True)
@@ -243,6 +280,9 @@ class MeltemRuntimeData:
     """Runtime objects kept for a config entry."""
 
     coordinator: MeltemDataUpdateCoordinator
+    # The port and units setup used; a change to them needs a reload.
+    setup_snapshot: Mapping[str, object] = field(default_factory=dict)
+    reload_scheduled: bool = False
 
 
 type MeltemIntegrationConfigEntry = ConfigEntry[MeltemRuntimeData]

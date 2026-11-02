@@ -39,7 +39,6 @@ from custom_components.meltem_ventilation.const import (
     PRESET_MODE_CODE_LOW,
     PRESET_MODE_CODE_MEDIUM,
     PROFILE_METADATA,
-    REGISTER_CO2_EXTRACT_AIR,
     REGISTER_CURRENT_LEVEL,
     REGISTER_EXHAUST_AIR_TEMPERATURE,
     REGISTER_EXTRACT_AIR_FLOW,
@@ -422,9 +421,7 @@ class TestRequestShapes:
         assert _reads(unit) == [
             (41020, 2),
             (41000, 6),
-            (41009, 2),
-            (41006, 2),
-            (41011, 3),
+            (41006, 8),
             (41016, 3),
             (41027, 1),
             (41030, 2),
@@ -500,16 +497,13 @@ class TestRequestShapes:
                 REGISTER_HUMIDITY_SUPPLY_AIR: [50],
             }
         )
-        unit.fail_read(REGISTER_CO2_EXTRACT_AIR, _REJECTED)
         unit.fail_read(REGISTER_VOC_SUPPLY_AIR, _REJECTED)
 
         state = await client.read_room_state(_F, RoomState(), _TEMPERATURES)
 
         assert _reads(unit) == [
             (REGISTER_EXTRACT_AIR_TEMPERATURE, 6),
-            (REGISTER_SUPPLY_AIR_TEMPERATURE, 2),
-            (REGISTER_HUMIDITY_EXTRACT_AIR, 1),
-            (REGISTER_HUMIDITY_SUPPLY_AIR, 1),
+            (REGISTER_HUMIDITY_EXTRACT_AIR, 6),
         ]
         assert state.humidity_extract_air == 45
         assert state.humidity_supply_air == 50
@@ -582,7 +576,7 @@ class TestMeasuredValues:
         )
         assert failed.read_health_for("temperature").consecutive_failures == 1
 
-    async def test_hardware_sentinel_air_quality_values_keep_the_last_value_without_failing_the_group(
+    async def test_hardware_sentinel_air_quality_values_become_unknown_without_failing_the_group(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
         unit.holding.update(
@@ -602,12 +596,20 @@ class TestMeasuredValues:
             voc_supply_air=120,
         )
 
-        state = await client.read_room_state(_FC_VOC, previous, _TEMPERATURES)
+        state, outcome = await client.read_room(_FC_VOC, previous, _TEMPERATURES)
 
-        assert state.humidity_extract_air == 44
-        assert state.humidity_supply_air == 46
-        assert state.co2_extract_air == 780
-        assert state.voc_supply_air == 120
+        # A placeholder means no reading, so the last value must not look current.
+        assert state.humidity_extract_air is None
+        assert state.humidity_supply_air is None
+        assert state.co2_extract_air is None
+        assert state.voc_supply_air is None
+        assert outcome.missing_sensor_values == {
+            "humidity_extract_air",
+            "humidity_supply_air",
+            "co2_extract_air",
+            "voc_supply_air",
+        }
+        assert outcome.sensor_values == frozenset()
         # One sensor without a reading must not take the temperatures offline.
         assert state.exhaust_temperature == 19.0
         assert state.extract_air_temperature == 22.0
@@ -630,12 +632,18 @@ class TestMeasuredValues:
             }
         )
 
-        state = await client.read_room_state(_FC_VOC, RoomState(), _TEMPERATURES)
+        state, outcome = await client.read_room(_FC_VOC, RoomState(), _TEMPERATURES)
 
         assert state.humidity_extract_air == 45
         assert state.co2_extract_air == 800
         assert state.humidity_supply_air == 47
         assert state.voc_supply_air is None
+        assert outcome.missing_sensor_values == {"voc_supply_air"}
+        assert outcome.sensor_values == {
+            "humidity_extract_air",
+            "co2_extract_air",
+            "humidity_supply_air",
+        }
         assert state.read_health_for("temperature").consecutive_failures == 0
 
     async def test_operating_hours_are_a_little_endian_uint32(
@@ -841,21 +849,21 @@ class TestReadHealth:
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
         room = replace(
-            _F, supported_entity_keys=frozenset({"exhaust_temperature", "supply_air_temperature"})
+            _F, supported_entity_keys=frozenset({"exhaust_temperature", "humidity_extract_air"})
         )
         unit.fail_read(REGISTER_EXTRACT_AIR_TEMPERATURE, IllegalDataAddressError())
-        unit.fail_read(REGISTER_SUPPLY_AIR_TEMPERATURE, ModbusTimeoutError("silent"))
-        started = dt_util.utcnow()
+        unit.fail_read(REGISTER_HUMIDITY_EXTRACT_AIR, ModbusTimeoutError("silent"))
 
-        state = await client.read_room_state(room, RoomState(), _TEMPERATURES)
+        state, outcome = await client.read_room(room, RoomState(), _TEMPERATURES)
 
         health = state.read_health_for("temperature")
         assert health.last_error_timed_out
-        assert state.last_read_job is not None
-        assert state.last_read_job.answered
-        assert not state.last_read_job.value_groups
-        assert not read_health.job_read_unanswered(room, state, _TEMPERATURES, started)
-        failure = read_health.job_read_failure(room, state, _TEMPERATURES, started)
+        assert outcome.answered
+        assert not outcome.value_groups
+        assert outcome.recorded_groups == {"temperature"}
+        assert outcome.errors.keys() == {"temperature"}
+        assert not read_health.job_read_unanswered(room, outcome, _TEMPERATURES)
+        failure = read_health.job_read_failure(room, outcome, _TEMPERATURES)
         assert failure is not None
         assert not failure.link_failure
 
@@ -866,16 +874,14 @@ class TestReadHealth:
         unit.read_holding_registers = AsyncMock(
             side_effect=[GatewayTargetError(), ModbusTimeoutError("silent")]
         )
-        started = dt_util.utcnow()
 
-        state = await client.read_room_state(room, RoomState(), _TEMPERATURES)
+        state, outcome = await client.read_room(room, RoomState(), _TEMPERATURES)
 
         health = state.read_health_for("temperature")
         assert health.last_error_timed_out
-        assert state.last_read_job is not None
-        assert state.last_read_job.answered
-        assert not state.last_read_job.value_groups
-        assert not read_health.job_read_unanswered(room, state, _TEMPERATURES, started)
+        assert outcome.answered
+        assert not outcome.value_groups
+        assert not read_health.job_read_unanswered(room, outcome, _TEMPERATURES)
 
 
 # ---------------------------------------------------------------------------

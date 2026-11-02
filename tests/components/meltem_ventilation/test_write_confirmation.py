@@ -14,7 +14,12 @@ from custom_components.meltem_ventilation.const import (
     WRITE_CONFIRMATION_TIMEOUT_SECONDS,
     WRITE_HEALTH_RETENTION_SECONDS,
 )
-from custom_components.meltem_ventilation.models import ReadHealth, RoomState, WriteConfirmation
+from custom_components.meltem_ventilation.models import (
+    ReadHealth,
+    RoomState,
+    WriteConfirmation,
+    WriteStatus,
+)
 from custom_components.meltem_ventilation.write_confirmation import (
     CONTROL_SETTING_WRITE_PREFIX,
     WriteConfirmations,
@@ -183,7 +188,9 @@ def test_readback_rejects_unknown_write_key() -> None:
 
 
 @pytest.mark.parametrize("status", ["pending", "unconfirmed", "mismatch", "unverifiable"])
-def test_open_write_needs_confirmation_until_the_health_retention_ends(status: str) -> None:
+def test_open_write_needs_confirmation_until_the_health_retention_ends(
+    status: WriteStatus,
+) -> None:
     confirmations = WriteConfirmations()
     confirmations.record_pending("unit_1", "airflow_levels", (60, 60))
     confirmations.set_status("unit_1", "airflow_levels", status)
@@ -200,10 +207,48 @@ def test_open_write_needs_confirmation_until_the_health_retention_ends(status: s
 
 
 @pytest.mark.parametrize("status", ["confirmed", "failed", "superseded"])
-def test_final_write_needs_no_confirmation(status: str) -> None:
+def test_final_write_needs_no_confirmation(status: WriteStatus) -> None:
     confirmations = WriteConfirmations()
     confirmations.record_pending("unit_1", "airflow_levels", (60, 60))
     confirmations.set_status("unit_1", "airflow_levels", status)
 
     assert not confirmations.needs_confirmation("unit_1", "airflow_levels")
     assert not confirmations.needs_confirmation("unit_2", "airflow_levels")
+
+
+def test_balanced_target_readback_persists_during_lag_and_clears_after_external_reset() -> None:
+    confirmations = WriteConfirmations()
+    now = dt_util.utcnow()
+    health = ReadHealth(last_attempt=now, last_successful_read=now)
+    confirmations.record_pending("unit_1", "airflow_levels", (65, 65))
+    confirmations.set_status("unit_1", "airflow_levels", "confirmed", actual_value=(65, 65))
+
+    # Post-write lag: measured flow is still 60/60 while write is recent and has not yet converged
+    lagging_previous = RoomState(
+        operation_mode=OPERATION_MODE_MANUAL,
+        target_level=60,
+        balanced_target_readback=65,
+        supply_air_flow=60,
+        extract_air_flow=60,
+        group_read_health=(("flow", health), ("flow_control", health)),
+    )
+    lagging_next = replace(lagging_previous, balanced_target_readback=None)
+    preserved, should_read = confirmations.prepare_balanced_target_readback(
+        "unit_1", lagging_next, lagging_previous
+    )
+    assert not should_read
+    assert preserved.balanced_target_readback == 65
+
+    # Once measured flow converged to 65/65, a later external change back to 60/60 clears 65
+    converged_previous = replace(lagging_previous, supply_air_flow=65, extract_air_flow=65)
+    reset_to_60 = replace(
+        converged_previous,
+        balanced_target_readback=None,
+        supply_air_flow=60,
+        extract_air_flow=60,
+    )
+    cleared, should_read = confirmations.prepare_balanced_target_readback(
+        "unit_1", reset_to_60, converged_previous
+    )
+    assert not should_read
+    assert cleared.balanced_target_readback is None

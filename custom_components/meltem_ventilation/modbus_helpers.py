@@ -127,14 +127,21 @@ def new_transport_policy(
     )
 
 
-def prepare_unit(unit: ModbusUnit, unit_id: int, policy: TransportPolicy) -> ModbusUnit:
+def prepare_unit(
+    unit: ModbusUnit,
+    unit_id: int,
+    policy: TransportPolicy,
+    *,
+    message_spacing: float = REQUEST_GAP_SECONDS,
+) -> ModbusUnit:
     """Ask the link for the gateway's timing and wrap the unit in the retry policy.
 
     The timeout must be asked for before the first request, since a lower
-    timeout only takes effect on the next connect.
+    timeout only takes effect on the next connect. Only the gateway tools pass
+    another ``message_spacing``.
     """
 
-    unit.set_message_spacing(REQUEST_GAP_SECONDS)
+    unit.set_message_spacing(message_spacing)
     unit.require_timeout(FIXED_TIMEOUT)
     # PolicyUnit overrides the register requests the integration sends and
     # hands every other ModbusUnit member to the wrapped unit via __getattr__,
@@ -283,7 +290,7 @@ async def detect_slave_details(unit: ModbusUnit) -> UnitProbeResult:
             app_setup_code = await probe.async_read_app_setup_code()
         except ModbusConnectionError as err:
             raise MeltemConnectionError(str(err)) from err
-        except (ModbusTimeoutError, ModbusError):
+        except ModbusTimeoutError, ModbusError:
             pass
 
     detected = {key for key in PLAUSIBLE_RANGES if is_plausible(key, values.get(key))}

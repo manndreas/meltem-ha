@@ -13,13 +13,15 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import (
     CO2_PROFILES,
     HUMIDITY_PROFILES,
+    OPERATION_MODE_AUTOMATIC,
+    OPERATION_MODE_CO2_CONTROL,
+    OPERATION_MODE_HUMIDITY_CONTROL,
     OPERATION_MODE_INACTIVE,
     PRESET_MODE_INACTIVE,
     PRESET_MODE_OPTIONS,
-    SENSOR_CONTROL_PROFILES,
 )
 from .coordinator import MeltemDataUpdateCoordinator
-from .entity import MeltemEntity, room_supports_entity
+from .entity import MeltemEntity, async_add_room_entities, room_has_entity
 from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, RoomConfig
 
 # The coordinator serializes all gateway access itself.
@@ -36,13 +38,15 @@ async def async_setup_entry(
     runtime_data: MeltemRuntimeData = entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    entities: list[SelectEntity] = []
-    for room in coordinator.rooms:
-        if room_supports_entity(room, "operation_mode", SENSOR_CONTROL_PROFILES):
+    def entities_of(room: RoomConfig) -> list[SelectEntity]:
+        entities: list[SelectEntity] = []
+        if room_has_entity(room, "operation_mode"):
             entities.append(MeltemOperationModeSelect(coordinator, room))
-        if room_supports_entity(room, "preset_mode"):
+        if room_has_entity(room, "preset_mode"):
             entities.append(MeltemPresetModeSelect(coordinator, room))
-    async_add_entities(entities)
+        return entities
+
+    async_add_room_entities(coordinator, async_add_entities, entities_of)
 
 
 class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
@@ -59,9 +63,9 @@ class MeltemOperationModeSelect(MeltemEntity, SelectEntity):
         super().__init__(coordinator, room, "operation_mode", "operation_mode")
         options = [OPERATION_MODE_INACTIVE]
         if room.profile in HUMIDITY_PROFILES:
-            options.append("humidity_control")
+            options.append(OPERATION_MODE_HUMIDITY_CONTROL)
         if room.profile in CO2_PROFILES:
-            options.extend(["co2_control", "automatic"])
+            options.extend([OPERATION_MODE_CO2_CONTROL, OPERATION_MODE_AUTOMATIC])
         self._attr_options = options
 
     @property

@@ -37,6 +37,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     entry = entries[0]
     runtime_data: MeltemRuntimeData = entry.runtime_data
     coordinator = runtime_data.coordinator
+    port = str(entry.data[CONF_PORT])
     last_job_error = coordinator.last_job_error
 
     return {
@@ -46,16 +47,30 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
         "last_update_success": coordinator.last_update_success,
         # The page is often pasted into issues, and by-id paths carry serial numbers.
         "last_job_error": (
-            redact_port(str(last_job_error), str(entry.data[CONF_PORT]))
-            if last_job_error is not None
-            else "none"
+            redact_port(str(last_job_error), port) if last_job_error is not None else "none"
         ),
+        "last_unit_errors": _last_unit_errors(coordinator, port),
         "unavailable_units": ", ".join(
             room.key for room in coordinator.rooms if not coordinator.room_available(room.key)
         )
         or "none",
         "stale_read_groups": _stale_read_groups(coordinator),
     }
+
+
+def _last_unit_errors(coordinator: MeltemDataUpdateCoordinator, port: str) -> str:
+    """Summarize the most recent failed read of each unit with its time."""
+
+    errors = coordinator.last_room_errors
+    return (
+        "; ".join(
+            f"{room.key}: {redact_port(error.message, port)} "
+            f"({error.at.isoformat(timespec='seconds')})"
+            for room in coordinator.rooms
+            if (error := errors.get(room.key)) is not None
+        )
+        or "none"
+    )
 
 
 def _stale_read_groups(coordinator: MeltemDataUpdateCoordinator) -> str:

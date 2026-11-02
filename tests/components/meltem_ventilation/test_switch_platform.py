@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -12,6 +12,8 @@ from custom_components.meltem_ventilation.coordinator import (
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
 from custom_components.meltem_ventilation.switch import MeltemIntensiveSwitch
 
+from .common import TEST_ENTRY_ID, mock_coordinator
+
 _ROOM = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
 
 
@@ -20,13 +22,11 @@ def _switch(
     *,
     optimistic: bool | None = None,
 ) -> MeltemIntensiveSwitch:
-    coordinator = MagicMock()
+    coordinator = mock_coordinator()
     coordinator.last_update_success = True
     coordinator.room_available.return_value = True
     coordinator.read_group_fresh.return_value = True
     coordinator.optimistic_intensive.return_value = optimistic
-    coordinator.async_activate_intensive = AsyncMock()
-    coordinator.async_deactivate_intensive = AsyncMock()
     coordinator.safe_data = {"unit_1": state or RoomState()}
     return MeltemIntensiveSwitch(coordinator, _ROOM)
 
@@ -93,4 +93,4 @@ async def test_turning_off_cancels_the_override() -> None:
 
 
 def test_unique_id_uses_the_intensive_key() -> None:
-    assert _switch().unique_id == "meltem_ventilation_unit_1_intensive"
+    assert _switch().unique_id == f"meltem_ventilation_{TEST_ENTRY_ID}_unit_1_intensive"

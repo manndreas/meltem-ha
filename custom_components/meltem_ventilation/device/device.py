@@ -26,6 +26,7 @@ from ..const import (
 from ..models import GatewayRfStatistics
 from .components import (
     Airflow,
+    AirQuality,
     AppSetupCode,
     Command,
     ControlSettings,
@@ -79,6 +80,24 @@ class MeltemRoomDevice(Device):
             # Plain units only expose the exhaust temperature (unit matrix).
             _only(self.temperatures, "exhaust_temperature")
         self.supply_temperature = SupplyTemperature(unit)
+        self.air_quality = AirQuality(unit)
+        if not has_co2 or not has_voc:
+            air_quality_fields = [
+                "humidity_extract_air",
+                "supply_air_temperature",
+                "humidity_supply_air",
+            ]
+            if has_co2:
+                air_quality_fields.append("co2_extract_air")
+            if has_voc:
+                air_quality_fields.append("voc_supply_air")
+            _only(self.air_quality, *air_quality_fields)
+            self.air_quality.register_ranges = (
+                (
+                    REGISTER_HUMIDITY_EXTRACT_AIR,
+                    REGISTER_VOC_SUPPLY_AIR if has_voc else REGISTER_HUMIDITY_SUPPLY_AIR,
+                ),
+            )
         self.extract_air_quality = ExtractAirQuality(unit)
         if not has_co2:
             _only(self.extract_air_quality, "humidity_extract_air")

@@ -1,0 +1,3666 @@
+# serializer version: 1
+# name: test_diagnostics
+  dict({
+    'coordinator': dict({
+      'configured_room_count': 1,
+      'cumulative_diagnostics': dict({
+        'period_started_at': '2026-11-02T12:00:00+00:00',
+        'read_failures': dict({
+        }),
+        'transport': dict({
+          'link_recycles': 0,
+          'request_attempts': 0,
+          'request_failures': 0,
+          'request_failures_by_category': dict({
+            'modbus_exception': 0,
+            'no_answer': 0,
+            'other': 0,
+          }),
+          'successful_attempts': 0,
+        }),
+        'write_issues': dict({
+        }),
+      }),
+      'gateway_probe_error': None,
+      'gateway_units': list([
+        2,
+      ]),
+      'last_job_error': None,
+      'last_room_errors': dict({
+      }),
+      'last_update_success': True,
+      'next_poll_delay_seconds': 0.25,
+      'poll_scheduled': True,
+      'room_states': dict({
+        'slave_2': dict({
+          'balanced_target_readback': None,
+          'co2_extract_air': 780,
+          'co2_max_level': 60,
+          'co2_min_level': 10,
+          'co2_starting_point': 800,
+          'days_until_filter_change': 120,
+          'error_status': False,
+          'exhaust_temperature': 8.5,
+          'extract_air_flow': 40,
+          'extract_air_temperature': 21.5,
+          'extract_target_level': None,
+          'fan_motor_hours': 11000,
+          'filter_change_due': False,
+          'frost_protection_active': False,
+          'group_read_health': tuple(
+            tuple(
+              'control_settings',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'fan_hours',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'filter',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'flow',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'flow_control',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'hours',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'intensive',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'rf_fault',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'rf_last_seen',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'rf_signal',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'status',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'temperature',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'value_error',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+          ),
+          'humidity_extract_air': 48,
+          'humidity_max_level': 60,
+          'humidity_min_level': 10,
+          'humidity_starting_point': 60,
+          'humidity_supply_air': 41,
+          'intensive_active': False,
+          'operating_hours': 12345,
+          'operation_mode': 'manual',
+          'outdoor_air_temperature': 4.0,
+          'preset_mode': None,
+          'rf_comm_status': False,
+          'rf_fault_status': False,
+          'rf_last_seen_age_seconds': 12,
+          'rf_signal_strength': -43,
+          'software_version': 2326,
+          'supply_air_flow': 42,
+          'supply_air_temperature': 19.0,
+          'target_level': 40,
+          'value_error_status': False,
+          'voc_supply_air': 120,
+        }),
+      }),
+      'rooms': list([
+        dict({
+          'app_setup_code': '**REDACTED**',
+          'key': 'slave_2',
+          'name': 'Unit 1',
+          'preview': 'R-Code **REDACTED** | ID 116852 | VOC',
+          'product_id': 116852,
+          'profile': 'ii_fc_voc',
+          'slave': 2,
+          'subentry_id': '01JMELTEMSNAPSHOTUNIT00000',
+          'supported_entity_keys': list([
+            'airflow_balance',
+            'app_setup_code',
+            'co2_extract_air',
+            'co2_max_level',
+            'co2_min_level',
+            'co2_starting_point',
+            'connectivity',
+            'days_until_filter_change',
+            'error_status',
+            'exhaust_temperature',
+            'extract_air_flow',
+            'extract_air_temperature',
+            'extract_level',
+            'fan_motor_hours',
+            'filter_change_due',
+            'frost_protection_active',
+            'humidity_extract_air',
+            'humidity_max_level',
+            'humidity_min_level',
+            'humidity_starting_point',
+            'humidity_supply_air',
+            'intensive',
+            'last_successful_update',
+            'modbus_slave_id',
+            'operating_hours',
+            'operation_mode',
+            'outdoor_air_temperature',
+            'preset_mode',
+            'rf_comm_status',
+            'rf_fault_status',
+            'rf_last_seen_age_seconds',
+            'rf_signal_strength',
+            'supply_air_flow',
+            'supply_air_temperature',
+            'supply_level',
+            'value_error_status',
+            'voc_supply_air',
+          ]),
+        }),
+      ]),
+      'state_room_count': 1,
+      'transport': dict({
+        'consecutive_timeouts': 0,
+        'last_answer_timestamp': None,
+        'link_recycles': 0,
+        'mean_response_time_ms': None,
+        'request_sample_count': 0,
+        'request_success_rate': None,
+        'request_window_seconds': 300.0,
+        'seconds_since_any_answer': None,
+      }),
+      'unavailable_rooms': list([
+      ]),
+    }),
+    'entry': dict({
+      'data': dict({
+        'port': '**REDACTED**',
+      }),
+      'entry_id': '01JMELTEMSNAPSHOTENTRY0000',
+      'minor_version': 1,
+      'options': dict({
+      }),
+      'state': 'ConfigEntryState.LOADED',
+      'title': 'Meltem Gateway M-WRG-GW',
+      'units': list([
+        dict({
+          'data': dict({
+            'app_setup_code': '**REDACTED**',
+            'key': 'slave_2',
+            'preview': 'R-Code **REDACTED** | ID 116852 | VOC',
+            'product_id': 116852,
+            'profile': 'ii_fc_voc',
+            'slave': 2,
+          }),
+          'subentry_id': '01JMELTEMSNAPSHOTUNIT00000',
+          'title': 'Unit 1',
+          'unique_id': '2',
+        }),
+      ]),
+      'version': 2,
+    }),
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_gateway_m_wrg_gw_modbus_connection-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'binary_sensor.meltem_gateway_m_wrg_gw_modbus_connection',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Modbus connection',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.CONNECTIVITY: 'connectivity'>,
+    'original_icon': None,
+    'original_name': 'Modbus connection',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_connectivity',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_connectivity',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_gateway_m_wrg_gw_modbus_connection-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'connectivity',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Modbus connection',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.meltem_gateway_m_wrg_gw_modbus_connection',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'unknown',
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_device_error-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': None,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_device_error',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Device error',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.PROBLEM: 'problem'>,
+    'original_icon': None,
+    'original_name': 'Device error',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'error_status',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_error_status',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_device_error-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'problem',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Device error',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_device_error',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'off',
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_filter_change_due-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': None,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_filter_change_due',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Filter change due',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.PROBLEM: 'problem'>,
+    'original_icon': None,
+    'original_name': 'Filter change due',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'filter_change_due',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_filter_change_due',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_filter_change_due-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'problem',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Filter change due',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_filter_change_due',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'off',
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_frost_protection_active-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': None,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_frost_protection_active',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Frost protection active',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Frost protection active',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'frost_protection_active',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_frost_protection_active',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_frost_protection_active-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Frost protection active',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_frost_protection_active',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'off',
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_reachable-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_reachable',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Reachable',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.CONNECTIVITY: 'connectivity'>,
+    'original_icon': None,
+    'original_name': 'Reachable',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'connectivity',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_connectivity',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_reachable-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'connectivity',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Reachable',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_reachable',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'on',
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_read_health-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_read_health',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Read health',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.PROBLEM: 'problem'>,
+    'original_icon': None,
+    'original_name': 'Read health',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'data_health',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_data_health',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_read_health-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      'control_settings': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'problem',
+      'fan_hours': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'filter': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'flow': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'flow_control': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Read health',
+      'hours': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'intensive': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'rf_fault': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'rf_last_seen': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'rf_signal': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'status': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'temperature': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'value_error': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
+      'writes': dict({
+      }),
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_read_health',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'off',
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_rf_communication_status-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_rf_communication_status',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'RF communication status',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.PROBLEM: 'problem'>,
+    'original_icon': None,
+    'original_name': 'RF communication status',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'rf_comm_status',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_rf_comm_status',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_rf_communication_status-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'problem',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 RF communication status',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_rf_communication_status',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'off',
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_rf_fault_status-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_rf_fault_status',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'RF fault status',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.PROBLEM: 'problem'>,
+    'original_icon': None,
+    'original_name': 'RF fault status',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'rf_fault_status',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_rf_fault_status',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_rf_fault_status-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'problem',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 RF fault status',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_rf_fault_status',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'off',
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_value_error-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_value_error',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Value error',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.PROBLEM: 'problem'>,
+    'original_icon': None,
+    'original_name': 'Value error',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'value_error_status',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_value_error_status',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_value_error-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'problem',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Value error',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_value_error',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'off',
+  })
+# ---
+# name: test_entities[fan][fan.meltem_modbus_unit_1_extract_air-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <FanEntityCapabilityAttribute.PRESET_MODES: 'preset_modes'>: None,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'fan',
+    'entity_category': None,
+    'entity_id': 'fan.meltem_modbus_unit_1_extract_air',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Extract air',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Extract air',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': <FanEntityFeature: 49>,
+    'translation_key': 'extract_level',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_extract_level',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[fan][fan.meltem_modbus_unit_1_extract_air-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Extract air',
+      'level_source': 'target',
+      'opposite_airflow': 40,
+      'opposite_airflow_known': True,
+      <FanEntityStateAttribute.PERCENTAGE: 'percentage'>: 40,
+      <FanEntityStateAttribute.PERCENTAGE_STEP: 'percentage_step'>: 1.0,
+      <FanEntityStateAttribute.PRESET_MODE: 'preset_mode'>: None,
+      <FanEntityCapabilityAttribute.PRESET_MODES: 'preset_modes'>: None,
+      <EntityStateAttribute.SUPPORTED_FEATURES: 'supported_features'>: <FanEntityFeature: 49>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'fan.meltem_modbus_unit_1_extract_air',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'on',
+  })
+# ---
+# name: test_entities[fan][fan.meltem_modbus_unit_1_supply_air-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <FanEntityCapabilityAttribute.PRESET_MODES: 'preset_modes'>: None,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'fan',
+    'entity_category': None,
+    'entity_id': 'fan.meltem_modbus_unit_1_supply_air',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Supply air',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Supply air',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': <FanEntityFeature: 49>,
+    'translation_key': 'supply_level',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_supply_level',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[fan][fan.meltem_modbus_unit_1_supply_air-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Supply air',
+      'level_source': 'target',
+      'opposite_airflow': 40,
+      'opposite_airflow_known': True,
+      <FanEntityStateAttribute.PERCENTAGE: 'percentage'>: 40,
+      <FanEntityStateAttribute.PERCENTAGE_STEP: 'percentage_step'>: 1.0,
+      <FanEntityStateAttribute.PRESET_MODE: 'preset_mode'>: None,
+      <FanEntityCapabilityAttribute.PRESET_MODES: 'preset_modes'>: None,
+      <EntityStateAttribute.SUPPORTED_FEATURES: 'supported_features'>: <FanEntityFeature: 49>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'fan.meltem_modbus_unit_1_supply_air',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'on',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_co2_maximum_level-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 100,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 10,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 10,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'number',
+    'entity_category': <EntityCategory.CONFIG: 'config'>,
+    'entity_id': 'number.meltem_modbus_unit_1_co2_maximum_level',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'CO2 maximum level',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'CO2 maximum level',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'co2_max_level',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_co2_max_level',
+    'unit_of_measurement': '%',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_co2_maximum_level-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 CO2 maximum level',
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 100,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 10,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 10,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: '%',
+    }),
+    'context': <ANY>,
+    'entity_id': 'number.meltem_modbus_unit_1_co2_maximum_level',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '60.0',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_co2_minimum_level-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 100,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 0,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 10,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'number',
+    'entity_category': <EntityCategory.CONFIG: 'config'>,
+    'entity_id': 'number.meltem_modbus_unit_1_co2_minimum_level',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'CO2 minimum level',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'CO2 minimum level',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'co2_min_level',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_co2_min_level',
+    'unit_of_measurement': '%',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_co2_minimum_level-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 CO2 minimum level',
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 100,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 0,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 10,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: '%',
+    }),
+    'context': <ANY>,
+    'entity_id': 'number.meltem_modbus_unit_1_co2_minimum_level',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '10.0',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_co2_starting_point-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 1200,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 500,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 1,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'number',
+    'entity_category': <EntityCategory.CONFIG: 'config'>,
+    'entity_id': 'number.meltem_modbus_unit_1_co2_starting_point',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'CO2 starting point',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'CO2 starting point',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'co2_starting_point',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_co2_starting_point',
+    'unit_of_measurement': <UnitOfRatio.PARTS_PER_MILLION: 'ppm'>,
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_co2_starting_point-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 CO2 starting point',
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 1200,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 500,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 1,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfRatio.PARTS_PER_MILLION: 'ppm'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'number.meltem_modbus_unit_1_co2_starting_point',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '800.0',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_humidity_maximum_level-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 100,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 10,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 10,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'number',
+    'entity_category': <EntityCategory.CONFIG: 'config'>,
+    'entity_id': 'number.meltem_modbus_unit_1_humidity_maximum_level',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Humidity maximum level',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Humidity maximum level',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'humidity_max_level',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_humidity_max_level',
+    'unit_of_measurement': '%',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_humidity_maximum_level-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Humidity maximum level',
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 100,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 10,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 10,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: '%',
+    }),
+    'context': <ANY>,
+    'entity_id': 'number.meltem_modbus_unit_1_humidity_maximum_level',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '60.0',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_humidity_minimum_level-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 100,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 0,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 10,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'number',
+    'entity_category': <EntityCategory.CONFIG: 'config'>,
+    'entity_id': 'number.meltem_modbus_unit_1_humidity_minimum_level',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Humidity minimum level',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Humidity minimum level',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'humidity_min_level',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_humidity_min_level',
+    'unit_of_measurement': '%',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_humidity_minimum_level-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Humidity minimum level',
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 100,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 0,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 10,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: '%',
+    }),
+    'context': <ANY>,
+    'entity_id': 'number.meltem_modbus_unit_1_humidity_minimum_level',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '10.0',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_humidity_starting_point-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 80,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 40,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 1,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'number',
+    'entity_category': <EntityCategory.CONFIG: 'config'>,
+    'entity_id': 'number.meltem_modbus_unit_1_humidity_starting_point',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Humidity starting point',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Humidity starting point',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'humidity_starting_point',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_humidity_starting_point',
+    'unit_of_measurement': '%',
+  })
+# ---
+# name: test_entities[number][number.meltem_modbus_unit_1_humidity_starting_point-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Humidity starting point',
+      <NumberEntityCapabilityAttribute.MAX: 'max'>: 80,
+      <NumberEntityCapabilityAttribute.MIN: 'min'>: 40,
+      <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.BOX: 'box'>,
+      <NumberEntityCapabilityAttribute.STEP: 'step'>: 1,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: '%',
+    }),
+    'context': <ANY>,
+    'entity_id': 'number.meltem_modbus_unit_1_humidity_starting_point',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '60.0',
+  })
+# ---
+# name: test_entities[select][select.meltem_modbus_unit_1_quick_mode-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SelectEntityCapabilityAttribute.OPTIONS: 'options'>: list([
+        'inactive',
+        'low',
+        'medium',
+        'high',
+      ]),
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'select',
+    'entity_category': None,
+    'entity_id': 'select.meltem_modbus_unit_1_quick_mode',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Quick mode',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Quick mode',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'preset_mode',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_preset_mode',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[select][select.meltem_modbus_unit_1_quick_mode-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Quick mode',
+      <SelectEntityCapabilityAttribute.OPTIONS: 'options'>: list([
+        'inactive',
+        'low',
+        'medium',
+        'high',
+      ]),
+    }),
+    'context': <ANY>,
+    'entity_id': 'select.meltem_modbus_unit_1_quick_mode',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'inactive',
+  })
+# ---
+# name: test_entities[select][select.meltem_modbus_unit_1_sensor_control-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SelectEntityCapabilityAttribute.OPTIONS: 'options'>: list([
+        'inactive',
+        'humidity_control',
+        'co2_control',
+        'automatic',
+      ]),
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'select',
+    'entity_category': <EntityCategory.CONFIG: 'config'>,
+    'entity_id': 'select.meltem_modbus_unit_1_sensor_control',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Sensor control',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Sensor control',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'operation_mode',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_operation_mode',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[select][select.meltem_modbus_unit_1_sensor_control-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Sensor control',
+      <SelectEntityCapabilityAttribute.OPTIONS: 'options'>: list([
+        'inactive',
+        'humidity_control',
+        'co2_control',
+        'automatic',
+      ]),
+    }),
+    'context': <ANY>,
+    'entity_id': 'select.meltem_modbus_unit_1_sensor_control',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'inactive',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_connected_device_count-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_connected_device_count',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Connected device count',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Connected device count',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_connected_devices',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_connected_devices',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_connected_device_count-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Connected device count',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_connected_device_count',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '1',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_failed_modbus_requests-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_failed_modbus_requests',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Failed Modbus requests',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Failed Modbus requests',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_modbus_failures_total',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_modbus_failures_total',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_failed_modbus_requests-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      'failures_by_category': dict({
+        'modbus_exception': 0,
+        'no_answer': 0,
+        'other': 0,
+      }),
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Failed Modbus requests',
+      'period_started_at': '2026-11-02T12:00:00+00:00',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+      'successful_attempts': 0,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_failed_modbus_requests',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '0',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_failed_read_groups-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_failed_read_groups',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Failed read groups',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Failed read groups',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_failed_read_groups_total',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_failed_read_groups_total',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_failed_read_groups-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      'by_room_and_group': dict({
+      }),
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Failed read groups',
+      'period_started_at': '2026-11-02T12:00:00+00:00',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_failed_read_groups',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '0',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_last_modbus_response-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_last_modbus_response',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Last Modbus response',
+    'options': dict({
+    }),
+    'original_device_class': <SensorDeviceClass.TIMESTAMP: 'timestamp'>,
+    'original_icon': None,
+    'original_name': 'Last Modbus response',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_last_answer',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_last_answer',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_last_modbus_response-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'timestamp',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Last Modbus response',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_last_modbus_response',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'unknown',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_mean_response_time-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_mean_response_time',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Mean response time',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.DURATION: 'duration'>,
+    'original_icon': None,
+    'original_name': 'Mean response time',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_response_time',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_response_time',
+    'unit_of_measurement': <UnitOfTime.MILLISECONDS: 'ms'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_mean_response_time-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'duration',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Mean response time',
+      'sample_count': 0,
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfTime.MILLISECONDS: 'ms'>,
+      'window_seconds': 300.0,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_mean_response_time',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'unknown',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_modbus_device_path-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_modbus_device_path',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Modbus device path',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Modbus device path',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'modbus_device_path',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_modbus_device_path',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_modbus_device_path-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Modbus device path',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_modbus_device_path',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '/dev/serial/by-id/usb-meltem',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_modbus_link_recycles-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_modbus_link_recycles',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Modbus link recycles',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Modbus link recycles',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_link_recycles_total',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_link_recycles_total',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_modbus_link_recycles-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Modbus link recycles',
+      'period_started_at': '2026-11-02T12:00:00+00:00',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_modbus_link_recycles',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '0',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_modbus_request_attempts-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_modbus_request_attempts',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Modbus request attempts',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Modbus request attempts',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_modbus_attempts_total',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_modbus_attempts_total',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_modbus_request_attempts-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      'failures_by_category': dict({
+        'modbus_exception': 0,
+        'no_answer': 0,
+        'other': 0,
+      }),
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Modbus request attempts',
+      'period_started_at': '2026-11-02T12:00:00+00:00',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+      'successful_attempts': 0,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_modbus_request_attempts',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '0',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_rf_load_previous_hour-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_rf_load_previous_hour',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'RF load previous hour',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 2,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'RF load previous hour',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_rf_load_previous_hour',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_rf_load_previous_hour',
+    'unit_of_measurement': '%',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_rf_load_previous_hour-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW RF load previous hour',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: '%',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_rf_load_previous_hour',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '0.04',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_rf_load_this_hour-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_rf_load_this_hour',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'RF load this hour',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 2,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'RF load this hour',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_rf_load_current_hour',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_rf_load_current_hour',
+    'unit_of_measurement': '%',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_rf_load_this_hour-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW RF load this hour',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: '%',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_rf_load_this_hour',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '0.26',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_rf_messages_sent_previous_hour-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_rf_messages_sent_previous_hour',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'RF messages sent previous hour',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'RF messages sent previous hour',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_rf_messages_previous_hour',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_rf_messages_previous_hour',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_rf_messages_sent_previous_hour-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW RF messages sent previous hour',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_rf_messages_sent_previous_hour',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '147',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_rf_messages_sent_this_hour-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_rf_messages_sent_this_hour',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'RF messages sent this hour',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'RF messages sent this hour',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_rf_messages_current_hour',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_rf_messages_current_hour',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_rf_messages_sent_this_hour-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW RF messages sent this hour',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_rf_messages_sent_this_hour',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '75',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_successful_modbus_requests_5_min-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_successful_modbus_requests_5_min',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Successful Modbus requests (5 min)',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Successful Modbus requests (5 min)',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_success_rate',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_success_rate',
+    'unit_of_measurement': '%',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_successful_modbus_requests_5_min-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Successful Modbus requests (5 min)',
+      'sample_count': 0,
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: '%',
+      'window_seconds': 300.0,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_successful_modbus_requests_5_min',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'unknown',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_total_airflow_delta-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_total_airflow_delta',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Total airflow delta',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.VOLUME_FLOW_RATE: 'volume_flow_rate'>,
+    'original_icon': None,
+    'original_name': 'Total airflow delta',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_airflow_delta',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_airflow_delta',
+    'unit_of_measurement': <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_total_airflow_delta-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      'complete': True,
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'volume_flow_rate',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Total airflow delta',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+      'unknown_units': dict({
+      }),
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_total_airflow_delta',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '2',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_total_extract_air_flow-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_total_extract_air_flow',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Total extract air flow',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.VOLUME_FLOW_RATE: 'volume_flow_rate'>,
+    'original_icon': None,
+    'original_name': 'Total extract air flow',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_extract_air_flow',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_extract_air_flow',
+    'unit_of_measurement': <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_total_extract_air_flow-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      'complete': True,
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'volume_flow_rate',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Total extract air flow',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+      'unknown_units': dict({
+      }),
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_total_extract_air_flow',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '40',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_total_supply_air_flow-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_total_supply_air_flow',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Total supply air flow',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.VOLUME_FLOW_RATE: 'volume_flow_rate'>,
+    'original_icon': None,
+    'original_name': 'Total supply air flow',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_supply_air_flow',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_supply_air_flow',
+    'unit_of_measurement': <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_total_supply_air_flow-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      'complete': True,
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'volume_flow_rate',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Total supply air flow',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+      'unknown_units': dict({
+      }),
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_total_supply_air_flow',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '42',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_uptime-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_uptime',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Uptime',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 1,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.DURATION: 'duration'>,
+    'original_icon': None,
+    'original_name': 'Uptime',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_uptime',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_uptime',
+    'unit_of_measurement': <UnitOfTime.DAYS: 'd'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_uptime-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'duration',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Uptime',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfTime.DAYS: 'd'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_uptime',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '15.0',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_utc_clock-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_utc_clock',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'UTC clock',
+    'options': dict({
+    }),
+    'original_device_class': <SensorDeviceClass.TIMESTAMP: 'timestamp'>,
+    'original_icon': None,
+    'original_name': 'UTC clock',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_utc_clock',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_utc_clock',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_utc_clock-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'timestamp',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW UTC clock',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_utc_clock',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '2026-11-02T12:00:00+00:00',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_write_command_issues-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': None,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', '01JMELTEMSNAPSHOTENTRY0000')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_write_command_issues',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Write command issues',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Write command issues',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_write_issues_total',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_gateway_write_issues_total',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_gateway_m_wrg_gw_write_command_issues-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      'by_room_category_and_command': dict({
+      }),
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Gateway M-WRG-GW Write command issues',
+      'period_started_at': '2026-11-02T12:00:00+00:00',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_gateway_m_wrg_gw_write_command_issues',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '0',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_airflow_balance-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_airflow_balance',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Airflow balance',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.VOLUME_FLOW_RATE: 'volume_flow_rate'>,
+    'original_icon': None,
+    'original_name': 'Airflow balance',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'airflow_balance',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_airflow_balance',
+    'unit_of_measurement': <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_airflow_balance-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'volume_flow_rate',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Airflow balance',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_airflow_balance',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '2',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_app_setup_code-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_app_setup_code',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'App setup code',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'App setup code',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'app_setup_code',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_app_setup_code',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_app_setup_code-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 App setup code',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_app_setup_code',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'R000001',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_days_until_filter_change-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_days_until_filter_change',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Days until filter change',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 2,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.DURATION: 'duration'>,
+    'original_icon': None,
+    'original_name': 'Days until filter change',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'days_until_filter_change',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_days_until_filter_change',
+    'unit_of_measurement': <UnitOfTime.DAYS: 'd'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_days_until_filter_change-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'duration',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Days until filter change',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfTime.DAYS: 'd'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_days_until_filter_change',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '120',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_exhaust_temperature-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_exhaust_temperature',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Exhaust temperature',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 1,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.TEMPERATURE: 'temperature'>,
+    'original_icon': None,
+    'original_name': 'Exhaust temperature',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'exhaust_temperature',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_exhaust_temperature',
+    'unit_of_measurement': <UnitOfTemperature.CELSIUS: '°C'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_exhaust_temperature-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'temperature',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Exhaust temperature',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfTemperature.CELSIUS: '°C'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_exhaust_temperature',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '8.5',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_extract_air_co2-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_extract_air_co2',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Extract air CO2',
+    'options': dict({
+    }),
+    'original_device_class': <SensorDeviceClass.CO2: 'carbon_dioxide'>,
+    'original_icon': None,
+    'original_name': 'Extract air CO2',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'co2_extract_air',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_co2_extract_air',
+    'unit_of_measurement': <UnitOfRatio.PARTS_PER_MILLION: 'ppm'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_extract_air_co2-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'carbon_dioxide',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Extract air CO2',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfRatio.PARTS_PER_MILLION: 'ppm'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_extract_air_co2',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '780',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_extract_air_flow-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_extract_air_flow',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Extract air flow',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.VOLUME_FLOW_RATE: 'volume_flow_rate'>,
+    'original_icon': None,
+    'original_name': 'Extract air flow',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'extract_air_flow',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_extract_air_flow',
+    'unit_of_measurement': <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_extract_air_flow-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'volume_flow_rate',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Extract air flow',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_extract_air_flow',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '40',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_extract_air_humidity-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_extract_air_humidity',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Extract air humidity',
+    'options': dict({
+    }),
+    'original_device_class': <SensorDeviceClass.HUMIDITY: 'humidity'>,
+    'original_icon': None,
+    'original_name': 'Extract air humidity',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'humidity_extract_air',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_humidity_extract_air',
+    'unit_of_measurement': '%',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_extract_air_humidity-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'humidity',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Extract air humidity',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: '%',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_extract_air_humidity',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '48',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_extract_air_temperature-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_extract_air_temperature',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Extract air temperature',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 1,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.TEMPERATURE: 'temperature'>,
+    'original_icon': None,
+    'original_name': 'Extract air temperature',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'extract_air_temperature',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_extract_air_temperature',
+    'unit_of_measurement': <UnitOfTemperature.CELSIUS: '°C'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_extract_air_temperature-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'temperature',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Extract air temperature',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfTemperature.CELSIUS: '°C'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_extract_air_temperature',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '21.5',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_fan_operating_hours-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_fan_operating_hours',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Fan operating hours',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 2,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.DURATION: 'duration'>,
+    'original_icon': None,
+    'original_name': 'Fan operating hours',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'fan_motor_hours',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_fan_motor_hours',
+    'unit_of_measurement': <UnitOfTime.HOURS: 'h'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_fan_operating_hours-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'duration',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Fan operating hours',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfTime.HOURS: 'h'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_fan_operating_hours',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '11000',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_last_successful_update-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_last_successful_update',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Last successful update',
+    'options': dict({
+    }),
+    'original_device_class': <SensorDeviceClass.TIMESTAMP: 'timestamp'>,
+    'original_icon': None,
+    'original_name': 'Last successful update',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'last_successful_update',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_last_successful_update',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_last_successful_update-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'timestamp',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Last successful update',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_last_successful_update',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '2026-11-02T12:00:00+00:00',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_modbus_slave_id-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_modbus_slave_id',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Modbus slave ID',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Modbus slave ID',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'modbus_slave_id',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_modbus_slave_id',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_modbus_slave_id-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Modbus slave ID',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_modbus_slave_id',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '2',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_operating_hours-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_operating_hours',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Operating hours',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 2,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.DURATION: 'duration'>,
+    'original_icon': None,
+    'original_name': 'Operating hours',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'operating_hours',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_operating_hours',
+    'unit_of_measurement': <UnitOfTime.HOURS: 'h'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_operating_hours-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'duration',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Operating hours',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.TOTAL_INCREASING: 'total_increasing'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfTime.HOURS: 'h'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_operating_hours',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '12345',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_outdoor_air_temperature-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_outdoor_air_temperature',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Outdoor air temperature',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 1,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.TEMPERATURE: 'temperature'>,
+    'original_icon': None,
+    'original_name': 'Outdoor air temperature',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'outdoor_air_temperature',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_outdoor_air_temperature',
+    'unit_of_measurement': <UnitOfTemperature.CELSIUS: '°C'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_outdoor_air_temperature-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'temperature',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Outdoor air temperature',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfTemperature.CELSIUS: '°C'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_outdoor_air_temperature',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '4.0',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_rf_last_seen_age-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_rf_last_seen_age',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'RF last-seen age',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.DURATION: 'duration'>,
+    'original_icon': None,
+    'original_name': 'RF last-seen age',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'rf_last_seen_age_seconds',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_rf_last_seen_age_seconds',
+    'unit_of_measurement': <UnitOfTime.SECONDS: 's'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_rf_last_seen_age-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'duration',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 RF last-seen age',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfTime.SECONDS: 's'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_rf_last_seen_age',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '12',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_rf_rssi-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_rf_rssi',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'RF RSSI',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.SIGNAL_STRENGTH: 'signal_strength'>,
+    'original_icon': None,
+    'original_name': 'RF RSSI',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'rf_signal_strength',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_rf_signal_strength',
+    'unit_of_measurement': 'dBm',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_rf_rssi-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'signal_strength',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 RF RSSI',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: 'dBm',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_rf_rssi',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '-43',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_supply_air_flow-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_supply_air_flow',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Supply air flow',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 0,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.VOLUME_FLOW_RATE: 'volume_flow_rate'>,
+    'original_icon': None,
+    'original_name': 'Supply air flow',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'supply_air_flow',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_supply_air_flow',
+    'unit_of_measurement': <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_supply_air_flow-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'volume_flow_rate',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Supply air flow',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR: 'm³/h'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_supply_air_flow',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '42',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_supply_air_humidity-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_supply_air_humidity',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Supply air humidity',
+    'options': dict({
+    }),
+    'original_device_class': <SensorDeviceClass.HUMIDITY: 'humidity'>,
+    'original_icon': None,
+    'original_name': 'Supply air humidity',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'humidity_supply_air',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_humidity_supply_air',
+    'unit_of_measurement': '%',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_supply_air_humidity-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'humidity',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Supply air humidity',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: '%',
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_supply_air_humidity',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '41',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_supply_air_temperature-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_supply_air_temperature',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Supply air temperature',
+    'options': dict({
+      'sensor': dict({
+        'suggested_display_precision': 1,
+      }),
+    }),
+    'original_device_class': <SensorDeviceClass.TEMPERATURE: 'temperature'>,
+    'original_icon': None,
+    'original_name': 'Supply air temperature',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'supply_air_temperature',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_supply_air_temperature',
+    'unit_of_measurement': <UnitOfTemperature.CELSIUS: '°C'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_supply_air_temperature-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'temperature',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Supply air temperature',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfTemperature.CELSIUS: '°C'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_supply_air_temperature',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '19.0',
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_supply_air_voc-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': dict({
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+    }),
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'sensor',
+    'entity_category': None,
+    'entity_id': 'sensor.meltem_modbus_unit_1_supply_air_voc',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Supply air VOC',
+    'options': dict({
+    }),
+    'original_device_class': <SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS: 'volatile_organic_compounds_parts'>,
+    'original_icon': None,
+    'original_name': 'Supply air VOC',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'voc_supply_air',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_voc_supply_air',
+    'unit_of_measurement': <UnitOfRatio.PARTS_PER_MILLION: 'ppm'>,
+  })
+# ---
+# name: test_entities[sensor][sensor.meltem_modbus_unit_1_supply_air_voc-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'volatile_organic_compounds_parts',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Supply air VOC',
+      <SensorEntityCapabilityAttribute.STATE_CLASS: 'state_class'>: <SensorStateClass.MEASUREMENT: 'measurement'>,
+      <EntityStateAttribute.UNIT_OF_MEASUREMENT: 'unit_of_measurement'>: <UnitOfRatio.PARTS_PER_MILLION: 'ppm'>,
+    }),
+    'context': <ANY>,
+    'entity_id': 'sensor.meltem_modbus_unit_1_supply_air_voc',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': '120',
+  })
+# ---
+# name: test_entities[switch][switch.meltem_modbus_unit_1_intensive_ventilation-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'switch',
+    'entity_category': None,
+    'entity_id': 'switch.meltem_modbus_unit_1_intensive_ventilation',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Intensive ventilation',
+    'options': dict({
+    }),
+    'original_device_class': None,
+    'original_icon': None,
+    'original_name': 'Intensive ventilation',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'intensive',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_intensive',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[switch][switch.meltem_modbus_unit_1_intensive_ventilation-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Intensive ventilation',
+    }),
+    'context': <ANY>,
+    'entity_id': 'switch.meltem_modbus_unit_1_intensive_ventilation',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'off',
+  })
+# ---

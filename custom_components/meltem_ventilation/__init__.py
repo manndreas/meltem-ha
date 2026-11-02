@@ -14,9 +14,9 @@ decisions stay in ``coordinator.py``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections import Counter
+from dataclasses import replace
 from functools import partial
-from typing import Any
 
 from homeassistant.components.modbus import async_get_unit
 from homeassistant.core import HomeAssistant
@@ -31,125 +31,51 @@ from homeassistant.helpers import entity_registry as er
 from .const import (
     CONF_MAX_REQUESTS_PER_SECOND,
     CONF_PORT,
-    CONF_ROOMS,
     DEFAULT_MAX_REQUESTS_PER_SECOND,
     DOMAIN,
-    ENTITY_PLATFORM_BY_KEY,
     GATEWAY_ENTITY_PLATFORM_BY_KEY,
     PLATFORMS,
-    SENSOR_CONTROL_PROFILES,
 )
 from .coordinator import MeltemDataUpdateCoordinator
 from .cumulative_diagnostics import CumulativeDiagnostics
-from .entity import gateway_device_info, gateway_identifiers
+from .entity import gateway_device_info, room_entity_platforms
+from .identifiers import (
+    APP_SETUP_CODE_IDENTIFIER_PREFIX,
+    gateway_entity_unique_id,
+    gateway_identifiers,
+    room_entity_unique_id,
+    room_identifiers,
+)
+from .migration import async_migrate_entry
 from .modbus_client import MeltemModbusClient
 from .modbus_helpers import (
     MeltemModbusError,
     build_serial_params,
     resolve_preferred_port_path,
-    supported_entity_keys_for_profile,
 )
 from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, RoomConfig
+from .units import room_config, unit_subentries
+
+__all__ = ["async_migrate_entry"]
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_migrate_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> bool:
-    """Migrate a config entry from an older schema."""
+def _room_configs(entry: MeltemIntegrationConfigEntry) -> list[RoomConfig]:
+    """Build the configured units; a code stored for several units identifies none of them."""
 
-    if entry.version > 1:
-        return False
-
-    if entry.minor_version < 2:
-        _async_migrate_data_health_entities(hass, entry)
-
-    if entry.minor_version < 3:
-        data = dict(entry.data)
-        options = dict(entry.options)
-        if CONF_MAX_REQUESTS_PER_SECOND in data:
-            options.setdefault(
-                CONF_MAX_REQUESTS_PER_SECOND,
-                data.pop(CONF_MAX_REQUESTS_PER_SECOND),
-            )
-        hass.config_entries.async_update_entry(
-            entry,
-            data=data,
-            options=options,
-            minor_version=3,
-        )
-
-    if entry.minor_version < 4:
-        data = dict(entry.data)
-        data[CONF_ROOMS] = [_migrate_room_identity_fields(room) for room in data[CONF_ROOMS]]
-        hass.config_entries.async_update_entry(entry, data=data, minor_version=4)
-
-    return True
-
-
-def _migrate_room_identity_fields(room: Mapping[str, Any]) -> dict[str, Any]:
-    """Move identity values from the legacy display preview to dedicated fields."""
-
-    migrated = dict(room)
-    preview = room.get("preview")
-    if not isinstance(preview, str):
-        return migrated
-
-    for part in preview.split(" | "):
-        if part.startswith("ID ") and "product_id" not in migrated:
-            try:
-                migrated["product_id"] = int(part.removeprefix("ID "))
-            except ValueError:
-                pass
-        elif part.startswith("R-Code ") and "app_setup_code" not in migrated:
-            code = part.removeprefix("R-Code ")
-            if (
-                len(code) == 7
-                and code.startswith("R")
-                and all(character in "0123456789ABCDEF" for character in code[1:])
-            ):
-                migrated["app_setup_code"] = code
-    return migrated
-
-
-def _async_migrate_data_health_entities(
-    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
-) -> None:
-    """Rename the airflow-only diagnostic while preserving registry settings."""
-
-    registry = er.async_get(hass)
-    entry_entities = {
-        entity.unique_id: entity
-        for entity in er.async_entries_for_config_entry(registry, entry.entry_id)
-    }
-    for room in entry.data[CONF_ROOMS]:
-        old_entity = entry_entities.get(f"{DOMAIN}_{room['key']}_airflow_data_stale")
-        new_unique_id = f"{DOMAIN}_{room['key']}_data_health"
-        if old_entity is None or new_unique_id in entry_entities:
-            continue
-        registry.async_update_entity(old_entity.entity_id, new_unique_id=new_unique_id)
-        entry_entities[new_unique_id] = old_entity
-
-
-def _room_config(room: Mapping[str, Any]) -> RoomConfig:
-    """Build one room whose entities follow from its profile.
-
-    Deriving them on load keeps older entries complete when a release adds
-    entities, without probing the gateway or rewriting the entry. Entity keys
-    stored by older releases are ignored.
-    """
-
-    return RoomConfig(
-        key=room["key"],
-        name=room["name"],
-        profile=room["profile"],
-        slave=int(room["slave"]),
-        preview=room.get("preview"),
-        product_id=int(room["product_id"]) if room.get("product_id") is not None else None,
-        app_setup_code=(
-            str(room["app_setup_code"]) if room.get("app_setup_code") is not None else None
-        ),
-        supported_entity_keys=frozenset(supported_entity_keys_for_profile(str(room["profile"]))),
+    rooms = [room_config(subentry) for subentry in unit_subentries(entry)]
+    code_counts = Counter(room.app_setup_code for room in rooms if room.app_setup_code)
+    ambiguous = [
+        room.key for room in rooms if room.app_setup_code and code_counts[room.app_setup_code] > 1
+    ]
+    if not ambiguous:
+        return rooms
+    _LOGGER.warning(
+        "Units %s share one stored app setup code; ignoring it until the next rescan",
+        ", ".join(ambiguous),
     )
+    return [replace(room, app_setup_code=None) if room.key in ambiguous else room for room in rooms]
 
 
 def _max_requests_per_second(entry: MeltemIntegrationConfigEntry) -> float:
@@ -176,18 +102,13 @@ def _async_remove_unsupported_entities(
 ) -> None:
     """Drop registry entries that no configured room/profile creates anymore."""
 
-    expected: dict[str, str] = {}
-    for room in rooms:
-        supported_keys = set(supported_entity_keys_for_profile(room.profile))
-        if room.profile not in SENSOR_CONTROL_PROFILES:
-            supported_keys.discard("operation_mode")
-        if {"extract_air_flow", "supply_air_flow"} & supported_keys:
-            supported_keys.add("data_health")
-        for object_key in supported_keys:
-            if platform := ENTITY_PLATFORM_BY_KEY.get(object_key):
-                expected[f"{DOMAIN}_{room.key}_{object_key}"] = platform.value
+    expected: dict[str, str] = {
+        room_entity_unique_id(entry.entry_id, room.key, object_key): platform.value
+        for room in rooms
+        for object_key, platform in room_entity_platforms(room).items()
+    }
     expected.update(
-        (f"{DOMAIN}_{entry.entry_id}_{key}", platform.value)
+        (gateway_entity_unique_id(entry.entry_id, key), platform.value)
         for key, platform in GATEWAY_ENTITY_PLATFORM_BY_KEY.items()
     )
 
@@ -217,17 +138,38 @@ def _async_register_gateway_device(
 def _async_sync_devices(
     hass: HomeAssistant, entry: MeltemIntegrationConfigEntry, rooms: list[RoomConfig]
 ) -> None:
-    """Register the gateway device and drop devices of units no longer configured."""
+    """Register the gateway device and align the unit devices with the configured units.
+
+    Devices of units no longer configured are removed. A unit device loses app
+    setup codes its unit no longer reports, so the code can move to the device
+    of the address that has it now without a device identifier collision.
+    """
 
     registry = dr.async_get(hass)
     # Unit devices reference the gateway via ``via_device_id``, so it must exist first.
     _async_register_gateway_device(hass, entry)
-    configured = {(DOMAIN, room.key) for room in rooms} | gateway_identifiers(entry.entry_id)
+    expected = {room.key: room_identifiers(room) for room in rooms}
+    configured = {(DOMAIN, room_key) for room_key in expected} | gateway_identifiers(entry.entry_id)
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
-        if device.identifiers & configured:
+        if not device.identifiers & configured:
+            _LOGGER.info("Removing device of unconfigured Meltem unit %s", device.name)
+            registry.async_remove_device(device.id)
             continue
-        _LOGGER.info("Removing device of unconfigured Meltem unit %s", device.name)
-        registry.async_remove_device(device.id)
+        room_key = next(
+            (key for domain, key in device.identifiers if domain == DOMAIN and key in expected),
+            None,
+        )
+        if room_key is None:
+            continue
+        stale = {
+            identifier
+            for identifier in device.identifiers
+            if identifier[0] == DOMAIN
+            and identifier[1].startswith(APP_SETUP_CODE_IDENTIFIER_PREFIX)
+            and identifier not in expected[room_key]
+        }
+        if stale:
+            registry.async_update_device(device.id, new_identifiers=device.identifiers - stale)
 
 
 async def _async_initial_refresh_and_gateway_mac(
@@ -235,9 +177,9 @@ async def _async_initial_refresh_and_gateway_mac(
     entry: MeltemIntegrationConfigEntry,
     coordinator: MeltemDataUpdateCoordinator,
 ) -> None:
-    """Run the initial refresh, then add the optional gateway MAC connection."""
+    """Run the first poll tick, which starts polling, then add the gateway MAC."""
 
-    await coordinator.async_refresh()
+    await coordinator.async_poll()
     try:
         gateway_mac = await coordinator.async_read_gateway_mac()
     except MeltemModbusError as err:
@@ -250,7 +192,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
     """Set up Meltem Modbus from a config entry."""
 
     port = await _async_normalize_port(hass, entry)
-    rooms = [_room_config(room) for room in entry.data[CONF_ROOMS]]
+    rooms = _room_configs(entry)
     max_requests_per_second = _max_requests_per_second(entry)
     _LOGGER.info(
         "Using Meltem max request rate of %.1f req/s for %s configured unit(s)",
@@ -300,7 +242,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
         max_requests_per_second=max_requests_per_second,
         cumulative_diagnostics=cumulative_diagnostics,
     )
-    entry.runtime_data = MeltemRuntimeData(coordinator=coordinator)
+    entry.runtime_data = MeltemRuntimeData(
+        coordinator=coordinator, setup_snapshot=_setup_snapshot(entry)
+    )
     forwarded = False
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -314,12 +258,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
                 # Home Assistant only drops runtime_data on unload, not after a failed setup.
                 del entry.runtime_data
 
+    entry.async_on_unload(entry.add_update_listener(_async_reload_on_change))
     entry.async_create_background_task(
         hass,
         _async_initial_refresh_and_gateway_mac(hass, entry, coordinator),
         "meltem_first_refresh",
     )
     return True
+
+
+def _setup_snapshot(entry: MeltemIntegrationConfigEntry) -> dict[str, object]:
+    """Return what setup reads from the entry, apart from the live request rate."""
+
+    return {
+        CONF_PORT: entry.data[CONF_PORT],
+        "units": {
+            subentry.subentry_id: (subentry.title, dict(subentry.data))
+            for subentry in unit_subentries(entry)
+        },
+    }
+
+
+async def _async_reload_on_change(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> None:
+    """Reload once the port or the units changed.
+
+    A new request rate applies without a reload, and a rescan changes several
+    units at once, so a reload is scheduled only once per change.
+    """
+
+    runtime_data: MeltemRuntimeData | None = getattr(entry, "runtime_data", None)
+    # A listener call queued before an unload can run after it.
+    if runtime_data is None or runtime_data.reload_scheduled:
+        return
+    if _setup_snapshot(entry) == runtime_data.setup_snapshot:
+        return
+    runtime_data.reload_scheduled = True
+    hass.config_entries.async_schedule_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> bool:

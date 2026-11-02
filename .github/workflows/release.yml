@@ -170,9 +170,11 @@ jobs:
 
       - name: Build release archive
         shell: bash
+        env:
+          ZIP_NAME: ${{ steps.release_meta.outputs.zip_name }}
         run: |
           mkdir -p dist
-          zip -r "dist/${{ steps.release_meta.outputs.zip_name }}" \
+          zip -r "dist/${ZIP_NAME}" \
             custom_components \
             CHANGELOG.md \
             LICENSE \

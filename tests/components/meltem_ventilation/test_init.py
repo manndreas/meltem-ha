@@ -12,7 +12,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntryState, ConfigSubentry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import (
@@ -60,6 +60,11 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_PRESET_MODE,
 )
 from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
+from custom_components.meltem_ventilation.identifiers import (
+    room_entity_unique_id,
+    room_identifiers,
+)
+from custom_components.meltem_ventilation.migration import _migrate_room_identity_fields
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
@@ -68,7 +73,11 @@ from custom_components.meltem_ventilation.modbus_helpers import (
 )
 from custom_components.meltem_ventilation.models import (
     MeltemRuntimeData,
+    RoomConfig,
 )
+from custom_components.meltem_ventilation.units import unit_subentry_data
+
+from .common import allow_next_read, skip_startup
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -94,20 +103,42 @@ def _entry(
     rooms: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
     entry_id: str = "test-entry-id",
-    version: int = 1,
+) -> MockConfigEntry:
+    """Return a current entry whose units are config subentries."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Meltem",
+        data={CONF_PORT: port},
+        options=options or {},
+        subentries_data=[unit_subentry_data(room) for room in deepcopy(rooms or [_ROOM])],
+        entry_id=entry_id,
+        version=2,
+        minor_version=1,
+        source="user",
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+def _legacy_entry(
+    hass: HomeAssistant,
+    *,
+    rooms: list[dict[str, Any]] | None = None,
+    options: dict[str, Any] | None = None,
     minor_version: int = 4,
 ) -> MockConfigEntry:
+    """Return an entry of version 1, which stored the units in its data."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Meltem",
         data={
-            CONF_PORT: port,
+            CONF_PORT: _PORT,
             CONF_MAX_REQUESTS_PER_SECOND: 2.0,
             CONF_ROOMS: deepcopy(rooms or [_ROOM]),
         },
         options=options or {},
-        entry_id=entry_id,
-        version=version,
+        entry_id="test-entry-id",
+        version=1,
         minor_version=minor_version,
         source="user",
     )
@@ -115,7 +146,24 @@ def _entry(
     return entry
 
 
+def _units(entry: MockConfigEntry) -> list[ConfigSubentry]:
+    return sorted(entry.subentries.values(), key=lambda subentry: subentry.data["slave"])
+
+
 def _register_entity(
+    hass: HomeAssistant, entry: MockConfigEntry, platform: str, key: str
+) -> er.RegistryEntry:
+    unit = _units(entry)[0]
+    return er.async_get(hass).async_get_or_create(
+        platform,
+        DOMAIN,
+        room_entity_unique_id(entry.entry_id, "unit_1", key),
+        config_entry=entry,
+        config_subentry_id=unit.subentry_id,
+    )
+
+
+def _register_legacy_entity(
     hass: HomeAssistant, entry: MockConfigEntry, platform: str, key: str
 ) -> er.RegistryEntry:
     return er.async_get(hass).async_get_or_create(
@@ -301,8 +349,9 @@ class TestAsyncSetupEntry:
 
         room = setup_mocks.coordinator_cls.call_args.kwargs["rooms"][0]
         assert room.supported_entity_keys == frozenset(supported_entity_keys_for_profile("ii_fc"))
+        assert room.subentry_id == _units(entry)[0].subentry_id
         # The stored entry is not rewritten.
-        assert "supported_entity_keys" not in entry.data[CONF_ROOMS][0]
+        assert "supported_entity_keys" not in _units(entry)[0].data
 
     async def test_setup_ignores_entity_keys_stored_by_older_releases(
         self,
@@ -311,10 +360,11 @@ class TestAsyncSetupEntry:
     ) -> None:
         """Probe keys beyond the profile would schedule reads the unit cannot answer."""
         stored_keys = ["extract_air_flow", "humidity_starting_point"]
-        entry = _entry(
+        entry = _legacy_entry(
             hass,
             rooms=[{**_ROOM, "profile": "ii_plain", "supported_entity_keys": stored_keys}],
         )
+        assert await async_migrate_entry(hass, entry) is True
 
         await async_setup_entry(hass, entry)
 
@@ -322,7 +372,7 @@ class TestAsyncSetupEntry:
         assert room.supported_entity_keys == frozenset(
             supported_entity_keys_for_profile("ii_plain")
         )
-        assert entry.data[CONF_ROOMS][0]["supported_entity_keys"] == stored_keys
+        assert "supported_entity_keys" not in _units(entry)[0].data
 
     @pytest.mark.parametrize(
         ("platform", "key"),
@@ -368,6 +418,46 @@ class TestAsyncSetupEntry:
         await async_setup_entry(hass, entry)
 
         assert er.async_get(hass).async_get(foreign.entity_id) is not None
+
+    async def test_unit_changes_reload_the_entry_once(
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks
+    ) -> None:
+        entry = _entry(hass)
+        assert await async_setup_entry(hass, entry) is True
+        (unit,) = _units(entry)
+
+        with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+            # A new request rate applies without a reload.
+            hass.config_entries.async_update_entry(
+                entry, options={CONF_MAX_REQUESTS_PER_SECOND: 3.0}
+            )
+            await hass.async_block_till_done()
+            reload.assert_not_called()
+
+            hass.config_entries.async_update_subentry(
+                entry, unit, data={**unit.data, "profile": "ii_f"}
+            )
+            await hass.async_block_till_done()
+            # A rescan changes several units at once; one reload covers them all.
+            hass.config_entries.async_update_subentry(
+                entry, unit, data={**unit.data, "profile": "ii_fc"}
+            )
+            await hass.async_block_till_done()
+
+        reload.assert_called_once_with(entry.entry_id)
+
+    async def test_a_late_listener_call_after_unload_does_nothing(
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks
+    ) -> None:
+        entry = _entry(hass)
+        assert await async_setup_entry(hass, entry) is True
+        (listener,) = entry.update_listeners
+        del entry.runtime_data
+
+        with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+            await listener(hass, entry)
+
+        reload.assert_not_called()
 
     async def test_setup_respects_option_max_request_rate(
         self,
@@ -448,24 +538,24 @@ class TestAsyncRemoveEntry:
 
 class TestAsyncMigrateEntry:
     async def test_migration_renames_the_airflow_health_entity(self, hass: HomeAssistant) -> None:
-        entry = _entry(hass, minor_version=1)
-        legacy = _register_entity(hass, entry, "binary_sensor", "airflow_data_stale")
+        entry = _legacy_entry(hass, minor_version=1)
+        legacy = _register_legacy_entity(hass, entry, "binary_sensor", "airflow_data_stale")
 
         assert await async_migrate_entry(hass, entry) is True
 
         migrated = er.async_get(hass).async_get(legacy.entity_id)
         assert migrated is not None
-        assert migrated.unique_id == f"{DOMAIN}_unit_1_data_health"
-        assert entry.minor_version == 4
+        assert migrated.unique_id == room_entity_unique_id(entry.entry_id, "unit_1", "data_health")
+        assert (entry.version, entry.minor_version) == (2, 1)
         assert CONF_MAX_REQUESTS_PER_SECOND not in entry.data
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 2.0
 
     async def test_migration_keeps_an_existing_data_health_entity(
         self, hass: HomeAssistant
     ) -> None:
-        entry = _entry(hass, minor_version=1)
-        legacy = _register_entity(hass, entry, "binary_sensor", "airflow_data_stale")
-        current = _register_entity(hass, entry, "binary_sensor", "data_health")
+        entry = _legacy_entry(hass, minor_version=1)
+        legacy = _register_legacy_entity(hass, entry, "binary_sensor", "airflow_data_stale")
+        current = _register_legacy_entity(hass, entry, "binary_sensor", "data_health")
 
         assert await async_migrate_entry(hass, entry) is True
 
@@ -474,14 +564,17 @@ class TestAsyncMigrateEntry:
         migrated_current = registry.async_get(current.entity_id)
         assert migrated_legacy is not None
         assert migrated_current is not None
+        # The setup cleanup removes the leftover legacy entity later.
         assert migrated_legacy.unique_id == legacy.unique_id
-        assert migrated_current.unique_id == current.unique_id
-        assert entry.minor_version == 4
+        assert migrated_current.unique_id == room_entity_unique_id(
+            entry.entry_id, "unit_1", "data_health"
+        )
+        assert (entry.version, entry.minor_version) == (2, 1)
 
     async def test_migration_preserves_an_existing_request_rate_option(
         self, hass: HomeAssistant
     ) -> None:
-        entry = _entry(
+        entry = _legacy_entry(
             hass,
             minor_version=2,
             options={CONF_MAX_REQUESTS_PER_SECOND: 5.0},
@@ -491,10 +584,10 @@ class TestAsyncMigrateEntry:
 
         assert CONF_MAX_REQUESTS_PER_SECOND not in entry.data
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
-        assert entry.minor_version == 4
+        assert (entry.version, entry.minor_version) == (2, 1)
 
     async def test_migration_moves_identity_values_from_preview(self, hass: HomeAssistant) -> None:
-        entry = _entry(
+        entry = _legacy_entry(
             hass,
             minor_version=3,
             rooms=[{**_ROOM, "preview": "R-Code R000001 | ID 116852 | basic"}],
@@ -502,14 +595,117 @@ class TestAsyncMigrateEntry:
 
         assert await async_migrate_entry(hass, entry) is True
 
-        room = entry.data[CONF_ROOMS][0]
-        assert room["preview"] == "R-Code R000001 | ID 116852 | basic"
-        assert room["product_id"] == 116852
-        assert room["app_setup_code"] == "R000001"
-        assert entry.minor_version == 4
+        unit = _units(entry)[0].data
+        assert unit["preview"] == "R-Code R000001 | ID 116852 | basic"
+        assert unit["product_id"] == 116852
+        assert unit["app_setup_code"] == "R000001"
+        assert (entry.version, entry.minor_version) == (2, 1)
+
+    @pytest.mark.parametrize(
+        ("room", "expected"),
+        [
+            pytest.param({"preview": None}, {"preview": None}, id="no-preview"),
+            pytest.param(
+                {"preview": "R-Code R00000G | ID 11685x | basic"},
+                {"preview": "R-Code R00000G | ID 11685x | basic"},
+                id="malformed-values",
+            ),
+            pytest.param(
+                {"preview": "R-Code R000001 | ID 116852", "product_id": 1, "app_setup_code": "R0"},
+                {"preview": "R-Code R000001 | ID 116852", "product_id": 1, "app_setup_code": "R0"},
+                id="stored-values-win",
+            ),
+        ],
+    )
+    def test_identity_migration_keeps_what_it_cannot_parse(
+        self, room: dict[str, Any], expected: dict[str, Any]
+    ) -> None:
+        assert _migrate_room_identity_fields(room) == expected
+
+    async def test_migration_of_a_current_entry_changes_nothing(self, hass: HomeAssistant) -> None:
+        entry = _entry(hass)
+        before = (dict(entry.data), dict(entry.options), set(entry.subentries))
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        assert (dict(entry.data), dict(entry.options), set(entry.subentries)) == before
+        assert (entry.version, entry.minor_version) == (2, 1)
+
+    async def test_migration_moves_units_with_their_devices_and_entities_to_subentries(
+        self, hass: HomeAssistant
+    ) -> None:
+        rooms = [
+            {**_ROOM, "key": "unit_1", "name": "Bathroom", "slave": 2},
+            {**_ROOM, "key": "unit_1_2", "name": "Kitchen", "slave": 3, "profile": "ii_fc"},
+        ]
+        entry = _legacy_entry(hass, rooms=rooms)
+        devices = dr.async_get(hass)
+        entities = er.async_get(hass)
+        device = devices.async_get_or_create(
+            config_entry_id=entry.entry_id, identifiers={(DOMAIN, "unit_1")}, name="Bathroom"
+        )
+        fan = entities.async_get_or_create(
+            "fan", DOMAIN, f"{DOMAIN}_unit_1_supply_level", config_entry=entry, device_id=device.id
+        )
+        entities.async_update_entity(fan.entity_id, name="Bathroom supply")
+        # The longer room key must not catch entities of the shorter one.
+        kitchen_fan = entities.async_get_or_create(
+            "fan", DOMAIN, f"{DOMAIN}_unit_1_2_supply_level", config_entry=entry
+        )
+        gateway = entities.async_get_or_create(
+            "sensor", DOMAIN, f"{DOMAIN}_{entry.entry_id}_gateway_uptime", config_entry=entry
+        )
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        assert CONF_ROOMS not in entry.data
+        bathroom, kitchen = _units(entry)
+        assert (bathroom.title, bathroom.unique_id) == ("Bathroom", "2")
+        assert dict(bathroom.data) == {
+            "key": "unit_1",
+            "slave": 2,
+            "profile": "ii_plain",
+            "preview": "ID 123 | basic",
+        }
+        assert (kitchen.title, kitchen.unique_id, kitchen.data["key"]) == (
+            "Kitchen",
+            "3",
+            "unit_1_2",
+        )
+        migrated = entities.async_get(fan.entity_id)
+        assert migrated is not None
+        assert migrated.unique_id == room_entity_unique_id(entry.entry_id, "unit_1", "supply_level")
+        assert migrated.config_subentry_id == bathroom.subentry_id
+        assert migrated.name == "Bathroom supply"
+        migrated_kitchen = entities.async_get(kitchen_fan.entity_id)
+        assert migrated_kitchen is not None
+        assert migrated_kitchen.unique_id == room_entity_unique_id(
+            entry.entry_id, "unit_1_2", "supply_level"
+        )
+        assert migrated_kitchen.config_subentry_id == kitchen.subentry_id
+        migrated_gateway = entities.async_get(gateway.entity_id)
+        assert migrated_gateway is not None
+        assert migrated_gateway.unique_id == gateway.unique_id
+        assert migrated_gateway.config_subentry_id is None
+        moved = devices.async_get(device.id)
+        assert moved is not None
+        assert moved.identifiers == {(DOMAIN, "unit_1")}
+        assert moved.config_entry_id == entry.entry_id
+        assert moved.config_subentry_id == bathroom.subentry_id
+
+    async def test_migration_keeps_units_that_share_an_address(self, hass: HomeAssistant) -> None:
+        """A subentry unique ID must be unique, so a duplicate address keeps none."""
+        rooms = [{**_ROOM, "key": "unit_1"}, {**_ROOM, "key": "unit_2", "name": "Unit 2"}]
+        entry = _legacy_entry(hass, rooms=rooms)
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        units = sorted(entry.subentries.values(), key=lambda unit: unit.data["key"])
+        assert [unit.unique_id for unit in units] == ["2", None]
 
     async def test_migration_rejects_a_newer_major_version(self, hass: HomeAssistant) -> None:
-        entry = _entry(hass, version=2, minor_version=1)
+        entry = MockConfigEntry(domain=DOMAIN, data={CONF_PORT: _PORT}, version=3)
+        entry.add_to_hass(hass)
 
         assert await async_migrate_entry(hass, entry) is False
 
@@ -583,6 +779,70 @@ class TestDeviceRegistrySync:
         assert registry.async_get(configured.id) is not None
         assert registry.async_get(dropped.id) is None
 
+    async def test_units_that_swapped_addresses_keep_their_devices_and_entities(
+        self, hass: HomeAssistant
+    ) -> None:
+        rooms = [
+            {**_ROOM, "key": "unit_1", "slave": 2, "app_setup_code": "R0000BB"},
+            {**_ROOM, "key": "unit_2", "slave": 3, "app_setup_code": "R0000AA"},
+        ]
+        entry = _entry(hass, rooms=rooms)
+        registry = dr.async_get(hass)
+        first = registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, "unit_1"), (DOMAIN, "app_setup_code:R0000AA")},
+        )
+        second = registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, "unit_2"), (DOMAIN, "app_setup_code:R0000BB")},
+        )
+
+        await async_setup_entry(hass, entry)
+
+        # The entity platform registers each unit's device from its device info;
+        # a stale code on the other device used to abort every entity of both units.
+        for room, device in zip(rooms, (first, second), strict=True):
+            identifiers = room_identifiers(
+                RoomConfig(
+                    key=room["key"],
+                    name=room["name"],
+                    profile=room["profile"],
+                    slave=room["slave"],
+                    app_setup_code=room["app_setup_code"],
+                )
+            )
+            registered = registry.async_get_or_create(
+                config_entry_id=entry.entry_id, identifiers=identifiers
+            )
+            assert registered.id == device.id
+            assert registered.identifiers == identifiers
+
+    async def test_a_code_stored_for_several_units_identifies_none_of_them(
+        self,
+        hass: HomeAssistant,
+        setup_mocks: _SetupMocks,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        rooms = [
+            {**_ROOM, "key": "unit_1", "slave": 2, "app_setup_code": "R0000AA"},
+            {**_ROOM, "key": "unit_2", "slave": 3, "app_setup_code": "R0000AA"},
+            {**_ROOM, "key": "unit_3", "slave": 4, "app_setup_code": "R0000CC"},
+        ]
+        entry = _entry(hass, rooms=rooms)
+
+        await async_setup_entry(hass, entry)
+
+        configured = setup_mocks.coordinator_cls.call_args.kwargs["rooms"]
+        assert [room.app_setup_code for room in configured] == [None, None, "R0000CC"]
+        assert "unit_1, unit_2 share one stored app setup code" in caplog.text
+        assert "R0000AA" not in caplog.text
+        # The stored configuration is left for the next rescan to correct.
+        assert [unit.data["app_setup_code"] for unit in _units(entry)] == [
+            "R0000AA",
+            "R0000AA",
+            "R0000CC",
+        ]
+
 
 # ---------------------------------------------------------------------------
 #  Home Assistant's shared Modbus connection
@@ -616,7 +876,7 @@ class TestSharedModbusConnection:
         self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         clock = SimpleNamespace(now=time.monotonic())
-        for module in ("coordinator", "modbus_client", "device.transport"):
+        for module in ("coordinator", "gateway_reads", "modbus_client", "device.transport"):
             monkeypatch.setattr(
                 f"custom_components.meltem_ventilation.{module}.time",
                 SimpleNamespace(monotonic=lambda: clock.now),
@@ -646,12 +906,12 @@ class TestSharedModbusConnection:
 
                 async def poll(room_key: str) -> None:
                     clock.now += 60
-                    coordinator._startup_jobs = []
-                    for job in coordinator._jobs:
+                    skip_startup(coordinator)
+                    for job in coordinator.poll_jobs:
                         job.next_due = (
                             0.0 if job.room_key == room_key and job.key == "flow" else float("inf")
                         )
-                    coordinator._last_read_started = None
+                    allow_next_read(coordinator)
                     await coordinator.async_refresh()
                     await hass.async_block_till_done()
 
@@ -659,10 +919,10 @@ class TestSharedModbusConnection:
                 await poll("unit_2")
                 registry = er.async_get(hass)
                 first_id = registry.async_get_entity_id(
-                    Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_supply_level"
+                    Platform.FAN, DOMAIN, f"{DOMAIN}_{entry.entry_id}_unit_1_supply_level"
                 )
                 second_id = registry.async_get_entity_id(
-                    Platform.FAN, DOMAIN, f"{DOMAIN}_unit_2_supply_level"
+                    Platform.FAN, DOMAIN, f"{DOMAIN}_{entry.entry_id}_unit_2_supply_level"
                 )
                 assert first_id is not None and second_id is not None
 
@@ -741,10 +1001,10 @@ class TestSharedModbusConnection:
 
             registry = er.async_get(hass)
             supply_id = registry.async_get_entity_id(
-                Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_supply_level"
+                Platform.FAN, DOMAIN, f"{DOMAIN}_{entry.entry_id}_unit_1_supply_level"
             )
             extract_id = registry.async_get_entity_id(
-                Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_extract_level"
+                Platform.FAN, DOMAIN, f"{DOMAIN}_{entry.entry_id}_unit_1_extract_level"
             )
             assert supply_id is not None
             assert extract_id is not None
@@ -771,7 +1031,10 @@ class TestSharedModbusConnection:
                 assert [(event.address, event.values[0]) for event in writes] == [
                     (REGISTER_MODE, MODE_UNBALANCED)
                 ]
-                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "failed"
+                assert (
+                    coordinator.write_confirmations.by_room["unit_1"]["airflow_levels"].status
+                    == "failed"
+                )
                 supply = hass.states.get(supply_id)
                 assert supply is not None
                 assert supply.attributes["percentage"] == 30
@@ -783,7 +1046,10 @@ class TestSharedModbusConnection:
                     (REGISTER_APPLY, 0),
                 ]
                 assert all(event.function_code == 0x06 for event in writes)
-                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "pending"
+                assert (
+                    coordinator.write_confirmations.by_room["unit_1"]["airflow_levels"].status
+                    == "pending"
+                )
                 supply = hass.states.get(supply_id)
                 extract = hass.states.get(extract_id)
                 assert supply is not None and extract is not None
@@ -791,14 +1057,17 @@ class TestSharedModbusConnection:
                 assert extract.attributes["percentage"] == 30
                 assert supply.attributes["level_source"] == "pending"
 
-                coordinator._startup_jobs = []
-                for job in coordinator._jobs:
+                skip_startup(coordinator)
+                for job in coordinator.poll_jobs:
                     job.next_due = 0.0 if job.key == "flow" else float("inf")
-                coordinator._last_read_started = None
+                allow_next_read(coordinator)
                 await coordinator.async_refresh()
                 await hass.async_block_till_done()
 
-                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
+                assert (
+                    coordinator.write_confirmations.by_room["unit_1"]["airflow_levels"].status
+                    == "confirmed"
+                )
                 supply = hass.states.get(supply_id)
                 extract = hass.states.get(extract_id)
                 assert supply is not None and extract is not None
@@ -845,7 +1114,7 @@ class TestSharedModbusConnection:
             unit.on_write(_apply_write)
             unit.write_register = _lose_apply_response
             supply_id = er.async_get(hass).async_get_entity_id(
-                Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_supply_level"
+                Platform.FAN, DOMAIN, f"{DOMAIN}_{entry.entry_id}_unit_1_supply_level"
             )
             assert supply_id is not None
 
@@ -874,15 +1143,21 @@ class TestSharedModbusConnection:
             ]
             assert unit.holding[REGISTER_MODE_STATUS] == [MODE_UNBALANCED, 120, 60]
             if lost_responses == 1:
-                coordinator._startup_jobs = []
-                for job in coordinator._jobs:
+                skip_startup(coordinator)
+                for job in coordinator.poll_jobs:
                     job.next_due = 0.0 if job.key == "flow" else float("inf")
-                coordinator._last_read_started = None
+                allow_next_read(coordinator)
                 await coordinator.async_refresh()
                 await hass.async_block_till_done()
-                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
+                assert (
+                    coordinator.write_confirmations.by_room["unit_1"]["airflow_levels"].status
+                    == "confirmed"
+                )
             else:
-                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "failed"
+                assert (
+                    coordinator.write_confirmations.by_room["unit_1"]["airflow_levels"].status
+                    == "failed"
+                )
             supply = hass.states.get(supply_id)
             assert supply is not None
             assert supply.attributes["percentage"] == 60
@@ -929,7 +1204,7 @@ class TestSharedModbusConnection:
 
                 assert not coordinator._gateway_lock.locked()
                 assert coordinator.effective_levels("unit_1") == (None, None)
-                confirmation = coordinator._writes.by_room["unit_1"]["airflow_levels"]
+                confirmation = coordinator.write_confirmations.by_room["unit_1"]["airflow_levels"]
                 assert confirmation.expected_value == (80, 80)
                 assert confirmation.status == "unconfirmed"
                 with pytest.raises(HomeAssistantError):
@@ -981,7 +1256,7 @@ class TestSharedModbusConnection:
                 unit.write_register = write_register
 
                 assert not coordinator._gateway_lock.locked()
-                confirmation = coordinator._writes.by_room["unit_1"]["airflow_levels"]
+                confirmation = coordinator.write_confirmations.by_room["unit_1"]["airflow_levels"]
                 assert confirmation.expected_value == (80, 80)
                 assert confirmation.status == "unconfirmed"
                 assert coordinator.effective_levels("unit_1") == (None, None)
@@ -989,13 +1264,16 @@ class TestSharedModbusConnection:
                 with pytest.raises(HomeAssistantError):
                     await coordinator.async_set_direction_level("unit_1", "extract", 40)
 
-                coordinator._startup_jobs = []
-                for job in coordinator._jobs:
+                skip_startup(coordinator)
+                for job in coordinator.poll_jobs:
                     job.next_due = 0.0 if job.key == "flow" else float("inf")
-                coordinator._last_read_started = None
+                allow_next_read(coordinator)
                 await coordinator.async_refresh()
                 assert coordinator.effective_levels("unit_1") == (80, 80)
-                assert coordinator._writes.by_room["unit_1"]["airflow_levels"].status == "confirmed"
+                assert (
+                    coordinator.write_confirmations.by_room["unit_1"]["airflow_levels"].status
+                    == "confirmed"
+                )
             finally:
                 assert await hass.config_entries.async_unload(entry.entry_id)
 
@@ -1021,10 +1299,10 @@ class TestSharedModbusConnection:
             coordinator = entry.runtime_data.coordinator
             unit = links[0].for_unit(2)
             unit.holding[REGISTER_HUMIDITY_STARTING_POINT] = [55, 20, 90]
-            coordinator._startup_jobs = []
-            for job in coordinator._jobs:
+            skip_startup(coordinator)
+            for job in coordinator.poll_jobs:
                 job.next_due = 0.0 if job.key == "control_settings" else float("inf")
-            coordinator._last_read_started = None
+            allow_next_read(coordinator)
             await coordinator.async_refresh()
             await hass.async_block_till_done()
 
@@ -1051,7 +1329,7 @@ class TestSharedModbusConnection:
                 "switch": (Platform.SWITCH, "intensive", "turn_on", {}),
             }[kind]
             entity_id = er.async_get(hass).async_get_entity_id(
-                platform, DOMAIN, f"{DOMAIN}_unit_1_{key}"
+                platform, DOMAIN, f"{DOMAIN}_{entry.entry_id}_unit_1_{key}"
             )
             assert entity_id is not None
             initial = hass.states.get(entity_id)
@@ -1080,7 +1358,7 @@ class TestSharedModbusConnection:
                 ]
                 assert float(state.state) == 65.0
                 assert (
-                    coordinator._writes.by_room["unit_1"][
+                    coordinator.write_confirmations.by_room["unit_1"][
                         "control_setting:humidity_starting_point"
                     ].status
                     == "confirmed"
@@ -1089,7 +1367,7 @@ class TestSharedModbusConnection:
                 assert writes[-1].address == REGISTER_APPLY
                 assert state.state == ("high" if kind == "select" else "on")
                 key = "preset_mode" if kind == "select" else "intensive"
-                assert coordinator._writes.by_room["unit_1"][key].status == "confirmed"
+                assert coordinator.write_confirmations.by_room["unit_1"][key].status == "confirmed"
 
             assert await hass.config_entries.async_unload(entry.entry_id)
 
@@ -1109,16 +1387,16 @@ class TestSharedModbusConnection:
             coordinator = entry.runtime_data.coordinator
             unit = links[0].for_unit(2)
             unit.holding[REGISTER_HUMIDITY_STARTING_POINT] = [55, 20, 60]
-            coordinator._startup_jobs = []
-            for job in coordinator._jobs:
+            skip_startup(coordinator)
+            for job in coordinator.poll_jobs:
                 job.next_due = 0.0 if job.key == "control_settings" else float("inf")
-            coordinator._last_read_started = None
+            allow_next_read(coordinator)
             await coordinator.async_refresh()
             await hass.async_block_till_done()
             writes: list[WriteEvent] = []
             unit.on_write(writes.append)
             entity_id = er.async_get(hass).async_get_entity_id(
-                Platform.NUMBER, DOMAIN, f"{DOMAIN}_unit_1_humidity_min_level"
+                Platform.NUMBER, DOMAIN, f"{DOMAIN}_{entry.entry_id}_unit_1_humidity_min_level"
             )
             assert entity_id is not None
 
@@ -1203,15 +1481,15 @@ class TestSharedModbusConnection:
                 return await original_read(address, count)
 
             monkeypatch.setattr(unit, "read_holding_registers", _blocked_read)
-            coordinator._startup_jobs = []
-            for job in coordinator._jobs:
+            skip_startup(coordinator)
+            for job in coordinator.poll_jobs:
                 job.next_due = 0.0 if job.key == "flow" else float("inf")
-            coordinator._last_read_started = None
+            allow_next_read(coordinator)
             read_task = asyncio.create_task(coordinator.async_refresh())
             await asyncio.wait_for(blocked.wait(), timeout=5)
             assert coordinator._gateway_lock.locked()
             supply_id = er.async_get(hass).async_get_entity_id(
-                Platform.FAN, DOMAIN, f"{DOMAIN}_unit_1_supply_level"
+                Platform.FAN, DOMAIN, f"{DOMAIN}_{entry.entry_id}_unit_1_supply_level"
             )
             assert supply_id is not None
             set_direction = coordinator.async_set_direction_level
@@ -1284,10 +1562,10 @@ class TestSharedModbusConnection:
             coordinator = entry.runtime_data.coordinator
             unit = links[0].for_unit(2)
             unit.fail_read(41020, IllegalDataValueError())
-            coordinator._startup_jobs = []
-            for job in coordinator._jobs:
+            skip_startup(coordinator)
+            for job in coordinator.poll_jobs:
                 job.next_due = 0.0 if job.key == "flow" else float("inf")
-            coordinator._last_read_started = None
+            allow_next_read(coordinator)
             await coordinator.async_refresh()
             cumulative = coordinator.cumulative_diagnostics
             assert cumulative is not None

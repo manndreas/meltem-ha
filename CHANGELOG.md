@@ -1,38 +1,103 @@
 # Changelog
 
-## 4.7.0
+## 5.0.0
 
-### Breaking Changes (4.7.0)
+### Breaking Changes (5.0.0)
 
 - **Breaking:** Requires Home Assistant `2026.11.0` or newer.
+- **Breaking:** Each unit is now stored as its own entry under the gateway.
+  The update moves existing units automatically and keeps their devices,
+  entities, entity IDs, and settings. An earlier release cannot load the
+  updated configuration; restore a backup to go back.
+- **Breaking:** The profile editor in the options is replaced by
+  **Reconfigure** on each unit. **Scan for new units** still lets you change
+  the profiles of all units in one step.
 
-### Improvements (4.7.0)
+### New Features (5.0.0)
 
+- Add a unit that was paired in the Meltem app after the initial setup with
+  **Add unit** on the integration page, and delete a single unit together with
+  its device and entities.
+- Show a repair notice when the gateway reports units that are not set up in
+  Home Assistant. The gateway's unit list is checked hourly. An ignored notice
+  stays ignored when the integration reloads.
+- **Scan for new units** lists the units the gateway no longer reports and
+  removes them only after you confirm.
+
+### Improvements (5.0.0)
+
+- Combine supply-air temperature and air-quality readings into fewer gateway
+  requests on units with humidity, CO2, or VOC sensors.
 - Reduce repeated requests when a unit returns a temporary error. Normal polling
   resumes when the affected readings succeed again.
+- Change the profile of a unit without probing the gateway again.
+- Poll each unit at exactly the planned time, and apply a new request rate
+  right away instead of after the current polling interval.
+- Confirm quick modes, intensive ventilation, and operating-mode changes
+  faster and keep polling the other units sooner afterwards: the readback now
+  follows after half a second instead of 1.5 seconds and is no longer
+  repeated. A change the readback misses is confirmed by the next regular poll.
 - Keep diagnostic counts and gateway availability accurate when some readings
   are delayed or skipped.
 - After a unit does not answer or a read is cancelled, wait five seconds before
-  reading it again. The unit remains unavailable until a read succeeds. This
-  reduces, but does not eliminate, the risk of delayed replies being mistaken
-  for current readings.
+  reading it again. This reduces, but does not eliminate, the risk of delayed
+  replies being mistaken for current readings. A single unanswered read no
+  longer makes the unit unavailable; that still happens after three failed
+  reads in a row or two minutes without an answer.
+- Show the last read error of each unit with its time on the system
+  information page and in the diagnostics download.
+- Update only the entities of the unit that was just read, which reduces the
+  load on Home Assistant with several units.
+- Log a warning when a command would also apply settings that an interrupted
+  earlier command left on the unit.
 
-### Fixes (4.7.0)
+### Fixes (5.0.0)
 
+- Show humidity, CO2, and VOC as unknown when the unit reports that a sensor
+  has no reading, instead of keeping the last value. A repair issue points to
+  a possibly wrong profile when this lasts for several minutes.
+- Keep all entities of units that changed their gateway address, for example
+  after pairing them again, once they are rescanned. Previously Home Assistant
+  could drop every entity of such units.
+- Accept new readings after the system clock was set back, instead of
+  refusing airflow changes until the clock caught up again. A system clock
+  that jumps forward, for example at the first time sync after boot, no longer
+  makes readings unavailable until their next read.
+- Keep the entered serial port in the setup form after a connection error.
+- Refresh the optional cumulative communication counters once a minute as
+  intended, not twice.
+- Refresh **Read health** locally even while polling is paused, so stale
+  readings and command deadlines appear without another read. Keep it
+  available during communication failures.
+- Keep ordinary words in diagnostics downloads readable while app setup codes
+  stay hidden.
 - Improve recovery from a disconnected USB gateway by allowing more time for
   the connection to return before retrying.
+- Stop a running intensive ventilation override when switching a unit off.
+- Keep unreachable units marked unavailable when the gateway still reports
+  their radio diagnostics, and avoid flagging **Read health** when a unit does
+  not support optional diagnostics.
 - After an interrupted airflow change, keep the target unknown and prevent
   changes that depend on the previous airflow until the unit reports its state
   again.
+- Update the displayed fan target when a balanced airflow is changed on the
+  unit or in the Meltem app back to a 10 m³/h step.
+- Keep a unit's saved app setup code when a later read fails, and persist
+  cumulative diagnostic counts reliably between updates.
 - Hide app setup codes in diagnostics downloads, including codes in error
   messages and unit details.
 - Close the gateway connection reliably when setup is interrupted or unloading
   encounters an error.
 
-### Other Changes (4.7.0)
+### Other Changes (5.0.0)
 
 - List the integration in the fans and ventilation category in the Home
   Assistant community catalog.
+- The diagnostics download lists the units of the gateway and reports
+  `next_poll_delay_seconds` and `poll_scheduled` instead of
+  `update_interval_seconds`.
+- The unique IDs of unit entities include the configuration entry, so units of
+  different gateways can never collide. Existing entities are migrated.
 
 ## 4.6.1
 

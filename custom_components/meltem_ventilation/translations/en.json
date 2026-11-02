@@ -85,10 +85,9 @@
     "step": {
       "init": {
         "title": "Configure Meltem Modbus",
-        "description": "Choose whether to change the request rate, update profiles for existing units, or scan for new units.",
+        "description": "Choose whether to change the request rate or to scan the gateway for new, moved, or removed units. To change the profile of a single unit, use Reconfigure on that unit.",
         "menu_options": {
           "edit_request_rate": "Change request rate",
-          "edit_profiles": "Change profiles for existing units",
           "rescan_units": "Scan for new units"
         }
       },
@@ -102,47 +101,13 @@
           "max_requests_per_second": "Maximum rate for individual read requests across all units, including retries and post-write readbacks. Poll-job starts are also limited to this rate; write sequences use separate hardware timing."
         }
       },
-      "edit_profiles": {
-        "title": "Change profiles for existing units",
-        "description": "Update the selected profile for each configured Meltem M-WRG unit.\n\n{unit_details}",
-        "data": {
-          "slave_2": "Unit at Modbus address 2",
-          "slave_3": "Unit at Modbus address 3",
-          "slave_4": "Unit at Modbus address 4",
-          "slave_5": "Unit at Modbus address 5",
-          "slave_6": "Unit at Modbus address 6",
-          "slave_7": "Unit at Modbus address 7",
-          "slave_8": "Unit at Modbus address 8",
-          "slave_9": "Unit at Modbus address 9",
-          "slave_10": "Unit at Modbus address 10",
-          "slave_11": "Unit at Modbus address 11",
-          "slave_12": "Unit at Modbus address 12",
-          "slave_13": "Unit at Modbus address 13",
-          "slave_14": "Unit at Modbus address 14",
-          "slave_15": "Unit at Modbus address 15",
-          "slave_16": "Unit at Modbus address 16"
-        },
-        "data_description": {
-          "slave_2": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_3": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_4": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_5": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_6": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_7": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_8": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_9": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_10": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_11": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_12": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_13": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_14": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_15": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_16": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint."
-        }
-      },
       "rescan_units": {
         "title": "Scan for new Meltem M-WRG units",
-        "description": "Scan the Meltem gateway for configured Meltem M-WRG units and update the stored profiles."
+        "description": "Scan the Meltem gateway for configured Meltem M-WRG units and update the stored profiles. Units the gateway no longer reports are removed together with their devices, after you confirm them."
+      },
+      "confirm_remove": {
+        "title": "Remove units",
+        "description": "The gateway no longer reports {removed_count} of the configured units. Submit to remove them together with their devices, entities, and entity settings:\n\n{removed_units}\n\nIf a unit is only switched off or out of radio range, close this dialog instead and scan again later."
       },
       "profiles": {
         "title": "Detected Meltem M-WRG units",
@@ -423,6 +388,7 @@
       "state_units": "Units with live state",
       "last_update_success": "Last update successful",
       "last_job_error": "Last scheduler error",
+      "last_unit_errors": "Last read error per unit",
       "unavailable_units": "Currently unavailable units",
       "stale_read_groups": "Stale read groups"
     }
@@ -448,6 +414,75 @@
     },
     "gateway_communication_failed": {
       "message": "Communication with the Meltem gateway failed. Check the USB connection and serial port."
+    }
+  },
+  "issues": {
+    "missing_humidity_extract_air": {
+      "title": "{unit}: extract air humidity is not reported",
+      "description": "The profile {profile} of {unit} includes an extract air humidity sensor, but the unit keeps reporting that no reading is available, so the sensor shows unknown.\n\nCheck that the profile selected for the unit matches its type plate, and reconfigure the unit if it does not. If the profile is correct, the sensor may be faulty. This message disappears once the unit reports a value again."
+    },
+    "missing_humidity_supply_air": {
+      "title": "{unit}: supply air humidity is not reported",
+      "description": "The profile {profile} of {unit} includes a supply air humidity sensor, but the unit keeps reporting that no reading is available, so the sensor shows unknown.\n\nCheck that the profile selected for the unit matches its type plate, and reconfigure the unit if it does not. If the profile is correct, the sensor may be faulty. This message disappears once the unit reports a value again."
+    },
+    "missing_co2_extract_air": {
+      "title": "{unit}: extract air CO2 is not reported",
+      "description": "The profile {profile} of {unit} includes an extract air CO2 sensor, but the unit keeps reporting that no reading is available, so the sensor shows unknown.\n\nCheck that the profile selected for the unit matches its type plate, and reconfigure the unit if it does not. If the profile is correct, the sensor may be faulty. This message disappears once the unit reports a value again."
+    },
+    "missing_voc_supply_air": {
+      "title": "{unit}: supply air VOC is not reported",
+      "description": "The profile {profile} of {unit} includes a supply air VOC sensor, but the unit keeps reporting that no reading is available, so the sensor shows unknown.\n\nCheck that the profile selected for the unit matches its type plate, and reconfigure the unit if it does not. If the profile is correct, the sensor may be faulty. This message disappears once the unit reports a value again."
+    },
+    "new_units_found": {
+      "title": "The Meltem gateway reports units that are not set up",
+      "description": "The gateway reports {count} Meltem M-WRG units that Home Assistant does not have yet, at Modbus address {addresses}.\n\nTo add them, open the Meltem Modbus integration and choose **Add unit**, or run **Scan for new units** in its options. The profile cannot be detected reliably, so you choose it from the type plate of each unit. This message disappears once every unit the gateway reports is set up."
+    }
+  },
+  "config_subentries": {
+    "unit": {
+      "entry_type": "Meltem M-WRG unit",
+      "initiate_flow": {
+        "user": "Add unit",
+        "reconfigure": "Change profile"
+      },
+      "step": {
+        "user": {
+          "title": "Add a Meltem M-WRG unit",
+          "description": "The gateway reports {device_count} units that are not set up yet. Choose the Modbus address of the unit to add.\n\n{unit_details}",
+          "data": {
+            "slave": "Modbus address"
+          },
+          "data_description": {
+            "slave": "Modbus address of the unit to add, as listed above."
+          }
+        },
+        "profile": {
+          "title": "Profile of the unit at Modbus address {slave}",
+          "description": "Choose the exact model profile of the new unit. Check the unit label; detected sensors are only a hint.\n\n{unit_details}",
+          "data": {
+            "profile": "Profile"
+          },
+          "data_description": {
+            "profile": "The model profile on the type plate decides which entities the unit gets."
+          }
+        },
+        "reconfigure": {
+          "title": "Change the profile of {unit}",
+          "description": "Choose the exact model profile of the unit. Check the unit label; the integration reloads afterwards.\n\n{unit_details}",
+          "data": {
+            "profile": "Profile"
+          },
+          "data_description": {
+            "profile": "The model profile on the type plate decides which entities the unit gets."
+          }
+        }
+      },
+      "abort": {
+        "entry_not_loaded": "The Meltem gateway is not loaded. Units can only be added while it is connected.",
+        "cannot_connect": "Failed to connect to the Meltem gateway.",
+        "no_new_units": "The gateway reports no units that are not set up yet. Add the unit in the Meltem app first.",
+        "already_configured": "This unit is already set up."
+      }
     }
   }
 }

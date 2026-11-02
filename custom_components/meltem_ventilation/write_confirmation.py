@@ -19,7 +19,15 @@ from .const import (
 )
 from .levels import levels_reached, target_levels
 from .modbus_helpers import normalize_control_setting
-from .models import RoomConfig, RoomState, WriteConfirmation, WriteValue
+from .models import (
+    EMPTY_READ_HEALTH,
+    ReadHealth,
+    RoomConfig,
+    RoomState,
+    WriteConfirmation,
+    WriteStatus,
+    WriteValue,
+)
 from .read_health import group_fresh
 
 CONTROL_SETTING_WRITE_PREFIX = "control_setting:"
@@ -29,12 +37,14 @@ _FLOW_CONTROL_WRITES = _BASE_MODE_WRITES | {"intensive"}
 # Base writes that leave a running intensive override in place (HW-1).
 _WRITES_HIDDEN_BY_INTENSIVE = frozenset({"airflow_levels", "operation_mode"})
 # Outcomes a later readback can no longer change.
-_FINAL_STATUSES = frozenset({"failed", "confirmed", "superseded"})
+_FINAL_STATUSES: frozenset[WriteStatus] = frozenset({"failed", "confirmed", "superseded"})
 # Outcomes a later exact readback can still turn into a confirmation; an
 # unverifiable write is judged once the intensive override has ended.
-_CONFIRMABLE_STATUSES = frozenset({"pending", "unconfirmed", "mismatch", "unverifiable"})
+_CONFIRMABLE_STATUSES: frozenset[WriteStatus] = frozenset(
+    {"pending", "unconfirmed", "mismatch", "unverifiable"}
+)
 # Outcomes that flag data health while they are recent.
-_UNHEALTHY_STATUSES = frozenset({"unconfirmed", "mismatch", "failed"})
+_UNHEALTHY_STATUSES: frozenset[WriteStatus] = frozenset({"unconfirmed", "mismatch", "failed"})
 
 
 def write_group(write_key: str) -> str:
@@ -47,7 +57,7 @@ def write_group(write_key: str) -> str:
     raise ValueError(f"Unknown write confirmation key: {write_key}")
 
 
-def confirmation_status(confirmation: WriteConfirmation) -> str:
+def confirmation_status(confirmation: WriteConfirmation) -> WriteStatus:
     """Return the status, treating a write that stays pending too long as unconfirmed."""
 
     if (
@@ -62,16 +72,28 @@ def confirmation_status(confirmation: WriteConfirmation) -> str:
 class WriteConfirmations:
     """The last outcome per unit and write key."""
 
-    def __init__(self, on_issue: Callable[[str, str, str], None] | None = None) -> None:
+    def __init__(self, on_issue: Callable[[str, str, WriteStatus], None] | None = None) -> None:
         self.by_room: dict[str, dict[str, WriteConfirmation]] = {}
         self._on_issue = on_issue
 
-    def record_pending(self, room_key: str, write_key: str, expected_value: WriteValue) -> None:
-        """Record a write the transport accepted, awaiting its readback."""
+    def record_pending(
+        self,
+        room_key: str,
+        write_key: str,
+        expected_value: WriteValue,
+        *,
+        baseline: ReadHealth = EMPTY_READ_HEALTH,
+    ) -> None:
+        """Record a write the transport accepted, awaiting its readback.
+
+        ``baseline`` is the confirming group's health when the write was sent;
+        only a read after the write changes it.
+        """
 
         self.by_room.setdefault(room_key, {})[write_key] = WriteConfirmation(
             expected_value=expected_value,
             started_at=dt_util.utcnow(),
+            baseline=baseline,
         )
 
     def supersede(self, room_key: str, write_key: str) -> tuple[str, ...]:
@@ -134,12 +156,6 @@ class WriteConfirmations:
                     },
                 )
 
-    def is_confirmed(self, room_key: str, write_key: str) -> bool:
-        """Return whether a write has been confirmed by a readback."""
-
-        confirmation = self.by_room.get(room_key, {}).get(write_key)
-        return confirmation is not None and confirmation.status == "confirmed"
-
     def prepare_balanced_target_readback(
         self, room_key: str, state: RoomState, previous_state: RoomState
     ) -> tuple[RoomState, bool]:
@@ -153,16 +169,23 @@ class WriteConfirmations:
             return state, False
 
         if not self.needs_confirmation(room_key, "airflow_levels"):
+            readback = previous_state.balanced_target_readback
             if (
-                previous_state.balanced_target_readback is not None
+                readback is not None
                 and state.operation_mode == previous_state.operation_mode
                 and state.preset_mode is None
                 and state.target_level == previous_state.target_level
+                and not _balanced_readback_superseded_by_flow(
+                    state,
+                    previous_state,
+                    readback,
+                    recent_write=self._has_recent_write(room_key, "airflow_levels"),
+                )
             ):
                 return (
                     replace(
                         state,
-                        balanced_target_readback=previous_state.balanced_target_readback,
+                        balanced_target_readback=readback,
                     ),
                     False,
                 )
@@ -170,11 +193,15 @@ class WriteConfirmations:
 
         return state, True
 
+    def _has_recent_write(self, room_key: str, write_key: str) -> bool:
+        confirmation = self.by_room.get(room_key, {}).get(write_key)
+        return confirmation is not None and _recent(confirmation)
+
     def set_status(
         self,
         room_key: str,
         write_key: str,
-        status: str,
+        status: WriteStatus,
         *,
         error: str | None = None,
         actual_value: WriteValue | None = None,
@@ -281,6 +308,31 @@ def _recent(confirmation: WriteConfirmation) -> bool:
     return age <= WRITE_HEALTH_RETENTION_SECONDS
 
 
+def _balanced_readback_superseded_by_flow(
+    state: RoomState,
+    previous_state: RoomState,
+    readback: int,
+    *,
+    recent_write: bool,
+) -> bool:
+    """Return whether fresh measured airflow shows the target returned to the coarse step."""
+
+    if (
+        not group_fresh(state, "flow")
+        or state.target_level is None
+        or state.supply_air_flow is None
+        or state.extract_air_flow is None
+    ):
+        return False
+    current_flow = (state.supply_air_flow, state.extract_air_flow)
+    if levels_reached(current_flow, (readback, readback)):
+        return False
+    if not levels_reached(current_flow, (state.target_level, state.target_level)):
+        return False
+    previous_flow = (previous_state.supply_air_flow, previous_state.extract_air_flow)
+    return not recent_write or levels_reached(previous_flow, (readback, readback))
+
+
 def _checked_confirmation(
     state: RoomState, write_key: str, confirmation: WriteConfirmation
 ) -> WriteConfirmation | None:
@@ -289,7 +341,8 @@ def _checked_confirmation(
     if confirmation.status in _FINAL_STATUSES:
         return None
     read_health = state.read_health_for(write_group(write_key))
-    if read_health.last_attempt is None or read_health.last_attempt < confirmation.started_at:
+    # Unchanged health means no read happened since the write.
+    if read_health.last_attempt is None or read_health == confirmation.baseline:
         return None
     if read_health.last_error is not None:
         if confirmation.status != "pending":
@@ -306,7 +359,7 @@ def _checked_confirmation(
     if actual is None:
         return None
     matches = _values_match(write_key, confirmation.expected_value, actual)
-    status = "confirmed" if matches else "mismatch"
+    status: WriteStatus = "confirmed" if matches else "mismatch"
     if confirmation.status == status and confirmation.actual_value == actual:
         return None
     return replace(confirmation, status=status, actual_value=actual, last_error=None)

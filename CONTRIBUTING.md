@@ -16,10 +16,10 @@ Thanks for helping improve the Meltem Home Assistant integration.
 
 ## Development setup
 
-The integration itself targets the Python version shipped with Home Assistant,
-which is why `pyproject.toml` declares `requires-python = ">=3.13"`. The test
-toolchain is stricter: Home Assistant's test helpers currently require Python
-`>=3.14.2`, so use a suitable 3.14 interpreter for the virtual environment.
+The integration targets the Python version shipped with Home Assistant
+`2026.11`, which is why `pyproject.toml` declares `requires-python = ">=3.14"`.
+Home Assistant's test helpers currently require Python `>=3.14.2`, so use a
+suitable 3.14 interpreter for the virtual environment.
 
 ```bash
 python -m venv .venv
@@ -51,8 +51,10 @@ ruff check custom_components tests tools
 mypy
 ```
 
-CI runs these checks, plus Pyright on `custom_components`, `tests` and `tools`, Markdownlint,
-hassfest, and the HACS validation.
+CI runs the tests as `pytest --cov --cov-report=term`, which fails below the
+coverage threshold configured in `pyproject.toml`. CI also runs Pyright on
+`custom_components`, `tests` and `tools`, Markdownlint, hassfest, and the HACS
+validation.
 
 Useful focused test runs:
 
@@ -62,6 +64,15 @@ pytest tests/components/meltem_ventilation/test_transport.py
 pytest tests/components/meltem_ventilation/test_serial_protocol.py
 pytest tests/components/meltem_ventilation/test_config_flow.py
 pytest tests/components/meltem_ventilation/test_entity_descriptions.py
+```
+
+`test_snapshots.py` compares every entity and the diagnostics download with
+the stored snapshots in `tests/components/meltem_ventilation/snapshots/`.
+After an intended change, regenerate them and review the diff before
+committing:
+
+```bash
+pytest tests/components/meltem_ventilation/test_snapshots.py --snapshot-update
 ```
 
 ### Running the tests on Windows
@@ -97,6 +108,9 @@ python -m tools.raw_requests --help
 - The tools keep their own copy of the link settings in `tools/_link.py`;
   `tests/components/meltem_ventilation/test_tools.py` keeps it in line with
   `const.py`.
+- `tools.raw_requests` continues after failed requests and prints their error
+  counts. Its exit code is `1` if any request failed, including a partial
+  failure; `0` means all requests succeeded.
 
 ## Contribution guidelines
 

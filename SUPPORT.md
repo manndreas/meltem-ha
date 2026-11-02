@@ -13,7 +13,8 @@ If you open an issue, please include enough detail to reproduce the problem.
 - relevant Home Assistant logs, with debug logging enabled if possible (see
   the [diagnostics guide](./docs/DIAGNOSTICS.md#logs))
 - the integration diagnostics download when the entry is available; the serial
-  port is redacted automatically
+  port and the app setup codes (R-codes) of the units are redacted
+  automatically
 
 ## Helpful logs
 

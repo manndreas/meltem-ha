@@ -99,3 +99,35 @@ def test_save_requests_are_rate_limited(monkeypatch) -> None:
     clock.now += 60.0
     diagnostics.record_request("success")
     assert store.async_delay_save.call_count == 2
+
+
+def test_save_after_initial_delay_schedules_remaining_interval(monkeypatch) -> None:
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.cumulative_diagnostics.time",
+        SimpleNamespace(monotonic=lambda: clock.now),
+    )
+    store = MagicMock()
+    diagnostics = CumulativeDiagnostics(store, None)
+
+    diagnostics.record_request("success")
+    assert store.async_delay_save.call_count == 1
+    data_fn, delay = store.async_delay_save.call_args.args
+    assert delay == 10.0
+
+    # Simulate Store firing its 10s delay timer at t=110.0
+    clock.now = 110.0
+    saved = data_fn()
+    assert saved["transport"]["request_attempts"] == 1
+
+    # A new event at t=115.0 (within the 60s window) must still schedule a delayed save
+    clock.now = 115.0
+    diagnostics.record_write_issue("room", "airflow_levels", "failed")
+    assert store.async_delay_save.call_count == 2
+    _, second_delay = store.async_delay_save.call_args.args
+    assert second_delay == 45.0
+
+    # Subsequent events while that timer is pending do not reset it
+    clock.now = 120.0
+    diagnostics.record_request("success")
+    assert store.async_delay_save.call_count == 2

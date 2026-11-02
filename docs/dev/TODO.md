@@ -1,6 +1,6 @@
 # Meltem Integration TODO
 
-Status: 4.6.1
+Status: 5.0.0
 
 This list only holds open items. Everything that used to be listed here as
 done is described in `CHANGELOG.md`. Hardware observations and reverse
@@ -57,23 +57,6 @@ Next step:
 - Collect values from more units before guessing a decoding.
 - The manufacturer documents contain neither `116852` nor `VMD-22RPS44`; the
   article numbers do not match, see `docs/dev/reference/models.md`.
-
-## TODO-4 — Wider block reads
-
-Priority: low
-Status: open, after the HW-7 post-release validation
-
-Finding:
-
-- The `register_ranges` of the components reproduce the blocks of the
-  pymodbus client one to one. Merging neighbouring blocks, for example
-  `41016..41021` in one request, would save requests per job.
-
-Next step:
-
-- Only with a benchmark on the real gateway, see test T-8 in
-  `docs/dev/LIVE_GATEWAY_TESTS.md`. Update the parity test in
-  `tests/components/meltem_ventilation/test_modbus_client.py` together with the ranges.
 
 ## TODO-5 — Raw register diagnostics
 

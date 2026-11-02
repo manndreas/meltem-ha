@@ -9,12 +9,20 @@
 
 - `custom_components/meltem_ventilation/manifest.json`: Home Assistant metadata and integration version
 - `custom_components/meltem_ventilation/const.py`: profile metadata, register constants, entity-key groupings
-- `custom_components/meltem_ventilation/modbus_client.py`: async room reads, mode decoding, write sequences
+- `custom_components/meltem_ventilation/modbus_client.py`: async room reads and write sequences
+- `custom_components/meltem_ventilation/mode_codec.py`: mode and quick-mode register writes, airflow scaling, and decoding of the mode status map
 - `custom_components/meltem_ventilation/modbus_helpers.py`: link parameters, unit preparation, discovery, setup probes
 - `custom_components/meltem_ventilation/device/`: register blocks as `modbus-connection` components (`components.py`), room/probe/gateway devices (`device.py`), and the shared retry policy (`transport.py`)
-- `custom_components/meltem_ventilation/coordinator.py`: gateway lock, request-rate cap, backoff, and write orchestration
+- `custom_components/meltem_ventilation/coordinator.py`: own poll scheduler, gateway lock, request-rate cap, backoff, and write orchestration
+- `custom_components/meltem_ventilation/room_runtime.py`: the coordinator's bookkeeping per unit between reads and writes
+- `custom_components/meltem_ventilation/gateway_reads.py`: optional gateway values, read only while an entity or check needs them
 - `custom_components/meltem_ventilation/polling.py`, `read_health.py`, `levels.py`, `overlay.py`, `write_confirmation.py`: job planning, read freshness, airflow targets, pending values, and write outcomes used by the coordinator
-- `custom_components/meltem_ventilation/config_flow.py`: setup, USB discovery, reconfigure (serial port), gateway-backed unit discovery, profile selection
+- `custom_components/meltem_ventilation/diagnostics.py`, `cumulative_diagnostics.py`, `system_health.py`: diagnostics download, persisted communication counters, and Home Assistant System Health
+- `custom_components/meltem_ventilation/missing_sensors.py`, `new_units.py`: repair issues for sensors that report no value and for units the gateway reports but that are not set up
+- `custom_components/meltem_ventilation/units.py`, `identifiers.py`: units as config subentries, and the unique IDs and device identifiers derived from them
+- `custom_components/meltem_ventilation/entity.py`: shared entity base classes and `room_has_entity`, the single rule for which entities a unit has
+- `custom_components/meltem_ventilation/config_flow.py`: setup, USB discovery, reconfigure (serial port); `options_flow.py`: request rate and unit rescans; `subentry_flow.py`: add a unit, change its profile; `flow_helpers.py`: their shared gateway-backed discovery, probes, and profile form
+- `custom_components/meltem_ventilation/migration.py`: config entry migrations from older schemas
 - `custom_components/meltem_ventilation/fan.py`: the two directional airflow controls, the primary control path
 - `custom_components/meltem_ventilation/number.py`: per-series control settings such as humidity and CO2 thresholds
 - `custom_components/meltem_ventilation/strings.json`: English entity/config strings
@@ -28,6 +36,7 @@
 - `docs/dev/LIVE_GATEWAY_TESTS.md`: test plan for running those checks on the live gateway; follow its safety rules
 - `docs/dev/SETTING_RE_BACKLOG.md`: parked reverse engineering of app settings, with its measurement log
 - `CHANGELOG.md`: release history
+- `tests/components/meltem_ventilation/common.py`: shared test doubles (`mock_coordinator`) and the helpers that drive single scheduler steps
 
 ## Working rules
 
@@ -45,9 +54,10 @@
 ## Validation
 
 - Tests need Python 3.14; see `CONTRIBUTING.md` for the setup and the Windows workarounds
-- Run tests with `pytest`, lint with `ruff check custom_components tests tools`, and type-check with `mypy`; CI runs all three, plus `ruff format --check`, Pyright on `custom_components`, `tests` and `tools`, Markdownlint, hassfest, and the HACS validation
+- Run tests with `pytest`, lint with `ruff check custom_components tests tools`, and type-check with `mypy`; CI runs all three, the tests as `pytest --cov --cov-report=term` with the coverage threshold from `pyproject.toml`, plus `ruff format --check`, Pyright on `custom_components`, `tests` and `tools`, Markdownlint, hassfest, and the HACS validation
 - Focused runs are usually enough while iterating, for example:
   - `pytest tests/components/meltem_ventilation/test_modbus_client.py`
   - `pytest tests/components/meltem_ventilation/test_transport.py`
   - `pytest tests/components/meltem_ventilation/test_config_flow.py`
   - `pytest tests/components/meltem_ventilation/test_entity_descriptions.py`
+- After an intended change to entities or the diagnostics download, regenerate the snapshots with `pytest tests/components/meltem_ventilation/test_snapshots.py --snapshot-update` and review the diff

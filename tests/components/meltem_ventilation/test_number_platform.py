@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from custom_components.meltem_ventilation.models import RoomConfig, RoomState
 from custom_components.meltem_ventilation.number import (
     CONTROL_SETTING_DESCRIPTIONS,
     MeltemControlSettingNumber,
 )
+
+from .common import mock_coordinator
 
 _ROOM = RoomConfig(key="unit_1", name="Unit 1", profile="ii_f", slave=2)
 _HUMIDITY_MIN_LEVEL = next(
@@ -19,12 +21,11 @@ _HUMIDITY_MIN_LEVEL = next(
 
 
 def _number(state: RoomState | None = None) -> MeltemControlSettingNumber:
-    coordinator = MagicMock()
+    coordinator = mock_coordinator()
     coordinator.last_update_success = True
     coordinator.room_available.return_value = True
     coordinator.read_group_for_entity.return_value = "control_settings"
     coordinator.read_group_available.return_value = True
-    coordinator.async_set_control_setting = AsyncMock()
     coordinator.safe_data = {"unit_1": state or RoomState()}
     return MeltemControlSettingNumber(coordinator, _ROOM, _HUMIDITY_MIN_LEVEL)
 

@@ -21,13 +21,14 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import ALL_PROFILES, GATEWAY_SILENT_AFTER_SECONDS, READ_GROUP_ENTITY_KEYS
+from .const import DATA_HEALTH_ENTITY_KEY, GATEWAY_SILENT_AFTER_SECONDS, READ_GROUP_ENTITY_KEYS
 from .coordinator import MeltemDataUpdateCoordinator
 from .entity import (
     MeltemEntity,
     MeltemGatewayEntity,
     MeltemRoomDiagnosticEntity,
-    room_supports_entity,
+    async_add_room_entities,
+    room_has_entity,
 )
 from .models import (
     MeltemIntegrationConfigEntry,
@@ -41,7 +42,6 @@ class MeltemBinarySensorDescription(BinarySensorEntityDescription):
     """Describe a Meltem binary sensor."""
 
     value_fn: Callable[[RoomState], bool | None]
-    supported_profiles: frozenset[str] = ALL_PROFILES
 
 
 BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
@@ -110,24 +110,21 @@ async def async_setup_entry(
 
     coordinator = entry.runtime_data.coordinator
 
-    entities: list[BinarySensorEntity] = [
-        MeltemBinarySensorEntity(coordinator, room, description)
-        for room in coordinator.rooms
-        for description in BINARY_SENSOR_DESCRIPTIONS
-        if room_supports_entity(room, description.key, description.supported_profiles)
-    ]
-    entities.extend(
-        MeltemDataHealthBinarySensor(coordinator, room)
-        for room in coordinator.rooms
-        if room.supports_any(("supply_air_flow", "extract_air_flow"))
-    )
-    entities.append(MeltemGatewayConnectivitySensor(coordinator, entry.entry_id))
-    entities.extend(
-        MeltemRoomConnectivitySensor(coordinator, room)
-        for room in coordinator.rooms
-        if room.supports("connectivity")
-    )
-    async_add_entities(entities)
+    async_add_entities([MeltemGatewayConnectivitySensor(coordinator, entry.entry_id)])
+
+    def entities_of(room: RoomConfig) -> list[BinarySensorEntity]:
+        entities: list[BinarySensorEntity] = [
+            MeltemBinarySensorEntity(coordinator, room, description)
+            for description in BINARY_SENSOR_DESCRIPTIONS
+            if room_has_entity(room, description.key)
+        ]
+        if room_has_entity(room, DATA_HEALTH_ENTITY_KEY):
+            entities.append(MeltemDataHealthBinarySensor(coordinator, room))
+        if room_has_entity(room, ROOM_CONNECTIVITY_DESCRIPTION.key):
+            entities.append(MeltemRoomConnectivitySensor(coordinator, room))
+        return entities
+
+    async_add_room_entities(coordinator, async_add_entities, entities_of)
 
 
 class MeltemGatewayConnectivitySensor(MeltemGatewayEntity, BinarySensorEntity):
@@ -176,7 +173,7 @@ class MeltemBinarySensorEntity(MeltemEntity, BinarySensorEntity):
         return self.entity_description.value_fn(self.room_state)
 
 
-class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
+class MeltemDataHealthBinarySensor(MeltemRoomDiagnosticEntity, BinarySensorEntity):
     """Report stale read groups and expose their last outcomes."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
@@ -185,11 +182,7 @@ class MeltemDataHealthBinarySensor(MeltemEntity, BinarySensorEntity):
     _unrecorded_attributes = frozenset({*READ_GROUP_ENTITY_KEYS, "writes"})
 
     def __init__(self, coordinator: MeltemDataUpdateCoordinator, room: RoomConfig) -> None:
-        super().__init__(coordinator, room, "data_health", "data_health")
-
-    @property
-    def available(self) -> bool:
-        return self.coordinator.last_update_success and self.room.key in self.coordinator.safe_data
+        super().__init__(coordinator, room, DATA_HEALTH_ENTITY_KEY, DATA_HEALTH_ENTITY_KEY)
 
     @property
     def is_on(self) -> bool | None:

@@ -5,3 +5,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Keeps the lint and test tools in requirements-test.txt current.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # These follow the supported Home Assistant release and move together by hand.
+      - dependency-name: homeassistant
+      - dependency-name: pytest-home-assistant
+      - dependency-name: modbus-connection
+      - dependency-name: tmodbus
+      - dependency-name: pymodbus
