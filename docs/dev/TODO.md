@@ -72,3 +72,65 @@ Next step:
 
 - Decide which ranges may be read and how often, so the diagnostics cannot
   flood the gateway.
+
+## TODO-6 — Support RTU over TCP gateways
+
+Priority: low
+Status: open, feature request ([GitHub issue #7](https://github.com/manndreas/meltem-ha/issues/7))
+
+Request:
+
+- Support network gateways such as the ESP32 bridge in the issue, which exposes
+  the Meltem gateway over RTU over TCP. This would help installations where
+  Home Assistant cannot access the gateway directly over USB, for example in
+  some Docker setups.
+
+Transport spike (2026-11-02):
+
+- On Home Assistant `2026.11.0b0`, `modbus-connection 4.12.7`, and `tmodbus
+  1.1.0`, the shared Home Assistant connection handled three RTU reads over a
+  single TCP connection using `ModbusSerialParams` with a `socket://` device
+  and RTU framing.
+- The test used the integration's `prepare_unit` and a local TCP server that
+  delimited frames after the ESP bridge's 40 ms idle gap. All three requests
+  carried valid RTU CRCs and returned the expected values.
+- This was a software-only test: no ESP32, Meltem gateway, or ventilation unit
+  was connected. The installed transport appears sufficient; end-to-end
+  behavior with the bridge remains unverified.
+
+Agreed first-version scope:
+
+- Support generic raw RTU over TCP, compatible with the ESP bridge; do not add
+  Modbus TCP/MBAP or UDP.
+- Enter the host and port manually, defaulting to port `5020`; mDNS discovery
+  is a separate follow-up.
+- Allow changing between serial and network transports in Reconfigure.
+- Document that the ESP bridge uses unauthenticated, unencrypted TCP and should
+  only be used on a trusted local network.
+- Mark the feature as not validated against real ESP32/Meltem hardware.
+
+Next step:
+
+- Generalize the gateway connection configuration and setup/reconfigure flow
+  to support either the existing serial device or an RTU-over-TCP host and
+  port, while preserving existing serial entries.
+- Validate the integration against an ESP32 bridge and Meltem gateway before
+  advertising support.
+
+## TODO-7 — Discover RTU-over-TCP bridges via mDNS
+
+Priority: low
+Status: open, follow-up feature request
+
+Finding:
+
+- The ESP bridge can advertise an `_modbus._tcp` service, but the first
+  RTU-over-TCP implementation will use manual host and port entry to keep its
+  setup scope small.
+
+Next step:
+
+- After manual RTU-over-TCP setup is supported, assess discovering and
+  selecting these services from the config flow.
+- Verify Home Assistant can resolve the advertised service and hostname
+  reliably before depending on mDNS for setup.
