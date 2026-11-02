@@ -143,6 +143,8 @@ _READBACK_PLANS: dict[str, RefreshPlan] = {
 
 
 class _CoordinatorClient(Protocol):
+    async def async_disconnect_gateway(self) -> None: ...
+
     async def async_read_gateway_uptime(self) -> int: ...
 
     async def async_read_gateway_mac(self) -> str: ...
@@ -532,6 +534,13 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         async with self._gateway_lock:
             return await self.client.async_read_gateway_mac()
+
+    async def async_validate_replacement(self, validate: Callable[[], Awaitable[None]]) -> None:
+        """Validate a replacement while polling cannot reopen the old link."""
+
+        async with self._gateway_lock:
+            await self.client.async_disconnect_gateway()
+            await validate()
 
     async def async_shutdown(self) -> None:
         self._polling_stopped = True

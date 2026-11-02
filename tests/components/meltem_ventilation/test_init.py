@@ -51,6 +51,7 @@ from custom_components.meltem_ventilation.const import (
     FIXED_TIMEOUT,
     MODE_MANUAL,
     MODE_UNBALANCED,
+    NETWORK_TIMEOUT,
     PLATFORMS,
     PRESET_MODE_CODE_HIGH,
     PRESET_MODE_CODE_INTENSIVE,
@@ -227,6 +228,7 @@ class TestAsyncSetupEntry:
         unit_factory = setup_mocks.client_cls.call_args.args[0]
         assert unit_factory.args[2].device == "socket://bridge.local:5020"
         assert unit_factory.args[2].framer == "rtu"
+        assert setup_mocks.client_cls.call_args.kwargs["timeout"] == NETWORK_TIMEOUT
         setup_mocks.resolve_port.assert_not_called()
         assert entry.runtime_data.setup_snapshot[CONF_HOST] == "bridge.local"
 
@@ -245,6 +247,7 @@ class TestAsyncSetupEntry:
             assert await async_setup_entry(hass, entry) is True
 
         setup_mocks.client_cls.assert_called_once()
+        assert setup_mocks.client_cls.call_args.kwargs["timeout"] == FIXED_TIMEOUT
         setup_mocks.coordinator_cls.assert_called_once()
         setup_mocks.forward.assert_awaited_once_with(entry, PLATFORMS)
         # The first refresh runs in the background so setup stays fast.

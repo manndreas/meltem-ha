@@ -291,15 +291,15 @@ class TestConfigFlowUser:
                 },
             )
         assert result.get("step_id") == "profiles"
-        assert all(params.device == "socket://bridge.local:5020" for params in params_seen)
+        assert all(params.device == "socket://bridge.local.:5020" for params in params_seen)
         assert all(params.framer == "rtu" for params in params_seen)
         assert params_seen
         result = await _async_submit_profiles(hass, result, {"slave_2": "ii_plain"})
         entry = _flow_entry(result)
-        assert entry.unique_id == "rtu-over-tcp://bridge.local:5020"
+        assert entry.unique_id == "rtu-over-tcp://bridge.local.:5020"
         assert entry.data == {
             CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
-            CONF_HOST: "bridge.local",
+            CONF_HOST: "bridge.local.",
             CONF_NETWORK_PORT: 5020,
         }
 
@@ -329,6 +329,21 @@ class TestConfigFlowUser:
             result["flow_id"], {CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP}
         )
         assert result.get("errors") == {"base": "invalid_connection"}
+
+    async def test_network_connect_timeout_is_not_reported_as_no_devices(
+        self, hass: HomeAssistant, gateway_link: MockModbusConnection
+    ) -> None:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        with patch.object(
+            gateway_link, "_connect_client", new=AsyncMock(side_effect=ModbusTimeoutError("open"))
+        ):
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP, CONF_HOST: "bridge.local"},
+            )
+        assert result.get("errors") == {"base": "cannot_connect"}
 
     async def test_serial_setup_ignores_hidden_network_fields(self, hass: HomeAssistant) -> None:
         result = await hass.config_entries.flow.async_init(
@@ -1400,10 +1415,10 @@ class TestReconfigureFlow:
                 },
             )
             assert result.get("reason") == "reconfigure_successful"
-            assert entry.unique_id == "rtu-over-tcp://bridge.local:5020"
+            assert entry.unique_id == "rtu-over-tcp://bridge.local.:5020"
             assert entry.data == {
                 CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
-                CONF_HOST: "bridge.local",
+                CONF_HOST: "bridge.local.",
                 CONF_NETWORK_PORT: 5020,
             }
             assert entry.entry_id == entry_id
@@ -1468,7 +1483,7 @@ class TestReconfigureFlow:
             result["flow_id"],
             {
                 CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
-                CONF_HOST: "BRIDGE.LOCAL.",
+                CONF_HOST: "BRIDGE.LOCAL",
                 CONF_NETWORK_PORT: 5020,
             },
         )

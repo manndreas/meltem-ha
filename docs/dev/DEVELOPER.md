@@ -193,13 +193,21 @@ Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
 - another integration that uses the same endpoint with incompatible link
   settings makes setup fail with `ConfigEntryError` (config flow:
   `port_in_use`)
-- every unit asks for `set_message_spacing(REQUEST_GAP_SECONDS)` and
-  `require_timeout(FIXED_TIMEOUT)` before its first request (`prepare_unit`);
-  both are floors, so another consumer of the same port can only raise them.
-  A YAML hub with `timeout: 3` on the same port would make every silent unit
-  cost 3 s per attempt instead of 0.8 s
+- every unit asks for `set_message_spacing(REQUEST_GAP_SECONDS)` and a
+  transport-specific timeout before its first request (`prepare_unit`);
+  both are floors, so another consumer of the same endpoint can only raise
+  them. USB uses `FIXED_TIMEOUT` (0.8 s); RTU over TCP uses
+  `NETWORK_TIMEOUT` (5 s), including DNS and connection establishment. The
+  shared Modbus API does not separate connect and response timeouts, so a
+  silent unit over TCP can take 5 s per attempt
 - the config flow reads the unit list and probes every unit on one temporary
   link, so the endpoint is opened once per step
+- when changing a loaded network connection, the coordinator holds its gateway
+  lock while disconnecting the old link and checking the replacement. This
+  lets a single-client bridge accept the check; on failure the unchanged old
+  connection is reopened by the next request. The link can be shared with
+  other integrations, which can reconnect while the check is running; their
+  requests cannot be serialized by this coordinator
 
 Register blocks are `Component`s in `device/components.py`. Each one pins
 `register_ranges` to a block benchmarked on the gateway (`Temperatures` reads

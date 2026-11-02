@@ -388,7 +388,7 @@ async def temporary_units(
                 )
             except HomeAssistantError as err:
                 raise PortInUseError(str(err)) from err
-            return prepare_unit(unit, slave, policy)
+            return prepare_unit(unit, slave, policy, timeout=connection.timeout)
 
         yield unit_for
 

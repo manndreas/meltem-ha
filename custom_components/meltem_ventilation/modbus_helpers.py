@@ -124,6 +124,7 @@ def prepare_unit(
     policy: TransportPolicy,
     *,
     message_spacing: float = REQUEST_GAP_SECONDS,
+    timeout: float = FIXED_TIMEOUT,
 ) -> ModbusUnit:
     """Ask the link for the gateway's timing and wrap the unit in the retry policy.
 
@@ -133,7 +134,7 @@ def prepare_unit(
     """
 
     unit.set_message_spacing(message_spacing)
-    unit.require_timeout(FIXED_TIMEOUT)
+    unit.require_timeout(timeout)
     # PolicyUnit overrides the register requests the integration sends and
     # hands every other ModbusUnit member to the wrapped unit via __getattr__,
     # which the protocol check cannot see.
@@ -173,7 +174,7 @@ async def discover_gateway_nodes(unit: ModbusUnit, port: str, *, start: int, end
     try:
         node_count = await gateway.async_read_node_count()
     except ModbusError as err:
-        return _discovery_failed(err, port, "node count")
+        return _discovery_failed(err, unit, port, "node count")
     if node_count <= 0:
         _LOGGER.warning(
             "Meltem gateway discovery on %s via device %s reported zero configured units",
@@ -185,7 +186,7 @@ async def discover_gateway_nodes(unit: ModbusUnit, port: str, *, start: int, end
     try:
         addresses = await gateway.async_read_node_addresses(min(_MAX_NODE_ADDRESSES, node_count))
     except ModbusError as err:
-        return _discovery_failed(err, port, "node address list")
+        return _discovery_failed(err, unit, port, "node address list")
 
     discovered: list[int] = []
     for address in addresses:
@@ -204,11 +205,13 @@ async def discover_gateway_nodes(unit: ModbusUnit, port: str, *, start: int, end
     return discovered
 
 
-def _discovery_failed(err: ModbusError, port: str, what: str) -> list[int]:
+def _discovery_failed(err: ModbusError, unit: ModbusUnit, port: str, what: str) -> list[int]:
     """Raise a dead link as ``MeltemConnectionError``; log any other error as no units."""
 
-    if isinstance(err, ModbusConnectionError):
-        raise MeltemConnectionError(f"Could not open serial connection on {port}: {err}") from err
+    if isinstance(err, ModbusConnectionError) or (
+        isinstance(err, ModbusTimeoutError) and not unit.connected
+    ):
+        raise MeltemConnectionError(f"Could not open connection on {port}: {err}") from err
     _LOGGER.warning(
         "Meltem gateway discovery on %s via device %s could not read the %s: %s",
         port,

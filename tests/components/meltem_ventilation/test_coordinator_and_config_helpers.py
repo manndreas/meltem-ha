@@ -78,6 +78,7 @@ class _FakeClient:
     """Stand-in for MeltemModbusClient with no serial port dependency."""
 
     def __init__(self) -> None:
+        self.disconnect_calls = 0
         self.discover_calls: list[tuple[int, int]] = []
         self.probe_calls: list[int] = []
         self.read_calls: list[tuple[str, RefreshPlan]] = []
@@ -89,6 +90,9 @@ class _FakeClient:
         self.write_control_setting_calls: list[tuple[str, str, int]] = []
         self.silent_seconds_by_slave: dict[int, float] = {}
         self.next_read_state = RoomState(target_level=42)
+
+    async def async_disconnect_gateway(self) -> None:
+        self.disconnect_calls += 1
 
     async def discover_gateway_units(self, start: int, end: int) -> list[int]:
         self.discover_calls.append((start, end))
@@ -1319,6 +1323,48 @@ class TestDirectionalWrites:
 
         assert client.write_unbalanced_calls == [("unit_1", 40, 60)]
         assert client.write_level_calls == [("unit_1", 40)]
+
+    async def test_replacement_validation_serializes_writes_and_releases_lock_on_cancel(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
+        validation_started = asyncio.Event()
+        write_started = asyncio.Event()
+
+        async def validate() -> None:
+            validation_started.set()
+            await asyncio.Event().wait()
+
+        async def write() -> None:
+            write_started.set()
+            await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 40)
+
+        validation = asyncio.create_task(coordinator.async_validate_replacement(validate))
+        pending_write: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(validation_started.wait(), 5)
+            assert client.disconnect_calls == 1
+            pending_write = asyncio.create_task(write())
+            await asyncio.wait_for(write_started.wait(), 5)
+            assert not pending_write.done()
+            assert not client.write_unbalanced_calls
+            validation.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await validation
+            await asyncio.wait_for(pending_write, 5)
+        finally:
+            validation.cancel()
+            if pending_write is not None:
+                pending_write.cancel()
+            await asyncio.gather(
+                validation,
+                *([pending_write] if pending_write is not None else []),
+                return_exceptions=True,
+            )
+
+        assert client.write_unbalanced_calls == [("unit_1", 40, 60)]
+        assert not coordinator._gateway_lock.locked()
 
     async def test_concurrent_fan_commands_from_a_scene_end_balanced(
         self,

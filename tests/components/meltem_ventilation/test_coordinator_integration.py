@@ -124,6 +124,9 @@ class _FakeClient:
         self.rf_statistics_calls = 0
         self.rf_statistics_error: MeltemModbusError | None = None
 
+    async def async_disconnect_gateway(self) -> None:
+        raise AssertionError("Gateway disconnection is not expected in polling tests")
+
     async def async_read_gateway_uptime(self) -> int:
         self.uptime_calls += 1
         if self.uptime_error is not None:

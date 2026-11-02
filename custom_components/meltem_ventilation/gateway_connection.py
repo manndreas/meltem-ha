@@ -22,6 +22,8 @@ from .const import (
     FIXED_BYTESIZE,
     FIXED_PARITY,
     FIXED_STOPBITS,
+    FIXED_TIMEOUT,
+    NETWORK_TIMEOUT,
 )
 
 _HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
@@ -49,13 +51,14 @@ def _normalize_host(host: str) -> str:
         return str(address)
 
     try:
-        hostname = host.rstrip(".").encode("idna").decode("ascii").lower()
+        hostname = host.encode("idna").decode("ascii").lower()
     except UnicodeError as err:
         raise ValueError("Invalid gateway hostname or IP address") from err
+    labels = hostname[:-1] if hostname.endswith(".") else hostname
     if (
-        not hostname
-        or len(hostname) > 253
-        or any(not _HOST_LABEL.fullmatch(label) for label in hostname.split("."))
+        not labels
+        or len(labels) > 253
+        or any(not _HOST_LABEL.fullmatch(label) for label in labels.split("."))
     ):
         raise ValueError("Invalid gateway hostname or IP address")
     return hostname
@@ -70,6 +73,10 @@ class SerialGatewayConnection:
     @property
     def unique_id(self) -> str:
         return self.port
+
+    @property
+    def timeout(self) -> float:
+        return FIXED_TIMEOUT
 
     def as_data(self) -> dict[str, str | int]:
         return {CONF_PORT: self.port}
@@ -106,6 +113,10 @@ class RtuTcpGatewayConnection:
     def unique_id(self) -> str:
         host = f"[{self.host}]" if ":" in self.host else self.host
         return f"rtu-over-tcp://{host}:{self.port}"
+
+    @property
+    def timeout(self) -> float:
+        return NETWORK_TIMEOUT
 
     def as_data(self) -> dict[str, str | int]:
         return {

@@ -39,7 +39,8 @@ def test_serial_connection_accepts_legacy_entries(data: dict[str, object]) -> No
 @pytest.mark.parametrize(
     ("input_host", "host", "address"),
     [
-        (" Example.Local. ", "example.local", "example.local"),
+        (" Example.Local. ", "example.local.", "example.local."),
+        ("Example.Local", "example.local", "example.local"),
         ("192.168.10.2", "192.168.10.2", "192.168.10.2"),
         ("[2001:DB8::1]", "2001:db8::1", "[2001:db8::1]"),
         ("FE80::1%en0", "fe80::1%en0", "[fe80::1%en0]"),
@@ -68,6 +69,15 @@ def test_network_port_is_part_of_identity_and_params() -> None:
     }
 
 
+def test_absolute_and_relative_hostnames_have_distinct_endpoints() -> None:
+    absolute = RtuTcpGatewayConnection("bridge.example.com.")
+    relative = RtuTcpGatewayConnection("bridge.example.com")
+
+    assert absolute.host == "bridge.example.com."
+    assert absolute.unique_id != relative.unique_id
+    assert absolute.modbus_params().device == "socket://bridge.example.com.:5020"
+
+
 @pytest.mark.parametrize(
     "host",
     [
@@ -77,6 +87,7 @@ def test_network_port_is_part_of_identity_and_params() -> None:
         "bridge/path",
         "bad host",
         "a..b",
+        "bridge..",
         "-bridge",
         "fe80::1%bad@host",
     ],

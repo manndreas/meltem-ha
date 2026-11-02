@@ -347,8 +347,16 @@ The serial link is handled by Home Assistant's Modbus integration, so other
 integrations can use the same port. They must use the same serial settings
 (19200 baud, 8E1); otherwise setup reports that the port is already in use.
 The longest timeout any of them asks for applies to all requests on that
-port, so a long timeout elsewhere slows down this integration when a unit
-does not answer.
+endpoint, so a long timeout elsewhere slows down this integration when a unit
+does not answer. The integration requests 0.8 seconds for USB and 5 seconds
+for RTU over TCP. The network timeout covers both connection establishment
+and Modbus responses.
+
+When reconfiguring a loaded network connection, the integration disconnects
+the current shared link while it checks the replacement. Other integrations
+using that link can be interrupted and will reconnect on their next request.
+If another integration reconnects during the check, a bridge that accepts only
+one client may still reject the replacement connection.
 
 ## Logs
 

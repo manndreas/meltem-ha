@@ -215,6 +215,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
     client = MeltemModbusClient(
         partial(async_get_unit, hass, entry, connection.modbus_params()),
         port=port,
+        timeout=connection.timeout,
         max_requests_per_second=max_requests_per_second,
         on_request=cumulative_diagnostics.record_request,
         on_link_recycle=cumulative_diagnostics.record_link_recycle,

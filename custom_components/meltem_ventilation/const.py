@@ -60,6 +60,7 @@ FIXED_BYTESIZE: Final = 8
 FIXED_PARITY: Final = "E"
 FIXED_STOPBITS: Final = 1
 FIXED_TIMEOUT = 0.8
+NETWORK_TIMEOUT = 5.0
 REQUEST_GAP_SECONDS = 0.1
 # A silent unit behind the gateway also times out, so only a run of timeouts
 # while no unit answered for a while points at a wedged serial link.

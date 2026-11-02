@@ -32,6 +32,7 @@ from .const import (
     CO2_PROFILES,
     CONTROL_SETTING_REGISTERS,
     DEFAULT_GATEWAY_DEVICE_ID,
+    FIXED_TIMEOUT,
     HUMIDITY_PROFILES,
     MODE_MANUAL,
     MODE_OFF,
@@ -224,10 +225,12 @@ class MeltemModbusClient:
         on_request: Callable[[RequestOutcome], None] | None = None,
         on_link_recycle: Callable[[], None] | None = None,
         message_spacing: float = REQUEST_GAP_SECONDS,
+        timeout: float = FIXED_TIMEOUT,
     ) -> None:
         self._unit_factory = unit_factory
         self._port = port
         self._message_spacing = message_spacing
+        self._timeout = timeout
         self._policy = new_transport_policy(
             on_request=on_request,
             on_link_recycle=on_link_recycle,
@@ -294,6 +297,7 @@ class MeltemModbusClient:
                 slave,
                 self._policy,
                 message_spacing=self._message_spacing,
+                timeout=self._timeout,
             )
         return unit
 
@@ -379,6 +383,12 @@ class MeltemModbusClient:
         unit = self._unit(DEFAULT_GATEWAY_DEVICE_ID)
         async with self._gateway_operation("validating the gateway"):
             await read_gateway_node_count(unit)
+
+    async def async_disconnect_gateway(self) -> None:
+        """Release the live connection so a replacement endpoint can be checked."""
+
+        async with self._gateway_operation("disconnecting the gateway"):
+            await self._unit(DEFAULT_GATEWAY_DEVICE_ID).disconnect()
 
     async def discover_gateway_units(self, start: int, end: int) -> list[int]:
         """Discover configured unit addresses using the current gateway link."""

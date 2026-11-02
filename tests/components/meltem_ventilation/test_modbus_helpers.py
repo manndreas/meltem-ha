@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from modbus_connection import (
@@ -205,6 +205,15 @@ class TestDiscoverGatewayNodes:
         gateway.fail_requests(ModbusTimeoutError("silent"))
 
         assert await _discover(gateway) == []
+
+    async def test_connection_timeout_is_a_connection_error(self) -> None:
+        link = MockModbusConnection()
+        gateway = link.for_unit(1)
+        with patch.object(
+            link, "_connect_client", new=AsyncMock(side_effect=ModbusTimeoutError("open"))
+        ):
+            with pytest.raises(MeltemConnectionError, match=_PORT):
+                await _discover(gateway)
 
     async def test_an_unreadable_address_list_yields_no_units(
         self, gateway: MockModbusUnit

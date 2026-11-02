@@ -8,10 +8,12 @@ The heavier runtime reads happen only after the config entry is created.
 from __future__ import annotations
 
 import logging
+from functools import partial
 from typing import Any
 
 from homeassistant import config_entries
 from homeassistant.config_entries import (
+    ConfigEntryState,
     ConfigFlowResult,
     ConfigSubentryFlow,
 )
@@ -277,7 +279,18 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         else connection
                     )
                     try:
-                        await async_validate_port(self.hass, endpoint)
+                        runtime = getattr(entry, "runtime_data", None)
+                        if (
+                            isinstance(current, RtuTcpGatewayConnection)
+                            and isinstance(connection, RtuTcpGatewayConnection)
+                            and entry.state is ConfigEntryState.LOADED
+                            and runtime is not None
+                        ):
+                            await runtime.coordinator.async_validate_replacement(
+                                partial(async_validate_port, self.hass, endpoint)
+                            )
+                        else:
+                            await async_validate_port(self.hass, endpoint)
                     except Exception as err:
                         errors["base"] = connection_error(err, "opening", connection.unique_id)
                 if not errors:
