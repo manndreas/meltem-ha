@@ -20,6 +20,7 @@ from modbus_connection import ModbusUnit
 from .const import (
     CONF_CONNECTION_TYPE,
     CONF_HOST,
+    CONF_NAME_IS_DEVICE_NAME,
     CONF_NETWORK_PORT,
     CONF_PORT,
     CONF_PROFILE,
@@ -36,6 +37,10 @@ from .const import (
     MAX_MAX_REQUESTS_PER_SECOND,
     MIN_MAX_REQUESTS_PER_SECOND,
     MODEL_PROFILE_LABELS,
+    PRODUCT_ID_M_WRG,
+    PRODUCT_ID_M_WRG_II,
+    product_metadata,
+    profile_label,
 )
 from .gateway_connection import GatewayConnection, RtuTcpGatewayConnection, SerialGatewayConnection
 from .modbus_helpers import (
@@ -68,6 +73,17 @@ PROFILE_SELECTOR = selector.SelectSelector(
             for key, label in MODEL_PROFILE_LABELS.items()
         ],
     )
+)
+
+PROFILE_MISMATCH_SELECTOR = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        mode=selector.SelectSelectorMode.DROPDOWN,
+        translation_key="profile_mismatch_action",
+        options=["correct", "confirm"],
+    )
+)
+PROFILE_MISMATCH_SCHEMA = vol.Schema(
+    {vol.Required("action", default="correct"): PROFILE_MISMATCH_SELECTOR}
 )
 
 MAX_REQUEST_RATE_SELECTOR = selector.NumberSelector(
@@ -135,7 +151,7 @@ def connection_schema(
 def profiles_form(
     slaves: list[int],
     defaults_by_slave: Mapping[int, str],
-    previews_by_slave: Mapping[int, str],
+    probes_by_slave: Mapping[int, UnitProbeResult],
     names_by_slave: Mapping[int, str] | None = None,
 ) -> tuple[vol.Schema, dict[str, str]]:
     """Build the schema and description placeholders for one profile step."""
@@ -150,7 +166,7 @@ def profiles_form(
     )
     placeholders = {
         "device_count": str(len(slaves)),
-        "unit_details": unit_details(slaves, previews_by_slave, names_by_slave),
+        **unit_detail_placeholders(slaves, probes_by_slave, names_by_slave),
     }
     return data_schema, placeholders
 
@@ -165,18 +181,24 @@ def profile_field_key(slave: int) -> str:
     return f"slave_{slave}"
 
 
-def default_room_name(used_names: set[str]) -> str:
-    """Return the first ``Unit N`` name that no kept unit uses yet."""
+def default_room_name(profile: str, app_setup_code: str | None, used_names: set[str]) -> str:
+    """Return a distinct initial device name based on the selected model family."""
 
-    number = 1
-    while f"Unit {number}" in used_names:
+    family = profile_label(profile).split(" (", 1)[0]
+    base = f"Meltem {family}"
+    if app_setup_code:
+        base = f"{base} ({app_setup_code})"
+    name = base
+    number = 2
+    while name in used_names:
+        name = f"{base} ({number})"
         number += 1
-    return f"Unit {number}"
+    return name
 
 
 def unit_details(
     slaves: list[int],
-    previews_by_slave: Mapping[int, str],
+    probes_by_slave: Mapping[int, UnitProbeResult],
     names_by_slave: Mapping[int, str] | None = None,
 ) -> str:
     """Build the markdown list that identifies each unit in the step description."""
@@ -184,15 +206,71 @@ def unit_details(
     names_by_slave = names_by_slave or {}
     lines: list[str] = []
     for slave in slaves:
-        details: list[str] = []
-        name = names_by_slave.get(slave)
-        if name:
-            details.append(name)
-        preview = previews_by_slave.get(slave)
-        if preview:
-            details.append(preview.replace("ID ", "Hardware ID "))
-        suffix = f": {', '.join(details)}" if details else ""
+        suffix = unit_detail(probes_by_slave.get(slave), names_by_slave.get(slave))
         lines.append(f"- **{slave}**{suffix}")
+    return "\n".join(lines)
+
+
+def unit_detail(probe: UnitProbeResult | None, name: str | None = None) -> str:
+    """Return a compact identity suffix for a translated unit label."""
+
+    details: list[str] = [name] if name else []
+    if probe:
+        if product := product_metadata(probe.product_id):
+            details.append(product.series)
+        if probe.app_setup_code:
+            if details:
+                details[-1] = f"{details[-1]} ({probe.app_setup_code})"
+            else:
+                details.append(probe.app_setup_code)
+    return f": {' · '.join(details)}" if details else ""
+
+
+def unit_detail_placeholders(
+    slaves: Iterable[int],
+    probes_by_slave: Mapping[int, UnitProbeResult],
+    names_by_slave: Mapping[int, str] | None = None,
+) -> dict[str, str]:
+    """Supply each translated profile field with its unit's identity."""
+
+    names = names_by_slave or {}
+    return {
+        f"{profile_field_key(slave)}_details": unit_detail(
+            probes_by_slave.get(slave), names.get(slave)
+        )
+        for slave in slaves
+    }
+
+
+def stored_unit_probe(room: Mapping[str, Any]) -> UnitProbeResult:
+    """Use a stored unit's identity in a flow without another gateway read."""
+
+    product_id = room.get("product_id")
+    setup_code = room.get("app_setup_code")
+    return UnitProbeResult(
+        profile="",
+        preview=None,
+        product_id=product_id if isinstance(product_id, int) else None,
+        app_setup_code=setup_code if isinstance(setup_code, str) else None,
+    )
+
+
+def profile_mismatches(
+    profiles_by_slave: Mapping[int, str], probes_by_slave: Mapping[int, UnitProbeResult]
+) -> str:
+    """List selections that contradict a known product family's catalog entry."""
+
+    expected_prefixes = {PRODUCT_ID_M_WRG: "s_", PRODUCT_ID_M_WRG_II: "ii_"}
+    lines: list[str] = []
+    for slave, profile in profiles_by_slave.items():
+        probe = probes_by_slave.get(slave)
+        if probe is None or probe.product_id not in expected_prefixes:
+            continue
+        if profile.startswith(expected_prefixes[probe.product_id]):
+            continue
+        product = product_metadata(probe.product_id)
+        if product is not None:
+            lines.append(f"- **{slave}**: {product.series} → {MODEL_PROFILE_LABELS[profile]}")
     return "\n".join(lines)
 
 
@@ -329,17 +407,6 @@ def build_rooms_from_profiles(
             room_key = f"{preferred_room_key}_{suffix}"
             suffix += 1
         used_room_keys.add(room_key)
-        name = str(existing_room.get("name") or default_room_name(used_names))
-        used_names.add(name)
-        room: dict[str, Any] = {
-            "key": room_key,
-            # Only the initial device name; renaming happens in the device registry.
-            "name": name,
-            "slave": slave,
-            "profile": selected_profile,
-            "preview": (probe_result.preview if probe_result else None)
-            or existing_room.get("preview"),
-        }
         product_id = (
             probe_result.product_id
             if probe_result and probe_result.product_id is not None
@@ -350,6 +417,22 @@ def build_rooms_from_profiles(
             if probe_result and probe_result.app_setup_code is not None
             else _retained_app_setup_code(existing_room, probed_codes)
         )
+        name = str(
+            existing_room.get("name")
+            or default_room_name(selected_profile, app_setup_code, used_names)
+        )
+        used_names.add(name)
+        room: dict[str, Any] = {
+            "key": room_key,
+            # Only the initial device name; renaming happens in the device registry.
+            "name": name,
+            "slave": slave,
+            "profile": selected_profile,
+            "preview": (probe_result.preview if probe_result else None)
+            or existing_room.get("preview"),
+        }
+        if not existing_room.get("name") or existing_room.get(CONF_NAME_IS_DEVICE_NAME) is True:
+            room[CONF_NAME_IS_DEVICE_NAME] = True
         if product_id is not None:
             room["product_id"] = product_id
         if app_setup_code is not None:
@@ -428,10 +511,6 @@ async def async_probe_units(slaves: list[int], probe: _Probe) -> dict[int, UnitP
     return results
 
 
-def probe_previews(results: Mapping[int, UnitProbeResult]) -> dict[int, str]:
-    return {slave: result.preview for slave, result in results.items() if result.preview}
-
-
 def probe_profiles(results: Mapping[int, UnitProbeResult]) -> dict[int, str]:
     return {slave: result.profile for slave, result in results.items()}
 
@@ -496,7 +575,12 @@ def new_unit(
         suffix += 1
     room: dict[str, object] = {
         CONF_UNIT_KEY: room_key,
-        "name": default_room_name({str(room["name"]) for room in existing}),
+        "name": default_room_name(
+            profile,
+            probe_result.app_setup_code if probe_result is not None else None,
+            {str(room["name"]) for room in existing},
+        ),
+        CONF_NAME_IS_DEVICE_NAME: True,
         CONF_SLAVE: slave,
         CONF_PROFILE: profile,
     }

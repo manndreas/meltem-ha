@@ -6,6 +6,12 @@
         "serial": "Série USB",
         "rtu_over_tcp": "RTU sobre TCP"
       }
+    },
+    "profile_mismatch_action": {
+      "options": {
+        "correct": "Alterar os perfis",
+        "confirm": "Continuar na mesma"
+      }
     }
   },
   "config": {
@@ -54,40 +60,50 @@
       },
       "profiles": {
         "title": "Unidades Meltem M-WRG detetadas",
-        "description": "A integração encontrou {device_count} unidades Meltem M-WRG. Escolha o perfil correspondente para cada unidade detetada.\n\n{unit_details}",
+        "description": "A integração encontrou {device_count} unidades Meltem M-WRG. Escolha o perfil correspondente para cada unidade detetada. Os números das unidades correspondem aos endereços Modbus.",
         "data": {
-          "slave_2": "Unidade no endereço Modbus 2",
-          "slave_3": "Unidade no endereço Modbus 3",
-          "slave_4": "Unidade no endereço Modbus 4",
-          "slave_5": "Unidade no endereço Modbus 5",
-          "slave_6": "Unidade no endereço Modbus 6",
-          "slave_7": "Unidade no endereço Modbus 7",
-          "slave_8": "Unidade no endereço Modbus 8",
-          "slave_9": "Unidade no endereço Modbus 9",
-          "slave_10": "Unidade no endereço Modbus 10",
-          "slave_11": "Unidade no endereço Modbus 11",
-          "slave_12": "Unidade no endereço Modbus 12",
-          "slave_13": "Unidade no endereço Modbus 13",
-          "slave_14": "Unidade no endereço Modbus 14",
-          "slave_15": "Unidade no endereço Modbus 15",
-          "slave_16": "Unidade no endereço Modbus 16"
+          "slave_2": "Unidade 2{slave_2_details}",
+          "slave_3": "Unidade 3{slave_3_details}",
+          "slave_4": "Unidade 4{slave_4_details}",
+          "slave_5": "Unidade 5{slave_5_details}",
+          "slave_6": "Unidade 6{slave_6_details}",
+          "slave_7": "Unidade 7{slave_7_details}",
+          "slave_8": "Unidade 8{slave_8_details}",
+          "slave_9": "Unidade 9{slave_9_details}",
+          "slave_10": "Unidade 10{slave_10_details}",
+          "slave_11": "Unidade 11{slave_11_details}",
+          "slave_12": "Unidade 12{slave_12_details}",
+          "slave_13": "Unidade 13{slave_13_details}",
+          "slave_14": "Unidade 14{slave_14_details}",
+          "slave_15": "Unidade 15{slave_15_details}",
+          "slave_16": "Unidade 16{slave_16_details}"
         },
         "data_description": {
-          "slave_2": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_3": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_4": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_5": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_6": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_7": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_8": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_9": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_10": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_11": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_12": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_13": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_14": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_15": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_16": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação."
+          "slave_2": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_3": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_4": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_5": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_6": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_7": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_8": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_9": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_10": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_11": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_12": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_13": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_14": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_15": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_16": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade."
+        }
+      },
+      "confirm_profile_mismatch": {
+        "title": "Família de modelo diferente",
+        "description": "Os perfis selecionados não correspondem às famílias de modelos detetadas (endereço Modbus: família detetada → perfil selecionado):\n\n{mismatches}\n\nVerifique a placa do dispositivo. Pode alterar a seleção ou continuar na mesma.",
+        "data": {
+          "action": "Como pretende continuar?"
+        },
+        "data_description": {
+          "action": "Volte à seleção de perfis ou continue com os perfis selecionados."
         }
       }
     },
@@ -134,40 +150,50 @@
       },
       "profiles": {
         "title": "Unidades Meltem M-WRG detetadas",
-        "description": "A nova procura encontrou {device_count} unidades Meltem M-WRG. Escolha o perfil correspondente para cada unidade detetada.\n\n{unit_details}",
+        "description": "A nova procura encontrou {device_count} unidades Meltem M-WRG. Escolha o perfil correspondente para cada unidade detetada. Os números das unidades correspondem aos endereços Modbus.",
         "data": {
-          "slave_2": "Unidade no endereço Modbus 2",
-          "slave_3": "Unidade no endereço Modbus 3",
-          "slave_4": "Unidade no endereço Modbus 4",
-          "slave_5": "Unidade no endereço Modbus 5",
-          "slave_6": "Unidade no endereço Modbus 6",
-          "slave_7": "Unidade no endereço Modbus 7",
-          "slave_8": "Unidade no endereço Modbus 8",
-          "slave_9": "Unidade no endereço Modbus 9",
-          "slave_10": "Unidade no endereço Modbus 10",
-          "slave_11": "Unidade no endereço Modbus 11",
-          "slave_12": "Unidade no endereço Modbus 12",
-          "slave_13": "Unidade no endereço Modbus 13",
-          "slave_14": "Unidade no endereço Modbus 14",
-          "slave_15": "Unidade no endereço Modbus 15",
-          "slave_16": "Unidade no endereço Modbus 16"
+          "slave_2": "Unidade 2{slave_2_details}",
+          "slave_3": "Unidade 3{slave_3_details}",
+          "slave_4": "Unidade 4{slave_4_details}",
+          "slave_5": "Unidade 5{slave_5_details}",
+          "slave_6": "Unidade 6{slave_6_details}",
+          "slave_7": "Unidade 7{slave_7_details}",
+          "slave_8": "Unidade 8{slave_8_details}",
+          "slave_9": "Unidade 9{slave_9_details}",
+          "slave_10": "Unidade 10{slave_10_details}",
+          "slave_11": "Unidade 11{slave_11_details}",
+          "slave_12": "Unidade 12{slave_12_details}",
+          "slave_13": "Unidade 13{slave_13_details}",
+          "slave_14": "Unidade 14{slave_14_details}",
+          "slave_15": "Unidade 15{slave_15_details}",
+          "slave_16": "Unidade 16{slave_16_details}"
         },
         "data_description": {
-          "slave_2": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_3": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_4": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_5": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_6": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_7": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_8": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_9": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_10": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_11": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_12": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_13": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_14": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_15": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.",
-          "slave_16": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação."
+          "slave_2": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_3": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_4": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_5": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_6": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_7": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_8": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_9": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_10": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_11": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_12": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_13": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_14": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_15": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade.",
+          "slave_16": "Selecione o perfil exato do modelo da unidade neste endereço Modbus. Verifique a etiqueta da unidade."
+        }
+      },
+      "confirm_profile_mismatch": {
+        "title": "Família de modelo diferente",
+        "description": "Os perfis selecionados não correspondem às famílias de modelos detetadas (endereço Modbus: família detetada → perfil selecionado):\n\n{mismatches}\n\nVerifique a placa do dispositivo. Pode alterar a seleção ou continuar na mesma.",
+        "data": {
+          "action": "Como pretende continuar?"
+        },
+        "data_description": {
+          "action": "Volte à seleção de perfis ou continue com os perfis selecionados."
         }
       }
     },
@@ -492,24 +518,24 @@
       "step": {
         "user": {
           "title": "Adicionar uma unidade Meltem M-WRG",
-          "description": "O gateway comunica {device_count} unidades que ainda não estão configuradas. Escolha o endereço Modbus e o perfil exato do modelo da unidade a adicionar. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.\n\n{unit_details}",
+          "description": "O gateway comunica {device_count} unidades que ainda não estão configuradas. Escolha o endereço Modbus e o perfil exato do modelo da unidade a adicionar. Verifique a etiqueta da unidade.\n\nDispositivos (endereço Modbus):\n\n{unit_details}",
           "data": {
             "slave": "Endereço Modbus",
-            "slave_2": "Perfil",
-            "slave_3": "Perfil",
-            "slave_4": "Perfil",
-            "slave_5": "Perfil",
-            "slave_6": "Perfil",
-            "slave_7": "Perfil",
-            "slave_8": "Perfil",
-            "slave_9": "Perfil",
-            "slave_10": "Perfil",
-            "slave_11": "Perfil",
-            "slave_12": "Perfil",
-            "slave_13": "Perfil",
-            "slave_14": "Perfil",
-            "slave_15": "Perfil",
-            "slave_16": "Perfil"
+            "slave_2": "Unidade 2{slave_2_details}",
+            "slave_3": "Unidade 3{slave_3_details}",
+            "slave_4": "Unidade 4{slave_4_details}",
+            "slave_5": "Unidade 5{slave_5_details}",
+            "slave_6": "Unidade 6{slave_6_details}",
+            "slave_7": "Unidade 7{slave_7_details}",
+            "slave_8": "Unidade 8{slave_8_details}",
+            "slave_9": "Unidade 9{slave_9_details}",
+            "slave_10": "Unidade 10{slave_10_details}",
+            "slave_11": "Unidade 11{slave_11_details}",
+            "slave_12": "Unidade 12{slave_12_details}",
+            "slave_13": "Unidade 13{slave_13_details}",
+            "slave_14": "Unidade 14{slave_14_details}",
+            "slave_15": "Unidade 15{slave_15_details}",
+            "slave_16": "Unidade 16{slave_16_details}"
           },
           "data_description": {
             "slave": "Endereço Modbus da unidade a adicionar, conforme indicado acima.",
@@ -532,7 +558,7 @@
         },
         "profile": {
           "title": "Perfil da unidade no endereço Modbus {slave}",
-          "description": "Escolha o perfil exato do modelo da nova unidade. Verifique a etiqueta da unidade; os sensores detetados são apenas uma indicação.\n\n{unit_details}",
+          "description": "Escolha o perfil exato do modelo da nova unidade. Verifique a etiqueta da unidade.\n\nUnidade {slave}{unit_details}",
           "data": {
             "profile": "Perfil"
           },
@@ -542,12 +568,22 @@
         },
         "reconfigure": {
           "title": "Alterar o perfil de {unit}",
-          "description": "Escolha o perfil exato do modelo da unidade. Verifique a etiqueta da unidade; a integração é recarregada depois.\n\n{unit_details}",
+          "description": "Escolha o perfil exato do modelo da unidade. Verifique a etiqueta da unidade; a integração é recarregada depois.\n\nUnidade {slave}{unit_details}",
           "data": {
             "profile": "Perfil"
           },
           "data_description": {
             "profile": "O perfil do modelo indicado na placa de características determina as entidades que a unidade recebe."
+          }
+        },
+        "confirm_profile_mismatch": {
+          "title": "Família de modelo diferente",
+          "description": "Os perfis selecionados não correspondem às famílias de modelos detetadas (endereço Modbus: família detetada → perfil selecionado):\n\n{mismatches}\n\nVerifique a placa do dispositivo. Pode alterar a seleção ou continuar na mesma.",
+          "data": {
+            "action": "Como pretende continuar?"
+          },
+          "data_description": {
+            "action": "Volte à seleção de perfis ou continue com os perfis selecionados."
           }
         }
       },

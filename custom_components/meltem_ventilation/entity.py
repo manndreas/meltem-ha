@@ -154,7 +154,11 @@ class MeltemEntity(CoordinatorEntity[MeltemDataUpdateCoordinator]):
             manufacturer="Meltem",
             model=profile_label(self.room.profile),
             model_id=product.model_id if product is not None else None,
-            name=f"{INTEGRATION_NAME} {self.room.name}",
+            name=(
+                self.room.name
+                if self.room.name_is_device_name
+                else f"{INTEGRATION_NAME} {self.room.name}"
+            ),
             hw_version=self._hw_version,
             sw_version=self._sw_version,
         )

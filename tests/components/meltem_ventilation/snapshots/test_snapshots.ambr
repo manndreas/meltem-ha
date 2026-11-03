@@ -216,6 +216,7 @@
           'app_setup_code': '**REDACTED**',
           'key': 'slave_2',
           'name': 'Unit 1',
+          'name_is_device_name': False,
           'preview': 'R-Code **REDACTED** | ID 116852 | VOC',
           'product_id': 116852,
           'profile': 'ii_fc_voc',

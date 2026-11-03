@@ -61,6 +61,7 @@ class RoomConfig:
     app_setup_code: str | None = None
     # The config subentry the unit is stored in; its entities and device belong to it.
     subentry_id: str | None = None
+    name_is_device_name: bool = False
 
     def supports(self, entity_key: str) -> bool:
         """Return whether this unit has one entity."""

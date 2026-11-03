@@ -50,6 +50,8 @@ from custom_components.meltem_ventilation.flow_helpers import (
     default_room_name,
     detected_profile_default,
     profile_field_key,
+    profile_mismatches,
+    stored_unit_probe,
     unit_details,
 )
 from custom_components.meltem_ventilation.modbus_helpers import MeltemModbusError
@@ -2259,11 +2261,39 @@ class TestConfigFlowHelpers:
 
     def test_unit_details_lists_preview_and_device_name(self) -> None:
         assert unit_details([2], {}) == "- **2**"
-        assert unit_details([2], {2: "ID 116852 | basic"}) == "- **2**: Hardware ID 116852 | basic"
+        probe = UnitProbeResult("plain", "unused", 116852, "R000001")
+        assert unit_details([2], {2: probe}) == "- **2**: M-WRG-II (R000001)"
         assert (
-            unit_details([2], {2: "ID 116852 | basic"}, {2: "Wohnzimmer"})
-            == "- **2**: Wohnzimmer, Hardware ID 116852 | basic"
+            unit_details([2], {2: probe}, {2: "Wohnzimmer"})
+            == "- **2**: Wohnzimmer · M-WRG-II (R000001)"
         )
+        assert unit_details([2], {2: UnitProbeResult("plain", None, 999, "R000001")}) == (
+            "- **2**: R000001"
+        )
+        assert unit_details([2], {2: UnitProbeResult("plain", None, 116852)}) == (
+            "- **2**: M-WRG-II"
+        )
+
+    def test_profile_mismatches_only_warn_for_known_different_families(self) -> None:
+        probes = {
+            2: UnitProbeResult("plain", None, 116852),
+            3: UnitProbeResult("plain", None, 116819),
+            4: UnitProbeResult("plain", None, 999),
+            5: UnitProbeResult("plain", None),
+        }
+        assert (
+            profile_mismatches(
+                {2: "s_f", 3: "ii_fc", 4: "s_plain", 5: "s_plain", 6: "s_plain"}, probes
+            )
+            == "- **2**: M-WRG-II → M-WRG-S (-F)\n- **3**: M-WRG → M-WRG-II (-FC)"
+        )
+        assert profile_mismatches({2: "ii_plain", 3: "s_plain"}, probes) == ""
+
+    def test_stored_unit_probe_uses_only_valid_identity_fields(self) -> None:
+        probe = stored_unit_probe({"product_id": 116852, "app_setup_code": "R000001"})
+        assert (probe.product_id, probe.app_setup_code) == (116852, "R000001")
+        probe = stored_unit_probe({"product_id": "116852", "app_setup_code": 123})
+        assert (probe.product_id, probe.app_setup_code) == (None, None)
 
     def test_build_rooms_from_profiles_preserves_existing_metadata(self) -> None:
         selected_profiles = {"slave_2": "ii_plain"}
@@ -2304,23 +2334,54 @@ class TestConfigFlowHelpers:
         )
 
         assert rooms[0]["profile"] == "ii_plain"
-        assert rooms[0]["name"] == "Unit 1"
+        assert rooms[0]["name"] == "Meltem M-WRG-II"
+        assert rooms[0]["name_is_device_name"] is True
 
     def test_default_room_name(self) -> None:
-        assert default_room_name(set()) == "Unit 1"
-        assert default_room_name({"Unit 1", "Unit 3"}) == "Unit 2"
+        assert default_room_name("ii_fc_voc", "R000001", set()) == "Meltem M-WRG-II (R000001)"
+        assert default_room_name("s_fc", None, set()) == "Meltem M-WRG-S"
+        assert default_room_name("ii_plain", None, {"Meltem M-WRG-II"}) == "Meltem M-WRG-II (2)"
+        assert (
+            default_room_name("ii_plain", "R000001", {"Meltem M-WRG-II (R000001)"})
+            == "Meltem M-WRG-II (R000001) (2)"
+        )
 
     def test_rescan_does_not_reuse_the_name_of_a_kept_unit(self) -> None:
         rooms = build_rooms_from_profiles(
             [2, 3, 4],
             {"slave_2": "ii_plain", "slave_3": "ii_plain", "slave_4": "ii_plain"},
             existing_rooms_by_slave={
-                3: {"key": "slave_3", "name": "Unit 1"},
+                3: {
+                    "key": "slave_3",
+                    "name": "Meltem M-WRG-II",
+                    "name_is_device_name": True,
+                },
                 4: {"key": "slave_4", "name": "Unit 2"},
             },
         )
 
-        assert [room["name"] for room in rooms] == ["Unit 3", "Unit 1", "Unit 2"]
+        assert [room["name"] for room in rooms] == [
+            "Meltem M-WRG-II (2)",
+            "Meltem M-WRG-II",
+            "Unit 2",
+        ]
+        assert rooms[1]["name_is_device_name"] is True
+        assert "name_is_device_name" not in rooms[2]
+
+    def test_new_units_with_duplicate_codes_get_distinct_names(self) -> None:
+        rooms = build_rooms_from_profiles(
+            [2, 3],
+            {"slave_2": "ii_plain", "slave_3": "ii_f"},
+            probe_results_by_slave={
+                2: UnitProbeResult("plain", None, app_setup_code="R000001"),
+                3: UnitProbeResult("f", None, app_setup_code="R000001"),
+            },
+        )
+
+        assert [room["name"] for room in rooms] == [
+            "Meltem M-WRG-II (R000001)",
+            "Meltem M-WRG-II (R000001) (2)",
+        ]
 
     def test_build_rooms_from_profiles_generates_unique_keys_for_new_rooms(self) -> None:
         selected_profiles = {
@@ -2364,7 +2425,7 @@ class TestConfigFlowHelpers:
         )
 
         assert [(room["key"], room["slave"], room["name"]) for room in rooms] == [
-            ("slave_2_2", 2, "Unit 2"),
+            ("slave_2_2", 2, "Meltem M-WRG-II (R0000CC)"),
             ("slave_2", 3, "Unit 1"),
         ]
         assert [room["app_setup_code"] for room in rooms] == ["R0000CC", "R0000AA"]
@@ -2967,7 +3028,11 @@ class TestOptionsFlow:
         assert data_schema is not None
         defaults = {key.schema: key.default() for key in data_schema.schema}
         assert defaults == {"slave_2": "ii_plain", "slave_3": "ii_f", "slave_4": "ii_f"}
-        assert flow._preview_by_slave == {2: "ID 2", 3: "ID 3", 4: "ID 4"}
+        assert {slave: probe.preview for slave, probe in flow._probe_results_by_slave.items()} == {
+            2: "ID 2",
+            3: "ID 3",
+            4: "ID 4",
+        }
 
     @pytest.mark.parametrize(
         ("discover", "error"),
@@ -3006,7 +3071,6 @@ class TestOptionsFlow:
     ) -> None:
         flow = self._build_flow(hass)
         flow._discovered_slaves = [2, 3]
-        flow._preview_by_slave = {2: "ID 116852 | basic"}
         flow._detected_profile_by_slave = {2: "plain", 3: "f"}
         entry = flow.config_entry
         (unit_1,) = entry.subentries.values()
@@ -3024,6 +3088,11 @@ class TestOptionsFlow:
         assert units[2].data["profile"] == "ii_f"
         assert units[2].data["key"] == "unit_1"
         assert units[2].title == "Unit 1"
-        assert units[3].data == {"key": "slave_3", "slave": 3, "profile": "ii_fc"}
-        assert units[3].title == "Unit 2"
+        assert units[3].data == {
+            "key": "slave_3",
+            "slave": 3,
+            "profile": "ii_fc",
+            "name_is_device_name": True,
+        }
+        assert units[3].title == "Meltem M-WRG-II"
         assert units[3].unique_id == "3"

@@ -24,15 +24,18 @@ from .const import (
 from .coordinator import MeltemDataUpdateCoordinator
 from .flow_helpers import (
     MAX_REQUEST_RATE_SELECTOR,
+    PROFILE_MISMATCH_SCHEMA,
     async_probe_units,
     async_resolve_port,
     build_rooms_from_profiles,
     device_names_by_slave,
     match_existing_rooms,
-    probe_previews,
     probe_profiles,
     profile_defaults,
+    profile_field_key,
+    profile_mismatches,
     profiles_form,
+    stored_unit_probe,
     unit_details,
 )
 from .gateway_connection import SerialGatewayConnection, gateway_connection_from_data
@@ -53,10 +56,10 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self) -> None:
         self._discovered_slaves: list[int] = []
-        self._preview_by_slave: dict[int, str] = {}
         self._probe_results_by_slave: dict[int, UnitProbeResult] = {}
         self._detected_profile_by_slave: dict[int, str] = {}
         self._selected_profiles: dict[str, Any] = {}
+        self._profile_mismatches = ""
 
     @property
     def _max_requests_per_second(self) -> float:
@@ -143,7 +146,7 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         data_schema, placeholders = profiles_form(
             slaves,
             defaults_by_slave,
-            self._preview_by_slave,
+            self._probe_results_by_slave,
             device_names_by_slave(
                 self.hass,
                 self.config_entry.entry_id,
@@ -249,7 +252,6 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         self._probe_results_by_slave = await async_probe_units(
             slaves, coordinator.async_probe_slave_details
         )
-        self._preview_by_slave = probe_previews(self._probe_results_by_slave)
         self._detected_profile_by_slave = probe_profiles(self._probe_results_by_slave)
         self._discovered_slaves = slaves
         return None
@@ -269,24 +271,59 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
         )
         if user_input is not None:
             self._selected_profiles = dict(user_input)
-            if self._stale_subentries(user_input, existing_rooms):
-                return await self.async_step_confirm_remove()
-            return await self._async_save_profiles(
-                self._discovered_slaves,
-                user_input,
-                existing_rooms,
-                resolve_port=True,
+            self._profile_mismatches = profile_mismatches(
+                {
+                    slave: str(user_input[profile_field_key(slave)])
+                    for slave in self._discovered_slaves
+                },
+                self._probe_results_by_slave,
             )
+            if self._profile_mismatches:
+                return await self.async_step_confirm_profile_mismatch()
+            return await self._async_finish_profiles(existing_rooms)
 
+        defaults = profile_defaults(
+            self._discovered_slaves, self._detected_profile_by_slave, existing_rooms
+        )
+        defaults.update(
+            {
+                slave: str(self._selected_profiles[profile_field_key(slave)])
+                for slave in self._discovered_slaves
+                if profile_field_key(slave) in self._selected_profiles
+            }
+        )
         return self._show_profiles_form(
             "profiles",
             self._discovered_slaves,
-            profile_defaults(
-                self._discovered_slaves,
-                self._detected_profile_by_slave,
-                existing_rooms,
-            ),
+            defaults,
             existing_rooms,
+        )
+
+    async def _async_finish_profiles(
+        self, existing_rooms: Mapping[int, Mapping[str, Any]]
+    ) -> ConfigFlowResult:
+        if self._stale_subentries(self._selected_profiles, existing_rooms):
+            return await self.async_step_confirm_remove()
+        return await self._async_save_profiles(
+            self._discovered_slaves, self._selected_profiles, existing_rooms, resolve_port=True
+        )
+
+    async def async_step_confirm_profile_mismatch(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Allow the user to correct or explicitly confirm mismatched profiles."""
+
+        if user_input is not None:
+            if user_input["action"] == "correct":
+                return await self.async_step_profiles()
+            existing_rooms = match_existing_rooms(
+                self._discovered_slaves, self._probe_results_by_slave, self._existing_rooms
+            )
+            return await self._async_finish_profiles(existing_rooms)
+        return self.async_show_form(
+            step_id="confirm_profile_mismatch",
+            data_schema=PROFILE_MISMATCH_SCHEMA,
+            description_placeholders={"mismatches": self._profile_mismatches},
         )
 
     async def async_step_confirm_remove(
@@ -320,9 +357,8 @@ class MeltemVentilationOptionsFlow(config_entries.OptionsFlow):
                 "removed_units": unit_details(
                     slaves,
                     {
-                        int(subentry.data[CONF_SLAVE]): str(subentry.data["preview"])
+                        int(subentry.data[CONF_SLAVE]): stored_unit_probe(subentry.data)
                         for subentry in stale
-                        if subentry.data.get("preview")
                     },
                     {
                         int(subentry.data[CONF_SLAVE]): names.get(

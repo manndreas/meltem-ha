@@ -6,6 +6,12 @@
         "serial": "Połączenie szeregowe USB",
         "rtu_over_tcp": "RTU przez TCP"
       }
+    },
+    "profile_mismatch_action": {
+      "options": {
+        "correct": "Zmień wybór profili",
+        "confirm": "Kontynuuj mimo to"
+      }
     }
   },
   "config": {
@@ -54,40 +60,50 @@
       },
       "profiles": {
         "title": "Wykryte jednostki Meltem M-WRG",
-        "description": "Integracja znalazła jednostki Meltem M-WRG (liczba: {device_count}). Wybierz odpowiedni profil dla każdej wykrytej jednostki.\n\n{unit_details}",
+        "description": "Integracja znalazła jednostki Meltem M-WRG (liczba: {device_count}). Wybierz odpowiedni profil dla każdej wykrytej jednostki. Numery urządzeń odpowiadają adresom Modbus.",
         "data": {
-          "slave_2": "Jednostka pod adresem Modbus 2",
-          "slave_3": "Jednostka pod adresem Modbus 3",
-          "slave_4": "Jednostka pod adresem Modbus 4",
-          "slave_5": "Jednostka pod adresem Modbus 5",
-          "slave_6": "Jednostka pod adresem Modbus 6",
-          "slave_7": "Jednostka pod adresem Modbus 7",
-          "slave_8": "Jednostka pod adresem Modbus 8",
-          "slave_9": "Jednostka pod adresem Modbus 9",
-          "slave_10": "Jednostka pod adresem Modbus 10",
-          "slave_11": "Jednostka pod adresem Modbus 11",
-          "slave_12": "Jednostka pod adresem Modbus 12",
-          "slave_13": "Jednostka pod adresem Modbus 13",
-          "slave_14": "Jednostka pod adresem Modbus 14",
-          "slave_15": "Jednostka pod adresem Modbus 15",
-          "slave_16": "Jednostka pod adresem Modbus 16"
+          "slave_2": "Urządzenie 2{slave_2_details}",
+          "slave_3": "Urządzenie 3{slave_3_details}",
+          "slave_4": "Urządzenie 4{slave_4_details}",
+          "slave_5": "Urządzenie 5{slave_5_details}",
+          "slave_6": "Urządzenie 6{slave_6_details}",
+          "slave_7": "Urządzenie 7{slave_7_details}",
+          "slave_8": "Urządzenie 8{slave_8_details}",
+          "slave_9": "Urządzenie 9{slave_9_details}",
+          "slave_10": "Urządzenie 10{slave_10_details}",
+          "slave_11": "Urządzenie 11{slave_11_details}",
+          "slave_12": "Urządzenie 12{slave_12_details}",
+          "slave_13": "Urządzenie 13{slave_13_details}",
+          "slave_14": "Urządzenie 14{slave_14_details}",
+          "slave_15": "Urządzenie 15{slave_15_details}",
+          "slave_16": "Urządzenie 16{slave_16_details}"
         },
         "data_description": {
-          "slave_2": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_3": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_4": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_5": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_6": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_7": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_8": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_9": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_10": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_11": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_12": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_13": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_14": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_15": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_16": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką."
+          "slave_2": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_3": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_4": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_5": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_6": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_7": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_8": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_9": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_10": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_11": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_12": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_13": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_14": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_15": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_16": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki."
+        }
+      },
+      "confirm_profile_mismatch": {
+        "title": "Niezgodna rodzina modeli",
+        "description": "Wybrane profile nie pasują do wykrytych rodzin modeli (adres Modbus: wykryta rodzina → wybrany profil):\n\n{mismatches}\n\nSprawdź tabliczkę znamionową. Możesz zmienić wybór lub mimo to kontynuować.",
+        "data": {
+          "action": "Co chcesz zrobić?"
+        },
+        "data_description": {
+          "action": "Wróć do wyboru profili lub kontynuuj z wybranymi profilami."
         }
       }
     },
@@ -134,40 +150,50 @@
       },
       "profiles": {
         "title": "Wykryte jednostki Meltem M-WRG",
-        "description": "Ponowne wyszukiwanie znalazło jednostki Meltem M-WRG (liczba: {device_count}). Wybierz odpowiedni profil dla każdej wykrytej jednostki.\n\n{unit_details}",
+        "description": "Ponowne wyszukiwanie znalazło jednostki Meltem M-WRG (liczba: {device_count}). Wybierz odpowiedni profil dla każdej wykrytej jednostki. Numery urządzeń odpowiadają adresom Modbus.",
         "data": {
-          "slave_2": "Jednostka pod adresem Modbus 2",
-          "slave_3": "Jednostka pod adresem Modbus 3",
-          "slave_4": "Jednostka pod adresem Modbus 4",
-          "slave_5": "Jednostka pod adresem Modbus 5",
-          "slave_6": "Jednostka pod adresem Modbus 6",
-          "slave_7": "Jednostka pod adresem Modbus 7",
-          "slave_8": "Jednostka pod adresem Modbus 8",
-          "slave_9": "Jednostka pod adresem Modbus 9",
-          "slave_10": "Jednostka pod adresem Modbus 10",
-          "slave_11": "Jednostka pod adresem Modbus 11",
-          "slave_12": "Jednostka pod adresem Modbus 12",
-          "slave_13": "Jednostka pod adresem Modbus 13",
-          "slave_14": "Jednostka pod adresem Modbus 14",
-          "slave_15": "Jednostka pod adresem Modbus 15",
-          "slave_16": "Jednostka pod adresem Modbus 16"
+          "slave_2": "Urządzenie 2{slave_2_details}",
+          "slave_3": "Urządzenie 3{slave_3_details}",
+          "slave_4": "Urządzenie 4{slave_4_details}",
+          "slave_5": "Urządzenie 5{slave_5_details}",
+          "slave_6": "Urządzenie 6{slave_6_details}",
+          "slave_7": "Urządzenie 7{slave_7_details}",
+          "slave_8": "Urządzenie 8{slave_8_details}",
+          "slave_9": "Urządzenie 9{slave_9_details}",
+          "slave_10": "Urządzenie 10{slave_10_details}",
+          "slave_11": "Urządzenie 11{slave_11_details}",
+          "slave_12": "Urządzenie 12{slave_12_details}",
+          "slave_13": "Urządzenie 13{slave_13_details}",
+          "slave_14": "Urządzenie 14{slave_14_details}",
+          "slave_15": "Urządzenie 15{slave_15_details}",
+          "slave_16": "Urządzenie 16{slave_16_details}"
         },
         "data_description": {
-          "slave_2": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_3": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_4": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_5": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_6": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_7": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_8": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_9": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_10": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_11": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_12": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_13": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_14": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_15": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
-          "slave_16": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką."
+          "slave_2": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_3": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_4": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_5": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_6": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_7": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_8": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_9": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_10": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_11": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_12": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_13": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_14": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_15": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki.",
+          "slave_16": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki."
+        }
+      },
+      "confirm_profile_mismatch": {
+        "title": "Niezgodna rodzina modeli",
+        "description": "Wybrane profile nie pasują do wykrytych rodzin modeli (adres Modbus: wykryta rodzina → wybrany profil):\n\n{mismatches}\n\nSprawdź tabliczkę znamionową. Możesz zmienić wybór lub mimo to kontynuować.",
+        "data": {
+          "action": "Co chcesz zrobić?"
+        },
+        "data_description": {
+          "action": "Wróć do wyboru profili lub kontynuuj z wybranymi profilami."
         }
       }
     },
@@ -492,24 +518,24 @@
       "step": {
         "user": {
           "title": "Dodaj jednostkę Meltem M-WRG",
-          "description": "Brama zgłasza jednostki, które nie są jeszcze skonfigurowane (liczba: {device_count}). Wybierz adres Modbus i dokładny profil modelu jednostki do dodania. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.\n\n{unit_details}",
+          "description": "Brama zgłasza jednostki, które nie są jeszcze skonfigurowane (liczba: {device_count}). Wybierz adres Modbus i dokładny profil modelu jednostki do dodania. Sprawdź tabliczkę jednostki.\n\nUrządzenia (adres Modbus):\n\n{unit_details}",
           "data": {
             "slave": "Adres Modbus",
-            "slave_2": "Profil",
-            "slave_3": "Profil",
-            "slave_4": "Profil",
-            "slave_5": "Profil",
-            "slave_6": "Profil",
-            "slave_7": "Profil",
-            "slave_8": "Profil",
-            "slave_9": "Profil",
-            "slave_10": "Profil",
-            "slave_11": "Profil",
-            "slave_12": "Profil",
-            "slave_13": "Profil",
-            "slave_14": "Profil",
-            "slave_15": "Profil",
-            "slave_16": "Profil"
+            "slave_2": "Urządzenie 2{slave_2_details}",
+            "slave_3": "Urządzenie 3{slave_3_details}",
+            "slave_4": "Urządzenie 4{slave_4_details}",
+            "slave_5": "Urządzenie 5{slave_5_details}",
+            "slave_6": "Urządzenie 6{slave_6_details}",
+            "slave_7": "Urządzenie 7{slave_7_details}",
+            "slave_8": "Urządzenie 8{slave_8_details}",
+            "slave_9": "Urządzenie 9{slave_9_details}",
+            "slave_10": "Urządzenie 10{slave_10_details}",
+            "slave_11": "Urządzenie 11{slave_11_details}",
+            "slave_12": "Urządzenie 12{slave_12_details}",
+            "slave_13": "Urządzenie 13{slave_13_details}",
+            "slave_14": "Urządzenie 14{slave_14_details}",
+            "slave_15": "Urządzenie 15{slave_15_details}",
+            "slave_16": "Urządzenie 16{slave_16_details}"
           },
           "data_description": {
             "slave": "Adres Modbus jednostki do dodania, zgodnie z listą powyżej.",
@@ -532,7 +558,7 @@
         },
         "profile": {
           "title": "Profil jednostki pod adresem Modbus {slave}",
-          "description": "Wybierz dokładny profil modelu nowej jednostki. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.\n\n{unit_details}",
+          "description": "Wybierz dokładny profil modelu nowej jednostki. Sprawdź tabliczkę jednostki.\n\nUrządzenie {slave}{unit_details}",
           "data": {
             "profile": "Profil"
           },
@@ -542,12 +568,22 @@
         },
         "reconfigure": {
           "title": "Zmień profil jednostki {unit}",
-          "description": "Wybierz dokładny profil modelu jednostki. Sprawdź tabliczkę jednostki; po zapisaniu integracja zostanie ponownie załadowana.\n\n{unit_details}",
+          "description": "Wybierz dokładny profil modelu jednostki. Sprawdź tabliczkę jednostki; po zapisaniu integracja zostanie ponownie załadowana.\n\nUrządzenie {slave}{unit_details}",
           "data": {
             "profile": "Profil"
           },
           "data_description": {
             "profile": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka."
+          }
+        },
+        "confirm_profile_mismatch": {
+          "title": "Niezgodna rodzina modeli",
+          "description": "Wybrane profile nie pasują do wykrytych rodzin modeli (adres Modbus: wykryta rodzina → wybrany profil):\n\n{mismatches}\n\nSprawdź tabliczkę znamionową. Możesz zmienić wybór lub mimo to kontynuować.",
+          "data": {
+            "action": "Co chcesz zrobić?"
+          },
+          "data_description": {
+            "action": "Wróć do wyboru profili lub kontynuuj z wybranymi profilami."
           }
         }
       },

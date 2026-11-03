@@ -32,6 +32,7 @@ from .const import (
     SUBENTRY_TYPE_UNIT,
 )
 from .flow_helpers import (
+    PROFILE_MISMATCH_SCHEMA,
     async_discover_units,
     async_resolve_port,
     async_validate_port,
@@ -39,9 +40,10 @@ from .flow_helpers import (
     connection_error,
     connection_schema,
     port_schema,
-    probe_previews,
     probe_profiles,
     profile_defaults,
+    profile_field_key,
+    profile_mismatches,
     profiles_form,
 )
 from .gateway_connection import (
@@ -68,9 +70,10 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._port = DEFAULT_PORT
         self._connection: GatewayConnection = SerialGatewayConnection(DEFAULT_PORT)
         self._discovered_slaves: list[int] = []
-        self._preview_by_slave: dict[int, str] = {}
         self._probe_results_by_slave: dict[int, UnitProbeResult] = {}
         self._detected_profile_by_slave: dict[int, str] = {}
+        self._selected_profiles: dict[str, Any] = {}
+        self._profile_mismatches = ""
         self._usb_title_placeholders: dict[str, str] | None = None
 
     @staticmethod
@@ -213,7 +216,6 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._port = port
         self._discovered_slaves = slaves
         self._probe_results_by_slave = probe_results
-        self._preview_by_slave = probe_previews(probe_results)
         self._detected_profile_by_slave = probe_profiles(probe_results)
         return None
 
@@ -226,26 +228,60 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_user()
 
         if user_input is not None:
-            rooms = build_rooms_from_profiles(
-                self._discovered_slaves,
-                user_input,
+            self._selected_profiles = dict(user_input)
+            self._profile_mismatches = profile_mismatches(
+                {
+                    slave: str(user_input[profile_field_key(slave)])
+                    for slave in self._discovered_slaves
+                },
                 self._probe_results_by_slave,
             )
-            return self.async_create_entry(
-                title=GATEWAY_NAME,
-                data=self._connection.as_data(),
-                subentries=[unit_subentry_data(room) for room in rooms],
-            )
+            if self._profile_mismatches:
+                return await self.async_step_confirm_profile_mismatch()
+            return self._create_profiles()
 
+        defaults = profile_defaults(self._discovered_slaves, self._detected_profile_by_slave)
+        defaults.update(
+            {
+                slave: str(self._selected_profiles[profile_field_key(slave)])
+                for slave in self._discovered_slaves
+                if profile_field_key(slave) in self._selected_profiles
+            }
+        )
         data_schema, placeholders = profiles_form(
             self._discovered_slaves,
-            profile_defaults(self._discovered_slaves, self._detected_profile_by_slave),
-            self._preview_by_slave,
+            defaults,
+            self._probe_results_by_slave,
         )
         return self.async_show_form(
             step_id="profiles",
             data_schema=data_schema,
             description_placeholders=placeholders,
+        )
+
+    def _create_profiles(self) -> ConfigFlowResult:
+        rooms = build_rooms_from_profiles(
+            self._discovered_slaves, self._selected_profiles, self._probe_results_by_slave
+        )
+        return self.async_create_entry(
+            title=GATEWAY_NAME,
+            data=self._connection.as_data(),
+            subentries=[unit_subentry_data(room) for room in rooms],
+        )
+
+    async def async_step_confirm_profile_mismatch(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Allow the user to correct or explicitly confirm mismatched profiles."""
+
+        if user_input is not None:
+            if user_input["action"] == "correct":
+                return await self.async_step_profiles()
+            return self._create_profiles()
+        return self.async_show_form(
+            step_id="confirm_profile_mismatch",
+            data_schema=PROFILE_MISMATCH_SCHEMA,
+            description_placeholders={"mismatches": self._profile_mismatches},
         )
 
     async def async_step_reconfigure(

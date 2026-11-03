@@ -44,6 +44,7 @@ from custom_components.meltem_ventilation.system_health import (
     async_register,
     system_health_info,
 )
+from custom_components.meltem_ventilation.units import unit_subentry_data
 
 from .common import mock_coordinator
 
@@ -114,6 +115,44 @@ def _dump(diagnostics: dict[str, Any]) -> str:
 
 
 class TestDiagnostics:
+    @pytest.mark.parametrize("with_runtime", [False, True])
+    async def test_setup_code_in_new_unit_name_is_redacted(
+        self, hass: HomeAssistant, with_runtime: bool
+    ) -> None:
+        name = "Meltem M-WRG-II (R00AB12)"
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            title="Meltem",
+            data={CONF_PORT: _PORT},
+            subentries_data=[
+                unit_subentry_data(
+                    {
+                        "key": "slave_2",
+                        "name": name,
+                        "name_is_device_name": True,
+                        "slave": 2,
+                        "profile": "ii_fc",
+                        "app_setup_code": "R00AB12",
+                    }
+                )
+            ],
+        )
+        entry.add_to_hass(hass)
+        if with_runtime:
+            coordinator = _coordinator()
+            coordinator.rooms = [
+                replace(_ROOM, name=name, name_is_device_name=True, app_setup_code="R00AB12")
+            ]
+            entry.runtime_data = types.SimpleNamespace(coordinator=coordinator)
+
+        result = await async_get_config_entry_diagnostics(hass, entry)
+
+        assert "R00AB12" not in _dump(result)
+        assert result["entry"]["units"][0]["title"] == f"Meltem M-WRG-II ({REDACTED})"
+        if with_runtime:
+            assert result["coordinator"]["rooms"][0]["name"] == f"Meltem M-WRG-II ({REDACTED})"
+        assert next(iter(entry.subentries.values())).title == name
+
     @pytest.mark.parametrize("fresh", [True, False])
     async def test_raw_mode_registers_report_freshness_without_normalizing(
         self, hass: HomeAssistant, fresh: bool

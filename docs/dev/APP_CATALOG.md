@@ -37,12 +37,13 @@ mapping for those units, not a general guarantee about all variants. Neither
 entry identifies a specific exchanger, sensor equipment, or exact model
 variant. In particular, tested P and E units shared the same product fields.
 
-The integration uses matching catalog entries as setup hints and as the Home
+The integration shows the family from matching catalog entries during setup,
+and warns when the selected profile belongs to a different family. The warning
+can be confirmed because the older-family mapping is unverified. Unknown IDs
+do not trigger a warning. The product identifier is also used as the Home
 Assistant device's model identifier, retaining the raw numeric ID as hardware
-version. Unknown IDs remain raw. The selected profile still determines the
-device model and supported entities; even the series is not automatically
-selected from the catalog. Stored IDs also work for already configured units,
-but an old stored setup preview is not rewritten until a fresh probe.
+version. The selected profile still determines the device model and supported
+entities; even the series is not automatically selected from the catalog.
 
 To confirm the M-WRG entry, compare `40002` and `40011` on an M-WRG-S unit
 with its type plate, as described in

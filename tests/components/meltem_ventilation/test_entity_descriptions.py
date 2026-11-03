@@ -445,9 +445,26 @@ class TestTranslations:
     @pytest.mark.parametrize("language", _LANGUAGES)
     def test_add_unit_profile_fields_are_translated(self, language: str) -> None:
         translations = _load_json(_COMPONENT_DIR / "translations" / f"{language}.json")
-        labels = translations["config_subentries"]["unit"]["step"]["user"]["data"]
+        label_sets = (
+            translations["config"]["step"]["profiles"]["data"],
+            translations["options"]["step"]["profiles"]["data"],
+            translations["config_subentries"]["unit"]["step"]["user"]["data"],
+        )
         for slave in range(DEFAULT_SCAN_SLAVE_START, DEFAULT_SCAN_SLAVE_END + 1):
-            assert labels[f"slave_{slave}"]
+            for labels in label_sets:
+                assert f"{{slave_{slave}_details}}" in labels[f"slave_{slave}"]
+
+    def test_german_setup_shows_the_compact_unit_label(self) -> None:
+        translations = _load_json(_COMPONENT_DIR / "translations" / "de.json")
+        for labels in (
+            translations["config"]["step"]["profiles"]["data"],
+            translations["options"]["step"]["profiles"]["data"],
+            translations["config_subentries"]["unit"]["step"]["user"]["data"],
+        ):
+            assert labels["slave_2"].format(slave_2_details=": M-WRG-II (R000001)") == (
+                "Gerät 2: M-WRG-II (R000001)"
+            )
+            assert labels["slave_2"].format(slave_2_details="") == "Gerät 2"
 
     def test_all_config_flow_fields_have_descriptions(self) -> None:
         strings = _load_json(_STRINGS)

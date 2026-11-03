@@ -7,7 +7,13 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry, ConfigSubentryData
 
-from .const import CONF_PROFILE, CONF_SLAVE, CONF_UNIT_KEY, SUBENTRY_TYPE_UNIT
+from .const import (
+    CONF_NAME_IS_DEVICE_NAME,
+    CONF_PROFILE,
+    CONF_SLAVE,
+    CONF_UNIT_KEY,
+    SUBENTRY_TYPE_UNIT,
+)
 from .modbus_helpers import supported_entity_keys_for_profile
 from .models import RoomConfig
 
@@ -19,6 +25,7 @@ UNIT_DATA_KEYS = (
     "preview",
     "product_id",
     "app_setup_code",
+    CONF_NAME_IS_DEVICE_NAME,
 )
 
 
@@ -82,4 +89,5 @@ def room_config(subentry: ConfigSubentry) -> RoomConfig:
         ),
         supported_entity_keys=frozenset(supported_entity_keys_for_profile(profile)),
         subentry_id=subentry.subentry_id,
+        name_is_device_name=data.get(CONF_NAME_IS_DEVICE_NAME) is True,
     )

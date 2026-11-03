@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, call, patch
@@ -116,6 +117,22 @@ class TestSensorEntityCreation:
             assert info.via_device_id is UNDEFINED
         else:
             assert info.via_device_id == gateway_device_id
+
+    def test_room_device_info_uses_the_complete_new_device_name(self) -> None:
+        room = replace(
+            _ROOM,
+            name="Meltem M-WRG-II (R000001)",
+            name_is_device_name=True,
+            app_setup_code="R000001",
+        )
+        sensor = MeltemSensorEntity(_coordinator(), room, _SENSORS["exhaust_temperature"])
+        info = sensor.device_info
+
+        assert info.name == "Meltem M-WRG-II (R000001)"
+        assert info.model == "M-WRG-II (O/VOC-AUL)"
+        assert info.manufacturer == "Meltem"
+        assert info.serial_number is UNDEFINED
+        assert _sensor("exhaust_temperature").device_info.name == "Meltem Modbus Living Room"
 
     async def test_cumulative_gateway_counter_metadata_value_and_attributes(
         self, hass: HomeAssistant

@@ -6,6 +6,12 @@
         "serial": "USB serial",
         "rtu_over_tcp": "RTU over TCP"
       }
+    },
+    "profile_mismatch_action": {
+      "options": {
+        "correct": "Change profile selection",
+        "confirm": "Continue anyway"
+      }
     }
   },
   "config": {
@@ -54,40 +60,50 @@
       },
       "profiles": {
         "title": "Detected Meltem M-WRG units",
-        "description": "The integration found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit.\n\n{unit_details}",
+        "description": "The integration found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit. The unit numbers are Modbus addresses.",
         "data": {
-          "slave_2": "Unit at Modbus address 2",
-          "slave_3": "Unit at Modbus address 3",
-          "slave_4": "Unit at Modbus address 4",
-          "slave_5": "Unit at Modbus address 5",
-          "slave_6": "Unit at Modbus address 6",
-          "slave_7": "Unit at Modbus address 7",
-          "slave_8": "Unit at Modbus address 8",
-          "slave_9": "Unit at Modbus address 9",
-          "slave_10": "Unit at Modbus address 10",
-          "slave_11": "Unit at Modbus address 11",
-          "slave_12": "Unit at Modbus address 12",
-          "slave_13": "Unit at Modbus address 13",
-          "slave_14": "Unit at Modbus address 14",
-          "slave_15": "Unit at Modbus address 15",
-          "slave_16": "Unit at Modbus address 16"
+          "slave_2": "Unit 2{slave_2_details}",
+          "slave_3": "Unit 3{slave_3_details}",
+          "slave_4": "Unit 4{slave_4_details}",
+          "slave_5": "Unit 5{slave_5_details}",
+          "slave_6": "Unit 6{slave_6_details}",
+          "slave_7": "Unit 7{slave_7_details}",
+          "slave_8": "Unit 8{slave_8_details}",
+          "slave_9": "Unit 9{slave_9_details}",
+          "slave_10": "Unit 10{slave_10_details}",
+          "slave_11": "Unit 11{slave_11_details}",
+          "slave_12": "Unit 12{slave_12_details}",
+          "slave_13": "Unit 13{slave_13_details}",
+          "slave_14": "Unit 14{slave_14_details}",
+          "slave_15": "Unit 15{slave_15_details}",
+          "slave_16": "Unit 16{slave_16_details}"
         },
         "data_description": {
-          "slave_2": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_3": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_4": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_5": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_6": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_7": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_8": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_9": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_10": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_11": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_12": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_13": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_14": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_15": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_16": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint."
+          "slave_2": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_3": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_4": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_5": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_6": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_7": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_8": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_9": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_10": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_11": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_12": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_13": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_14": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_15": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_16": "Select the exact model profile of the unit at this Modbus address. Check the unit label."
+        }
+      },
+      "confirm_profile_mismatch": {
+        "title": "Model family mismatch",
+        "description": "The selected profiles do not match the detected model families (Modbus address: detected family → selected profile):\n\n{mismatches}\n\nCheck the unit label. You can change the selection or continue anyway.",
+        "data": {
+          "action": "How do you want to proceed?"
+        },
+        "data_description": {
+          "action": "Return to the profile selection or continue with the selected profiles."
         }
       }
     },
@@ -134,40 +150,50 @@
       },
       "profiles": {
         "title": "Detected Meltem M-WRG units",
-        "description": "The rescan found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit.\n\n{unit_details}",
+        "description": "The rescan found {device_count} Meltem M-WRG units. Choose the matching profile for each detected unit. The unit numbers are Modbus addresses.",
         "data": {
-          "slave_2": "Unit at Modbus address 2",
-          "slave_3": "Unit at Modbus address 3",
-          "slave_4": "Unit at Modbus address 4",
-          "slave_5": "Unit at Modbus address 5",
-          "slave_6": "Unit at Modbus address 6",
-          "slave_7": "Unit at Modbus address 7",
-          "slave_8": "Unit at Modbus address 8",
-          "slave_9": "Unit at Modbus address 9",
-          "slave_10": "Unit at Modbus address 10",
-          "slave_11": "Unit at Modbus address 11",
-          "slave_12": "Unit at Modbus address 12",
-          "slave_13": "Unit at Modbus address 13",
-          "slave_14": "Unit at Modbus address 14",
-          "slave_15": "Unit at Modbus address 15",
-          "slave_16": "Unit at Modbus address 16"
+          "slave_2": "Unit 2{slave_2_details}",
+          "slave_3": "Unit 3{slave_3_details}",
+          "slave_4": "Unit 4{slave_4_details}",
+          "slave_5": "Unit 5{slave_5_details}",
+          "slave_6": "Unit 6{slave_6_details}",
+          "slave_7": "Unit 7{slave_7_details}",
+          "slave_8": "Unit 8{slave_8_details}",
+          "slave_9": "Unit 9{slave_9_details}",
+          "slave_10": "Unit 10{slave_10_details}",
+          "slave_11": "Unit 11{slave_11_details}",
+          "slave_12": "Unit 12{slave_12_details}",
+          "slave_13": "Unit 13{slave_13_details}",
+          "slave_14": "Unit 14{slave_14_details}",
+          "slave_15": "Unit 15{slave_15_details}",
+          "slave_16": "Unit 16{slave_16_details}"
         },
         "data_description": {
-          "slave_2": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_3": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_4": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_5": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_6": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_7": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_8": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_9": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_10": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_11": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_12": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_13": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_14": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_15": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint.",
-          "slave_16": "Select the exact model profile of the unit at this Modbus address. Check the unit label; detected sensors are only a hint."
+          "slave_2": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_3": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_4": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_5": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_6": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_7": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_8": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_9": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_10": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_11": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_12": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_13": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_14": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_15": "Select the exact model profile of the unit at this Modbus address. Check the unit label.",
+          "slave_16": "Select the exact model profile of the unit at this Modbus address. Check the unit label."
+        }
+      },
+      "confirm_profile_mismatch": {
+        "title": "Model family mismatch",
+        "description": "The selected profiles do not match the detected model families (Modbus address: detected family → selected profile):\n\n{mismatches}\n\nCheck the unit label. You can change the selection or continue anyway.",
+        "data": {
+          "action": "How do you want to proceed?"
+        },
+        "data_description": {
+          "action": "Return to the profile selection or continue with the selected profiles."
         }
       }
     },
@@ -492,24 +518,24 @@
       "step": {
         "user": {
           "title": "Add a Meltem M-WRG unit",
-          "description": "The gateway reports {device_count} units that are not set up yet. Choose the Modbus address and exact model profile of the unit to add. Check the unit label; detected sensors are only a hint.\n\n{unit_details}",
+          "description": "The gateway reports {device_count} units that are not set up yet. Choose the Modbus address and exact model profile of the unit to add. Check the unit label.\n\nUnits (Modbus address):\n\n{unit_details}",
           "data": {
             "slave": "Modbus address",
-            "slave_2": "Profile",
-            "slave_3": "Profile",
-            "slave_4": "Profile",
-            "slave_5": "Profile",
-            "slave_6": "Profile",
-            "slave_7": "Profile",
-            "slave_8": "Profile",
-            "slave_9": "Profile",
-            "slave_10": "Profile",
-            "slave_11": "Profile",
-            "slave_12": "Profile",
-            "slave_13": "Profile",
-            "slave_14": "Profile",
-            "slave_15": "Profile",
-            "slave_16": "Profile"
+            "slave_2": "Unit 2{slave_2_details}",
+            "slave_3": "Unit 3{slave_3_details}",
+            "slave_4": "Unit 4{slave_4_details}",
+            "slave_5": "Unit 5{slave_5_details}",
+            "slave_6": "Unit 6{slave_6_details}",
+            "slave_7": "Unit 7{slave_7_details}",
+            "slave_8": "Unit 8{slave_8_details}",
+            "slave_9": "Unit 9{slave_9_details}",
+            "slave_10": "Unit 10{slave_10_details}",
+            "slave_11": "Unit 11{slave_11_details}",
+            "slave_12": "Unit 12{slave_12_details}",
+            "slave_13": "Unit 13{slave_13_details}",
+            "slave_14": "Unit 14{slave_14_details}",
+            "slave_15": "Unit 15{slave_15_details}",
+            "slave_16": "Unit 16{slave_16_details}"
           },
           "data_description": {
             "slave": "Modbus address of the unit to add, as listed above.",
@@ -532,7 +558,7 @@
         },
         "profile": {
           "title": "Profile of the unit at Modbus address {slave}",
-          "description": "Choose the exact model profile of the new unit. Check the unit label; detected sensors are only a hint.\n\n{unit_details}",
+          "description": "Choose the exact model profile of the new unit. Check the unit label.\n\nUnit {slave}{unit_details}",
           "data": {
             "profile": "Profile"
           },
@@ -542,12 +568,22 @@
         },
         "reconfigure": {
           "title": "Change the profile of {unit}",
-          "description": "Choose the exact model profile of the unit. Check the unit label; the integration reloads afterwards.\n\n{unit_details}",
+          "description": "Choose the exact model profile of the unit. Check the unit label; the integration reloads afterwards.\n\nUnit {slave}{unit_details}",
           "data": {
             "profile": "Profile"
           },
           "data_description": {
             "profile": "The model profile on the type plate decides which entities the unit gets."
+          }
+        },
+        "confirm_profile_mismatch": {
+          "title": "Model family mismatch",
+          "description": "The selected profiles do not match the detected model families (Modbus address: detected family → selected profile):\n\n{mismatches}\n\nCheck the unit label. You can change the selection or continue anyway.",
+          "data": {
+            "action": "How do you want to proceed?"
+          },
+          "data_description": {
+            "action": "Return to the profile selection or continue with the selected profiles."
           }
         }
       },

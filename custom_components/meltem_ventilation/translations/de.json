@@ -6,6 +6,12 @@
         "serial": "USB-seriell",
         "rtu_over_tcp": "RTU über TCP"
       }
+    },
+    "profile_mismatch_action": {
+      "options": {
+        "correct": "Profilauswahl ändern",
+        "confirm": "Trotzdem fortfahren"
+      }
     }
   },
   "config": {
@@ -54,40 +60,50 @@
       },
       "profiles": {
         "title": "Erkannte Meltem M-WRG Geräte",
-        "description": "Die Integration hat {device_count} Meltem M-WRG Geräte gefunden. Wähle für jedes erkannte Gerät das passende Profil aus.\n\n{unit_details}",
+        "description": "Die Integration hat {device_count} Meltem M-WRG Geräte gefunden. Wähle für jedes erkannte Gerät das passende Profil aus. Die Gerätenummern entsprechen den Modbus-Adressen.",
         "data": {
-          "slave_2": "Gerät an Modbus-Adresse 2",
-          "slave_3": "Gerät an Modbus-Adresse 3",
-          "slave_4": "Gerät an Modbus-Adresse 4",
-          "slave_5": "Gerät an Modbus-Adresse 5",
-          "slave_6": "Gerät an Modbus-Adresse 6",
-          "slave_7": "Gerät an Modbus-Adresse 7",
-          "slave_8": "Gerät an Modbus-Adresse 8",
-          "slave_9": "Gerät an Modbus-Adresse 9",
-          "slave_10": "Gerät an Modbus-Adresse 10",
-          "slave_11": "Gerät an Modbus-Adresse 11",
-          "slave_12": "Gerät an Modbus-Adresse 12",
-          "slave_13": "Gerät an Modbus-Adresse 13",
-          "slave_14": "Gerät an Modbus-Adresse 14",
-          "slave_15": "Gerät an Modbus-Adresse 15",
-          "slave_16": "Gerät an Modbus-Adresse 16"
+          "slave_2": "Gerät 2{slave_2_details}",
+          "slave_3": "Gerät 3{slave_3_details}",
+          "slave_4": "Gerät 4{slave_4_details}",
+          "slave_5": "Gerät 5{slave_5_details}",
+          "slave_6": "Gerät 6{slave_6_details}",
+          "slave_7": "Gerät 7{slave_7_details}",
+          "slave_8": "Gerät 8{slave_8_details}",
+          "slave_9": "Gerät 9{slave_9_details}",
+          "slave_10": "Gerät 10{slave_10_details}",
+          "slave_11": "Gerät 11{slave_11_details}",
+          "slave_12": "Gerät 12{slave_12_details}",
+          "slave_13": "Gerät 13{slave_13_details}",
+          "slave_14": "Gerät 14{slave_14_details}",
+          "slave_15": "Gerät 15{slave_15_details}",
+          "slave_16": "Gerät 16{slave_16_details}"
         },
         "data_description": {
-          "slave_2": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_3": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_4": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_5": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_6": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_7": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_8": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_9": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_10": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_11": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_12": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_13": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_14": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_15": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_16": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis."
+          "slave_2": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_3": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_4": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_5": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_6": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_7": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_8": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_9": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_10": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_11": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_12": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_13": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_14": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_15": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_16": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild."
+        }
+      },
+      "confirm_profile_mismatch": {
+        "title": "Abweichende Gerätefamilie",
+        "description": "Die gewählten Profile passen nicht zu den erkannten Gerätefamilien (Modbus-Adresse: erkannte Familie → gewähltes Profil):\n\n{mismatches}\n\nPrüfe das Typenschild. Du kannst die Auswahl ändern oder trotzdem fortfahren.",
+        "data": {
+          "action": "Wie möchtest du fortfahren?"
+        },
+        "data_description": {
+          "action": "Kehre zur Profilauswahl zurück oder fahre mit den gewählten Profilen fort."
         }
       }
     },
@@ -134,40 +150,50 @@
       },
       "profiles": {
         "title": "Erkannte Meltem M-WRG Geräte",
-        "description": "Der erneute Scan hat {device_count} Meltem M-WRG Geräte gefunden. Wähle für jedes erkannte Gerät das passende Profil aus.\n\n{unit_details}",
+        "description": "Der erneute Scan hat {device_count} Meltem M-WRG Geräte gefunden. Wähle für jedes erkannte Gerät das passende Profil aus. Die Gerätenummern entsprechen den Modbus-Adressen.",
         "data": {
-          "slave_2": "Gerät an Modbus-Adresse 2",
-          "slave_3": "Gerät an Modbus-Adresse 3",
-          "slave_4": "Gerät an Modbus-Adresse 4",
-          "slave_5": "Gerät an Modbus-Adresse 5",
-          "slave_6": "Gerät an Modbus-Adresse 6",
-          "slave_7": "Gerät an Modbus-Adresse 7",
-          "slave_8": "Gerät an Modbus-Adresse 8",
-          "slave_9": "Gerät an Modbus-Adresse 9",
-          "slave_10": "Gerät an Modbus-Adresse 10",
-          "slave_11": "Gerät an Modbus-Adresse 11",
-          "slave_12": "Gerät an Modbus-Adresse 12",
-          "slave_13": "Gerät an Modbus-Adresse 13",
-          "slave_14": "Gerät an Modbus-Adresse 14",
-          "slave_15": "Gerät an Modbus-Adresse 15",
-          "slave_16": "Gerät an Modbus-Adresse 16"
+          "slave_2": "Gerät 2{slave_2_details}",
+          "slave_3": "Gerät 3{slave_3_details}",
+          "slave_4": "Gerät 4{slave_4_details}",
+          "slave_5": "Gerät 5{slave_5_details}",
+          "slave_6": "Gerät 6{slave_6_details}",
+          "slave_7": "Gerät 7{slave_7_details}",
+          "slave_8": "Gerät 8{slave_8_details}",
+          "slave_9": "Gerät 9{slave_9_details}",
+          "slave_10": "Gerät 10{slave_10_details}",
+          "slave_11": "Gerät 11{slave_11_details}",
+          "slave_12": "Gerät 12{slave_12_details}",
+          "slave_13": "Gerät 13{slave_13_details}",
+          "slave_14": "Gerät 14{slave_14_details}",
+          "slave_15": "Gerät 15{slave_15_details}",
+          "slave_16": "Gerät 16{slave_16_details}"
         },
         "data_description": {
-          "slave_2": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_3": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_4": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_5": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_6": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_7": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_8": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_9": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_10": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_11": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_12": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_13": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_14": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_15": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.",
-          "slave_16": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis."
+          "slave_2": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_3": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_4": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_5": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_6": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_7": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_8": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_9": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_10": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_11": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_12": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_13": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_14": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_15": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild.",
+          "slave_16": "Wähle das genaue Modellprofil des Geräts an dieser Modbus-Adresse. Prüfe das Typenschild."
+        }
+      },
+      "confirm_profile_mismatch": {
+        "title": "Abweichende Gerätefamilie",
+        "description": "Die gewählten Profile passen nicht zu den erkannten Gerätefamilien (Modbus-Adresse: erkannte Familie → gewähltes Profil):\n\n{mismatches}\n\nPrüfe das Typenschild. Du kannst die Auswahl ändern oder trotzdem fortfahren.",
+        "data": {
+          "action": "Wie möchtest du fortfahren?"
+        },
+        "data_description": {
+          "action": "Kehre zur Profilauswahl zurück oder fahre mit den gewählten Profilen fort."
         }
       }
     },
@@ -492,24 +518,24 @@
       "step": {
         "user": {
           "title": "Meltem M-WRG Gerät hinzufügen",
-          "description": "Das Gateway meldet {device_count} Geräte, die noch nicht eingerichtet sind. Wähle die Modbus-Adresse und das genaue Modellprofil des Geräts, das du hinzufügen möchtest. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.\n\n{unit_details}",
+          "description": "Das Gateway meldet {device_count} Geräte, die noch nicht eingerichtet sind. Wähle die Modbus-Adresse und das genaue Modellprofil des Geräts, das du hinzufügen möchtest. Prüfe das Typenschild.\n\nGeräte (Modbus-Adresse):\n\n{unit_details}",
           "data": {
             "slave": "Modbus-Adresse",
-            "slave_2": "Profil",
-            "slave_3": "Profil",
-            "slave_4": "Profil",
-            "slave_5": "Profil",
-            "slave_6": "Profil",
-            "slave_7": "Profil",
-            "slave_8": "Profil",
-            "slave_9": "Profil",
-            "slave_10": "Profil",
-            "slave_11": "Profil",
-            "slave_12": "Profil",
-            "slave_13": "Profil",
-            "slave_14": "Profil",
-            "slave_15": "Profil",
-            "slave_16": "Profil"
+            "slave_2": "Gerät 2{slave_2_details}",
+            "slave_3": "Gerät 3{slave_3_details}",
+            "slave_4": "Gerät 4{slave_4_details}",
+            "slave_5": "Gerät 5{slave_5_details}",
+            "slave_6": "Gerät 6{slave_6_details}",
+            "slave_7": "Gerät 7{slave_7_details}",
+            "slave_8": "Gerät 8{slave_8_details}",
+            "slave_9": "Gerät 9{slave_9_details}",
+            "slave_10": "Gerät 10{slave_10_details}",
+            "slave_11": "Gerät 11{slave_11_details}",
+            "slave_12": "Gerät 12{slave_12_details}",
+            "slave_13": "Gerät 13{slave_13_details}",
+            "slave_14": "Gerät 14{slave_14_details}",
+            "slave_15": "Gerät 15{slave_15_details}",
+            "slave_16": "Gerät 16{slave_16_details}"
           },
           "data_description": {
             "slave": "Modbus-Adresse des hinzuzufügenden Geräts, wie oben aufgeführt.",
@@ -532,7 +558,7 @@
         },
         "profile": {
           "title": "Profil des Geräts an Modbus-Adresse {slave}",
-          "description": "Wähle das genaue Modellprofil des neuen Geräts. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.\n\n{unit_details}",
+          "description": "Wähle das genaue Modellprofil des neuen Geräts. Prüfe das Typenschild.\n\nGerät {slave}{unit_details}",
           "data": {
             "profile": "Profil"
           },
@@ -542,12 +568,22 @@
         },
         "reconfigure": {
           "title": "Profil von {unit} ändern",
-          "description": "Wähle das genaue Modellprofil des Geräts. Prüfe das Typenschild; die Integration wird danach neu geladen.\n\n{unit_details}",
+          "description": "Wähle das genaue Modellprofil des Geräts. Prüfe das Typenschild; die Integration wird danach neu geladen.\n\nGerät {slave}{unit_details}",
           "data": {
             "profile": "Profil"
           },
           "data_description": {
             "profile": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält."
+          }
+        },
+        "confirm_profile_mismatch": {
+          "title": "Abweichende Gerätefamilie",
+          "description": "Die gewählten Profile passen nicht zu den erkannten Gerätefamilien (Modbus-Adresse: erkannte Familie → gewähltes Profil):\n\n{mismatches}\n\nPrüfe das Typenschild. Du kannst die Auswahl ändern oder trotzdem fortfahren.",
+          "data": {
+            "action": "Wie möchtest du fortfahren?"
+          },
+          "data_description": {
+            "action": "Kehre zur Profilauswahl zurück oder fahre mit den gewählten Profilen fort."
           }
         }
       },

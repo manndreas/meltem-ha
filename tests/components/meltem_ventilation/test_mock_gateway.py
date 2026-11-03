@@ -333,7 +333,7 @@ async def test_end_to_end_setup_entities_diagnostics_options_and_reconfigure(
         assert flow.get("step_id") == "profiles"
         placeholders = flow.get("description_placeholders")
         assert placeholders is not None
-        assert "ID 116852 | App: M-WRG-II (VMD-22RPS44)" in placeholders["unit_details"]
+        assert placeholders["slave_2_details"].startswith(": M-WRG-II")
         flow = await hass.config_entries.flow.async_configure(
             flow["flow_id"], {"slave_2": "ii_fc_voc"}
         )
@@ -344,6 +344,7 @@ async def test_end_to_end_setup_entities_diagnostics_options_and_reconfigure(
             (DOMAIN, "slave_2"), entry.entry_id
         )
         assert device is not None
+        assert device.name == "Meltem M-WRG-II (R00A002)"
         assert (device.model, device.model_id, device.hw_version) == (
             "M-WRG-II (O/VOC-AUL)",
             "VMD-22RPS44",
@@ -401,7 +402,9 @@ async def test_end_to_end_setup_entities_diagnostics_options_and_reconfigure(
 
         diagnostics = await async_get_config_entry_diagnostics(hass, entry)
         assert diagnostics["entry"]["data"][CONF_HOST] != "127.0.0.1"
-        assert "127.0.0.1" not in json.dumps(diagnostics, cls=ExtendedJSONEncoder)
+        diagnostic_json = json.dumps(diagnostics, cls=ExtendedJSONEncoder)
+        assert "127.0.0.1" not in diagnostic_json
+        assert "R00A002" not in diagnostic_json
 
         options = await hass.config_entries.options.async_init(entry.entry_id)
         options = await hass.config_entries.options.async_configure(

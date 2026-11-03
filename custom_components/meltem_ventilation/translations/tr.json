@@ -6,6 +6,12 @@
         "serial": "USB seri",
         "rtu_over_tcp": "TCP üzerinden RTU"
       }
+    },
+    "profile_mismatch_action": {
+      "options": {
+        "correct": "Profil seçimini değiştir",
+        "confirm": "Yine de devam et"
+      }
     }
   },
   "config": {
@@ -54,40 +60,50 @@
       },
       "profiles": {
         "title": "Algılanan Meltem M-WRG üniteleri",
-        "description": "Entegrasyon {device_count} Meltem M-WRG ünitesi buldu. Algılanan her ünite için uygun profili seçin.\n\n{unit_details}",
+        "description": "Entegrasyon {device_count} Meltem M-WRG ünitesi buldu. Algılanan her ünite için uygun profili seçin. Cihaz numaraları Modbus adreslerine karşılık gelir.",
         "data": {
-          "slave_2": "Modbus adresi 2'deki ünite",
-          "slave_3": "Modbus adresi 3'teki ünite",
-          "slave_4": "Modbus adresi 4'teki ünite",
-          "slave_5": "Modbus adresi 5'teki ünite",
-          "slave_6": "Modbus adresi 6'daki ünite",
-          "slave_7": "Modbus adresi 7'deki ünite",
-          "slave_8": "Modbus adresi 8'deki ünite",
-          "slave_9": "Modbus adresi 9'daki ünite",
-          "slave_10": "Modbus adresi 10'daki ünite",
-          "slave_11": "Modbus adresi 11'deki ünite",
-          "slave_12": "Modbus adresi 12'deki ünite",
-          "slave_13": "Modbus adresi 13'teki ünite",
-          "slave_14": "Modbus adresi 14'teki ünite",
-          "slave_15": "Modbus adresi 15'teki ünite",
-          "slave_16": "Modbus adresi 16'daki ünite"
+          "slave_2": "Cihaz 2{slave_2_details}",
+          "slave_3": "Cihaz 3{slave_3_details}",
+          "slave_4": "Cihaz 4{slave_4_details}",
+          "slave_5": "Cihaz 5{slave_5_details}",
+          "slave_6": "Cihaz 6{slave_6_details}",
+          "slave_7": "Cihaz 7{slave_7_details}",
+          "slave_8": "Cihaz 8{slave_8_details}",
+          "slave_9": "Cihaz 9{slave_9_details}",
+          "slave_10": "Cihaz 10{slave_10_details}",
+          "slave_11": "Cihaz 11{slave_11_details}",
+          "slave_12": "Cihaz 12{slave_12_details}",
+          "slave_13": "Cihaz 13{slave_13_details}",
+          "slave_14": "Cihaz 14{slave_14_details}",
+          "slave_15": "Cihaz 15{slave_15_details}",
+          "slave_16": "Cihaz 16{slave_16_details}"
         },
         "data_description": {
-          "slave_2": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_3": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_4": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_5": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_6": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_7": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_8": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_9": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_10": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_11": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_12": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_13": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_14": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_15": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_16": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur."
+          "slave_2": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_3": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_4": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_5": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_6": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_7": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_8": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_9": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_10": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_11": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_12": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_13": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_14": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_15": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_16": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin."
+        }
+      },
+      "confirm_profile_mismatch": {
+        "title": "Model ailesi uyuşmazlığı",
+        "description": "Seçilen profiller algılanan model aileleriyle eşleşmiyor (Modbus adresi: algılanan aile → seçilen profil):\n\n{mismatches}\n\nCihazın bilgi etiketini kontrol edin. Seçimi değiştirebilir veya yine de devam edebilirsiniz.",
+        "data": {
+          "action": "Nasıl devam etmek istiyorsunuz?"
+        },
+        "data_description": {
+          "action": "Profil seçimine dönün veya seçilen profillerle devam edin."
         }
       }
     },
@@ -134,40 +150,50 @@
       },
       "profiles": {
         "title": "Algılanan Meltem M-WRG üniteleri",
-        "description": "Yeniden tarama {device_count} Meltem M-WRG ünitesi buldu. Algılanan her ünite için uygun profili seçin.\n\n{unit_details}",
+        "description": "Yeniden tarama {device_count} Meltem M-WRG ünitesi buldu. Algılanan her ünite için uygun profili seçin. Cihaz numaraları Modbus adreslerine karşılık gelir.",
         "data": {
-          "slave_2": "Modbus adresi 2'deki ünite",
-          "slave_3": "Modbus adresi 3'teki ünite",
-          "slave_4": "Modbus adresi 4'teki ünite",
-          "slave_5": "Modbus adresi 5'teki ünite",
-          "slave_6": "Modbus adresi 6'daki ünite",
-          "slave_7": "Modbus adresi 7'deki ünite",
-          "slave_8": "Modbus adresi 8'deki ünite",
-          "slave_9": "Modbus adresi 9'daki ünite",
-          "slave_10": "Modbus adresi 10'daki ünite",
-          "slave_11": "Modbus adresi 11'deki ünite",
-          "slave_12": "Modbus adresi 12'deki ünite",
-          "slave_13": "Modbus adresi 13'teki ünite",
-          "slave_14": "Modbus adresi 14'teki ünite",
-          "slave_15": "Modbus adresi 15'teki ünite",
-          "slave_16": "Modbus adresi 16'daki ünite"
+          "slave_2": "Cihaz 2{slave_2_details}",
+          "slave_3": "Cihaz 3{slave_3_details}",
+          "slave_4": "Cihaz 4{slave_4_details}",
+          "slave_5": "Cihaz 5{slave_5_details}",
+          "slave_6": "Cihaz 6{slave_6_details}",
+          "slave_7": "Cihaz 7{slave_7_details}",
+          "slave_8": "Cihaz 8{slave_8_details}",
+          "slave_9": "Cihaz 9{slave_9_details}",
+          "slave_10": "Cihaz 10{slave_10_details}",
+          "slave_11": "Cihaz 11{slave_11_details}",
+          "slave_12": "Cihaz 12{slave_12_details}",
+          "slave_13": "Cihaz 13{slave_13_details}",
+          "slave_14": "Cihaz 14{slave_14_details}",
+          "slave_15": "Cihaz 15{slave_15_details}",
+          "slave_16": "Cihaz 16{slave_16_details}"
         },
         "data_description": {
-          "slave_2": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_3": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_4": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_5": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_6": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_7": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_8": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_9": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_10": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_11": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_12": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_13": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_14": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_15": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
-          "slave_16": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur."
+          "slave_2": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_3": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_4": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_5": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_6": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_7": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_8": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_9": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_10": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_11": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_12": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_13": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_14": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_15": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.",
+          "slave_16": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin."
+        }
+      },
+      "confirm_profile_mismatch": {
+        "title": "Model ailesi uyuşmazlığı",
+        "description": "Seçilen profiller algılanan model aileleriyle eşleşmiyor (Modbus adresi: algılanan aile → seçilen profil):\n\n{mismatches}\n\nCihazın bilgi etiketini kontrol edin. Seçimi değiştirebilir veya yine de devam edebilirsiniz.",
+        "data": {
+          "action": "Nasıl devam etmek istiyorsunuz?"
+        },
+        "data_description": {
+          "action": "Profil seçimine dönün veya seçilen profillerle devam edin."
         }
       }
     },
@@ -492,24 +518,24 @@
       "step": {
         "user": {
           "title": "Meltem M-WRG ünitesi ekle",
-          "description": "Ağ geçidi henüz kurulmamış {device_count} ünite bildiriyor. Eklenecek ünitenin Modbus adresini ve tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.\n\n{unit_details}",
+          "description": "Ağ geçidi henüz kurulmamış {device_count} ünite bildiriyor. Eklenecek ünitenin Modbus adresini ve tam model profilini seçin. Ünite etiketini kontrol edin.\n\nCihazlar (Modbus adresi):\n\n{unit_details}",
           "data": {
             "slave": "Modbus adresi",
-            "slave_2": "Profil",
-            "slave_3": "Profil",
-            "slave_4": "Profil",
-            "slave_5": "Profil",
-            "slave_6": "Profil",
-            "slave_7": "Profil",
-            "slave_8": "Profil",
-            "slave_9": "Profil",
-            "slave_10": "Profil",
-            "slave_11": "Profil",
-            "slave_12": "Profil",
-            "slave_13": "Profil",
-            "slave_14": "Profil",
-            "slave_15": "Profil",
-            "slave_16": "Profil"
+            "slave_2": "Cihaz 2{slave_2_details}",
+            "slave_3": "Cihaz 3{slave_3_details}",
+            "slave_4": "Cihaz 4{slave_4_details}",
+            "slave_5": "Cihaz 5{slave_5_details}",
+            "slave_6": "Cihaz 6{slave_6_details}",
+            "slave_7": "Cihaz 7{slave_7_details}",
+            "slave_8": "Cihaz 8{slave_8_details}",
+            "slave_9": "Cihaz 9{slave_9_details}",
+            "slave_10": "Cihaz 10{slave_10_details}",
+            "slave_11": "Cihaz 11{slave_11_details}",
+            "slave_12": "Cihaz 12{slave_12_details}",
+            "slave_13": "Cihaz 13{slave_13_details}",
+            "slave_14": "Cihaz 14{slave_14_details}",
+            "slave_15": "Cihaz 15{slave_15_details}",
+            "slave_16": "Cihaz 16{slave_16_details}"
           },
           "data_description": {
             "slave": "Eklenecek ünitenin yukarıda listelenen Modbus adresi.",
@@ -532,7 +558,7 @@
         },
         "profile": {
           "title": "Modbus adresi {slave} üzerindeki ünitenin profili",
-          "description": "Yeni ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.\n\n{unit_details}",
+          "description": "Yeni ünitenin tam model profilini seçin. Ünite etiketini kontrol edin.\n\nCihaz {slave}{unit_details}",
           "data": {
             "profile": "Profil"
           },
@@ -542,12 +568,22 @@
         },
         "reconfigure": {
           "title": "{unit} ünitesinin profilini değiştir",
-          "description": "Ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; entegrasyon daha sonra yeniden yüklenir.\n\n{unit_details}",
+          "description": "Ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; entegrasyon daha sonra yeniden yüklenir.\n\nCihaz {slave}{unit_details}",
           "data": {
             "profile": "Profil"
           },
           "data_description": {
             "profile": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler."
+          }
+        },
+        "confirm_profile_mismatch": {
+          "title": "Model ailesi uyuşmazlığı",
+          "description": "Seçilen profiller algılanan model aileleriyle eşleşmiyor (Modbus adresi: algılanan aile → seçilen profil):\n\n{mismatches}\n\nCihazın bilgi etiketini kontrol edin. Seçimi değiştirebilir veya yine de devam edebilirsiniz.",
+          "data": {
+            "action": "Nasıl devam etmek istiyorsunuz?"
+          },
+          "data_description": {
+            "action": "Profil seçimine dönün veya seçilen profillerle devam edin."
           }
         }
       },

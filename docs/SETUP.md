@@ -9,15 +9,22 @@ Match it to the code below the DataMatrix on the unit label to identify which
 Modbus address belongs to each physical unit. Choose the profile using the
 model information on the type plate.
 
-For known product IDs, the setup preview also shows a series and product
-identifier from the app catalog. The older-series mapping has not yet been
-verified on hardware. Existing units with a known ID show the identifier in
-their device details.
+For known product IDs, the setup list also shows the device family from the
+app catalog. The older-family mapping has not yet been verified on hardware.
+If the selected profile belongs to a different family, a warning lets you
+correct the selection or explicitly continue. Unknown or unreadable product
+IDs do not cause a warning. Existing units with a known ID show the product
+identifier in their device details.
 
-Units are listed by their Modbus address and initially named `Unit 1`, `Unit 2`
-and so on. Each unit appears as its own entry under the gateway on the
-integration page. Rename them like any other Home Assistant device; the new
-name is also shown when you change a profile later.
+Units are listed by their Modbus address. New devices are initially named
+after the selected model family and, when available, their setup code, for
+example `Meltem M-WRG-II (R000001)`. Home Assistant shows this editable name
+when assigning devices to areas. If a code cannot be read, the name contains
+only the model family; duplicate initial names receive a numeric suffix.
+
+Each unit appears as its own entry under the gateway on the integration page.
+Rename devices like any other Home Assistant device; the new name is also
+shown when you change a profile later. Existing device names are not changed.
 
 ## Changing the gateway connection
 

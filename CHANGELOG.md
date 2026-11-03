@@ -39,8 +39,11 @@
 ### Improvements (5.0.0)
 
 - Known product information is shown during setup and in unit details to help
-  identify devices. The mapping for older units has not yet been verified on
-  hardware.
+  identify devices. Setup lists the family and setup code, and warns before
+  accepting a profile from a different family. The mapping for older units has
+  not yet been verified on hardware.
+- New units receive an editable device name based on the selected model family
+  and setup code, making them easier to identify when assigning areas.
 - Communication and updates are more efficient and recover more reliably from
   temporary errors. A unit is no longer marked unavailable after a single
   unanswered read.

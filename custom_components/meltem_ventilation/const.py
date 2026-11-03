@@ -41,6 +41,7 @@ SUBENTRY_TYPE_UNIT = "unit"
 CONF_UNIT_KEY = "key"
 CONF_SLAVE = "slave"
 CONF_PROFILE = "profile"
+CONF_NAME_IS_DEVICE_NAME = "name_is_device_name"
 
 DEFAULT_PORT = "/dev/ttyACM0"
 DEFAULT_NETWORK_PORT = 5020

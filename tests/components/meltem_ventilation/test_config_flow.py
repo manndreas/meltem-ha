@@ -456,8 +456,9 @@ class TestConfigFlowUser:
         assert result.get("type") == FlowResultType.FORM
         assert result.get("step_id") == "profiles"
         assert list(_flow_schema(result).schema.keys()) == ["slave_2", "slave_3"]
-        details = _flow_placeholders(result)["unit_details"]
-        assert "ID 116852 | App: M-WRG-II (VMD-22RPS44) | CO2" in details
+        details = _flow_placeholders(result)
+        assert details["slave_2_details"] == ": M-WRG-II"
+        assert details["slave_3_details"] == ""
         for unit in (gateway, co2_unit):
             assert unit.required_timeout == FIXED_TIMEOUT
             assert unit.message_spacing == REQUEST_GAP_SECONDS
@@ -476,9 +477,7 @@ class TestConfigFlowUser:
         with _patch_resolve():
             result = await _async_submit_port(hass)
             assert _flow_schema(result)({}) == {"slave_2": "ii_plain"}
-            assert (
-                "ID 116819 | App: M-WRG (VMD-22RES22)" in _flow_placeholders(result)["unit_details"]
-            )
+            assert _flow_placeholders(result)["slave_2_details"] == ": M-WRG"
             result = await _async_submit_profiles(hass, result, {"slave_2": "s_plain"})
 
         assert _units(_flow_entry(result))[0].data["profile"] == "s_plain"
@@ -563,11 +562,12 @@ class TestConfigFlowProfiles:
         entry = _flow_entry(result)
         (unit,) = _units(entry)
         assert unit.subentry_type == SUBENTRY_TYPE_UNIT
-        assert (unit.title, unit.unique_id) == ("Unit 1", "2")
+        assert (unit.title, unit.unique_id) == ("Meltem M-WRG-II (R000001)", "2")
         assert dict(unit.data) == {
             "key": "slave_2",
             "slave": 2,
             "profile": "ii_fc",
+            "name_is_device_name": True,
             "preview": "R-Code R000001 | ID 116852 | CO2",
             "product_id": 116852,
             "app_setup_code": "R000001",
@@ -575,6 +575,51 @@ class TestConfigFlowProfiles:
         assert (entry.version, entry.minor_version) == (2, 2)
         assert entry.options == {}
         assert entry.unique_id == _STABLE_PORT
+
+    @pytest.mark.parametrize("action", ["correct", "confirm"])
+    async def test_setup_warns_before_saving_a_different_family(
+        self, hass: HomeAssistant, action: str
+    ) -> None:
+        with (
+            _patch_scan([2]),
+            _patch_detect("f", "unused", product_id=116852, app_setup_code="R000001"),
+            _patch_resolve(),
+        ):
+            result = await _async_submit_port(hass)
+            assert _flow_placeholders(result)["slave_2_details"] == ": M-WRG-II (R000001)"
+            result = await _async_submit_profiles(hass, result, {"slave_2": "s_f"})
+
+        assert result.get("step_id") == "confirm_profile_mismatch"
+        assert _flow_placeholders(result)["mismatches"] == "- **2**: M-WRG-II → M-WRG-S (-F)"
+        assert _flow_schema(result)({}) == {"action": "correct"}
+        assert not hass.config_entries.async_entries(DOMAIN)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"action": action}
+        )
+        if action == "correct":
+            assert result.get("step_id") == "profiles"
+            assert _flow_schema(result)({}) == {"slave_2": "s_f"}
+            result = await _async_submit_profiles(hass, result, {"slave_2": "ii_f"})
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert _units(_flow_entry(result))[0].data["profile"] == (
+            "ii_f" if action == "correct" else "s_f"
+        )
+        assert _units(_flow_entry(result))[0].title == (
+            "Meltem M-WRG-II (R000001)" if action == "correct" else "Meltem M-WRG-S (R000001)"
+        )
+
+    async def test_setup_warns_when_default_conflicts_with_older_family(
+        self, hass: HomeAssistant
+    ) -> None:
+        with _patch_scan([2]), _patch_detect(product_id=116819), _patch_resolve():
+            result = await _async_submit_port(hass)
+            result = await _async_submit_profiles(hass, result, {"slave_2": "ii_plain"})
+        assert result.get("step_id") == "confirm_profile_mismatch"
+        assert _flow_placeholders(result)["mismatches"] == "- **2**: M-WRG → M-WRG-II"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"action": "confirm"}
+        )
+        assert _units(_flow_entry(result))[0].data["profile"] == "ii_plain"
 
     async def test_profiles_step_multiple_units(self, hass: HomeAssistant) -> None:
         with _patch_scan([2, 3]), _patch_detect(), _patch_resolve():
@@ -586,7 +631,7 @@ class TestConfigFlowProfiles:
         assert result.get("type") == FlowResultType.CREATE_ENTRY
         units = _units(_flow_entry(result))
         assert [unit.data["profile"] for unit in units] == ["ii_plain", "ii_f"]
-        assert [unit.title for unit in units] == ["Unit 1", "Unit 2"]
+        assert [unit.title for unit in units] == ["Meltem M-WRG-II", "Meltem M-WRG-II (2)"]
 
     async def test_profiles_step_uses_stable_field_keys_regardless_of_language(
         self, hass: HomeAssistant
@@ -605,7 +650,12 @@ class TestConfigFlowProfiles:
     ) -> None:
         with (
             _patch_scan([2]),
-            _patch_detect("fc", "R-Code R000001 | ID 116852 | CO2"),
+            _patch_detect(
+                "fc",
+                "R-Code R000001 | ID 116852 | CO2",
+                product_id=116852,
+                app_setup_code="R000001",
+            ),
             _patch_resolve(),
         ):
             result = await _async_submit_usb_port(hass)
@@ -613,9 +663,7 @@ class TestConfigFlowProfiles:
         assert result.get("type") == FlowResultType.FORM
         assert result.get("step_id") == "profiles"
         assert list(_flow_schema(result).schema.keys()) == ["slave_2"]
-        unit_details = _flow_placeholders(result)["unit_details"]
-        assert "R-Code R000001" in unit_details
-        assert "Hardware ID 116852 | CO2" in unit_details
+        assert _flow_placeholders(result)["slave_2_details"] == ": M-WRG-II (R000001)"
 
     async def test_usb_flow_returns_to_confirm_usb_on_scan_error(self, hass: HomeAssistant) -> None:
         with _patch_scan_error(MeltemConnectionError("fail")):
@@ -704,6 +752,42 @@ def entry_fixture(hass: HomeAssistant) -> MockConfigEntry:
 
 
 class TestOptionsFlow:
+    @pytest.mark.parametrize("action", ["correct", "confirm"])
+    async def test_rescan_warns_before_removal_and_retains_the_selection(
+        self, hass: HomeAssistant, entry: MockConfigEntry, action: str
+    ) -> None:
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[3]),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", None, 116852, "R000003")
+            ),
+        )
+        result = await _async_open_option(hass, entry, "rescan_units")
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+        assert _flow_placeholders(result)["slave_3_details"] == ": M-WRG-II (R000003)"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"slave_3": "s_plain"}
+        )
+        assert result.get("step_id") == "confirm_profile_mismatch"
+        assert [unit.unique_id for unit in _units(entry)] == ["2"]
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"action": action}
+        )
+        if action == "correct":
+            assert result.get("step_id") == "profiles"
+            assert _flow_schema(result)({}) == {"slave_3": "s_plain"}
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"], {"slave_3": "ii_plain"}
+            )
+        assert result.get("step_id") == "confirm_remove"
+        assert [unit.unique_id for unit in _units(entry)] == ["2"]
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert _units(entry)[0].data["profile"] == (
+            "ii_plain" if action == "correct" else "s_plain"
+        )
+
     async def test_rescan_network_entry_reuses_coordinator(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
@@ -808,9 +892,7 @@ class TestOptionsFlow:
         )
         # Unit 2 (R0000BB) is reported nowhere anymore, so its removal needs a confirmation.
         assert result.get("step_id") == "confirm_remove"
-        assert _flow_placeholders(result)["removed_units"] == (
-            "- **3**: Unit 2, Hardware ID 2 | basic"
-        )
+        assert _flow_placeholders(result)["removed_units"] == ("- **3**: Unit 2 (R0000BB)")
         result = await hass.config_entries.options.async_configure(result["flow_id"], {})
 
         assert result.get("type") == FlowResultType.CREATE_ENTRY
@@ -905,9 +987,7 @@ class TestOptionsFlow:
         result = await hass.config_entries.options.async_configure(result["flow_id"], {})
 
         assert result.get("step_id") == "profiles"
-        assert (
-            "- **8**: Bathroom, R-Code R0000AA | CO2" in _flow_placeholders(result)["unit_details"]
-        )
+        assert _flow_placeholders(result)["slave_8_details"] == ": Bathroom (R0000AA)"
         assert _flow_schema(result)({}) == {"slave_2": "ii_f", "slave_8": "ii_fc"}
 
         result = await hass.config_entries.options.async_configure(
@@ -990,6 +1070,48 @@ class TestOptionsFlow:
         assert retained_fan.name == "Bathroom supply"
         assert retained_fan.disabled_by is er.RegistryEntryDisabler.USER
 
+    async def test_rescan_retains_new_style_name_and_user_rename(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        (unit,) = _units(entry)
+        name = "Meltem M-WRG-II · R0000AA"
+        hass.config_entries.async_update_subentry(
+            entry,
+            unit,
+            title=name,
+            data={**unit.data, "name_is_device_name": True, "app_setup_code": "R0000AA"},
+        )
+        registry = dr.async_get(hass)
+        device = registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            config_subentry_id=unit.subentry_id,
+            identifiers={(DOMAIN, "unit_1"), (DOMAIN, "app_setup_code:R0000AA")},
+            name=name,
+        )
+        registry.async_update_device(device.id, name_by_user="Bathroom")
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[3]),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", None, app_setup_code="R0000AA")
+            ),
+        )
+
+        result = await _async_open_option(hass, entry, "rescan_units")
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"slave_3": "ii_f"}
+        )
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        (moved,) = _units(entry)
+        assert moved.subentry_id == unit.subentry_id
+        assert moved.title == name
+        assert moved.data["name_is_device_name"] is True
+        retained = registry.async_get(device.id)
+        assert retained is not None
+        assert retained.name_by_user == "Bathroom"
+
     async def test_rescan_keeps_a_moved_unit_when_a_new_unit_takes_its_address(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
@@ -1022,7 +1144,10 @@ class TestOptionsFlow:
             "R0000AA",
         )
         assert by_slave[2].subentry_id != unit.subentry_id
-        assert (by_slave[2].data["key"], by_slave[2].title) == ("slave_2_2", "Unit 2")
+        assert (by_slave[2].data["key"], by_slave[2].title) == (
+            "slave_2_2",
+            "Meltem M-WRG-II (R0000CC)",
+        )
 
     async def test_rescan_removes_units_the_gateway_no_longer_reports(
         self, hass: HomeAssistant, entry: MockConfigEntry
@@ -1054,7 +1179,7 @@ class TestOptionsFlow:
         assert result.get("step_id") == "confirm_remove"
         assert _flow_placeholders(result) == {
             "removed_count": "1",
-            "removed_units": "- **2**: Bathroom, Hardware ID 2 | basic",
+            "removed_units": "- **2**: Bathroom",
         }
         assert [unit.data["key"] for unit in _units(entry)] == ["unit_1"]
 
@@ -1062,7 +1187,11 @@ class TestOptionsFlow:
 
         assert result.get("type") == FlowResultType.CREATE_ENTRY
         (unit,) = _units(entry)
-        assert (unit.unique_id, unit.title, unit.data["key"]) == ("3", "Unit 1", "slave_3")
+        assert (unit.unique_id, unit.title, unit.data["key"]) == (
+            "3",
+            "Meltem M-WRG-II",
+            "slave_3",
+        )
 
     async def test_rescan_without_removed_units_saves_right_away(
         self, hass: HomeAssistant, entry: MockConfigEntry
@@ -1233,7 +1362,7 @@ class TestUnitSubentryFlow:
 
         assert result.get("step_id") == "profile"
         assert _flow_placeholders(result)["slave"] == "3"
-        assert "Hardware ID 7 | CO2" in _flow_placeholders(result)["unit_details"]
+        assert _flow_placeholders(result)["unit_details"] == ": R000002"
         assert _flow_schema(result)({}) == {"profile": "ii_fc"}
         probe.assert_awaited_once_with(3)
 
@@ -1243,15 +1372,93 @@ class TestUnitSubentryFlow:
 
         assert result.get("type") == FlowResultType.CREATE_ENTRY
         added = next(unit for unit in _units(entry) if unit.unique_id == "3")
-        assert added.title == "Unit 2"
+        assert added.title == "Meltem M-WRG-II (R000002)"
         assert dict(added.data) == {
             "key": "slave_3",
             "slave": 3,
             "profile": "ii_fc",
+            "name_is_device_name": True,
             "preview": "R-Code R000002 | ID 7 | CO2",
             "product_id": 7,
             "app_setup_code": "R000002",
         }
+
+    async def test_single_new_unit_warns_and_can_confirm_the_profile(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3]),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", None, 116852, "R000003")
+            ),
+        )
+        result = await _async_start_add_unit(hass, entry)
+        assert _flow_placeholders(result)["unit_details"] == ": M-WRG-II (R000003)"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"profile": "s_plain"}
+        )
+        assert result.get("step_id") == "confirm_profile_mismatch"
+        assert len(_units(entry)) == 1
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"action": "confirm"}
+        )
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert _units(entry)[1].data["profile"] == "s_plain"
+
+    async def test_single_new_unit_can_correct_the_profile_after_warning(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3]),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", None, 116852)
+            ),
+        )
+        result = await _async_start_add_unit(hass, entry)
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"profile": "s_plain"}
+        )
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"action": "correct"}
+        )
+        assert result.get("step_id") == "profile"
+        assert _flow_schema(result)({}) == {"profile": "s_plain"}
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"profile": "ii_plain"}
+        )
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert _units(entry)[1].data["profile"] == "ii_plain"
+
+    async def test_multiple_new_units_allow_correcting_the_chosen_profile(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3, 4]),
+            async_probe_slave_details=AsyncMock(
+                side_effect=lambda slave: UnitProbeResult("plain", None, 116852)
+            ),
+        )
+        result = await _async_start_add_unit(hass, entry)
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"slave": "3", "slave_3": "s_f"}
+        )
+        assert result.get("step_id") == "confirm_profile_mismatch"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"action": "correct"}
+        )
+        assert result.get("step_id") == "user"
+        assert _flow_schema(result)({"slave": "3"})["slave_3"] == "s_f"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"slave": "3", "slave_3": "ii_f"}
+        )
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert _units(entry)[1].data["profile"] == "ii_f"
 
     @pytest.mark.parametrize(
         ("slave", "submitted_profile", "expected_profile"),
@@ -1284,8 +1491,7 @@ class TestUnitSubentryFlow:
 
         assert result.get("step_id") == "user"
         assert _flow_placeholders(result)["device_count"] == "2"
-        assert "Hardware ID 3" in _flow_placeholders(result)["unit_details"]
-        assert "Hardware ID 4" in _flow_placeholders(result)["unit_details"]
+        assert _flow_placeholders(result)["unit_details"] == "- **3**\n- **4**"
         markers = {
             marker.schema: marker
             for marker in _flow_schema(result).schema
@@ -1416,8 +1622,13 @@ class TestUnitSubentryFlow:
         )
 
         added = next(unit for unit in _units(entry) if unit.unique_id == "3")
-        assert added.title == "Unit 3"
-        assert dict(added.data) == {"key": "slave_3_2", "slave": 3, "profile": "ii_plain"}
+        assert added.title == "Meltem M-WRG-II"
+        assert dict(added.data) == {
+            "key": "slave_3_2",
+            "slave": 3,
+            "profile": "ii_plain",
+            "name_is_device_name": True,
+        }
 
     async def test_reconfigure_changes_the_profile_of_one_unit(
         self, hass: HomeAssistant, entry: MockConfigEntry
@@ -1435,9 +1646,7 @@ class TestUnitSubentryFlow:
 
         assert result.get("step_id") == "reconfigure"
         assert _flow_placeholders(result)["unit"] == "Bathroom"
-        assert _flow_placeholders(result)["unit_details"] == (
-            "- **2**: Bathroom, Hardware ID 2 | basic"
-        )
+        assert _flow_placeholders(result)["unit_details"] == ": Bathroom"
         assert _flow_schema(result)({}) == {"profile": "ii_plain"}
         with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
             result = await hass.config_entries.subentries.async_configure(
@@ -1449,6 +1658,35 @@ class TestUnitSubentryFlow:
         assert dict(_units(entry)[0].data) == {**unit.data, "profile": "ii_fc"}
         # Without a loaded entry there is no update listener to reload it.
         mock_reload.assert_called_once_with(entry.entry_id)
+
+    async def test_reconfigure_warns_using_stored_identity_and_allows_correction(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        (unit,) = _units(entry)
+        hass.config_entries.async_update_subentry(
+            entry, unit, data={**unit.data, "product_id": 116852, "app_setup_code": "R000001"}
+        )
+        result = await entry.start_subentry_reconfigure_flow(hass, unit.subentry_id)
+        assert _flow_placeholders(result)["unit_details"] == ": M-WRG-II (R000001)"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"profile": "s_f"}
+        )
+        assert result.get("step_id") == "confirm_profile_mismatch"
+        assert _units(entry)[0].data["profile"] == "ii_plain"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"action": "correct"}
+        )
+        assert result.get("step_id") == "reconfigure"
+        assert _flow_schema(result)({}) == {"profile": "s_f"}
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"profile": "s_f"}
+        )
+        with patch.object(hass.config_entries, "async_schedule_reload"):
+            result = await hass.config_entries.subentries.async_configure(
+                result["flow_id"], {"action": "confirm"}
+            )
+        assert result.get("reason") == "reconfigure_successful"
+        assert _units(entry)[0].data["profile"] == "s_f"
 
     async def test_reconfigure_of_a_loaded_entry_leaves_the_reload_to_its_listener(
         self, hass: HomeAssistant, entry: MockConfigEntry
