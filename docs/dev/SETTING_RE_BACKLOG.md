@@ -54,6 +54,12 @@ What is already clear:
   [extract shortcut](MELTEM.md#app-saved-extract-shortcut-a-b-a-on-2026-11-03),
   and [supply shortcut](MELTEM.md#app-saved-supply-shortcut-a-b-a-on-2026-11-03)
   measurements.
+- A complete FC03 scan of `0..65535` on slave `4` initially made `59001`
+  look MED-dependent (`4482 -> 4484 -> 4482`), but a targeted MED-40 repeat
+  did not reproduce it: isolated reads stayed at `4482`. Treat `59001` as an
+  unconfirmed scan-context lead, not a local setting register. The three
+  exhaustive snapshots are archived under
+  [measurements/2026-11-03/med-full-range](measurements/2026-11-03/med-full-range/).
 
 What is not yet justified:
 
@@ -624,6 +630,9 @@ Current status after the app-setting A-B-A runs:
   its restore; tests after LOW started with the previous setting's restored
   value. Expanded known-island snapshots found no direct per-setting register;
   only shadow/meta words, RF readings, and temperature values changed
+- the exhaustive MED A-B-A scan showed one initially correlated address,
+  `59001`, but targeted rereads at MED 40 did not change it from `4482`; no
+  setting register is confirmed by the broad scan
 - the vendor Modbus table does not document keypad-default writes; no
   `40xxx` write was attempted
 - further progress needs a documented local write sequence or a separately

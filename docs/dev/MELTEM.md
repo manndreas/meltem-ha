@@ -1416,6 +1416,47 @@ new app value and its restore. Its behavior is consistent with a shared
 last-write/readback value, not a local per-setting register. No direct local
 setting register or safe Modbus write sequence has been identified.
 
+### Exhaustive MED A-B-A FC03 scan on 2026-11-03
+
+To look beyond the previously readable islands, the full holding-register
+address space `0..65535` on slave `4` was captured three times, using Modbus
+function `0x03` only. Between captures, the app changed only saved MED airflow
+from `30` to `40` m³/h, then restored it to `30`. No Modbus write was sent.
+The unit stayed in manual HIGH at `60/60` m³/h with error flags clear.
+
+| Phase | App MED | Snapshot | Addresses with values |
+| --- | ---: | --- | ---: |
+| Before | `30` | [Full FC03 scan before](measurements/2026-11-03/med-full-range/custom-slave4-20261103-123532-med-30-before-full-scan.json) | `237 / 65,536` |
+| Changed | `40` | [Full FC03 scan at MED 40](measurements/2026-11-03/med-full-range/custom-slave4-20261103-145001-med-40-full-scan.json) | `237 / 65,536` |
+| Restored | `30` | [Full FC03 scan after restore](measurements/2026-11-03/med-full-range/custom-slave4-20261103-201829-med-30-after-full-scan.json) | `198 / 65,536` |
+
+Comparing only addresses that returned a value in both MED-30 scans and held
+the same value in those two captures left `107` stable addresses. Of those,
+only `59001` differed in the MED-40 scan: `4482 -> 4484 -> 4482`. At first
+glance this is a plausible MED-setting lead. However, the final scan had
+`39` addresses that were readable in the first two scans but returned no
+value, including `40901..40910`, `41120..41133`, `42006..42009`, and several
+`490xx` addresses. A subsequent isolated-read A-B-A repeat while MED was
+`30 -> 40 -> 30` returned `59001=4482` in all three reads; `59000`,
+`59002`, and `59010..59017` each returned `130` throughout. Thus the
+`59001` change seen only during the broad scan was not reproduced by the
+targeted repeat and is not a confirmed setting register.
+
+The broad scans also returned a striking but non-stable pattern at
+`59000..59002` and `59010..59017`: the first two captures showed `4482` at
+MED 30 and `4484` at MED 40; after restore, `59000`, `59002`, and `59010..17`
+read `130`, while `59001` remained `4482`. The later targeted MED-40 repeat
+read those same neighbors as `130`, not `4484`. This makes the broad-scan
+correlation insufficient to identify a local setting representation; it may
+reflect a transient or scan-context value. No writes were made to these
+registers.
+
+During the restored full scan, `40901` and multiple formerly readable setting
+registers were unavailable; a later single-register read of `40901` returned
+`AcknowledgeError (0x05)`. The documented `42000..42005` block remained
+readable and unchanged. The scan does not identify a safe local write
+sequence. The raw snapshots are preserved above for follow-up analysis.
+
 ## Unit and link lifecycle
 
 How the gateway and the integration behave when a unit loses power, Home
