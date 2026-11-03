@@ -12,7 +12,9 @@ Related documents:
 - `docs/dev/HARDWARE_BACKLOG.md`: review findings that need a live gateway before
   they can be decided
 - `docs/dev/LIVE_GATEWAY_TESTS.md`: how to measure them
+- `docs/dev/MOCK_GATEWAY.md`: how to run software-only RTU-over-TCP smoke tests
 - `docs/dev/SETTING_RE_BACKLOG.md`: parked reverse engineering of app settings
+- `docs/dev/APK_ANALYSIS.md`: static Android app and cloud-protocol reference
 
 ## Safety and liability
 
@@ -49,8 +51,8 @@ These are the most important practical findings from the latest hardware tests:
 - room entities stay unavailable until the first poll returns at least one
   state value
 - unloading shuts the client down for good, so a late post-write readback
-  cannot reach the link; Home Assistant's `modbus` integration closes the
-  serial port once the entry has released its units
+  cannot reach the link; Home Assistant's `modbus` integration releases the
+  serial or TCP connection once the entry has released its units
 - since `4.0.0` all of this runs over Home Assistant's shared Modbus
   connection (tmodbus) instead of an own pymodbus client; partial live
   tmodbus-vs-pymodbus results and remaining post-release validation are tracked
@@ -65,6 +67,20 @@ does not follow a failed coordinator update: a disconnected state and the last
 read timestamp must remain visible. Room reachability is unknown until its
 first read attempt. The timestamp is the latest successful supported group for
 that room only.
+
+Absolute humidity is computed only when the matching temperature and humidity
+arrive in the same room read; a partial or invalid pair clears the derived
+value instead of combining fresh and stale inputs. Raw `41100..41102` values
+are retained before mode normalization for the diagnostics download.
+External-input diagnostics use independent single-register reads only while
+enabled, with the shared gateway lock and transport rate limit. At most one
+such room read is added per scheduler tick; disabled entities trigger none.
+The CO2/VOC measurements use ppm and normal air-quality polling. Supply-air
+CO2 (`41012`) and extract-air VOC (`41008`) exist only on the VOC profile,
+where they are decoded from the `41006..41013` block it reads anyway; the
+`-FC` profiles carry only extract-air CO2 (unit matrix in
+[reference/models.md](reference/models.md)) and do not read `41012`.
+Component register ranges remain unchanged.
 
 `WriteConfirmations` keeps outcomes per room and write key for internal
 read-health evaluation. Confirmation deadlines and recent failed or
@@ -123,8 +139,8 @@ field to unknown. Hardware observations are recorded in [MELTEM.md](MELTEM.md).
 
 ## Scope
 
-The integration currently targets Meltem M-WRG units behind an
-`M-WRG-GW` gateway over Modbus RTU via USB.
+The integration targets Meltem M-WRG units behind an `M-WRG-GW` gateway over
+Modbus RTU via USB or a raw RTU-over-TCP bridge.
 
 Supported series/profiles:
 
@@ -138,27 +154,18 @@ Supported series/profiles:
 
 ## Gateway network interface
 
-Current working assumption:
+Previous app traffic captures showed cloud communication for normal control,
+and earlier LAN probes did not find a useful local service. A later
+[read-only comparison](MELTEM.md#read-only-modbus-tcp-comparison-on-2026-11-03)
+did obtain matching gateway and unit values over native Modbus TCP, but the
+port subsequently refused new connections. The reason and the conditions for
+reliable access remain unknown.
 
-- the `M-WRG-GW` gateway is not meaningfully controllable via a local LAN API
-- the Meltem mobile app communicates with Meltem's internet services rather
-  than directly with a local gateway API for normal control flows
-- local Home Assistant integration should therefore continue to treat USB /
-  serial Modbus as the primary supported path
-
-Observed basis for that assumption:
-
-- previous app traffic captures showed internet communication rather than a
-  usable local control channel
-- direct probing of the gateway IP on the tested setup did not reveal any
-  useful local TCP service, SSDP response, mDNS service, or other obvious LAN
-  control surface
-
-Practical consequence:
-
-- further reverse engineering effort is better spent on USB / serial Modbus
-  behavior or, if ever needed, on the app's cloud traffic rather than on the
-  gateway's local network interface
+The integration therefore continues to use Modbus RTU over USB serial or raw
+RTU-over-TCP. The latter is not Modbus TCP/MBAP. Do not reset or reconfigure
+the gateway merely to make its LAN port accessible, and do not assume normal
+control, write support, or coexistence with the app from the short read-only
+observation.
 
 ## Gateway and Modbus behavior
 
@@ -182,25 +189,41 @@ Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
 - `async_get_unit(hass, entry, params, unit_id)` at runtime; the units are
   released when the entry unloads, and the link closes after the last holder
 - `async_get_temporary_unit(hass, params, unit_id)` in the config flow
+- `gateway_connection.py` interprets existing entries without a connection
+  type as serial and builds parameters for serial or raw RTU-over-TCP links
 - the backend is always tmodbus via `modbus-connection`; HA `2026.11.0` pins
   `modbus-connection` `4.12.7`. Version `4.12.3` first added `require_timeout`
   and the device-modelling framework used here; the integration's minimum
   dependency is aligned with the supported HA baseline
-- link parameters are fixed in `build_serial_params`: 19200 baud, 8E1, RTU
-- another integration that uses the same port with other link settings makes
-  setup fail with `ConfigEntryError` (config flow: `port_in_use`)
-- every unit asks for `set_message_spacing(REQUEST_GAP_SECONDS)` and
-  `require_timeout(FIXED_TIMEOUT)` before its first request (`prepare_unit`);
-  both are floors, so another consumer of the same port can only raise them.
-  A YAML hub with `timeout: 3` on the same port would make every silent unit
-  cost 3 s per attempt instead of 0.8 s
+- serial parameters from `build_serial_params` are fixed at 19200 baud, 8E1,
+  RTU; network parameters use `socket://host:port` with RTU framing
+- another integration that uses the same endpoint with incompatible link
+  settings makes setup fail with `ConfigEntryError` (config flow:
+  `port_in_use`)
+- every unit asks for `set_message_spacing(REQUEST_GAP_SECONDS)` and a
+  transport-specific timeout before its first request (`prepare_unit`);
+  both are floors, so another consumer of the same endpoint can only raise
+  them. USB uses `FIXED_TIMEOUT` (0.8 s); RTU over TCP uses
+  `NETWORK_TIMEOUT` (5 s), including DNS and connection establishment. The
+  shared Modbus API does not separate connect and response timeouts, so a
+  silent unit over TCP can take 5 s per attempt
 - the config flow reads the unit list and probes every unit on one temporary
-  link, so the port is opened once per step
+  link, so the endpoint is opened once per step
+- when changing a loaded network connection, the coordinator holds its gateway
+  lock while disconnecting the old link and checking the replacement. This
+  lets a single-client bridge accept the check; on failure the unchanged old
+  connection is reopened by the next request. The link can be shared with
+  other integrations, which can reconnect while the check is running; their
+  requests cannot be serialized by this coordinator
 
 Register blocks are `Component`s in `device/components.py`. Each one pins
 `register_ranges` to a block benchmarked on the gateway (`Temperatures` reads
 `41000..41005` and `AirQuality` reads `41006..41011` or `41006..41013` in one
-request alongside `Temperatures`, validated in T-8).
+request alongside `Temperatures`). T-8 benchmarked these blocks only on
+sensorless `M-WRG-II` units, which never send the `AirQuality` request at
+runtime; whether `-F` and `-FC` units answer the whole block, including
+`41007`/`41008` on `-F`, is open as
+[HW-10](HARDWARE_BACKLOG.md#hw-10--merged-air-quality-block-on-sensor-equipped-units).
 `tests/components/meltem_ventilation/test_modbus_client.py` checks the request
 shapes with the mock's `read_events`. Do not merge blocks without a benchmark
 on the real gateway.
@@ -251,8 +274,16 @@ exception codes do not start this component backoff. The separate current-mode
 status read retains its existing 30-to-300-second exception backoff. While a
 component is backed off, its cached values and read health are left unchanged;
 the skipped poll is not counted as another failed read group. Other components
-and rooms continue polling. The setup probes follow the transport retry rules
-above, not the runtime component backoff.
+and rooms continue polling. The setup probe does not use the runtime component
+backoff. It gives up on a unit after a timeout before the unit answered
+anything, since every further read would only time out as well. Once the unit
+has answered, one lost or garbled reply, or a read refused by the recovery
+pause, is read again after `TRANSPORT_READ_RECOVERY_SECONDS`; without that
+retry a single lost telegram would turn a sensor unit into a `plain` proposal.
+During a rescan the runtime client probes under the gateway lock, so that rare
+wait also delays polling by up to five seconds.
+A timeout while the link is not connected is a failed connect, for example to
+an unreachable bridge, and raises `MeltemConnectionError` like discovery does.
 
 The quiet window keeps silent units from recycling a link their neighbours
 still answer on, also when two silent units or two jobs of one silent unit
@@ -281,8 +312,7 @@ When a unit times out before any of its blocks answered in a job, the rest of
 that job is skipped and its groups are marked failed. Jobs during the recovery
 pause are skipped without another request or failure count. If a timeout occurs
 after another block answered, later blocked components are skipped. Only an
-exception response starts the mode backoff; the setup probe also stops at the
-first timeout of a unit.
+exception response starts the mode backoff.
 
 So far an unconfigured address timed out after about 0.8 s, while a
 physically powered-off unit caused no timeout at all: the gateway kept
@@ -398,7 +428,10 @@ Current design:
   instances (`gateway_reads.py`): read in the poll tick under the gateway lock while at least one
   consumer needs them, and cancelled when the last consumer goes away; the
   unit list has an internal consumer and waits five minutes before its first
-  read; `coordinator.optional_gateway_reads` exposes them
+  read; `coordinator.optional_gateway_reads` exposes them. A failed read is
+  retried after `OPTIONAL_READ_RETRY_SECONDS` (60 s), doubling with each
+  further failure up to its regular interval, so an hourly value is not lost
+  for an hour after one refused request; the 60-second reads are unaffected
 - one job can perform several grouped or optional Modbus reads, each subject
   to the shared read limit and the link's minimum `REQUEST_GAP_SECONDS`
 - airflow-level writes rely on the normal scheduler for later readback instead
@@ -451,13 +484,25 @@ and the rest of the group stays healthy. When a sensor of the selected profile
 reports such a placeholder `MISSING_SENSOR_ISSUE_AFTER_READS` times in a row
 (about three minutes), `missing_sensors.py` raises a non-persistent repair
 issue for that unit and sensor; it suggests checking the profile and
-disappears with the next real value, on reload, or on restart.
+disappears with the next real value, on reload, or on restart. Only the
+sensors that define a profile (`modbus_client.PROFILE_SENSORS`: both
+humidities, extract-air CO2, supply-air VOC) raise one. Supply-air CO2
+(`41012`) and extract-air VOC (`41008`) come only from the app's register map
+and are offered, disabled by default, on the `O/VOC-AUL` profile, where they
+are decoded from the `41006..41013` block that profile reads anyway. A
+placeholder there says nothing about the profile, so they neither raise an
+issue nor take part in the setup probe's profile detection.
+`test_missing_sensors.py` checks that every issue sensor has a translation.
 Expected groups are derived from each room's supported entities, so a register
 that a device profile does not expose is not reported as a failed read. The
 group-to-entity mapping lives in `const.READ_GROUP_ENTITY_KEYS` and
 `RefreshPlan.read_groups()`; the client and the coordinator both use it.
 Groups with no successful read remain unknown until the existing failure
-threshold is reached. The aggregate `data_health` status is also unknown when
+threshold is reached, unless the unit refused the group with an exception
+response: such a group is only retried after a backoff while its entities are
+already unavailable, so `read_health.group_stale` reports it at once. Optional
+diagnostic groups are the exception to that; a refusal there means the unit
+lacks the register. The aggregate `data_health` status is also unknown when
 there is only inconclusive read health and no write outcome; a failed attempt
 alone is not a healthy reading. Existing confirmed failures and stale values
 continue to flag a problem during startup.
@@ -496,7 +541,11 @@ may already have applied some or all of the command. The new outcome is
 `unconfirmed`, and affected pending overlays are cleared without doing I/O
 during cancellation. After an interrupted flow-control write, directional and
 operating-mode changes that depend on the old state are refused until a later
-successful flow-control read; an explicit balanced or unbalanced command can
+successful read of the group the unit's levels come from: the flow-control
+read, or, while the mode status map is not fresh, the airflow read
+(`coordinator._levels_reported_since`, following `levels.reported_levels`).
+Without that fallback a unit that refuses `41100..41102` would stay
+uncontrollable until a reload. An explicit balanced or unbalanced command can
 still be sent. Cancellation while merely waiting for the gateway lock leaves
 the previous state unchanged.
 
@@ -567,7 +616,9 @@ the single-register confirmation read of `41121` described under
 `41132` is still written last as the apply latch. Registers written before an
 interrupted command stay staged until the next `41132`; the client remembers
 them per unit and logs a warning when a later command's commit would also
-apply some it does not write again. Whether that commit really applies them is
+apply some it does not write again. A register whose write timed out or was
+cancelled counts as staged, because the unit may have stored it; one the unit
+refused with an exception response does not. Whether that commit really applies them is
 open ([HW-8](HARDWARE_BACKLOG.md#hw-8--an-interrupted-mode-command-leaves-staged-registers-for-the-next-commit)).
 
 Write errors reach the UI as translated `HomeAssistantError`s (`exceptions` in
@@ -647,8 +698,10 @@ Meltem app, see [MELTEM.md](MELTEM.md#reverse-engineered-app-preset-behavior):
 
 Decisions:
 
-- `Abluft` / `Zuluft` are not written as app shortcuts. The airflow the app
-  stores for them is not readable, so the integration would have to guess it.
+- `Abluft` / `Zuluft` are not written as app shortcuts. The app keeps the
+  airflows for these buttons on the phone and sends them with every command
+  ([APK_ANALYSIS.md](APK_ANALYSIS.md#extract-only-and-supply-only-airflows));
+  nothing on the unit exposes them, so the integration would have to guess.
   Both states are set by turning one of the two fans to zero, which uses the
   documented unbalanced write sequence. The shortcut encoding
   `200 + airflow / 10` is still decoded on read, so a shortcut started on the
@@ -656,9 +709,10 @@ Decisions:
 - Missing keypad LEDs for `Abluft` / `Zuluft` are not an integration defect;
   the Meltem app leaves them dark as well.
 - Settings the app stores on the unit (LOW / MED / HIGH airflows, intensive
-  airflow and duration, shortcut airflows) persist locally, but no register
-  for them has been found. They are not supported; the reverse engineering is
-  parked, see [SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md).
+  airflow and duration, the supply-only / extract-only airflows of parameters
+  42..47) persist locally, but no register for them has been found. They are
+  not supported; the reverse engineering is parked, see
+  [SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md).
 - The values in Meltem's Modbus-KNX document describe KNX objects, not the
   holding registers of the USB gateway, and are not used.
 
@@ -819,7 +873,10 @@ Current limitation:
 
 The product registers `40002` / `40011` / `40021`
 ([MELTEM.md](MELTEM.md#product-registers-and-readable-islands)) are the best
-current path to improve this.
+current path to improve this. The [app catalog](APP_CATALOG.md#product-entries)
+provides a matching M-WRG-II identifier and an unverified M-WRG candidate.
+The integration displays these as hints and device model IDs but does not use
+them to select a profile.
 
 That means:
 
@@ -865,7 +922,8 @@ Writes convert from UI airflow to raw Modbus values:
 
 Important setup behavior:
 
-- the serial port must remain editable even if USB discovery pre-fills it
+- the connection type and endpoint are editable; USB discovery still
+  pre-fills the serial device path
 - users need to select the exact model profile manually
 - setup previews are best-effort only
 - the setup probe is intentionally minimal and reads product/capability
@@ -880,7 +938,8 @@ Known UX caveat:
 
 ## Config entries, units, and profile changes
 
-Since config entry version `2.1`, the entry data holds only the serial port;
+Since config entry version `2.1` (current: `2.2`), the entry data holds the gateway connection
+(a serial port for existing entries, or a transport type, host and TCP port);
 every unit is a config subentry of type `unit` (`units.py`). Its title is the
 unit's initial name, its unique ID is the Modbus address, and its data holds
 the room key, address, profile, and the identity values of the setup probe.
@@ -902,7 +961,7 @@ because Home Assistant `2026.11` keeps device identifiers unique per config
 entry. Units of a second gateway therefore no longer collide with the first;
 lifting `single_config_entry` is a separate product decision.
 
-An update listener reloads the entry when the port or the unit subentries
+An update listener reloads the entry when the gateway connection or unit subentries
 differ from what setup used (`_setup_snapshot`). A new request rate applies
 without a reload, and a rescan that changes several units schedules one reload.
 Flows that change a loaded entry therefore finish with `async_update_and_abort`
@@ -924,7 +983,9 @@ Setup never probes the gateway for entity metadata:
   and `2.1` moved every unit into a subentry, gave unit entities entry-scoped
   unique IDs, and moved the entities and devices to their subentries with all
   user settings; entity keys that releases before `4.0.0` stored with a unit
-  are dropped then
+  are dropped then. `2.2` renamed the unit entity key `rf_fault_status` to
+  `device_fault` (`40103`, named after the Meltem app) and moves existing
+  entities to the new unique ID with their entity ID and settings
 - devices of units no longer configured are removed on setup; unit devices are
   linked to the gateway device via `via_device_id`
 
@@ -933,8 +994,9 @@ upgrades. Remove and re-add the config entry only when its stored data is
 actually corrupt or when debugging a setup problem that cannot be reproduced
 otherwise. Removing only the gateway device does not reset the config entry.
 
-The serial port is changed with the reconfigure flow, which checks the new
-port before saving it.
+The gateway connection is changed with the reconfigure flow, which checks the
+new endpoint before saving it. Network endpoint identity uses the normalized
+hostname or IP address and port; switching transports preserves the entry ID.
 
 A unit device also carries its app setup code as an identifier
 (`identifiers.room_identifiers`). When units change addresses, for example
@@ -944,7 +1006,9 @@ platforms load, because Home Assistant rejects device info whose identifiers
 belong to another device and drops every entity of that unit. A rescan also
 drops a stored code of a unit it could not probe when another unit now reports
 that code, and a code stored for several units identifies none of them until
-the next rescan.
+the next rescan. A rescan reserves the room keys of all matched units before it
+names new ones: a new unit at a moved unit's old address gets a suffixed key
+instead of taking over the moved unit's subentry, device, and entities.
 
 ### Repair issues
 
@@ -952,7 +1016,10 @@ the next rescan.
   minutes after startup and then hourly, as an `OptionalGatewayRead` without an
   entity consumer, and raises `new_units_found` while the gateway reports
   addresses that have no unit subentry. The profile cannot be detected
-  reliably, so units are never added without the user.
+  reliably, so units are never added without the user. This read uses
+  `discover_gateway_nodes(strict=True)`: a check the gateway does not answer
+  raises instead of returning an empty list, which would delete the issue and
+  with it the user's "Ignore".
 - `missing_sensors.py`: see
   [Read health and write confirmation](#read-health-and-write-confirmation).
 
@@ -1030,8 +1097,12 @@ exercise reads, writes, unknown registers, exception frames, fragmented,
 missing, truncated, corrupted, delayed, and mismatched responses, retries,
 and reconnection. Home Assistant fan service tests also run through its shared
 Modbus integration and the real RTU client to the simulated serial device.
-The tests exercise the local read quarantine, including multiple delayed RTU
-replies. They do not prove safety across reloads or for other holders of the
+The tests exercise the local read quarantine: a read during the pause sends no
+request, and late replies that arrive during the pause are discarded before
+the next request. A late reply that arrives only after the pause, while the
+next request of the same length is open, would still be accepted; the tests do
+not cover that case, which the pause can make less likely but not prevent.
+They do not prove safety across reloads or for other holders of the
 shared connection, as described above.
 A write whose reply was lost may likewise have been applied more than once.
 These tests do not establish that repeated writes are harmless on physical
@@ -1066,7 +1137,7 @@ If something breaks:
    ```
 
 3. Confirm scan results.
-4. Confirm the correct serial port is used.
+4. Confirm the correct connection type and endpoint are configured.
 5. Confirm the correct model profiles were chosen.
 6. Only then investigate individual register behavior.
 

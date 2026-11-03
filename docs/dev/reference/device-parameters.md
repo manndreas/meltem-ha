@@ -181,7 +181,16 @@ matching names and descriptions; none of the documents states it.
   are configurable per side and stored in the unit. The traced app encoding
   `200 + airflow / 10` (HW-3 in
   [../HARDWARE_BACKLOG.md](../HARDWARE_BACKLOG.md)) may correspond to these
-  stored values, but the documents say nothing about an encoding.
+  stored values, but the documents say nothing about an encoding. The app's
+  own extract and supply buttons do not use these parameters; they send
+  airflows kept on the phone
+  ([../APK_ANALYSIS.md](../APK_ANALYSIS.md#extract-only-and-supply-only-airflows)).
+- **The app catalog uses these IDs as tag numbers.** It supports the inferred
+  mapping above for 10 (close flaps), 76 (filter buzzer) and 151-154 (CO2
+  control with the supply-air VOC sensor, "reserved" in this table), and gives
+  95 the same name as `42006`. Its ranges and defaults differ from this table
+  in several places, for example 8, 119 and 196; see
+  [../APK_ANALYSIS.md](../APK_ANALYSIS.md#service-metadata-compared-with-other-sources).
 - **Cross-ventilation runtime** (ID 196, default 120 min) suggests that
   supply-only / extract-only operation may be time-limited on `M-WRG-II` in
   some contexts. The documents do not explain when ID 196 applies.

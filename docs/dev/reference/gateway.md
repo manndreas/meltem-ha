@@ -128,9 +128,11 @@ Source: `GW` 6.
 
 ## Relevance for this integration
 
-- The documented operating model is cloud-based app control. This matches the
-  observation in [../DEVELOPER.md](../DEVELOPER.md) that no useful local LAN
-  control interface was found.
+- The documented operating model is cloud-based app control. Earlier LAN
+  probes did not find a useful local control service; a later
+  [hardware comparison](../MELTEM.md#read-only-modbus-tcp-comparison-on-2026-11-03)
+  briefly obtained Modbus TCP reads before the port refused further
+  connections. Reliable local control remains unverified.
 - Gateway and units talk over 868.3 MHz radio. Every Modbus request to a unit
   behind the gateway is therefore relayed over radio. That is consistent with
   the slow, sequential gateway behaviour and with the timing questions in

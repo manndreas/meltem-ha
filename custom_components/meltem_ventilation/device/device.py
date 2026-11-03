@@ -11,12 +11,12 @@ from ..const import (
     REGISTER_CO2_EXTRACT_AIR,
     REGISTER_CURRENT_LEVEL,
     REGISTER_DAYS_UNTIL_FILTER_CHANGE,
+    REGISTER_DEVICE_FAULT,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_RF_COMM_STATUS,
-    REGISTER_RF_FAULT_STATUS,
     REGISTER_RF_LAST_SEEN_AGE,
     REGISTER_RF_SIGNAL_STRENGTH,
     REGISTER_SOFTWARE_VERSION,
@@ -30,7 +30,6 @@ from .components import (
     AppSetupCode,
     Command,
     ControlSettings,
-    ExtractAirQuality,
     FanMotorHours,
     GatewayMac,
     GatewayUptime,
@@ -41,7 +40,6 @@ from .components import (
     ProductId,
     Register,
     Status,
-    SupplyAirQuality,
     SupplyTemperature,
     Temperatures,
 )
@@ -90,7 +88,7 @@ class MeltemRoomDevice(Device):
             if has_co2:
                 air_quality_fields.append("co2_extract_air")
             if has_voc:
-                air_quality_fields.append("voc_supply_air")
+                air_quality_fields.extend(("voc_extract_air", "voc_supply_air"))
             _only(self.air_quality, *air_quality_fields)
             self.air_quality.register_ranges = (
                 (
@@ -98,12 +96,6 @@ class MeltemRoomDevice(Device):
                     REGISTER_VOC_SUPPLY_AIR if has_voc else REGISTER_HUMIDITY_SUPPLY_AIR,
                 ),
             )
-        self.extract_air_quality = ExtractAirQuality(unit)
-        if not has_co2:
-            _only(self.extract_air_quality, "humidity_extract_air")
-        self.supply_air_quality = SupplyAirQuality(unit)
-        if not has_voc:
-            _only(self.supply_air_quality, "humidity_supply_air")
         self.status = Status(unit)
         self.days_until_filter_change = Register(
             unit, base_offset=REGISTER_DAYS_UNTIL_FILTER_CHANGE
@@ -121,7 +113,7 @@ class MeltemRoomDevice(Device):
                 "humidity_max_level",
             )
         self.rf_comm_status = Register(unit, base_offset=REGISTER_RF_COMM_STATUS)
-        self.rf_fault_status = Register(unit, base_offset=REGISTER_RF_FAULT_STATUS)
+        self.device_fault = Register(unit, base_offset=REGISTER_DEVICE_FAULT)
         self.value_error_status = Register(unit, base_offset=REGISTER_VALUE_ERROR_STATUS)
         self.rf_last_seen_age = Register(unit, base_offset=REGISTER_RF_LAST_SEEN_AGE)
         self.rf_signal_strength = Register(unit, base_offset=REGISTER_RF_SIGNAL_STRENGTH)

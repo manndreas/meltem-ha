@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN, profile_label
-from .modbus_client import placeholder_sensors
+from .modbus_client import PROFILE_SENSORS, placeholder_sensors
 from .models import ReadJobOutcome, RoomConfig
 
 # Consecutive reads with a "no sensor" placeholder before an issue is raised;
@@ -65,13 +65,13 @@ class MissingSensorIssues:
     def record(self, room: RoomConfig, outcome: ReadJobOutcome) -> None:
         """Count placeholder readings and raise or clear the matching issues."""
 
-        for sensor in outcome.sensor_values:
+        for sensor in outcome.sensor_values & PROFILE_SENSORS:
             key = (room.key, sensor)
             self._missing_reads.pop(key, None)
             if key in self._raised:
                 self._raised.discard(key)
                 ir.async_delete_issue(self._hass, DOMAIN, self._issue_id(key))
-        for sensor in outcome.missing_sensor_values:
+        for sensor in outcome.missing_sensor_values & PROFILE_SENSORS:
             key = (room.key, sensor)
             count = self._missing_reads[key] = self._missing_reads.get(key, 0) + 1
             if count >= MISSING_SENSOR_ISSUE_AFTER_READS and key not in self._raised:

@@ -8,8 +8,9 @@ from types import MappingProxyType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import probatio
 import pytest
-from homeassistant import config_entries
+from homeassistant import config_entries, data_entry_flow
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigEntryState,
@@ -18,10 +19,12 @@ from homeassistant.config_entries import (
     SubentryFlowResult,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.field_visibility import is_field_visible
 from homeassistant.helpers.service_info.usb import UsbServiceInfo
 from modbus_connection import IllegalDataAddressError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection
@@ -30,8 +33,13 @@ from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.config_flow import MeltemVentilationConfigFlow
 from custom_components.meltem_ventilation.const import (
+    CONF_CONNECTION_TYPE,
+    CONF_HOST,
     CONF_MAX_REQUESTS_PER_SECOND,
+    CONF_NETWORK_PORT,
     CONF_PORT,
+    CONNECTION_RTU_OVER_TCP,
+    CONNECTION_SERIAL,
     DEFAULT_GATEWAY_DEVICE_ID,
     DEFAULT_MAX_REQUESTS_PER_SECOND,
     DOMAIN,
@@ -79,6 +87,24 @@ def _flow_schema(result: ConfigFlowResult | SubentryFlowResult) -> Schema:
     schema = result.get("data_schema")
     assert schema is not None
     return schema
+
+
+def _assert_connection_visibility(result: ConfigFlowResult) -> None:
+    markers = {
+        marker.schema: marker
+        for marker in _flow_schema(result).schema
+        if isinstance(marker, data_entry_flow.Optional)
+    }
+    assert set(markers) == {CONF_PORT, CONF_HOST, CONF_NETWORK_PORT}
+    for connection_type, visible in (
+        (CONNECTION_SERIAL, {CONF_PORT}),
+        (CONNECTION_RTU_OVER_TCP, {CONF_HOST, CONF_NETWORK_PORT}),
+    ):
+        for name, marker in markers.items():
+            assert marker.visible is not None
+            assert is_field_visible(marker.visible, {CONF_CONNECTION_TYPE: connection_type}) == (
+                name in visible
+            )
 
 
 def _units(entry: ConfigEntry) -> list[ConfigSubentry]:
@@ -237,6 +263,106 @@ def _attach_coordinator(entry: MockConfigEntry, **methods: Any) -> SimpleNamespa
 
 
 class TestConfigFlowUser:
+    async def test_network_setup_scans_with_raw_rtu_parameters(
+        self, hass: HomeAssistant, gateway_link: MockModbusConnection
+    ) -> None:
+        params_seen = []
+
+        @asynccontextmanager
+        async def record_unit(hass, params, unit_id):
+            params_seen.append(params)
+            yield gateway_link.for_unit(unit_id)
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        _assert_connection_visibility(result)
+        with (
+            _patch_scan([2]),
+            _patch_detect(),
+            patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=record_unit),
+        ):
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                    CONF_HOST: "Bridge.Local.",
+                    CONF_PORT: 123,
+                },
+            )
+        assert result.get("step_id") == "profiles"
+        assert all(params.device == "socket://bridge.local.:5020" for params in params_seen)
+        assert all(params.framer == "rtu" for params in params_seen)
+        assert params_seen
+        result = await _async_submit_profiles(hass, result, {"slave_2": "ii_plain"})
+        entry = _flow_entry(result)
+        assert entry.unique_id == "rtu-over-tcp://bridge.local.:5020"
+        assert entry.data == {
+            CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+            CONF_HOST: "bridge.local.",
+            CONF_NETWORK_PORT: 5020,
+        }
+
+    async def test_invalid_network_host_is_preserved_for_correction(
+        self, hass: HomeAssistant
+    ) -> None:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "bad host",
+                CONF_NETWORK_PORT: 5020,
+            },
+        )
+        assert result.get("errors") == {"base": "invalid_connection"}
+        assert _flow_schema(result)({})[CONF_HOST] == "bad host"
+        _assert_connection_visibility(result)
+
+    async def test_missing_network_host_shows_error(self, hass: HomeAssistant) -> None:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP}
+        )
+        assert result.get("errors") == {"base": "invalid_connection"}
+
+    async def test_network_connect_timeout_is_not_reported_as_no_devices(
+        self, hass: HomeAssistant, gateway_link: MockModbusConnection
+    ) -> None:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        with patch.object(
+            gateway_link, "_connect_client", new=AsyncMock(side_effect=ModbusTimeoutError("open"))
+        ):
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP, CONF_HOST: "bridge.local"},
+            )
+        assert result.get("errors") == {"base": "cannot_connect"}
+
+    async def test_serial_setup_ignores_hidden_network_fields(self, hass: HomeAssistant) -> None:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        with _patch_scan([2]), _patch_detect(), _patch_resolve():
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_SERIAL,
+                    CONF_PORT: _PORT,
+                    CONF_HOST: 123,
+                    CONF_NETWORK_PORT: -1,
+                },
+            )
+        assert result.get("step_id") == "profiles"
+        result = await _async_submit_profiles(hass, result, {"slave_2": "ii_plain"})
+        assert _flow_entry(result).data == {CONF_PORT: _STABLE_PORT}
+
     async def test_user_step_shows_form(self, hass: HomeAssistant) -> None:
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -282,7 +408,7 @@ class TestConfigFlowUser:
         assert result.get("type") == FlowResultType.FORM
         assert result.get("errors") == {"base": expected}
         # The form offers the entered port again, not the default.
-        assert _flow_schema(result)({}) == {CONF_PORT: "/dev/ttyUSB7"}
+        assert _flow_schema(result)({})[CONF_PORT] == "/dev/ttyUSB7"
         result = await _async_retry_user_flow(hass, result["flow_id"])
         assert result.get("type") == FlowResultType.CREATE_ENTRY
         assert _flow_entry(result).unique_id == _STABLE_PORT
@@ -312,7 +438,14 @@ class TestConfigFlowUser:
         co2_unit = gateway_link.for_unit(2)
         # Product ID 116852 as a little-endian uint32, then humidity and CO2.
         co2_unit.holding.update(
-            {40002: [116852 & 0xFFFF, 116852 >> 16], 41006: 45, 41007: 800, 41011: 50}
+            {
+                40002: [116852 & 0xFFFF, 116852 >> 16],
+                41006: 45,
+                41007: 800,
+                41008: 32767,
+                41011: 50,
+                41012: 32767,
+            }
         )
         co2_unit.fail_read(41013, IllegalDataAddressError())
         gateway_link.for_unit(3).fail_requests(ModbusTimeoutError("silent"))
@@ -324,12 +457,31 @@ class TestConfigFlowUser:
         assert result.get("step_id") == "profiles"
         assert list(_flow_schema(result).schema.keys()) == ["slave_2", "slave_3"]
         details = _flow_placeholders(result)["unit_details"]
-        assert "ID 116852 | CO2" in details
+        assert "ID 116852 | App: M-WRG-II (VMD-22RPS44) | CO2" in details
         for unit in (gateway, co2_unit):
             assert unit.required_timeout == FIXED_TIMEOUT
             assert unit.message_spacing == REQUEST_GAP_SECONDS
         # The silent unit is given up after its first unanswered probe.
         assert len(gateway_link.for_unit(3).read_events) == 1
+
+    async def test_catalog_series_is_only_a_hint_in_profile_selection(
+        self, hass: HomeAssistant, gateway_link: MockModbusConnection
+    ) -> None:
+        gateway_link.for_unit(DEFAULT_GATEWAY_DEVICE_ID).holding.update({43901: 1, 43902: [2]})
+        unit = gateway_link.for_unit(2)
+        unit.holding.update({40002: [116819 & 0xFFFF, 116819 >> 16]})
+        for register in (41006, 41007, 41008, 41011, 41012, 41013):
+            unit.fail_read(register, IllegalDataAddressError())
+
+        with _patch_resolve():
+            result = await _async_submit_port(hass)
+            assert _flow_schema(result)({}) == {"slave_2": "ii_plain"}
+            assert (
+                "ID 116819 | App: M-WRG (VMD-22RES22)" in _flow_placeholders(result)["unit_details"]
+            )
+            result = await _async_submit_profiles(hass, result, {"slave_2": "s_plain"})
+
+        assert _units(_flow_entry(result))[0].data["profile"] == "s_plain"
 
     async def test_user_step_scans_and_probes_on_one_link(
         self, hass: HomeAssistant, gateway_link: MockModbusConnection
@@ -420,7 +572,7 @@ class TestConfigFlowProfiles:
             "product_id": 116852,
             "app_setup_code": "R000001",
         }
-        assert (entry.version, entry.minor_version) == (2, 1)
+        assert (entry.version, entry.minor_version) == (2, 2)
         assert entry.options == {}
         assert entry.unique_id == _STABLE_PORT
 
@@ -552,6 +704,33 @@ def entry_fixture(hass: HomeAssistant) -> MockConfigEntry:
 
 
 class TestOptionsFlow:
+    async def test_rescan_network_entry_reuses_coordinator(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        data = {
+            CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+            CONF_HOST: "bridge.local",
+            CONF_NETWORK_PORT: 5020,
+        }
+        hass.config_entries.async_update_entry(entry, data=data)
+        coordinator = _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2]),
+            async_probe_slave_details=AsyncMock(
+                return_value=UnitProbeResult("plain", "ID 2 | basic", product_id=2)
+            ),
+        )
+        with patch(f"{_PATCHES_BASE}.resolve_preferred_port_path") as resolve:
+            result = await _async_open_option(hass, entry, "rescan_units")
+            result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"], {"slave_2": "ii_plain"}
+            )
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert dict(entry.data) == data
+        coordinator.async_discover_gateway_units.assert_awaited_once()
+        resolve.assert_not_called()
+
     async def test_options_init_shows_menu(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
@@ -811,6 +990,40 @@ class TestOptionsFlow:
         assert retained_fan.name == "Bathroom supply"
         assert retained_fan.disabled_by is er.RegistryEntryDisabler.USER
 
+    async def test_rescan_keeps_a_moved_unit_when_a_new_unit_takes_its_address(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        (unit,) = _units(entry)
+        # Keys generated at setup follow the address, which collides with the new unit.
+        hass.config_entries.async_update_subentry(
+            entry, unit, data={**unit.data, "key": "slave_2", "app_setup_code": "R0000AA"}
+        )
+        probes = {
+            2: UnitProbeResult("plain", "R-Code R0000CC | basic", app_setup_code="R0000CC"),
+            3: UnitProbeResult("plain", "R-Code R0000AA | basic", app_setup_code="R0000AA"),
+        }
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3]),
+            async_probe_slave_details=AsyncMock(side_effect=probes.__getitem__),
+        )
+
+        result = await _async_open_option(hass, entry, "rescan_units")
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"slave_2": "ii_plain", "slave_3": "ii_plain"}
+        )
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        by_slave = {unit.data["slave"]: unit for unit in _units(entry)}
+        assert by_slave[3].subentry_id == unit.subentry_id
+        assert (by_slave[3].data["key"], by_slave[3].data["app_setup_code"]) == (
+            "slave_2",
+            "R0000AA",
+        )
+        assert by_slave[2].subentry_id != unit.subentry_id
+        assert (by_slave[2].data["key"], by_slave[2].title) == ("slave_2_2", "Unit 2")
+
     async def test_rescan_removes_units_the_gateway_no_longer_reports(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:
@@ -1040,15 +1253,30 @@ class TestUnitSubentryFlow:
             "app_setup_code": "R000002",
         }
 
-    async def test_several_new_units_ask_for_the_address_first(
-        self, hass: HomeAssistant, entry: MockConfigEntry
+    @pytest.mark.parametrize(
+        ("slave", "submitted_profile", "expected_profile"),
+        [
+            pytest.param("3", None, "ii_f", id="first-default"),
+            pytest.param("4", None, "ii_fc", id="second-default"),
+            pytest.param("3", "s_plain", "s_plain", id="explicit-profile"),
+        ],
+    )
+    async def test_several_new_units_choose_address_and_profile_together(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        slave: str,
+        submitted_profile: str | None,
+        expected_profile: str,
     ) -> None:
         entry.mock_state(hass, ConfigEntryState.LOADED)
         _attach_coordinator(
             entry,
             async_discover_gateway_units=AsyncMock(return_value=[2, 3, 4]),
             async_probe_slave_details=AsyncMock(
-                side_effect=lambda slave: UnitProbeResult("plain", f"ID {slave} | basic")
+                side_effect=lambda slave: UnitProbeResult(
+                    {3: "f", 4: "fc"}[slave], f"ID {slave} | sensor"
+                )
             ),
         )
 
@@ -1056,18 +1284,109 @@ class TestUnitSubentryFlow:
 
         assert result.get("step_id") == "user"
         assert _flow_placeholders(result)["device_count"] == "2"
+        assert "Hardware ID 3" in _flow_placeholders(result)["unit_details"]
+        assert "Hardware ID 4" in _flow_placeholders(result)["unit_details"]
+        markers = {
+            marker.schema: marker
+            for marker in _flow_schema(result).schema
+            if isinstance(marker, data_entry_flow.Required)
+        }
+        assert set(markers) == {"slave_3", "slave_4"}
+        for selected in ("3", "4"):
+            for name, marker in markers.items():
+                assert marker.visible is not None
+                assert is_field_visible(marker.visible, {"slave": selected}) == (
+                    name == f"slave_{selected}"
+                )
+                assert not is_field_visible(marker.visible, {})
+
+        schema = _flow_schema(result)
+        serialized = probatio.to_field_list(schema, custom_serializer=cv.custom_serializer)
+        assert isinstance(serialized, list)
+        data_entry_flow.add_visible_conditions_to_serialized_schema(schema, serialized)
+        fields = {field["name"]: field for field in serialized}
+        assert fields["slave_3"]["visible"] == {"field": "slave", "value": "3"}
+        assert fields["slave_3"]["default"] == "ii_f"
+        assert fields["slave_4"]["visible"] == {"field": "slave", "value": "4"}
+        assert fields["slave_4"]["default"] == "ii_fc"
+
+        hidden_slave = "4" if slave == "3" else "3"
+        user_input = {"slave": slave, f"slave_{hidden_slave}": "invalid-hidden-profile"}
+        if submitted_profile is not None:
+            user_input[f"slave_{slave}"] = submitted_profile
+        result = await hass.config_entries.subentries.async_configure(result["flow_id"], user_input)
+
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert [unit.unique_id for unit in _units(entry)] == ["2", slave]
+        assert _units(entry)[1].data["key"] == f"slave_{slave}"
+        assert _units(entry)[1].data["profile"] == expected_profile
+        assert _units(entry)[1].data["preview"] == f"ID {slave} | sensor"
+
+    async def test_several_new_units_require_valid_selection(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3, 4]),
+            async_probe_slave_details=AsyncMock(return_value=UnitProbeResult("plain", "basic")),
+        )
+        result = await _async_start_add_unit(hass, entry)
+        for user_input in ({}, {"slave": "5"}, {"slave": "3", "slave_3": "invalid"}):
+            with pytest.raises(InvalidData):
+                await hass.config_entries.subentries.async_configure(result["flow_id"], user_input)
+        assert [unit.unique_id for unit in _units(entry)] == ["2"]
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"slave": "4", "slave_4": "ii_fc"}
+        )
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert _units(entry)[1].data["profile"] == "ii_fc"
+
+    async def test_several_new_units_use_fallback_after_probe_failure(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3, 4]),
+            async_probe_slave_details=AsyncMock(side_effect=MeltemConnectionError("no answer")),
+        )
+        result = await _async_start_add_unit(hass, entry)
         result = await hass.config_entries.subentries.async_configure(
             result["flow_id"], {"slave": "4"}
         )
-        assert result.get("step_id") == "profile"
-        assert _flow_placeholders(result)["slave"] == "4"
+        assert result.get("type") == FlowResultType.CREATE_ENTRY
+        assert _units(entry)[1].data["profile"] == "ii_plain"
+
+    async def test_adding_a_unit_aborts_if_configured_while_form_was_open(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        _attach_coordinator(
+            entry,
+            async_discover_gateway_units=AsyncMock(return_value=[2, 3]),
+            async_probe_slave_details=AsyncMock(return_value=UnitProbeResult("plain", "basic")),
+        )
+        result = await _async_start_add_unit(hass, entry)
+        subentry = unit_subentry_data(
+            {"key": "slave_3", "name": "Unit 2", "slave": 3, "profile": "ii_plain"}
+        )
+        hass.config_entries.async_add_subentry(
+            entry,
+            ConfigSubentry(
+                data=MappingProxyType(subentry["data"]),
+                subentry_type=subentry["subentry_type"],
+                title=subentry["title"],
+                unique_id=subentry["unique_id"],
+            ),
+        )
+
         result = await hass.config_entries.subentries.async_configure(
             result["flow_id"], {"profile": "ii_plain"}
         )
 
-        assert result.get("type") == FlowResultType.CREATE_ENTRY
-        assert [unit.unique_id for unit in _units(entry)] == ["2", "4"]
-        assert _units(entry)[1].data["key"] == "slave_4"
+        assert result.get("type") == FlowResultType.ABORT
+        assert result.get("reason") == "already_configured"
 
     async def test_an_added_unit_gets_a_key_no_unit_uses(
         self, hass: HomeAssistant, entry: MockConfigEntry
@@ -1157,6 +1476,110 @@ class TestUnitSubentryFlow:
 
 
 class TestReconfigureFlow:
+    async def test_switch_transport_preserves_entry_and_subentries(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        entry_id = entry.entry_id
+        subentry_ids = set(entry.subentries)
+        registry = er.async_get(hass)
+        entity = registry.async_get_or_create(
+            "fan",
+            DOMAIN,
+            room_entity_unique_id(entry.entry_id, "unit_1", "supply_level"),
+            config_entry=entry,
+            config_subentry_id=next(iter(subentry_ids)),
+        )
+        with (
+            _patch_validate_ok(),
+            _patch_resolve_unchanged(),
+            patch.object(hass.config_entries, "async_schedule_reload"),
+        ):
+            result = await entry.start_reconfigure_flow(hass)
+            _assert_connection_visibility(result)
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                    CONF_HOST: "Bridge.Local.",
+                    CONF_NETWORK_PORT: 5020,
+                },
+            )
+            assert result.get("reason") == "reconfigure_successful"
+            assert entry.unique_id == "rtu-over-tcp://bridge.local.:5020"
+            assert entry.data == {
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "bridge.local.",
+                CONF_NETWORK_PORT: 5020,
+            }
+            assert entry.entry_id == entry_id
+            assert set(entry.subentries) == subentry_ids
+            assert registry.async_get(entity.entity_id) == entity
+            result = await entry.start_reconfigure_flow(hass)
+            _assert_connection_visibility(result)
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_SERIAL,
+                    CONF_PORT: "/dev/ttyACM1",
+                    CONF_NETWORK_PORT: -1,
+                },
+            )
+        assert result.get("reason") == "reconfigure_successful"
+        assert entry.data == {CONF_PORT: "/dev/ttyACM1"}
+        assert entry.unique_id == "/dev/ttyACM1"
+        assert entry.entry_id == entry_id
+        assert set(entry.subentries) == subentry_ids
+        assert registry.async_get(entity.entity_id) == entity
+
+    async def test_failed_network_reconfigure_does_not_change_entry(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        original_data = dict(entry.data)
+        with patch(
+            f"{_PATCHES_BASE}.read_gateway_node_count",
+            new=AsyncMock(side_effect=MeltemConnectionError("bridge offline")),
+        ):
+            result = await entry.start_reconfigure_flow(hass)
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                    CONF_HOST: "bridge.local",
+                    CONF_NETWORK_PORT: 15020,
+                },
+            )
+        assert result.get("errors") == {"base": "cannot_connect"}
+        assert dict(entry.data) == original_data
+        _assert_connection_visibility(result)
+        defaults = _flow_schema(result)({})
+        assert defaults[CONF_CONNECTION_TYPE] == CONNECTION_RTU_OVER_TCP
+        assert defaults[CONF_HOST] == "bridge.local"
+        assert defaults[CONF_NETWORK_PORT] == 15020
+
+    async def test_switch_to_duplicate_network_endpoint_aborts(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        MockConfigEntry(
+            domain=DOMAIN,
+            unique_id="rtu-over-tcp://bridge.local:5020",
+            data={
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "bridge.local",
+                CONF_NETWORK_PORT: 5020,
+            },
+        ).add_to_hass(hass)
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "BRIDGE.LOCAL",
+                CONF_NETWORK_PORT: 5020,
+            },
+        )
+        assert result.get("reason") == "already_configured"
+        assert entry.data[CONF_PORT] == _STABLE_PORT
+
     async def test_reconfigure_of_a_loaded_entry_leaves_the_reload_to_its_listener(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:

@@ -38,6 +38,21 @@ class NewUnitIssue:
 
         return self._reported or ()
 
+    def restore(self, configured: Iterable[int]) -> None:
+        """Drop newly configured units from an active issue of an earlier run."""
+
+        issue = ir.async_get(self._hass).async_get_issue(DOMAIN, self._issue_id)
+        if issue is None or not issue.active:
+            return
+        placeholders = issue.translation_placeholders or {}
+        reported = [
+            int(part)
+            for item in placeholders.get("addresses", "").split(",")
+            if (part := item.strip()).isdigit()
+        ]
+        self._reported = tuple(sorted(set(reported)))
+        self.update(self._reported, configured)
+
     def update(self, reported: Iterable[int], configured: Iterable[int]) -> None:
         """Raise, update, or clear the issue for the latest unit list of the gateway."""
 

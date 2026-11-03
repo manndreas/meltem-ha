@@ -32,11 +32,12 @@ from .const import (
     CO2_PROFILES,
     CONTROL_SETTING_REGISTERS,
     DEFAULT_GATEWAY_DEVICE_ID,
+    EXTERNAL_INPUT_LIMITS,
+    EXTERNAL_INPUT_REGISTERS,
+    FIXED_TIMEOUT,
     HUMIDITY_PROFILES,
     MODE_MANUAL,
     MODE_OFF,
-    MODE_SENSOR_CONTROL,
-    MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE,
     MODE_UNBALANCED,
     PLAIN_PROFILES,
     READ_GROUP_ENTITY_KEYS,
@@ -46,6 +47,7 @@ from .const import (
 )
 from .device import MeltemGateway, MeltemRoomDevice
 from .device.transport import NO_ANSWER_ERRORS, ReadQuarantinedError, RequestOutcome
+from .environment import absolute_humidity
 from .modbus_helpers import (
     PLAUSIBLE_RANGES,
     MeltemConnectionError,
@@ -98,7 +100,7 @@ _FLAG_FIELDS = frozenset(
 _BRIDGE_RF_COMPONENTS = frozenset(
     {
         "rf_comm_status",
-        "rf_fault_status",
+        "device_fault",
         "value_error_status",
         "rf_last_seen_age",
         "rf_signal_strength",
@@ -106,21 +108,33 @@ _BRIDGE_RF_COMPONENTS = frozenset(
 )
 _OPTIONAL_DIAGNOSTIC_COMPONENTS = (_BRIDGE_RF_COMPONENTS - {"rf_comm_status"}) | {"fan_motor_hours"}
 
+# The two APK-only fields come from the block the VOC profile reads anyway.
 _AIR_QUALITY_FIELDS: tuple[tuple[str, str, frozenset[str]], ...] = (
     ("humidity_extract_air", "air_quality", HUMIDITY_PROFILES),
     ("co2_extract_air", "air_quality", CO2_PROFILES),
+    ("voc_extract_air", "air_quality", VOC_PROFILES),
+    ("co2_supply_air", "air_quality", VOC_PROFILES),
     ("humidity_supply_air", "air_quality", HUMIDITY_PROFILES),
     ("voc_supply_air", "air_quality", VOC_PROFILES),
 )
 
+# Sensors that define a profile. Only the app's register map knows the other two
+# (docs/dev/MELTEM.md), so a placeholder there says nothing about the profile.
+PROFILE_SENSORS = frozenset(
+    {"humidity_extract_air", "humidity_supply_air", "co2_extract_air", "voc_supply_air"}
+)
+
 
 def placeholder_sensors(room: RoomConfig) -> frozenset[str]:
-    """Return the sensor fields of a unit that can report a "no sensor" placeholder."""
+    """Return the profile sensors of a unit that can report a "no sensor" placeholder."""
 
     return frozenset(
         name
         for name, _component, profiles in _AIR_QUALITY_FIELDS
-        if name in PLAUSIBLE_RANGES and room.profile in profiles and room.supports(name)
+        if name in PROFILE_SENSORS
+        and name in PLAUSIBLE_RANGES
+        and room.profile in profiles
+        and room.supports(name)
     )
 
 
@@ -188,12 +202,13 @@ class _ReadBackoff:
             return False
         return True
 
-    def mark_failure(self, key: _BackoffKey) -> None:
+    def mark_failure(self, key: _BackoffKey, *, now: float | None = None) -> None:
         """Pause the read twice as long as last time, up to the maximum."""
 
         failures = min(self.failures.get(key, 0) + 1, self.max_failures)
         self.failures[key] = failures
-        self.until[key] = time.monotonic() + min(
+        base = time.monotonic() if now is None else now
+        self.until[key] = base + min(
             self.max_seconds,
             self.start_seconds * 2 ** (failures - 1),
         )
@@ -224,11 +239,14 @@ class MeltemModbusClient:
         on_request: Callable[[RequestOutcome], None] | None = None,
         on_link_recycle: Callable[[], None] | None = None,
         message_spacing: float = REQUEST_GAP_SECONDS,
+        timeout: float = FIXED_TIMEOUT,
     ) -> None:
         self._unit_factory = unit_factory
         self._port = port
         self._message_spacing = message_spacing
+        self._timeout = timeout
         self._policy = new_transport_policy(
+            timeout=timeout,
             on_request=on_request,
             on_link_recycle=on_link_recycle,
         )
@@ -294,6 +312,7 @@ class MeltemModbusClient:
                 slave,
                 self._policy,
                 message_spacing=self._message_spacing,
+                timeout=self._timeout,
             )
         return unit
 
@@ -341,6 +360,19 @@ class MeltemModbusClient:
         async with self._gateway_operation(f"reading app setup code for room {room.key}"):
             return await self._room_device(room).async_read_app_setup_code()
 
+    async def async_read_external_input_setting(self, room: RoomConfig, key: str) -> int:
+        """Read one documented external-input setting without changing it."""
+
+        if key not in EXTERNAL_INPUT_REGISTERS:
+            raise MeltemModbusError(f"Unknown external input setting {key!r}")
+        address = EXTERNAL_INPUT_REGISTERS[key]
+        async with self._gateway_operation(f"reading {key} for room {room.key}"):
+            (value,) = await self._unit(room.slave).read_holding_registers(address, 1)
+        minimum, maximum = EXTERNAL_INPUT_LIMITS[key]
+        if not minimum <= value <= maximum:
+            raise MeltemModbusError(f"Invalid {key} readback: {value}")
+        return value
+
     async def async_read_gateway_node_count(self) -> int:
         """Read how many devices are registered with the gateway."""
 
@@ -380,8 +412,22 @@ class MeltemModbusClient:
         async with self._gateway_operation("validating the gateway"):
             await read_gateway_node_count(unit)
 
-    async def discover_gateway_units(self, start: int, end: int) -> list[int]:
-        """Discover configured unit addresses using the current gateway link."""
+    async def async_disconnect_gateway(self) -> None:
+        """Release the live connection so a replacement endpoint can be checked."""
+
+        async with self._gateway_operation("disconnecting the gateway"):
+            try:
+                await self._unit(DEFAULT_GATEWAY_DEVICE_ID).disconnect()
+            except ModbusConnectionError as err:
+                _LOGGER.debug("Dropping the Meltem gateway link failed: %s", err)
+
+    async def discover_gateway_units(
+        self, start: int, end: int, *, strict: bool = False
+    ) -> list[int]:
+        """Discover configured unit addresses using the current gateway link.
+
+        With ``strict`` a failed read raises instead of reporting no units.
+        """
 
         async with self._gateway_operation("discovering units"):
             return await discover_gateway_nodes(
@@ -389,6 +435,7 @@ class MeltemModbusClient:
                 self._port,
                 start=start,
                 end=end,
+                strict=strict,
             )
 
     async def probe_slave_details(
@@ -507,6 +554,7 @@ class MeltemModbusClient:
         for groups in active_reads.values():
             job.attempted_groups.update(groups)
 
+        started_at = time.monotonic()
         try:
             report = await device.async_poll(list(active_reads))
         except ModbusConnectionError:
@@ -537,7 +585,7 @@ class MeltemModbusClient:
                 component in _OPTIONAL_DIAGNOSTIC_COMPONENTS
                 and isinstance(error, ModbusExceptionError)
             ):
-                self._component_backoff.mark_failure((slave, component))
+                self._component_backoff.mark_failure((slave, component), now=started_at)
             else:
                 self._component_backoff.clear((slave, component))
         return report.updated
@@ -634,22 +682,30 @@ class MeltemModbusClient:
         """
 
         staged = self._staged_mode_registers.get(room.slave, frozenset())
-        if left_over := staged - {name for name, _ in writes}:
-            _LOGGER.warning(
-                "Room %s (slave %s): %s also applies %s, left staged by an interrupted command",
-                room.name,
-                room.slave,
-                action,
-                ", ".join(sorted(left_over)),
-            )
         written: list[str] = []
         try:
             async with self._gateway_operation(f"{action} for room {room.key}"):
                 device = self._room_device(room)
                 for name, value in writes:
-                    # A write without a response may still have reached the unit.
+                    try:
+                        await device.mode.write(name, value)
+                    except ModbusExceptionError:
+                        # The unit refused this register, so it holds nothing staged.
+                        raise
+                    except BaseException:
+                        # A write without a response may still have reached the unit.
+                        written.append(name)
+                        raise
                     written.append(name)
-                    await device.mode.write(name, value)
+                if left_over := staged - {name for name, _ in writes}:
+                    _LOGGER.warning(
+                        "Room %s (slave %s): %s also applies %s, left staged by an "
+                        "interrupted command",
+                        room.name,
+                        room.slave,
+                        action,
+                        ", ".join(sorted(left_over)),
+                    )
                 await device.command.write("apply", 0)
         except BaseException:
             if written:
@@ -684,6 +740,7 @@ class MeltemModbusClient:
 
         status = device.mode_status
         job.attempted_groups.update(_MODE_GROUPS)
+        started_at = time.monotonic()
         try:
             await status.async_update()
         except ModbusConnectionError:
@@ -692,19 +749,15 @@ class MeltemModbusClient:
             if isinstance(err, NO_ANSWER_ERRORS):
                 job.silent_error = err
             elif isinstance(err, ModbusExceptionError):
-                self._mode_backoff.mark_failure(key)
+                self._mode_backoff.mark_failure(key, now=started_at)
             job.record_error(_MODE_GROUPS, err)
             return None
 
         self._mode_backoff.clear(key)
         job.unit_success_groups.update(_MODE_GROUPS)
-        mode = cast(int, status.mode)
-        current_level = cast(int, status.current_level)
-        if mode == MODE_SENSOR_CONTROL:
-            current_level = MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE.get(current_level, current_level)
         return ModeRead(
-            mode=mode,
-            current_level=current_level,
+            mode=cast(int, status.mode),
+            current_level=cast(int, status.current_level),
             extract_target_level=cast(int, status.extract_target_level),
         )
 
@@ -785,9 +838,9 @@ def _due_fields(room: RoomConfig, plan: RefreshPlan) -> dict[str, _FieldRead]:
         )
     add("rf_comm_status", "rf_comm_status", "status", plan.refresh_status, attribute="value")
     add(
-        "rf_fault_status",
-        "rf_fault_status",
-        "rf_fault",
+        "device_fault",
+        "device_fault",
+        "device_fault",
         plan.refresh_rf_diagnostics,
         attribute="value",
     )
@@ -854,7 +907,7 @@ def _fresh_values(
             job.sensor_values.add(name)
         if name == "rf_signal_strength" and value >= 0x8000:
             value -= 0x10000
-        if name == "rf_fault_status":
+        if name == "device_fault":
             values[name] = None if value == 0xFFFF else bool(value)
         elif name == "value_error_status":
             values[name] = bool(value) if value in (0, 1) else None
@@ -862,6 +915,14 @@ def _fresh_values(
             values[name] = bool(value) if name in _FLAG_FIELDS else value
         if values[name] is not None and source.component not in _BRIDGE_RF_COMPONENTS:
             job.value_groups.add(source.group)
+    for result_key, temperature_key, humidity_key in (
+        ("absolute_humidity_extract_air", "extract_air_temperature", "humidity_extract_air"),
+        ("absolute_humidity_supply_air", "supply_air_temperature", "humidity_supply_air"),
+    ):
+        if temperature_key in due or humidity_key in due:
+            values[result_key] = absolute_humidity(
+                values.get(temperature_key), values.get(humidity_key)
+            )
     return values
 
 

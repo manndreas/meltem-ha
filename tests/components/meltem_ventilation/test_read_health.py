@@ -30,7 +30,8 @@ def _freeze_now(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(read_health, "dt_util", SimpleNamespace(utcnow=lambda: _NOW))
 
 
-def test_airflow_freshness_limits() -> None:
+def test_documented_freshness_limits() -> None:
+    """docs/DIAGNOSTICS.md states these numbers; changing one must update the docs."""
     assert AIRFLOW_STALE_AFTER_SECONDS == 30
     assert READ_FAILURE_THRESHOLD == 3
 
@@ -125,17 +126,34 @@ def test_failure_threshold_distinguishes_fresh_from_available(group: str, failur
     ("failures", "stale"),
     [(1, None), (READ_FAILURE_THRESHOLD - 1, None), (READ_FAILURE_THRESHOLD, True)],
 )
-def test_never_successful_reads_have_unknown_freshness_until_failure_threshold(
+def test_never_successful_timeouts_have_unknown_freshness_until_failure_threshold(
     failures: int, stale: bool | None
 ) -> None:
     state = RoomState().with_read_health(
         "flow",
-        ReadHealth(last_attempt=_NOW, consecutive_failures=failures, last_error="timeout"),
+        ReadHealth(
+            last_attempt=_NOW,
+            consecutive_failures=failures,
+            last_error="timeout",
+            last_error_timed_out=True,
+        ),
     )
 
     assert not read_health.group_fresh(state, "flow")
     assert not read_health.group_available(state, "flow")
     assert read_health.group_stale(state, "flow") is stale
+
+
+def test_a_refused_group_that_was_never_delivered_is_stale_at_once() -> None:
+    """A refusal backs the group off while its entities are already unavailable."""
+    state = RoomState().with_read_health(
+        "flow_control",
+        ReadHealth(last_attempt=_NOW, consecutive_failures=1, last_error="illegal address"),
+    )
+
+    assert not read_health.group_available(state, "flow_control")
+    assert read_health.group_stale(state, "flow_control") is True
+    assert read_health.data_health_stale(state, writes_unhealthy=False, has_writes=False) is True
 
 
 def _outcome(

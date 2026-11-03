@@ -11,10 +11,10 @@ Purpose:
 - avoid broad blind scans across the full register space
 - make before/after captures reproducible
 
-This document is intentionally about local Modbus-facing reverse engineering,
-not the cloud API.
-
-For cloud-side app traffic mapping, see `meltem-cloud-ha/docs/SETTING_MAPPING.md`.
+This document is intentionally about local Modbus-facing reverse engineering.
+The static APK analysis, including the cloud API calls found in the app, is
+summarized in [APK_ANALYSIS.md](APK_ANALYSIS.md); cloud API register names do
+not imply corresponding local Modbus registers.
 
 The original raw captures for the March/April 2026 experiments were local
 working files and are not archived in this repository. Their recorded
@@ -25,12 +25,35 @@ evidence is preserved under [`measurements/`](measurements/).
 
 What is already clear:
 
-- runtime control over USB / serial Modbus is well established
+- runtime control over Modbus RTU via USB serial works; RTU over TCP is
+  implemented but not yet tested with a real bridge
+  ([HW-11](HARDWARE_BACKLOG.md#hw-11--rtu-over-tcp-through-a-real-bridge))
 - app-side settings such as keypad airflow defaults and intensive ventilation
   parameters appear to remain effective offline later on the physical device
 - therefore the effective configuration is very likely persisted locally
 - however, the concrete local register write path for many app settings is not
   yet identified in the tested holding-register ranges
+- APK 1.17 confirms that tags `11..15` (intensive airflow/duration and keypad
+  LOW/MED/HIGH) use the app's cloud tag protocol, not direct writes to their
+  tag numbers. No equivalent local Modbus mapping or safe write sequence was
+  found; see [APK_ANALYSIS.md](APK_ANALYSIS.md#what-the-app-settings-screen-does).
+  The airflows behind the app's own extract/supply buttons are not read from
+  the unit: the app stores them on the phone and sends them with every
+  command. The unit's supply-only/extract-only settings (tags `42..47`) are
+  separate. Night-ventilation tags `58..61` have no reachable page in the app.
+- New app-only A-B-A tests for LOW, MED, intensive airflow, intensive
+  duration, and both extract/supply shortcuts on slave `4` made local `40901`
+  follow each newly saved value and its restore. Before tests after LOW it held
+  the preceding setting's restored value. Expanded snapshots of known
+  readable islands exposed no direct per-setting value; only undecoded `520xx`
+  shadow/meta words, RF fields, and temperature readings varied. See the
+  [LOW](MELTEM.md#app-saved-low-setting-a-b-a-on-2026-11-03),
+  [MED](MELTEM.md#app-saved-med-setting-a-b-a-on-2026-11-03),
+  [intensive airflow](MELTEM.md#app-saved-intensive-airflow-a-b-a-on-2026-11-03),
+  [intensive duration](MELTEM.md#app-saved-intensive-duration-a-b-a-on-2026-11-03),
+  [extract shortcut](MELTEM.md#app-saved-extract-shortcut-a-b-a-on-2026-11-03),
+  and [supply shortcut](MELTEM.md#app-saved-supply-shortcut-a-b-a-on-2026-11-03)
+  measurements.
 
 What is not yet justified:
 
@@ -309,6 +332,16 @@ Interpretation:
   through the app, but the idle value `1` and the MED mismatch show that it is
   likely shared, selected, or otherwise overwritten. Do not treat it as a
   stable per-setting address.
+- A static explanation exists for that pattern: opening the app's Settings
+  page selects all of its tags one after another through `40911` and reads
+  each through `40901`, ending with tags `9` (default 20), `10` and `76`
+  (default 1 each). A save does not cancel a read already in progress, and the
+  write itself (`40949 = [tag, 0, raw, 0]`) does not touch the selector. If
+  the cloud forwards these selector writes to the unit, `40901` would show the
+  last tag read or written, not a fixed setting
+  ([APK_ANALYSIS.md](APK_ANALYSIS.md#reads-triggered-by-opening-a-page)). This
+  is unconfirmed; the read-only check is
+  [H-12](LIVE_GATEWAY_TESTS.md#h-12--app-settings-page-and-40901).
 - App changes to MED and HIGH did affect the device as expected, but this does
   not establish a local Modbus write sequence.
 - The cloud API uses `40911` to select a field and `40949` to write it. Neither
@@ -323,8 +356,10 @@ Interpretation:
   - humidity control thresholds and airflow bounds
   - CO2 control thresholds and airflow bounds
   - external control input airflow and delays
-- on slave `4`, `40901` was locally readable and sometimes tracked an app-edited
-  keypad value, but not consistently enough to treat it as a per-setting value
+- on slave `4`, `40901` tracked app-saved LOW, MED, intensive airflow/duration,
+  and extract/supply shortcut values in A-B-A tests, but at each test after LOW
+  began with the previous setting's restored value; it is a shared/readback
+  lead, not an established persistent per-setting register or local write target
 - runtime preset writes exist in `41120..41124` plus commit register `41132`
 - additional local shadow/meta ranges exist and do move when settings or panel
   actions change:
@@ -467,6 +502,14 @@ Why this family matters:
 - it may explain why runtime shortcut writes work but the stored defaults are
   still unreadable
 
+Static app evidence (2026-11-03): the app's `Abluft` / `Zuluft` buttons do not
+use these unit parameters. They keep both airflows on the phone per device and
+send them with each `41120` mode-`4` command. The unit parameters 42..47 are
+edited only on the app's Settings page through the tag protocol (German labels
+`Zuluftbetrieb Zuluft/Abluft` and `Abluftbetrieb Zuluft/Abluft`), and the
+manufacturer says they apply to InControl and the remote control. See
+[APK_ANALYSIS.md](APK_ANALYSIS.md#extract-only-and-supply-only-airflows).
+
 Status:
 
 - lower priority than intensive ventilation and keypad defaults
@@ -501,6 +544,13 @@ Not yet captured at all:
 - standby settings
 - acoustic signals
 - VOC / CO2 special configuration pages
+
+The app's Settings page shows standby (`7..10`), buzzer (`76`) and, on
+M-WRG-II, the two-sensor VOC/CO2 control (`151..154`); the Interval and
+Temperature pages show `66..69` and `65`, `81`, `82`. Opening any of these
+pages already performs one selector write per tag
+([APK_ANALYSIS.md](APK_ANALYSIS.md#reads-triggered-by-opening-a-page)), so a
+capture baseline must be taken before the page is opened, not after.
 
 ## Capture workflow
 
@@ -563,14 +613,17 @@ Stop pursuing a family for now if:
 The point is to find a stable local write model, not to spend unlimited time
 on speculative search.
 
-Current status after the latest keypad and intensive runs:
+Current status after the app-setting A-B-A runs:
 
 - local persistence is well supported, but a directly usable local write
   sequence for app-side defaults is still missing
 - the 2026-10-09 run-on-time A-B-A test still found no direct setting field;
   only shadow/meta drift was observed
-- the 2026-10-16 LOW/HIGH reads sometimes tracked app values through `40901`,
-  while MED did not; treat `40901` as a likely shared/overwritten readback
+- the 2026-11-03 app-only A-B-A tests for LOW, MED, intensive airflow/duration,
+  and extract/supply shortcuts made `40901` follow the last saved value, then
+  its restore; tests after LOW started with the previous setting's restored
+  value. Expanded known-island snapshots found no direct per-setting register;
+  only shadow/meta words, RF readings, and temperature values changed
 - the vendor Modbus table does not document keypad-default writes; no
   `40xxx` write was attempted
 - further progress needs a documented local write sequence or a separately

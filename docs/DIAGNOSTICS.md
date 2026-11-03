@@ -36,6 +36,13 @@ configured units, a lower request-rate cap, or transport retries can delay the
 initial scan and later refreshes; the intervals above are targets, not
 guaranteed delivery times.
 
+On units with humidity sensors, **Absolute extract air humidity** and
+**Absolute supply air humidity** estimate g/m³ from the matching temperature
+and relative humidity. Both sensors are disabled by default and add no
+Modbus reads. A result is unknown if either input is missing or the inputs
+were not obtained together; stale temperature-group data also makes the
+sensor unavailable.
+
 ## Read health and availability
 
 After three consecutive transport failures (timeouts or lost connections),
@@ -55,7 +62,7 @@ successful unit response.
 
 **Days until filter change** and **Read health** are enabled by default.
 **Operating hours**, **RF communication status**, **Modbus slave ID**, and
-**Modbus device path** remain disabled by default. **App setup code** is also
+**Modbus endpoint** remain disabled by default. **App setup code** is also
 disabled by default; enabling it reads the two identity registers `40000..40001`
 once for that entity load and exposes the R-code printed below the unit's
 DataMatrix. This is an app-setup identifier, not the manufacturer's serial
@@ -71,20 +78,54 @@ unit **dBm is provisional**: the upstream register map specifies the signed
 encoding but does not establish the physical unit for this register. See the
 [hardware observations](dev/MELTEM.md) for the measured values.
 
-These room diagnostics use separate register reads and read-health groups;
-an unsupported diagnostic does not invalidate the existing measurements or
-controls. The room reads follow the normal supported-profile polling even
-when their entities are disabled; hiding them does not stop those reads.
+These RF and operating-hour room diagnostics use separate register reads and
+read-health groups; an unsupported diagnostic does not invalidate the existing
+measurements or controls. Their reads follow the normal supported-profile
+polling even when their entities are disabled; hiding them does not stop those
+reads.
 
-**RF fault status** (`40103`) and **Value error** (`40104`) are disabled by
+**External control input airflow**, **switch-on delay**, and **run-on time**
+are the configured settings for the unit's physical external control input.
+The manufacturer describes this as a mains-voltage input for a compatible switch,
+timer, motion detector, or similar accessory; an active input takes priority
+over Modbus commands. These sensors show configuration, **not** whether the
+input is currently active. They do not control or switch the input.
+
+The sensors are disabled by default; enabling one reads only its own documented
+register (`42007`, `42008`, or `42009`), approximately once per hour. Disabling
+it stops those reads. Airflow is shown in percent and the delays in minutes;
+values outside the manufacturer register ranges are rejected. A failed or
+unsupported read does not make the room or other entities unavailable. A
+failed read is retried after one minute, then after two, four, and so on, up to
+the hourly interval; units answered these registers with a temporary refusal
+while their radio link was starting. A cached value expires after three hours
+without a successful read. Do not
+connect an HA GPIO or relay directly to the unit's mains-voltage input; wiring
+and compatible accessories must follow the unit manual and be handled by a
+qualified installer.
+
+The `-FC` profiles provide extract-air CO2 and the `O/VOC-AUL` profile also
+supply-air VOC. Both use ppm and the Home Assistant CO2 or VOC device class,
+and are enabled by default on the profiles that carry the sensor. The
+`O/VOC-AUL` profile additionally offers **Supply air CO2** (`41012`) and
+**Extract air VOC** (`41008`). Only the Meltem app's register map describes
+these two registers, and no unit has yet reported a value there, so both
+sensors are disabled by default and never raise a repair issue. They come from
+the same request as the other air-quality values and add no Modbus reads.
+`32767` is reported as unknown; other values outside the same plausible range
+used for the corresponding existing sensor are rejected.
+
+**Device fault** (`40103`) and **Value error** (`40104`) are disabled by
 default. They use the upstream Airios interpretation: fault status is off for
 `0`, on for nonzero values except `0xFFFF`, and unknown for `0xFFFF`. Value
 error is off for `0`, on for `1`, and unknown for other values. A later unknown
 value clears the previous binary state instead of retaining a healthy value.
-RF fault status is distinct from the existing **Device error** (`41016`);
-it is not specifically labelled as a fan failure. Value error indicates one
-or more invalid values, not which sensor failed. These meanings have not been
-independently confirmed by inducing faults on Meltem hardware.
+Device fault is distinct from the existing **Device error** (`41016`);
+it is not specifically labelled as a fan failure. The Meltem app calls
+`40103` "Device Fault" and asks to restart the unit and to contact Meltem if
+either register reports `1`. Value error indicates one or more invalid values,
+not which sensor failed. These meanings have not been independently confirmed
+by inducing faults on Meltem hardware.
 
 Each unit also provides **Reachable**, enabled by default, and an optional
 **Last successful update** timestamp. These diagnostics remain visible during
@@ -97,7 +138,9 @@ time during an outage; it does not promise that every group is current.
 
 **Read health** stays available even when a unit or individual read group is
 unavailable. It turns on when a read group is stale (three consecutive failed
-read jobs or its stale interval has elapsed) or while a recent command has
+read jobs or its stale interval has elapsed), when the unit refused a group it
+has never delivered (for example a mode status the unit does not support), or
+while a recent command has
 failed, mismatched, or remained unconfirmed. Its attributes show details per
 group and for recent commands. It refreshes locally every 10 seconds, without
 extra Modbus requests, so stale readings, confirmation deadlines, and expired
@@ -106,11 +149,13 @@ state is known, it reports unknown rather than unavailable.
 
 An interrupted command may already have reached the unit. It is marked
 unconfirmed, and direction or operating-mode changes that depend on the old
-airflow are refused until a fresh mode read is available.
+airflow are refused until a fresh mode read is available. A unit whose mode
+status cannot be read reports its measured airflow instead, so for such a unit
+the next successful airflow read ends the refusal.
 
 ### Diagnostics download privacy
 
-The diagnostics download redacts the configured serial port and R-codes,
+The diagnostics download redacts the configured serial port or network host and R-codes,
 including R-codes in legacy unit previews and error messages. This does not
 change the saved configuration, device registry, or optional app setup code
 entity. Review any download before sharing it because other contextual data,
@@ -119,7 +164,11 @@ such as unit names, may still be present.
 The download lists every unit under `entry.units` with its stored address,
 profile, and identity. Under `coordinator`, `next_poll_delay_seconds` is the
 time the scheduler waits after its current tick, and `poll_scheduled` shows
-that the next tick is planned.
+that the next tick is planned. Each room state also includes the last raw
+mode-status registers `41100..41102`, before mode decoding. Their `fresh`
+flag distinguishes a current successful mode read from retained older values;
+the accompanying flow-control read health records its last successful time.
+This adds no register reads.
 
 ### Repair notices
 
@@ -133,9 +182,12 @@ reload or check.
   gateway (two small requests). A unit that is paired in the Meltem app but not
   set up in Home Assistant raises this notice with its Modbus address. Add it
   with **Add unit** on the integration page, or run **Scan for new units** in
-  the options. The notice disappears once every reported unit is set up.
+  the options. The notice disappears once every reported unit is set up. A
+  check the gateway does not answer keeps the notice as it is and is repeated
+  after a minute.
 - **A sensor of a unit is not reported**: the selected profile includes a
-  humidity, CO2, or VOC sensor, but the unit reports that it has no reading
+  humidity, extract-air CO2, or supply-air VOC sensor, but the unit reports
+  that it has no reading
   for about three minutes in a row. The sensor shows unknown meanwhile instead
   of its last value. Check that the profile matches the type plate and change
   it with **Reconfigure** on the unit; if it does, the sensor may be faulty.
@@ -344,11 +396,23 @@ that has recovered since, so check the time.
 ## Serial port shared with another integration
 
 The serial link is handled by Home Assistant's Modbus integration, so other
-integrations can use the same port. They must use the same serial settings
-(19200 baud, 8E1); otherwise setup reports that the port is already in use.
+integrations can use the same port. They must use the same link settings;
+otherwise setup reports that the port is already in use. For USB these are
+19200 baud, 8E1. An RTU-over-TCP endpoint is opened as a `socket://` link with
+115200 baud, 8N1; Home Assistant's own Modbus integration uses the same
+settings for an `rtuovertcp` hub, while the gateway's serial settings apply on
+the bridge side.
 The longest timeout any of them asks for applies to all requests on that
-port, so a long timeout elsewhere slows down this integration when a unit
-does not answer.
+endpoint, so a long timeout elsewhere slows down this integration when a unit
+does not answer. The integration requests 0.8 seconds for USB and 5 seconds
+for RTU over TCP. The network timeout covers both connection establishment
+and Modbus responses.
+
+When reconfiguring a loaded network connection, the integration disconnects
+the current shared link while it checks the replacement. Other integrations
+using that link can be interrupted and will reconnect on their next request.
+If another integration reconnects during the check, a bridge that accepts only
+one client may still reject the replacement connection.
 
 ## Logs
 

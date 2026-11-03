@@ -55,6 +55,21 @@ The same gateway still answered uptime at `41019` and discovery at `43901` /
 `0`, report-server-ID `0x11`, and device-identification `0x2B/0x0E` returned
 Modbus exception `0x01` on the gateway and unit `2`.
 
+On 2026-11-03 the same four gateway registers again each returned `0x02`.
+Uptime increased from `259` to `630` seconds between probes, and discovery
+returned six units. A subsequent ten-round discovery matched the same list in
+every round. Under the G-2 pass criterion in force at the time, the missing
+registers meant a formal failure even though the exceptions matched the
+previous observation. Raw logs are local, not archived: `p3-gateway.txt`,
+`g2-repeat.txt`, and `g3-r12.txt`.
+
+With the user's agreement, G-2 was then corrected to recognize the four known
+`0x02` replies without accepting timeouts or unexpected errors. A new pair
+of checks at 01:16:18 and 01:22:10 passed the revised criterion: all eight
+individual reads returned `0x02`, the six-node list was unchanged, and uptime
+increased from `1613` to `1965` seconds over 352 seconds. The logs
+`g2-revised-first.txt` and `g2-revised-second.txt` are local, not archived.
+
 ### Network settings, MAC address, and uptime width
 
 Read-only gateway reads on 2026-10-21 established the following holding-register
@@ -73,6 +88,14 @@ registers continued to report the fallback configuration. They are therefore
 not a reliable source for the current DHCP lease. The active address was
 identified separately from the LAN's ARP mapping and is omitted.
 
+The Meltem app reads the MAC at `41012..41014` and its cloud URL at
+`41034..41090` over Modbus TCP, and its setup writes a credential to
+`41030..41033`, the URL with the bridge ID to `41034..41090` and a zero GUID
+field to `41091..41098` on the gateway
+([APK_ANALYSIS.md](APK_ANALYSIS.md#gateway-modbus-tcp-frames)). No
+measurement documented here has read those gateway registers, and none
+should: they hold the gateway's credential and cloud binding.
+
 The Airios `BRDG-02EM23` implementation in
 [`pyairios`](https://github.com/scabrero/pyairios) identifies `41019` as uptime
 and reads it as a 32-bit value. A live read of `41019..41020` returned
@@ -80,6 +103,35 @@ and reads it as a 32-bit value. A live read of `41019..41020` returned
 still `0`. This confirms the low-word-first 32-bit seconds representation used
 by the integration. The gateway hardware was identified by the user as the
 same `BRDG-02EM23` model.
+
+### Read-only Modbus TCP comparison on 2026-11-03
+
+The user supplied the gateway's LAN address and reported that the official
+app could show the gateway and slave `4`. No reset, gateway configuration
+change, or Modbus write was performed for this test. The address and MAC are
+intentionally omitted.
+
+- A TCP connection to port `502` succeeded. An FC03 Modbus TCP read of the
+  gateway MAC matched the three MAC words read separately over USB serial;
+  the gateway unit count and ordered address list also matched.
+- Between 00:58:35 and 00:58:40 local time, a serial → TCP → serial comparison
+  on unit `4` returned identical values for all ten requested ranges:
+  `41100×3`, `41016×3`, `41020×2`, `41103`, `41104`, `41105`, `41106`,
+  `42007`, `42008`, and `42009`. In particular, mode was `[3, 230, 0]`,
+  flags `[0, 0, 0]`, and airflow `[60, 60]` on all three paths. The two
+  transports were not used concurrently.
+- A later attempt to reconnect using `modbus-connection 4.12.7` / `tmodbus
+  1.1.0` failed at TCP connect with `ConnectionRefusedError`; no Modbus request
+  was sent by that attempt. Independent connection attempts at 01:01:49,
+  01:02:28, 01:07:18, 01:16:57, and 01:22:29 were also refused.
+
+The LAN port was therefore usable for a short read-only observation, not
+reliably available throughout the session. The cause of the later refusal,
+whether cloud state or startup timing matters, sustained operation, writes,
+and coexistence with another client remain unverified. This does not justify
+changing gateway mode, resetting it, or treating the existing RTU-over-TCP
+implementation as Modbus TCP. Local, unarchived evidence:
+`tcp-serial-compare.txt`, `tcp-values.json`, and `tcp-reconnect-result.txt`.
 
 ### Request pacing and block reads
 
@@ -90,7 +142,9 @@ same `BRDG-02EM23` model.
 - setup scans are sensitive to short timeouts
 - stable block reads: airflow `41020..41021`, status `41016..41018`,
   temperatures `41000..41005`, and air quality plus supply temperature
-  `41006..41011` (`41006..41013` on `O/VOC-AUL`)
+  `41006..41011` (`41006..41013` on `O/VOC-AUL`); the air-quality block has
+  only been read on sensorless units so far, see
+  [HW-10](HARDWARE_BACKLOG.md#hw-10--merged-air-quality-block-on-sensor-equipped-units)
 - over tmodbus (since `4.0.0`), simple reads took about `16 ms` on average,
   slightly faster than with the earlier pymodbus client (`18.6..19.5 ms`)
 - in the one request-gap sweep, gaps of `0.05..0.3 s` passed, while gap `0`
@@ -137,6 +191,9 @@ All six tested `M-WRG-II` units returned the same product registers:
 - `40021 RECEIVED_PRODUCT_ID -> 116852 (0x0001C874)`
 
 These registers are the most promising basis for telling the series apart.
+The [app catalog](APP_CATALOG.md#product-entries) independently lists the same
+ID and name for M-WRG-II and suggests another entry for M-WRG-S; the latter
+has not been verified on local hardware.
 
 Other diagnostic registers that returned stable values:
 
@@ -210,8 +267,10 @@ Potentially useful but still unclassified areas are:
   has returned both `0x05` exceptions and successful values in different
   probes.
 - within the reported `41000..41029` island: `41008`, `41012..41015`,
-  `41022..41026`, and `41028..41029` have no confirmed semantics. `41013` is
-  used as VOC for one selected profile, but that mapping remains unverified.
+  `41022..41026`, and `41028..41029` have no manufacturer-documented
+  semantics. The integration follows the APK mapping for `41008` (extract VOC),
+  `41012` (supply CO2), and `41013` (supply VOC), using ppm for these sensors;
+  `41008` and `41012` only on the `O/VOC-AUL` profile and disabled by default.
 - `41019` behaved as gateway uptime on address `1`; that meaning should not be
   assumed for room-unit addresses.
 - `40103` and `40104` returned stable values in separate probes, but are not
@@ -231,6 +290,34 @@ A read-only probe of `30000..30002` on slave `4` on 2026-11-02 ([R-8](LIVE_GATEW
 returned `IllegalDataAddressError` (`0x02`) for holding-register reads (`0x03`)
 and `IllegalFunctionError` (`0x01`) for input-register reads (`0x04`).
 
+### App-derived register survey on 2026-11-03
+
+Two paced, single-register FC03 surveys covered units `2..7`. Unit `5`
+reported software version `2584`; the others reported `2326`. The user
+identified the test unit as M-WRG-II without humidity, CO2, or VOC sensors;
+sensor-equipped variants were not available for a positive sensor test.
+The second survey, after initial `0x05` responses had cleared, found:
+
+| Unit registers | Result on all six units | Interpretation limit |
+| --- | --- | --- |
+| `41006`, `41011` | `239` | Consistent with absent humidity readings. |
+| `41007`, `41008`, `41012`, `41013` | `32767` | No valid sensor values; this does not establish sensor meaning or units. |
+| `41015`, `41019` | `49144` (`0xBFF8`), `31` | Same on units in different quick modes; semantics remain unknown. |
+| `41103..41105` | `0, 0, 0` | No active intensive/other override was verified in this survey. The app reads the active override from these registers when `41100` is `0`; see [HW-13](HARDWARE_BACKLOG.md#hw-13--temporary-override-status-4110341105). |
+| `41106` | `0` on units 2–4, `3` on units 5–7 | User reported no active app time program on units 4–7; see the controlled comparison below. |
+| `41113` | `425` (`0x01A9`) | Same despite LOW, MED and HIGH status; do not infer actual speed from this snapshot. In the app's legacy mode-word layout this is mode `1` (continuous) with speed `0`; see [HW-12](HARDWARE_BACKLOG.md#hw-12--legacy-mode-word-41113). |
+| `42006..42009` | `12, 60, 1, 15` | Repeatable raw settings, not evidence that any write is safe. They equal the app's defaults for tags `95`, `54`, `55` and `56` ([APK_ANALYSIS.md](APK_ANALYSIS.md#service-metadata-compared-with-other-sources)). |
+
+During the first survey, five units returned `0x05` for `41113` and
+`42006..42009`; unit `4` answered. The second survey returned the values above
+on all six. On unit `4`, read attempts at `40911` and `40949` returned
+`0x02`, while `40901` and `40954` returned `0x05`. These are **read** results:
+they do not prove whether a register is writable. No sensor label, range, or
+profile was changed from these observations. Five further reads on unit `4`,
+120 seconds apart, repeated all six sensor placeholders without errors.
+Raw output is local, not archived: `survey.json`, `survey-repeat.json`, and
+`sensor-long.txt`.
+
 ### Read-only spot-check of pyairios candidates (2026-10-21)
 
 After comparing the `BRDG-02EM23` bridge model and `VMD-02RPS78` controller
@@ -246,7 +333,7 @@ On gateway address `1`:
 | --- | --- | --- |
 | `41015..41016` | `[39440, 27352]`, then `[39450, 27352]` | UTC time; low-word-first decoding advanced from `2026-10-21 10:55:12` to `10:55:22 UTC`. |
 | `41017..41018` | `[46640, 27352]`, then `[46650, 27352]` | Local time; decoded values were exactly 7200 seconds ahead of UTC. |
-| `41021` / `41022` | `4` / `60` | Daylight-saving type and timezone-offset registers; the meaning of code `4` and the relationship of `60` to the observed +2-hour offset are not established. |
+| `41021` / `41022` | `4` / `60` | Daylight-saving type and timezone-offset registers; the meaning of code `4` and the relationship of `60` to the observed +2-hour offset are not established. The Meltem app sends exactly `daylightSavingType = 4`, `timeZoneOffset = 60` to the cloud after gateway setup ([APK_ANALYSIS.md](APK_ANALYSIS.md#gateway-discovery-and-setup-on-the-local-network)). |
 | `42100` / `42101` | `14` / `40` | RF messages sent in the current and previous hour; unchanged over the 10-second repeat. |
 | `42102..42103` | `[23096, 15340]` | RF load, current hour; pyairios `FloatRegister` decoding gives `0.0072129`. An earlier read gave `[15127, 15348]` (`0.0074533`). Upstream reports the decoded value directly in percent; physical calibration on Meltem remains unverified. |
 | `42104..42105` | `[28241, 15401]` | RF load, previous hour; decoded `0.0103412`, unchanged in the repeated sample. |
@@ -498,11 +585,16 @@ comparison, not a verified mapping for the locally tested `VMD-22RPS44`.
 
 ### Registers not covered by the collected manufacturer documents
 
-The integration uses `41013` as "VOC, supply air" (UINT16, `ppm`) for the
-`O/VOC-AUL` profile. An earlier version of this file listed the register and
-an `O/VOC-AUL` column (all temperatures, both humidities, CO2 and VOC) in the
-sensor matrix. None of the documents collected in `docs/meltem/` contains the
-register or the option. Their origin is unknown; treat both as unverified.
+The integration follows the APK map for `41008` (VOC, extract air), `41012`
+(CO2, supply air), and `41013` (VOC, supply air), and uses ppm for all three.
+None of the documents collected in `docs/meltem/` contains these registers or
+the `O/VOC-AUL` option. The 2026-11-03 survey covered only sensorless units, so
+it did not capture positive sensor readings; see the survey above. The app's
+normal overview does not poll `41008` or `41012` either
+([APK_ANALYSIS.md](APK_ANALYSIS.md)). The integration therefore offers those
+two only on the `O/VOC-AUL` profile, disabled by default, and uses neither for
+profile detection or repair issues; the `-FC` profiles do not read `41012`,
+since the manufacturer's unit matrix gives them an extract-air CO2 sensor only.
 
 ### Slave 5 compared with the other units
 
@@ -533,7 +625,10 @@ slave `4` and one read of the same identity fields across all six showed:
 - `41113` returned repeatable but differing values on slaves `4` and `5`, while
   other units returned exception `0x05` in that sweep. It was also unavailable
   on slaves `3` and `5` in the 2026-10-02 scan, so its availability is
-  inconsistent and its meaning remains unknown.
+  inconsistent and its meaning remains unknown. Slave `4` returned `1449`
+  (`0x05A9`) while in `[4, 0, 228]`; in the app's legacy mode-word layout that
+  is mode `5` (`OM_CROSS_AIR_SMT_OUT`), see
+  [HW-12](HARDWARE_BACKLOG.md#hw-12--legacy-mode-word-41113).
 - `52010` was `118` on both `4` and `5` in this latest comparison. Its earlier
   per-unit offset in the idle captures was not reproduced, so it is not a
   reliable model marker.
@@ -590,6 +685,159 @@ value matched the printed Device No. or Part No. Modbus function `0x2B/0x0E`
 on slave `4`. No writes were made. The `40000/40001` pair is the DataMatrix
 `R` code, not the printed Device No.; their relationship remains unknown.
 
+## App time-program comparison on 2026-11-03
+
+The user reported that slave `4` had no existing switch points and its
+time program was disabled. The user then created one temporary HIGH switch
+point for Wednesday at 12:00 in the official app, enabled the program,
+disabled it, and removed the test point. The assistant used only FC03 reads;
+the app operations themselves changed device state.
+
+| App state | Unit `41106` | Unit `49000`, `49001`, `49002` | Unit `49011..49017` |
+| --- | ---: | --- | --- |
+| Initially disabled, no points | `0` | `49001=0`; other requested schedule registers returned `0x05` in the earlier survey | `0x05` in the earlier survey |
+| Temporary point saved and program enabled | `1`, three reads | `[4, 3, 0]` | `[0, 2, 12, 0, 3, 230, 0]` |
+| Program disabled, point retained | `3`, two reads | `[4, 3, 0]` | `[0, 2, 12, 0, 3, 230, 0]` |
+| Test point removed, program disabled | `0`, two reads | `[3, 3, 0]` | `[0, 0, 0, 0, 0, 0, 0]` |
+
+Throughout the controlled readings, `41100..41102` remained `[3, 230, 0]`,
+measured airflow `[60, 60]`, and `41016..41018` `[0, 0, 0]`. The user
+confirmed the final app state as HIGH, 60/60, with an empty disabled program.
+This is one M-WRG-II unit: it supports `1` as active and `3` as inactive in
+this sequence, not a general mapping for all other values or firmware. Five
+follow-up reads at 120-second intervals continued to show the same status,
+airflow and error flags, with `41106=0` after the program was removed.
+
+The observed `49012=2`, `49013=12`, `49014=0`, `49015=3`, and `49016=230`
+match the selected Wednesday, 12:00 and HIGH app point. The time was in the
+future and the point was removed before execution; actual weekday execution
+and the cloud API payload were not captured. The result supports the
+Monday-zero app interpretation, but does not by itself prove the server's
+weekday semantics. The schedule registers becoming readable after the app
+operation also does not establish a general local schedule-read or write
+protocol. The values `49000 = 4` after saving and `3` after removing the
+point, `49001 = 3` and `49002 = 0`, and the tuple order match the action
+codes, "finished" and "OK" values and tuple layout of an uncalled `490xx`
+helper in the app
+([APK_ANALYSIS.md](APK_ANALYSIS.md#legacy-490xx-helper)).
+
+The required all-known snapshots were taken before and after the app
+interaction. Beforehand `41120..41124` and `41132` returned `0x05`; afterward
+they read as zero. Several shadow/meta words also differed, as did some
+configuration fields that had initially returned `0x05`. Thus the user's
+reported final program and the observed operating state were restored, but
+the initially unreadable internal set-register state cannot be proven
+identical. The shadow changes are not decoded as schedule data. Raw captures
+and per-phase output are local, not archived: `snapshot-before.txt`,
+`snapshot-after-schedule.txt`, `schedule-before.txt`, `schedule-active.txt`,
+`schedule-disabled.txt`, `schedule-restored.txt`, and
+`schedule-registers-active.txt`.
+
+### Two-point app schedule on 2026-11-03
+
+After confirming slave `4` was again HIGH at `60/60 m³/h`, with no stored
+switch points and `41106=0`, the user saved two future points for Wednesday:
+12:00 HIGH and 14:00 LOW. The time program stayed disabled. No Modbus write was
+performed.
+
+The app showed both points. Opening the second point for editing did not change
+the raw register reads: three rounds still returned
+`49011..49017 = [0, 2, 12, 0, 3, 230, 0]`. The user then changed the second
+point from LOW to MEDIUM and saved, still leaving the program disabled.
+Three more rounds returned exactly the same seven values. Thus this read path
+exposed the first HIGH point, but did not expose the second point or its
+changed mode. It is not yet known whether the firmware holds a selected point
+behind a selector, whether the cloud schedule is stored elsewhere, or whether
+these `490xx` values are only a status/workaround view. `49011` remained `0`;
+it was not written or advanced during this test.
+
+The user restored the second point to LOW and deleted both test points. A
+final three-round check showed `41106=0`, `49011..49017` all zero,
+`49000..49002=[3, 3, 0]`, `41100..41102=[3, 230, 0]`, airflow `60/60`, and
+error flags `[0, 0, 0]`. This verifies the app-reported cleanup and current
+operating state, but not the complete contents of any hidden stored schedule.
+Raw output is local, not archived: `two-point-schedule-before.txt`,
+`two-point-schedule-second-open.txt`, `two-point-schedule-medium.txt`, and
+`two-point-schedule-cleanup.txt`.
+
+### Cross-unit scheduler state on 2026-11-03
+
+A further read-only check on all six registered units repeated
+`41106` three times, five seconds apart. All devices reported error flags
+`41016..41018 = [0, 0, 0]`; airflow and current mode stayed stable.
+
+| Unit | `41106` in each of 3 reads | App state available |
+| ---: | ---: | --- |
+| 2 | `0` | Not checked during this comparison. |
+| 3 | `0` | Not checked during this comparison. |
+| 4 | `0` | User confirmed the temporary point was deleted and the program disabled. |
+| 5 | `3` | User had reported the app program was not active; whether points remain stored was not checked. |
+| 6 | `3` | User had reported the app program was not active; whether points remain stored was not checked. |
+| 7 | `3` | User had reported the app program was not active; whether points remain stored was not checked. |
+
+This rules against treating `41106=3` as “program active.” The controlled
+unit-4 tests below show `1` while an enabled program is running, `3` with
+points stored but the program disabled, and `0` after deleting the points.
+This mapping is observed on slave `4`; it is not proven for units 5–7. Unit 5 additionally returned
+`49000..49002 = [0, 3, 1]`, `49011=14`, and zero in `49012..49017`;
+units 2, 3, 6, and 7 mostly returned `0x05` on the individual schedule
+register reads. These differences prevent treating the `490xx` values as a
+decoded list or a universal schedule readback. No Modbus writes were made.
+The three-round raw log is local, not archived:
+`scheduler-cross-unit-repeat.txt`.
+
+At 01:16, two more reads on unit `4` still found set-side
+`41120..41124=[0, 0, 0, 0, 0]` and `41132=0`, while the read-only status
+remained `[3, 230, 0]`, airflow `60/60`, and error `0`. The test plan has no
+established restoration sequence for a set-side mode of `0`; the observed
+current HIGH state is not proof that writing HIGH would restore those set
+registers. Even with the user's permission to write unit `4`, direct
+write-based follow-ups were therefore not started. The final read at 01:22
+confirmed the same unit `4` state and no `41016` error on any of the six units.
+The read-only checks are local, not archived: `restore-state-check.txt` and
+`final-state.txt`.
+
+### Two-point schedule execution on 2026-11-03
+
+After confirming the schedule was empty and disabled, the app was used to add
+two Tuesday points on slave `4`: MED at `12:05` and HIGH at `12:10`. The app
+list showed both points. The time program was enabled through the app; no
+Modbus writes were made.
+
+The passive monitor started at `12:04:13` and ran 100 rounds at five-second
+intervals through `12:12:29`, reading measured airflow `41020..41021`, error
+flags `41016..41018`, current mode/scheduler status `41100..41106`, and the
+schedule registers `49000..49002` and `49011..49017`.
+Before activation, the stored-but-disabled schedule had `41106=3`,
+`49000..49002=[4, 3, 0]`, and
+`49011..49017=[1, 1, 12, 10, 3, 230, 0]`.
+
+| Observation | `41100..41102` | `41106` | `41020..41021` | `41016..41018` |
+| --- | --- | ---: | --- | --- |
+| Points stored, schedule disabled | `[3, 230, 0]` | `3` | `[60, 60]` | `[0, 0, 0]` |
+| Before first point | `[3, 230, 0]` | `1` | `[60, 60]` | `[0, 0, 0]` |
+| Around `12:05:03` | `[3, 229, 0]` | `1` | `[60, 60]` | `[0, 0, 0]` |
+| Around `12:05:13` | `[3, 229, 0]` | `1` | `[30, 30]` | `[0, 0, 0]` |
+| Around `12:10:03` | `[3, 230, 0]` | `1` | `[60, 60]` | `[0, 0, 0]` |
+
+Thus the Tuesday MED point took effect within about ten seconds of `12:05`;
+the HIGH point took effect at the `12:10` sample. This confirms actual
+execution on this unit and is consistent with the app's Monday-zero weekday
+mapping, but it does not establish behavior on other weekdays or firmware.
+
+Throughout the active schedule, `49000..49002` stayed `[4, 3, 0]`, while
+`49011..49017` stayed `[1, 1, 12, 10, 3, 230, 0]`. That tuple corresponds to
+the second point (with `49011=1`, consistent with index `1`: Tuesday, 12:10,
+HIGH) even while the first MED point was active. It therefore is not a live
+“currently executing point” readback in this test. It still does not prove
+whether other entries are stored behind other selector values or elsewhere.
+
+After the second point, the app was used to disable the program and delete
+both points. The app showed an empty schedule; final passive reads returned
+`41106=0`, `49000..49002=[3, 3, 0]`, `49011..49017` all zero, HIGH status
+`[3, 230, 0]`, airflow `[60, 60]`, and error flags `[0, 0, 0]`. The monitor
+and raw captures were local and are not archived.
+
 ## Temperature register quirk
 
 Observed on tested `M-WRG-GW` gateways:
@@ -602,6 +850,12 @@ Observed on tested `M-WRG-GW` gateways:
 The 2026-10-02 scan could not re-evaluate the swap: all six discovered units
 were `ii_plain`; `41000` and `41002` decoded as NaN, while `41004` was a
 plausible room temperature. Repeat the swap test on a sensor-equipped variant.
+
+The Meltem app 1.17 labels the cloud values the same way: `41000` as extract
+air (`Abluft`), `41004` as exhaust air (`Fortluft`), and it pairs `41000` with
+extract humidity `41006` for absolute humidity. That is static app metadata,
+not a measurement; see
+[APK_ANALYSIS.md](APK_ANALYSIS.md#overview-display).
 
 ## Operating mode and set registers
 
@@ -911,6 +1165,10 @@ Current interpretation:
   write them; since 3.0.0 it expresses supply-only and extract-only operation
   by setting one fan to zero, because the airflow stored for the shortcut is
   not readable
+- the static app analysis shows where that airflow comes from: the app keeps
+  both sides of each shortcut on the phone, per device, and sends them with
+  every command; it does not use an airflow stored on the unit
+  ([APK_ANALYSIS.md](APK_ANALYSIS.md#extract-only-and-supply-only-airflows))
 
 Important limitation:
 
@@ -975,6 +1233,189 @@ Important limitation:
   as likely normal device behavior, not as proof that the HA integration is
   writing the wrong runtime preset registers
 
+### App-saved LOW setting A-B-A on 2026-11-03
+
+On slave `4`, the app settings screen showed LOW `10`, MED `30`, HIGH `60`
+m³/h, and intensive airflow `80` m³/h with a 15-minute run-on time. The unit
+remained in manual HIGH at `60/60` m³/h throughout. After taking a
+read-only `keypad`-family baseline, the user-approved test changed only the
+saved LOW setting in the app from `10` to `20` m³/h, then restored it to
+`10`. No Modbus writes were made.
+
+| Phase | App LOW | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `10` | `1` in three reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `20` | `20` in two reads | unchanged | unchanged |
+| Restored | `10` | `10` in two reads | unchanged | unchanged |
+
+Read-only attempts to `40911` and `40949` returned `Illegal Data Address`
+(`0x02`) before and during the changed phase. Comparing the complete captured
+`keypad` register family before and after the app save found no change in
+product/device, measurement, mode/runtime, or documented configuration
+values. Only shadow/meta words changed: `52003..52007` went from
+`[5378, 5378, 5378, 5379, 5379]` to `[4352, 4352, 4352, 4352, 4352]`, and
+`52008..52009` from `[5379, 5379]` to `[5377, 5377]`. These words did not
+revert when LOW was restored.
+
+The repeat shows that `40901` can reflect the most recently app-saved LOW
+value, but its baseline `1` while the app setting was already `10`, and the
+lack of a corresponding stable register in the captured setting family, mean
+it is not established as the persistent LOW register or a Modbus write
+target. The shadow changes are not decoded as airflow values. The test
+confirms an app-side A-B-A change and restoration, not a local Modbus write
+sequence.
+
+### App-saved MED setting A-B-A on 2026-11-03
+
+After restoring LOW to `10`, the app showed MED `30` and the unit remained in
+manual HIGH at `60/60` m³/h. The user-approved app-only test changed MED to
+`40` m³/h and restored it to `30`.
+
+| Phase | App MED | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `30` | `10` in two reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `40` | `40` in two reads | unchanged | unchanged |
+| Restored | `30` | `30` in two reads | unchanged | unchanged |
+
+As in the LOW test, reads of `40911` and `40949` returned
+`Illegal Data Address` (`0x02`) before and during the changed phase. The
+captured `keypad` family showed only `52008` and `52009` changing during the
+app save: `52008` went from `5381` to `4352`, and `52009` from `5381` to
+`5377`. After restoring MED, `52008` was `5377` and `52009` remained `5377`;
+neither exactly returned to its original value. All other captured values,
+including measurement, mode/runtime, and documented configuration registers,
+were unchanged.
+
+The previous `2026-10-16` MED experiment returned `40901=20` after setting MED
+to `40`; this result was not reproduced. Together, the new LOW and MED tests
+show that `40901` follows the app-saved value in these two A-B-A sequences,
+but its initial `1` while LOW was `10` means it still cannot be identified as
+a persistent per-setting register or a local Modbus write target. Both
+settings were changed only through the app; no Modbus writes were made.
+
+### App-saved intensive airflow A-B-A on 2026-11-03
+
+With LOW `10`, MED `30`, HIGH `60`, and intensive airflow `80` m³/h shown in
+the app, the user-approved test changed only the saved intensive airflow to
+`90` m³/h and restored it to `80`. The configured 15-minute run-on time was
+left unchanged. The unit remained in manual HIGH at `60/60` m³/h.
+
+| Phase | App intensive airflow | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `80` | `30` in two reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `90` | `90` in two reads | unchanged | unchanged |
+| Restored | `80` | `80` in two reads | unchanged | unchanged |
+
+Reads of `40911` and `40949` returned `Illegal Data Address` (`0x02`) before
+and during the changed phase. The `keypad`-family snapshots changed only in
+shadow/meta words `52004..52009`: `52004..52007` changed from `4352` to `5377`
+and returned to `4352` on restore; `52008..52009` changed from `5380` to
+`5377` and restored to `[4352, 5377]`. No other captured values changed
+except the exhaust-air temperature pair `41004..41005`, which moved from
+`10.46` to `10.57 °C` during the run and remained there after restore. The
+measured airflow, mode status, and documented configuration values stayed
+unchanged. No Modbus writes were made.
+
+Across the LOW, MED, and intensive-airflow tests, `40901` followed the last
+app-saved value (`20`, `40`, and `90`), then the restored value (`10`, `30`,
+and `80`). Before the MED and intensive tests it held the preceding test's
+restored value, not that setting's current value. This supports interpreting it
+as a shared last-write/readback value rather than a dedicated persistent
+setting register; it does not identify a safe local write target. The
+configured intensive duration was tested separately below.
+
+### App-saved intensive duration A-B-A on 2026-11-03
+
+The app's intensive airflow had been restored to `80` m³/h with a 15-minute
+run-on. The user-approved test changed only the run-on to `20` minutes and
+restored it to `15`; airflow remained `80` m³/h. The unit stayed in manual
+HIGH at `60/60` m³/h.
+
+| Phase | App run-on | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `15 min` | `80` in two reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `20 min` | `20` in two reads | unchanged | unchanged |
+| Restored | `15 min` | `15` in two reads | unchanged | unchanged |
+
+As in the other tests, reads of `40911` and `40949` returned `Illegal Data
+Address` (`0x02`) before and during the changed phase. The `keypad`-family
+snapshots showed only `52008..52009` changing during the save, from
+`[5389, 5389]` to `[5379, 5379]`; they remained `[5379, 5379]` after restore.
+The `41004..41005` exhaust-temperature reading also varied between captures.
+Other captured values, including measured airflow, current mode, and
+documented configuration registers, remained unchanged. No Modbus writes were
+made.
+
+Across the LOW, MED, intensive-airflow, and intensive-duration app-only A-B-A
+tests, `40901` followed the last app-saved value and its restore. Before each
+test after LOW, it held the previous test's restored value. This strengthens
+the interpretation of `40901` as a shared last-write/readback value, not a
+dedicated persistent setting register. The tests still do not reveal a local
+Modbus write target or a safe local write sequence.
+
+### App-saved extract shortcut A-B-A on 2026-11-03
+
+The app showed the saved `Taste 4 (III) Abluft` airflow at `80` m³/h. The
+user-approved test changed only that preset to `90` m³/h and restored it to
+`80`. The unit remained in manual HIGH at `60/60` m³/h.
+
+This test used an expanded read-only snapshot of 24 previously identified
+register islands: `40000..40025`, `40026..40033`, `40041`, `40050..40051`,
+`40071`, `40100..40104`, `40109..40110`, `40120`, `40200..40209`, `40901`,
+`40911`, `40949`, `41000..41034`, `41100..41113`, `41120..41124`, `41132`,
+`41133`, `42000..42009`, `49000..49002`, `49011..49017`, `51100..51113`,
+`51120..51133`, `51150..51151`, and `52000..52010`. Of 176 addresses, 173
+returned values. No broad register-space scan or Modbus write was performed.
+
+| Phase | App `Taste 4 Abluft` | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `80` | `15` in two reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `90` | `90` in two reads | unchanged | unchanged |
+| Restored | `80` | `80` in two reads | unchanged | unchanged |
+
+Reads of `40911` and `40949` returned `Illegal Data Address` (`0x02`) before
+and during the changed phase. The expanded snapshot found no setting-shaped
+register changing with the saved airflow. `52008..52009` changed from
+`[5378, 5378]` to `[4352, 4352]` during the app save and stayed there after
+restore. `40100` moved from `40` to `24` and then `39`; this is the provisional
+RF last-seen-age field, whose reset behavior is independent of the app setting.
+All other captured values were unchanged. The app setting was restored, and
+there was no change to the unit's active mode or airflow.
+
+This broader capture confirms that the known, previously readable register
+islands still expose no direct value for this saved one-sided airflow preset.
+`40901` again follows the most recently app-saved value, but is not a
+per-setting local register; the `520xx` values remain undecoded metadata.
+
+### App-saved supply shortcut A-B-A on 2026-11-03
+
+The app showed the saved `Taste 4 (III) Zuluft` airflow at `80` m³/h. The
+user-approved test changed only that preset to `90` m³/h and restored it to
+`80`. The unit remained in manual HIGH at `60/60` m³/h. The same 24-range
+read-only snapshot of previously identified register islands was used.
+
+| Phase | App `Taste 4 Zuluft` | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `80` | `80` in two reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `90` | `90` in two reads | unchanged | unchanged |
+| Restored | `80` | `80` in two reads | unchanged | unchanged |
+
+Reads of `40911` and `40949` returned `Illegal Data Address` (`0x02`) before
+and during the changed phase. The expanded snapshot found only four changed
+registers: `40100` (RF last-seen age) went `4 -> 13 -> 43`; `40109` (RF signal
+strength) changed from raw `65505` to `65492`; `40901` followed the app value;
+and shadow word `52009` changed `4352 -> 5378 -> 4352`. These RF/measurement
+changes do not track the saved airflow. All other captured values, including
+current airflow, mode, and documented configuration, remained unchanged.
+There was no Modbus write.
+
+Across all six app-only A-B-A tests (LOW, MED, intensive airflow, intensive
+duration, extract shortcut, and supply shortcut), `40901` held the previous
+test's restored value at the start of the next setting test, then followed the
+new app value and its restore. Its behavior is consistent with a shared
+last-write/readback value, not a local per-setting register. No direct local
+setting register or safe Modbus write sequence has been identified.
+
 ## Unit and link lifecycle
 
 How the gateway and the integration behave when a unit loses power, Home
@@ -1023,7 +1464,9 @@ units for this run, but not how the gateway obtains the powered-off unit's
 unchanged values. They may be retained or cached; the client marked the reads
 successful, so it could not measure a recovery time after power-up. Treat H-1
 as partial/inconclusive for detecting a silent powered-off unit, not as proof
-that the reported airflow was physically present.
+that the reported airflow was physically present. Whether `40101` or `40100`
+reveal such a unit is the open question in
+[HW-14](HARDWARE_BACKLOG.md#hw-14--detecting-a-silent-unit-through-40101).
 
 After power-up in the first run, `41020..41021` read `[80, 0]`, matching the
 Meltem app and the physical airflow, while the then-used set-register read
@@ -1195,7 +1638,7 @@ room has only one consecutive failure and is not stale.
 ### H-3 repeat on 2026-10-14
 
 The kernel recorded USB loss at `19:49:13 CEST` and re-enumerated the same
-same adapter as `/dev/ttyACM0` at `19:50:39`, an 86-second
+adapter as `/dev/ttyACM0` at `19:50:39`, an 86-second
 gap. The action log separately records the user's unplug confirmation at
 `19:49:24`, the reconnect prompt at `19:49:54`, and the user's replug
 confirmation at `19:50:45`; these are not physical USB event timestamps.

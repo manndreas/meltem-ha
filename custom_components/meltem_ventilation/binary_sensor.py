@@ -67,11 +67,11 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[MeltemBinarySensorDescription, ...] = (
         value_fn=lambda state: state.rf_comm_status,
     ),
     MeltemBinarySensorDescription(
-        key="rf_fault_status",
+        key="device_fault",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        value_fn=lambda state: state.rf_fault_status,
+        value_fn=lambda state: state.device_fault,
     ),
     MeltemBinarySensorDescription(
         key="value_error_status",

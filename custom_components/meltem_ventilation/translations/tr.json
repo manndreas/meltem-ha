@@ -1,0 +1,563 @@
+{
+  "title": "Meltem Modbus",
+  "selector": {
+    "connection_type": {
+      "options": {
+        "serial": "USB seri",
+        "rtu_over_tcp": "TCP üzerinden RTU"
+      }
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meltem Modbus",
+        "description": "Önce M-WRG-GW ağ geçidini ve ünitelerini Meltem uygulamasında kurun. USB seri veya TCP üzerinden ham RTU bağlantısını seçin. Ağ bağlantılarında şifreleme ve kimlik doğrulama yoktur; yalnızca güvenilir bir yerel ağ kullanın.",
+        "data": {
+          "connection_type": "Bağlantı türü",
+          "port": "Seri bağlantı noktası",
+          "host": "Köprü ana bilgisayar adı veya IP adresi",
+          "network_port": "Köprü TCP bağlantı noktası"
+        },
+        "data_description": {
+          "connection_type": "Ağ geçidine ulaşmak için kullanılacak bağlantıyı seçin.",
+          "port": "USB seri bağlantısı için aygıt yolu.",
+          "host": "TCP üzerinden RTU köprüsünün ana bilgisayar adı veya IP adresi.",
+          "network_port": "Ham RTU köprüsünün TCP bağlantı noktası."
+        }
+      },
+      "reconfigure": {
+        "title": "Ağ geçidi bağlantısını değiştir",
+        "description": "Ağ geçidi bağlantısını değiştirin. Ağ bağlantılarında şifreleme ve kimlik doğrulama yoktur; yalnızca güvenilir bir yerel ağ kullanın. Entegrasyon daha sonra yeniden yüklenir.",
+        "data": {
+          "connection_type": "Bağlantı türü",
+          "port": "Seri bağlantı noktası",
+          "host": "Köprü ana bilgisayar adı veya IP adresi",
+          "network_port": "Köprü TCP bağlantı noktası"
+        },
+        "data_description": {
+          "connection_type": "Ağ geçidine ulaşmak için kullanılacak bağlantıyı seçin.",
+          "port": "USB seri bağlantısı için aygıt yolu.",
+          "host": "TCP üzerinden RTU köprüsünün ana bilgisayar adı veya IP adresi.",
+          "network_port": "Ham RTU köprüsünün TCP bağlantı noktası."
+        }
+      },
+      "confirm_usb": {
+        "title": "Meltem Modbus ağ geçidi bulundu",
+        "description": "Home Assistant, {port} üzerinde bir USB aygıtı buldu ({manufacturer}, {description}). Bir M-WRG-GW ağ geçidi gereklidir. Ağ geçidi, desteklenen tüm Meltem M-WRG üniteleriyle birlikte Meltem uygulamasında önceden kurulmuş ve USB ile Home Assistant ana bilgisayarına bağlanmış olmalıdır.",
+        "data": {
+          "port": "Seri bağlantı noktası"
+        },
+        "data_description": {
+          "port": "Home Assistant'ın ağ geçidi için bulduğu USB seri aygıt yolunu onaylayın veya değiştirin."
+        }
+      },
+      "profiles": {
+        "title": "Algılanan Meltem M-WRG üniteleri",
+        "description": "Entegrasyon {device_count} Meltem M-WRG ünitesi buldu. Algılanan her ünite için uygun profili seçin.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Modbus adresi 2'deki ünite",
+          "slave_3": "Modbus adresi 3'teki ünite",
+          "slave_4": "Modbus adresi 4'teki ünite",
+          "slave_5": "Modbus adresi 5'teki ünite",
+          "slave_6": "Modbus adresi 6'daki ünite",
+          "slave_7": "Modbus adresi 7'deki ünite",
+          "slave_8": "Modbus adresi 8'deki ünite",
+          "slave_9": "Modbus adresi 9'daki ünite",
+          "slave_10": "Modbus adresi 10'daki ünite",
+          "slave_11": "Modbus adresi 11'deki ünite",
+          "slave_12": "Modbus adresi 12'deki ünite",
+          "slave_13": "Modbus adresi 13'teki ünite",
+          "slave_14": "Modbus adresi 14'teki ünite",
+          "slave_15": "Modbus adresi 15'teki ünite",
+          "slave_16": "Modbus adresi 16'daki ünite"
+        },
+        "data_description": {
+          "slave_2": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_3": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_4": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_5": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_6": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_7": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_8": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_9": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_10": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_11": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_12": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_13": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_14": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_15": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_16": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Meltem ağ geçidine bağlanılamadı.",
+      "invalid_connection": "Geçerli bir seri aygıt yolu veya ağ ana bilgisayar adı ile TCP bağlantı noktası girin.",
+      "no_devices_found": "Ağ geçidinde desteklenen Meltem M-WRG ünitesi bulunamadı. Üniteleri Home Assistant'ta kurmadan önce M-WRG-GW ağ geçidine eklenmiş ve yapılandırılmış olduklarından emin olun.",
+      "port_in_use": "Başka bir entegrasyon bu bağlantıyı zaten farklı ayarlarla kullanıyor.",
+      "unknown": "Beklenmeyen hata. Ayrıntılar için Home Assistant günlüğüne bakın."
+    },
+    "abort": {
+      "already_configured": "Bu Meltem ağ geçidi zaten yapılandırılmış.",
+      "already_in_progress": "Bu Meltem ağ geçidinin kurulumu zaten devam ediyor.",
+      "reconfigure_successful": "Meltem ağ geçidi bağlantısı güncellendi."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Meltem Modbus'u yapılandır",
+        "description": "İstek hızını değiştirmek mi yoksa ağ geçidinde yeni, taşınmış veya kaldırılmış üniteleri taramak mı istediğinizi seçin. Tek bir ünitenin profilini değiştirmek için o ünitedeki Yeniden yapılandır seçeneğini kullanın.",
+        "menu_options": {
+          "edit_request_rate": "İstek hızını değiştir",
+          "rescan_units": "Yeni üniteleri tara"
+        }
+      },
+      "edit_request_rate": {
+        "title": "İstek hızını değiştir",
+        "description": "Yapılandırılmış tüm üniteler için Modbus okuma isteklerinin ortak üst sınırını belirleyin. Sorgulama işlerinin başlatılması da bu hızla sınırlıdır; bir iş birden fazla okuma isteği içerebilir. Yeniden denemeler ve yazma sonrası geri okumalar istek sınırına dahildir. Seri bağlantı noktasını değiştirmek için entegrasyonu yeniden yapılandırın.",
+        "data": {
+          "max_requests_per_second": "Saniyedeki en yüksek istek sayısı"
+        },
+        "data_description": {
+          "max_requests_per_second": "Yeniden denemeler ve yazma sonrası geri okumalar dahil, tüm ünitelerdeki tekil okuma istekleri için en yüksek hız. Sorgulama işlerinin başlatılması da bu hızla sınırlıdır; yazma dizileri ayrı donanım zamanlaması kullanır."
+        }
+      },
+      "rescan_units": {
+        "title": "Yeni Meltem M-WRG ünitelerini tara",
+        "description": "Meltem ağ geçidinde yapılandırılmış Meltem M-WRG ünitelerini tarayın ve kayıtlı profilleri güncelleyin. Ağ geçidinin artık bildirmediği üniteler, onayınızdan sonra cihazlarıyla birlikte kaldırılır."
+      },
+      "confirm_remove": {
+        "title": "Üniteleri kaldır",
+        "description": "Ağ geçidi, yapılandırılmış ünitelerden {removed_count} tanesini artık bildirmiyor. Bunları cihazları, varlıkları ve varlık ayarlarıyla birlikte kaldırmak için gönderin:\n\n{removed_units}\n\nBir ünite yalnızca kapalıysa veya radyo menzilinin dışındaysa bu iletişim kutusunu kapatın ve daha sonra yeniden tarayın."
+      },
+      "profiles": {
+        "title": "Algılanan Meltem M-WRG üniteleri",
+        "description": "Yeniden tarama {device_count} Meltem M-WRG ünitesi buldu. Algılanan her ünite için uygun profili seçin.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Modbus adresi 2'deki ünite",
+          "slave_3": "Modbus adresi 3'teki ünite",
+          "slave_4": "Modbus adresi 4'teki ünite",
+          "slave_5": "Modbus adresi 5'teki ünite",
+          "slave_6": "Modbus adresi 6'daki ünite",
+          "slave_7": "Modbus adresi 7'deki ünite",
+          "slave_8": "Modbus adresi 8'deki ünite",
+          "slave_9": "Modbus adresi 9'daki ünite",
+          "slave_10": "Modbus adresi 10'daki ünite",
+          "slave_11": "Modbus adresi 11'deki ünite",
+          "slave_12": "Modbus adresi 12'deki ünite",
+          "slave_13": "Modbus adresi 13'teki ünite",
+          "slave_14": "Modbus adresi 14'teki ünite",
+          "slave_15": "Modbus adresi 15'teki ünite",
+          "slave_16": "Modbus adresi 16'daki ünite"
+        },
+        "data_description": {
+          "slave_2": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_3": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_4": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_5": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_6": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_7": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_8": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_9": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_10": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_11": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_12": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_13": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_14": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_15": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.",
+          "slave_16": "Bu Modbus adresindeki ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Meltem ağ geçidine bağlanılamadı.",
+      "no_devices_found": "Ağ geçidinde desteklenen Meltem M-WRG ünitesi bulunamadı. Üniteleri Home Assistant'ta kurmadan önce M-WRG-GW ağ geçidine eklenmiş ve yapılandırılmış olduklarından emin olun."
+    }
+  },
+  "triggers": {
+    "filter_change_due": {
+      "name": "Filtre değişimi gerekli",
+      "description": "Seçilen bir Meltem ünitesi filtre değişiminin gerekli olduğunu bildirdiğinde tetiklenir.",
+      "fields": {
+        "behavior": {
+          "name": "Şu durumda tetikle"
+        },
+        "for": {
+          "name": "En az şu süre boyunca"
+        }
+      }
+    }
+  },
+  "conditions": {
+    "filter_change_due": {
+      "name": "Filtre değişimi gerekli",
+      "description": "Seçilen bir Meltem ünitesinin filtre değişiminin gerekli olduğunu bildirip bildirmediğini denetler.",
+      "fields": {
+        "behavior": {
+          "name": "Koşul şu durumda sağlanır"
+        },
+        "for": {
+          "name": "En az şu süre boyunca"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "exhaust_temperature": {
+        "name": "Atık hava sıcaklığı"
+      },
+      "outdoor_air_temperature": {
+        "name": "Dış hava sıcaklığı"
+      },
+      "extract_air_temperature": {
+        "name": "Egzoz havası sıcaklığı"
+      },
+      "supply_air_temperature": {
+        "name": "Besleme havası sıcaklığı"
+      },
+      "humidity_extract_air": {
+        "name": "Egzoz havası nemi"
+      },
+      "humidity_supply_air": {
+        "name": "Besleme havası nemi"
+      },
+      "absolute_humidity_extract_air": {
+        "name": "Egzoz havası mutlak nemi"
+      },
+      "absolute_humidity_supply_air": {
+        "name": "Besleme havası mutlak nemi"
+      },
+      "external_input_level": {
+        "name": "Harici kontrol girişi hava debisi"
+      },
+      "external_input_on_delay": {
+        "name": "Harici kontrol girişi devreye girme gecikmesi"
+      },
+      "external_input_run_on": {
+        "name": "Harici kontrol girişi gecikmeli kapanma süresi"
+      },
+      "voc_extract_air": {
+        "name": "Egzoz havası VOC"
+      },
+      "co2_supply_air": {
+        "name": "Besleme havası CO2"
+      },
+      "co2_extract_air": {
+        "name": "Egzoz havası CO2"
+      },
+      "voc_supply_air": {
+        "name": "Besleme havası VOC"
+      },
+      "extract_air_flow": {
+        "name": "Egzoz havası debisi"
+      },
+      "supply_air_flow": {
+        "name": "Besleme havası debisi"
+      },
+      "days_until_filter_change": {
+        "name": "Filtre değişimine kalan gün"
+      },
+      "operating_hours": {
+        "name": "Çalışma saatleri"
+      },
+      "fan_motor_hours": {
+        "name": "Fan çalışma saatleri"
+      },
+      "rf_last_seen_age_seconds": {
+        "name": "Son RF sinyalinden bu yana geçen süre"
+      },
+      "rf_signal_strength": {
+        "name": "RF RSSI"
+      },
+      "modbus_slave_id": {
+        "name": "Modbus slave kimliği"
+      },
+      "modbus_device_path": {
+        "name": "Modbus uç noktası"
+      },
+      "app_setup_code": {
+        "name": "Uygulama kurulum kodu"
+      },
+      "gateway_last_answer": {
+        "name": "Son Modbus yanıtı"
+      },
+      "gateway_connected_devices": {
+        "name": "Bağlı cihaz sayısı"
+      },
+      "gateway_rf_messages_current_hour": {
+        "name": "Bu saat gönderilen RF mesajları"
+      },
+      "gateway_rf_messages_previous_hour": {
+        "name": "Önceki saat gönderilen RF mesajları"
+      },
+      "gateway_rf_load_current_hour": {
+        "name": "Bu saatteki RF yükü"
+      },
+      "gateway_rf_load_previous_hour": {
+        "name": "Önceki saatteki RF yükü"
+      },
+      "gateway_response_time": {
+        "name": "Ortalama yanıt süresi"
+      },
+      "gateway_success_rate": {
+        "name": "Başarılı Modbus istekleri (5 dk)"
+      },
+      "gateway_supply_air_flow": {
+        "name": "Toplam besleme havası debisi"
+      },
+      "gateway_extract_air_flow": {
+        "name": "Toplam egzoz havası debisi"
+      },
+      "gateway_airflow_delta": {
+        "name": "Toplam hava debisi farkı"
+      },
+      "gateway_uptime": {
+        "name": "Çalışma süresi"
+      },
+      "gateway_utc_clock": {
+        "name": "UTC saati"
+      },
+      "gateway_modbus_attempts_total": {
+        "name": "Modbus istek denemeleri"
+      },
+      "gateway_modbus_failures_total": {
+        "name": "Başarısız Modbus istekleri"
+      },
+      "gateway_link_recycles_total": {
+        "name": "Modbus bağlantısı yeniden başlatmaları"
+      },
+      "gateway_failed_read_groups_total": {
+        "name": "Başarısız okuma grupları"
+      },
+      "gateway_write_issues_total": {
+        "name": "Yazma komutu sorunları"
+      },
+      "airflow_balance": {
+        "name": "Hava debisi dengesi"
+      },
+      "last_successful_update": {
+        "name": "Son başarılı güncelleme"
+      }
+    },
+    "binary_sensor": {
+      "error_status": {
+        "name": "Cihaz hatası"
+      },
+      "frost_protection_active": {
+        "name": "Donma koruması etkin"
+      },
+      "filter_change_due": {
+        "name": "Filtre değişimi gerekli"
+      },
+      "rf_comm_status": {
+        "name": "RF iletişim durumu"
+      },
+      "device_fault": {
+        "name": "Cihaz arızası"
+      },
+      "value_error_status": {
+        "name": "Değer hatası"
+      },
+      "data_health": {
+        "name": "Okuma durumu"
+      },
+      "gateway_connectivity": {
+        "name": "Modbus bağlantısı"
+      },
+      "connectivity": {
+        "name": "Erişilebilir"
+      }
+    },
+    "switch": {
+      "intensive": {
+        "name": "Yoğun havalandırma"
+      }
+    },
+    "number": {
+      "humidity_starting_point": {
+        "name": "Nem başlangıç noktası"
+      },
+      "humidity_min_level": {
+        "name": "Nem en düşük seviyesi"
+      },
+      "humidity_max_level": {
+        "name": "Nem en yüksek seviyesi"
+      },
+      "co2_starting_point": {
+        "name": "CO2 başlangıç noktası"
+      },
+      "co2_min_level": {
+        "name": "CO2 en düşük seviyesi"
+      },
+      "co2_max_level": {
+        "name": "CO2 en yüksek seviyesi"
+      }
+    },
+    "fan": {
+      "supply_level": {
+        "name": "Besleme havası"
+      },
+      "extract_level": {
+        "name": "Egzoz havası"
+      }
+    },
+    "select": {
+      "operation_mode": {
+        "name": "Sensör kontrolü",
+        "state": {
+          "inactive": "Kapalı",
+          "humidity_control": "Nem kontrolü",
+          "co2_control": "CO2 kontrolü",
+          "automatic": "Otomatik"
+        }
+      },
+      "preset_mode": {
+        "name": "Hızlı mod",
+        "state": {
+          "inactive": "Özel",
+          "low": "Düşük",
+          "medium": "Orta",
+          "high": "Yüksek"
+        }
+      }
+    }
+  },
+  "system_health": {
+    "info": {
+      "loaded_entries": "Yüklenen yapılandırma girdileri",
+      "configured_units": "Yapılandırılmış üniteler",
+      "state_units": "Canlı durumu olan üniteler",
+      "last_update_success": "Son güncelleme başarılı",
+      "last_job_error": "Son zamanlayıcı hatası",
+      "last_unit_errors": "Ünite başına son okuma hatası",
+      "unavailable_units": "Şu anda kullanılamayan üniteler",
+      "stale_read_groups": "Güncelliğini yitirmiş okuma grupları"
+    }
+  },
+  "exceptions": {
+    "write_failed": {
+      "message": "Komut {unit} ünitesine gönderilemedi. Ayrıntılar için Home Assistant günlüğüne bakın."
+    },
+    "opposite_airflow_unknown": {
+      "message": "{unit} ünitesinin karşı yöndeki hava debisi şu anda bilinmiyor; bu nedenle tek bir yön kapatılamaz. Ünite hava debisini bildirdiğinde yeniden deneyin."
+    },
+    "airflow_unknown": {
+      "message": "{unit} ünitesinin mevcut hava debisi bilinmiyor; bu nedenle çalışma modu bir seviye tahmin edilmeden değiştirilemez. Bunun yerine hava debisini fan varlıklarıyla ayarlayın."
+    },
+    "control_level_range": {
+      "message": "{unit} ünitesinin en düşük seviyesi (%{minimum}) en yüksek seviyesinden (%{maximum}) yüksek olmamalıdır."
+    },
+    "gateway_unavailable": {
+      "message": "Meltem ağ geçidine {port} üzerinden bağlanılamadı. Bağlantıyı ve USB için erişim izinlerini kontrol edin."
+    },
+    "port_in_use": {
+      "message": "Ağ geçidi bağlantısı zaten farklı ayarlarla kullanılıyor."
+    },
+    "gateway_communication_failed": {
+      "message": "Meltem ağ geçidiyle iletişim başarısız oldu. USB bağlantısını ve seri bağlantı noktasını kontrol edin."
+    }
+  },
+  "issues": {
+    "missing_humidity_extract_air": {
+      "title": "{unit}: egzoz havası nemi bildirilmiyor",
+      "description": "{unit} ünitesinin {profile} profili bir egzoz havası nem sensörü içeriyor, ancak ünite okuma olmadığını bildirmeyi sürdürüyor; bu nedenle sensör bilinmiyor olarak görünüyor.\n\nÜnite için seçilen profilin tip etiketiyle eşleştiğini kontrol edin; eşleşmiyorsa üniteyi yeniden yapılandırın. Profil doğruysa sensör arızalı olabilir. Ünite yeniden bir değer bildirdiğinde bu mesaj kaybolur."
+    },
+    "missing_humidity_supply_air": {
+      "title": "{unit}: besleme havası nemi bildirilmiyor",
+      "description": "{unit} ünitesinin {profile} profili bir besleme havası nem sensörü içeriyor, ancak ünite okuma olmadığını bildirmeyi sürdürüyor; bu nedenle sensör bilinmiyor olarak görünüyor.\n\nÜnite için seçilen profilin tip etiketiyle eşleştiğini kontrol edin; eşleşmiyorsa üniteyi yeniden yapılandırın. Profil doğruysa sensör arızalı olabilir. Ünite yeniden bir değer bildirdiğinde bu mesaj kaybolur."
+    },
+    "missing_co2_extract_air": {
+      "title": "{unit}: egzoz havası CO2 değeri bildirilmiyor",
+      "description": "{unit} ünitesinin {profile} profili bir egzoz havası CO2 sensörü içeriyor, ancak ünite okuma olmadığını bildirmeyi sürdürüyor; bu nedenle sensör bilinmiyor olarak görünüyor.\n\nÜnite için seçilen profilin tip etiketiyle eşleştiğini kontrol edin; eşleşmiyorsa üniteyi yeniden yapılandırın. Profil doğruysa sensör arızalı olabilir. Ünite yeniden bir değer bildirdiğinde bu mesaj kaybolur."
+    },
+    "missing_voc_supply_air": {
+      "title": "{unit}: besleme havası VOC değeri bildirilmiyor",
+      "description": "{unit} ünitesinin {profile} profili bir besleme havası VOC sensörü içeriyor, ancak ünite okuma olmadığını bildirmeyi sürdürüyor; bu nedenle sensör bilinmiyor olarak görünüyor.\n\nÜnite için seçilen profilin tip etiketiyle eşleştiğini kontrol edin; eşleşmiyorsa üniteyi yeniden yapılandırın. Profil doğruysa sensör arızalı olabilir. Ünite yeniden bir değer bildirdiğinde bu mesaj kaybolur."
+    },
+    "new_units_found": {
+      "title": "Meltem ağ geçidi kurulmamış üniteler bildiriyor",
+      "description": "Ağ geçidi, Home Assistant'ta henüz bulunmayan {count} Meltem M-WRG ünitesini Modbus adresi {addresses} üzerinde bildiriyor.\n\nBunları eklemek için Meltem Modbus entegrasyonunu açıp **Ünite ekle**'yi seçin veya seçeneklerinde **Yeni üniteleri tara**'yı çalıştırın. Profil güvenilir şekilde algılanamaz; bu yüzden profili her ünitenin tip etiketine bakarak siz seçersiniz. Ağ geçidinin bildirdiği tüm üniteler kurulduğunda bu mesaj kaybolur."
+    }
+  },
+  "config_subentries": {
+    "unit": {
+      "entry_type": "Meltem M-WRG ünitesi",
+      "initiate_flow": {
+        "user": "Ünite ekle",
+        "reconfigure": "Profili değiştir"
+      },
+      "step": {
+        "user": {
+          "title": "Meltem M-WRG ünitesi ekle",
+          "description": "Ağ geçidi henüz kurulmamış {device_count} ünite bildiriyor. Eklenecek ünitenin Modbus adresini ve tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.\n\n{unit_details}",
+          "data": {
+            "slave": "Modbus adresi",
+            "slave_2": "Profil",
+            "slave_3": "Profil",
+            "slave_4": "Profil",
+            "slave_5": "Profil",
+            "slave_6": "Profil",
+            "slave_7": "Profil",
+            "slave_8": "Profil",
+            "slave_9": "Profil",
+            "slave_10": "Profil",
+            "slave_11": "Profil",
+            "slave_12": "Profil",
+            "slave_13": "Profil",
+            "slave_14": "Profil",
+            "slave_15": "Profil",
+            "slave_16": "Profil"
+          },
+          "data_description": {
+            "slave": "Eklenecek ünitenin yukarıda listelenen Modbus adresi.",
+            "slave_2": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_3": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_4": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_5": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_6": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_7": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_8": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_9": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_10": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_11": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_12": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_13": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_14": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_15": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler.",
+            "slave_16": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler."
+          }
+        },
+        "profile": {
+          "title": "Modbus adresi {slave} üzerindeki ünitenin profili",
+          "description": "Yeni ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; algılanan sensörler yalnızca bir ipucudur.\n\n{unit_details}",
+          "data": {
+            "profile": "Profil"
+          },
+          "data_description": {
+            "profile": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler."
+          }
+        },
+        "reconfigure": {
+          "title": "{unit} ünitesinin profilini değiştir",
+          "description": "Ünitenin tam model profilini seçin. Ünite etiketini kontrol edin; entegrasyon daha sonra yeniden yüklenir.\n\n{unit_details}",
+          "data": {
+            "profile": "Profil"
+          },
+          "data_description": {
+            "profile": "Tip etiketindeki model profili, ünitenin hangi varlıkları alacağını belirler."
+          }
+        }
+      },
+      "abort": {
+        "entry_not_loaded": "Meltem ağ geçidi yüklenmedi. Üniteler yalnızca ağ geçidi bağlıyken eklenebilir.",
+        "cannot_connect": "Meltem ağ geçidine bağlanılamadı.",
+        "no_new_units": "Ağ geçidi henüz kurulmamış ünite bildirmiyor. Önce üniteyi Meltem uygulamasında ekleyin.",
+        "already_configured": "Bu ünite zaten kurulmuş.",
+        "reconfigure_successful": "Ünite güncellendi."
+      }
+    }
+  }
+}

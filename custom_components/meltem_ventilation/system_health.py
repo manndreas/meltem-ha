@@ -7,9 +7,10 @@ from typing import Any
 from homeassistant.components import system_health
 from homeassistant.core import HomeAssistant, callback
 
-from .const import CONF_PORT, DOMAIN
+from .const import DOMAIN
 from .coordinator import MeltemDataUpdateCoordinator
 from .diagnostics import redact_port
+from .gateway_connection import RtuTcpGatewayConnection, gateway_connection_from_data
 from .models import MeltemRuntimeData
 
 
@@ -37,7 +38,8 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     entry = entries[0]
     runtime_data: MeltemRuntimeData = entry.runtime_data
     coordinator = runtime_data.coordinator
-    port = str(entry.data[CONF_PORT])
+    connection = gateway_connection_from_data(entry.data)
+    port = connection.host if isinstance(connection, RtuTcpGatewayConnection) else connection.port
     last_job_error = coordinator.last_job_error
 
     return {

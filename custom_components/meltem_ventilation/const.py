@@ -27,6 +27,11 @@ PLATFORMS: list[Platform] = [
 
 CONF_MAX_REQUESTS_PER_SECOND = "max_requests_per_second"
 CONF_PORT = "port"
+CONF_CONNECTION_TYPE = "connection_type"
+CONF_HOST = "host"
+CONF_NETWORK_PORT = "network_port"
+CONNECTION_SERIAL = "serial"
+CONNECTION_RTU_OVER_TCP = "rtu_over_tcp"
 # Only in config entries before version 2, which stored the units in their data.
 CONF_ROOMS = "rooms"
 
@@ -38,6 +43,7 @@ CONF_SLAVE = "slave"
 CONF_PROFILE = "profile"
 
 DEFAULT_PORT = "/dev/ttyACM0"
+DEFAULT_NETWORK_PORT = 5020
 DEFAULT_GATEWAY_DEVICE_ID = 1
 DEFAULT_SCAN_SLAVE_START = 2
 DEFAULT_SCAN_SLAVE_END = 16
@@ -54,6 +60,7 @@ FIXED_BYTESIZE: Final = 8
 FIXED_PARITY: Final = "E"
 FIXED_STOPBITS: Final = 1
 FIXED_TIMEOUT = 0.8
+NETWORK_TIMEOUT = 5.0
 REQUEST_GAP_SECONDS = 0.1
 # A silent unit behind the gateway also times out, so only a run of timeouts
 # while no unit answered for a while points at a wedged serial link.
@@ -71,6 +78,10 @@ GATEWAY_CONNECTED_DEVICES_REFRESH_SECONDS = 60.0
 GATEWAY_CONNECTED_DEVICES_STALE_SECONDS = 180.0
 GATEWAY_RF_STATISTICS_REFRESH_SECONDS = 60.0
 GATEWAY_RF_STATISTICS_STALE_SECONDS = 180.0
+EXTERNAL_INPUT_REFRESH_SECONDS = 3600.0
+EXTERNAL_INPUT_STALE_SECONDS = 3 * EXTERNAL_INPUT_REFRESH_SECONDS
+# First retry of a failed optional read; it doubles up to the read's refresh interval.
+OPTIONAL_READ_RETRY_SECONDS = 60.0
 
 GATEWAY_ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
     "modbus_device_path": Platform.SENSOR,
@@ -117,6 +128,28 @@ TARGET_OPTIMISTIC_SECONDS = 15.0
 # ---------------------------------------------------------------------------
 #  Unit profiles
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ProductMetadata:
+    """App catalog information, not a complete physical unit profile."""
+
+    series: str
+    model_id: str
+
+
+PRODUCT_ID_M_WRG = 116819
+PRODUCT_ID_M_WRG_II = 116852
+PRODUCT_METADATA: dict[int, ProductMetadata] = {
+    PRODUCT_ID_M_WRG: ProductMetadata("M-WRG", "VMD-22RES22"),
+    PRODUCT_ID_M_WRG_II: ProductMetadata("M-WRG-II", "VMD-22RPS44"),
+}
+
+
+def product_metadata(product_id: int | None) -> ProductMetadata | None:
+    """Look up an app catalog entry without guessing unknown product IDs."""
+
+    return PRODUCT_METADATA.get(product_id) if product_id is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,13 +271,15 @@ RAW_VALUE_TO_SENSOR_MODE: dict[int, str] = {
 }
 SENSOR_OPERATION_MODES: tuple[str, ...] = tuple(SENSOR_MODE_TO_RAW_VALUE)
 
-# Read-side sensor subcodes in 41101, from the ioBroker decode and not yet seen
-# on hardware; 144 is an unverified extra (HW-4). Used for every profile.
+# Read-side sensor subcodes in 41101. This table includes the community decode
+# and the additional automatic/CO2 values listed by the Meltem app.
 MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE: dict[int, int] = {
     48: MODE_AUTOMATIC_VALUE,
+    80: MODE_AUTOMATIC_VALUE,
     MODE_HUMIDITY_CONTROL_VALUE: MODE_HUMIDITY_CONTROL_VALUE,
     MODE_CO2_CONTROL_VALUE: MODE_CO2_CONTROL_VALUE,
     176: MODE_CO2_CONTROL_VALUE,
+    208: MODE_CO2_CONTROL_VALUE,
 }
 
 DIRECTION_SUPPLY = "supply"
@@ -270,7 +305,7 @@ REGISTER_APP_SETUP_CODE = 40000
 REGISTER_SOFTWARE_VERSION = 40004
 REGISTER_RF_LAST_SEEN_AGE = 40100
 REGISTER_RF_COMM_STATUS = 40101
-REGISTER_RF_FAULT_STATUS = 40103
+REGISTER_DEVICE_FAULT = 40103
 REGISTER_VALUE_ERROR_STATUS = 40104
 REGISTER_RF_SIGNAL_STRENGTH = 40109
 
@@ -278,7 +313,7 @@ BRIDGE_RF_REGISTERS: frozenset[int] = frozenset(
     {
         REGISTER_RF_LAST_SEEN_AGE,
         REGISTER_RF_COMM_STATUS,
-        REGISTER_RF_FAULT_STATUS,
+        REGISTER_DEVICE_FAULT,
         REGISTER_VALUE_ERROR_STATUS,
         REGISTER_RF_SIGNAL_STRENGTH,
     }
@@ -294,7 +329,9 @@ REGISTER_HUMIDITY_EXTRACT_AIR = 41006
 REGISTER_CO2_EXTRACT_AIR = 41007
 REGISTER_SUPPLY_AIR_TEMPERATURE = 41009
 REGISTER_HUMIDITY_SUPPLY_AIR = 41011
+REGISTER_CO2_SUPPLY_AIR = 41012
 REGISTER_VOC_SUPPLY_AIR = 41013
+REGISTER_VOC_EXTRACT_AIR = 41008
 REGISTER_ERROR_STATUS = 41016
 REGISTER_FILTER_CHANGE_DUE = 41017
 REGISTER_FROST_PROTECTION_ACTIVE = 41018
@@ -323,7 +360,20 @@ REGISTER_HUMIDITY_MAX_LEVEL = 42002
 REGISTER_CO2_STARTING_POINT = 42003
 REGISTER_CO2_MIN_LEVEL = 42004
 REGISTER_CO2_MAX_LEVEL = 42005
+REGISTER_EXTERNAL_INPUT_LEVEL = 42007
+REGISTER_EXTERNAL_INPUT_ON_DELAY = 42008
+REGISTER_EXTERNAL_INPUT_RUN_ON = 42009
 
+EXTERNAL_INPUT_REGISTERS: dict[str, int] = {
+    "external_input_level": REGISTER_EXTERNAL_INPUT_LEVEL,
+    "external_input_on_delay": REGISTER_EXTERNAL_INPUT_ON_DELAY,
+    "external_input_run_on": REGISTER_EXTERNAL_INPUT_RUN_ON,
+}
+EXTERNAL_INPUT_LIMITS: dict[str, tuple[int, int]] = {
+    "external_input_level": (10, 100),
+    "external_input_on_delay": (0, 240),
+    "external_input_run_on": (0, 240),
+}
 REGISTER_GATEWAY_NUMBER_OF_NODES = 43901
 REGISTER_GATEWAY_MAC_START = 41012
 REGISTER_GATEWAY_UTC_CLOCK = 41015
@@ -379,7 +429,11 @@ READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
             "supply_air_temperature",
             "humidity_extract_air",
             "humidity_supply_air",
+            "absolute_humidity_extract_air",
+            "absolute_humidity_supply_air",
             "co2_extract_air",
+            "co2_supply_air",
+            "voc_extract_air",
             "voc_supply_air",
         }
     ),
@@ -388,13 +442,13 @@ READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
     "fan_hours": frozenset({"fan_motor_hours"}),
     "rf_last_seen": frozenset({"rf_last_seen_age_seconds"}),
     "rf_signal": frozenset({"rf_signal_strength"}),
-    "rf_fault": frozenset({"rf_fault_status"}),
+    "device_fault": frozenset({"device_fault"}),
     "value_error": frozenset({"value_error_status"}),
     "control_settings": frozenset(CONTROL_SETTING_REGISTERS),
 }
 
 OPTIONAL_DIAGNOSTIC_READ_GROUPS: frozenset[str] = frozenset(
-    {"rf_last_seen", "rf_signal", "rf_fault", "value_error", "fan_hours"}
+    {"rf_last_seen", "rf_signal", "device_fault", "value_error", "fan_hours"}
 )
 
 BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
@@ -414,7 +468,7 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
         "filter_change_due",
         "intensive",
         "rf_comm_status",
-        "rf_fault_status",
+        "device_fault",
         "value_error_status",
         "operation_mode",
         "preset_mode",
@@ -423,6 +477,7 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
         "airflow_balance",
         "connectivity",
         "last_successful_update",
+        *EXTERNAL_INPUT_REGISTERS,
     }
 )
 
@@ -435,7 +490,11 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "supply_air_temperature",
             "humidity_extract_air",
             "humidity_supply_air",
+            "absolute_humidity_extract_air",
+            "absolute_humidity_supply_air",
             "co2_extract_air",
+            "co2_supply_air",
+            "voc_extract_air",
             "voc_supply_air",
             "extract_air_flow",
             "supply_air_flow",
@@ -448,6 +507,7 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "modbus_slave_id",
             "airflow_balance",
             "last_successful_update",
+            *EXTERNAL_INPUT_REGISTERS,
         ),
         Platform.SENSOR,
     ),
@@ -457,7 +517,7 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "frost_protection_active",
             "filter_change_due",
             "rf_comm_status",
-            "rf_fault_status",
+            "device_fault",
             "value_error_status",
             "data_health",
             "connectivity",
@@ -481,7 +541,12 @@ ENTITY_PROFILES: dict[str, frozenset[str]] = {
     "supply_air_temperature": HUMIDITY_PROFILES,
     "humidity_extract_air": HUMIDITY_PROFILES,
     "humidity_supply_air": HUMIDITY_PROFILES,
+    "absolute_humidity_extract_air": HUMIDITY_PROFILES,
+    "absolute_humidity_supply_air": HUMIDITY_PROFILES,
     "co2_extract_air": CO2_PROFILES,
+    # From the app's register map only; read in the VOC profile's existing block.
+    "co2_supply_air": VOC_PROFILES,
+    "voc_extract_air": VOC_PROFILES,
     "voc_supply_air": VOC_PROFILES,
     **{
         key: HUMIDITY_PROFILES if key.startswith("humidity_") else CO2_PROFILES

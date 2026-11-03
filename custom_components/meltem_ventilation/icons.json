@@ -22,7 +22,7 @@
       "rf_comm_status": {
         "default": "mdi:wifi-alert"
       },
-      "rf_fault_status": {
+      "device_fault": {
         "default": "mdi:alert-circle-outline"
       },
       "value_error_status": {

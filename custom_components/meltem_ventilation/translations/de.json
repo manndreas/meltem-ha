@@ -1,25 +1,45 @@
 {
   "title": "Meltem Modbus",
+  "selector": {
+    "connection_type": {
+      "options": {
+        "serial": "USB-seriell",
+        "rtu_over_tcp": "RTU über TCP"
+      }
+    }
+  },
   "config": {
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "Ein M-WRG-GW Gateway ist erforderlich. Es muss bereits mit allen unterstützten Meltem M-WRG Geräten in der Meltem App eingerichtet und per USB mit dem Home-Assistant-Rechner verbunden sein. Die Integration scannt danach die eingerichteten Geräte und fragt das genaue Profil jedes erkannten Geräts ab.",
+        "description": "Richte das M-WRG-GW und seine Geräte zuerst in der Meltem-App ein. Wähle USB-seriell oder rohes RTU über TCP. Netzwerkverbindungen sind weder verschlüsselt noch authentifiziert; verwende ausschließlich ein vertrauenswürdiges lokales Netzwerk.",
         "data": {
-          "port": "Serieller Port"
+          "connection_type": "Verbindungstyp",
+          "port": "Serieller Port",
+          "host": "Hostname oder IP-Adresse der Bridge",
+          "network_port": "TCP-Port der Bridge"
         },
         "data_description": {
-          "port": "Gerätepfad des per USB mit diesem Home-Assistant-Rechner verbundenen M-WRG-GW Gateways."
+          "connection_type": "Wähle die Verbindung zum Gateway.",
+          "port": "Gerätepfad für die USB-serielle Verbindung.",
+          "host": "Hostname oder IP-Adresse der RTU-over-TCP-Bridge.",
+          "network_port": "TCP-Port der RTU-Bridge."
         }
       },
       "reconfigure": {
-        "title": "Seriellen Port ändern",
-        "description": "Aktualisiere den seriellen Port des M-WRG-GW Gateways. Die Integration wird danach neu geladen.",
+        "title": "Gateway-Verbindung ändern",
+        "description": "Ändere die Gateway-Verbindung. Netzwerkverbindungen sind weder verschlüsselt noch authentifiziert; verwende ausschließlich ein vertrauenswürdiges lokales Netzwerk. Die Integration wird danach neu geladen.",
         "data": {
-          "port": "Serieller Port"
+          "connection_type": "Verbindungstyp",
+          "port": "Serieller Port",
+          "host": "Hostname oder IP-Adresse der Bridge",
+          "network_port": "TCP-Port der Bridge"
         },
         "data_description": {
-          "port": "Wähle den neuen Gerätepfad des M-WRG-GW Gateways. Der Port wird vor dem Speichern geprüft."
+          "connection_type": "Wähle die Verbindung zum Gateway.",
+          "port": "Gerätepfad für die USB-serielle Verbindung.",
+          "host": "Hostname oder IP-Adresse der RTU-over-TCP-Bridge.",
+          "network_port": "TCP-Port der RTU-Bridge."
         }
       },
       "confirm_usb": {
@@ -73,12 +93,15 @@
     },
     "error": {
       "cannot_connect": "Verbindung zum Meltem-Gateway fehlgeschlagen.",
+      "invalid_connection": "Gib einen gültigen seriellen Gerätepfad oder Netzwerk-Hostnamen und TCP-Port ein.",
       "no_devices_found": "Es wurden keine unterstützten Meltem M-WRG Geräte am Gateway gefunden. Stelle sicher, dass die Geräte bereits im M-WRG-GW Gateway hinzugefügt und eingerichtet wurden, bevor du sie in Home Assistant einrichtest.",
-      "port_in_use": "Eine andere Integration verwendet diesen seriellen Port bereits mit anderen seriellen Einstellungen.",
+      "port_in_use": "Eine andere Integration verwendet diese Verbindung bereits mit anderen Einstellungen.",
       "unknown": "Unerwarteter Fehler. Details stehen im Home-Assistant-Log."
     },
     "abort": {
-      "already_configured": "Dieses Meltem-Gateway ist bereits eingerichtet."
+      "already_configured": "Dieses Meltem-Gateway ist bereits eingerichtet.",
+      "already_in_progress": "Die Einrichtung dieses Meltem-Gateways läuft bereits.",
+      "reconfigure_successful": "Die Verbindung zum Meltem-Gateway wurde aktualisiert."
     }
   },
   "options": {
@@ -201,6 +224,27 @@
       "humidity_supply_air": {
         "name": "Zuluftfeuchte"
       },
+      "absolute_humidity_extract_air": {
+        "name": "Absolute Abluftfeuchte"
+      },
+      "absolute_humidity_supply_air": {
+        "name": "Absolute Zuluftfeuchte"
+      },
+      "external_input_level": {
+        "name": "Externer Steuereingang – Lüftungsstufe"
+      },
+      "external_input_on_delay": {
+        "name": "Externer Steuereingang – Einschaltverzögerung"
+      },
+      "external_input_run_on": {
+        "name": "Externer Steuereingang – Nachlaufzeit"
+      },
+      "voc_extract_air": {
+        "name": "Abluft-VOC"
+      },
+      "co2_supply_air": {
+        "name": "Zuluft-CO2"
+      },
       "co2_extract_air": {
         "name": "Abluft-CO2"
       },
@@ -232,7 +276,7 @@
         "name": "Modbus-Slave-ID"
       },
       "modbus_device_path": {
-        "name": "Modbus-Gerätepfad"
+        "name": "Modbus-Endpunkt"
       },
       "app_setup_code": {
         "name": "App-Setup-Code"
@@ -311,8 +355,8 @@
       "rf_comm_status": {
         "name": "RF-Kommunikationsstatus"
       },
-      "rf_fault_status": {
-        "name": "RF-Fehlerstatus"
+      "device_fault": {
+        "name": "Gerätestörung"
       },
       "value_error_status": {
         "name": "Messwertfehler"
@@ -407,10 +451,10 @@
       "message": "Die Mindeststufe ({minimum} %) von {unit} darf nicht über der Höchststufe ({maximum} %) liegen."
     },
     "gateway_unavailable": {
-      "message": "Die Verbindung zum Meltem-Gateway über den seriellen Anschluss {port} ist fehlgeschlagen. Prüfe die USB-Verbindung und die Zugriffsrechte."
+      "message": "Die Verbindung zum Meltem-Gateway über {port} ist fehlgeschlagen. Prüfe die Verbindung und bei USB die Zugriffsrechte."
     },
     "port_in_use": {
-      "message": "Der serielle Anschluss wird bereits mit anderen Einstellungen verwendet."
+      "message": "Die Gateway-Verbindung wird bereits mit anderen Einstellungen verwendet."
     },
     "gateway_communication_failed": {
       "message": "Die Kommunikation mit dem Meltem-Gateway ist fehlgeschlagen. Prüfe die USB-Verbindung und den seriellen Anschluss."
@@ -448,12 +492,42 @@
       "step": {
         "user": {
           "title": "Meltem M-WRG Gerät hinzufügen",
-          "description": "Das Gateway meldet {device_count} Geräte, die noch nicht eingerichtet sind. Wähle die Modbus-Adresse des Geräts, das du hinzufügen möchtest.\n\n{unit_details}",
+          "description": "Das Gateway meldet {device_count} Geräte, die noch nicht eingerichtet sind. Wähle die Modbus-Adresse und das genaue Modellprofil des Geräts, das du hinzufügen möchtest. Prüfe das Typenschild; erkannte Sensoren sind nur ein Hinweis.\n\n{unit_details}",
           "data": {
-            "slave": "Modbus-Adresse"
+            "slave": "Modbus-Adresse",
+            "slave_2": "Profil",
+            "slave_3": "Profil",
+            "slave_4": "Profil",
+            "slave_5": "Profil",
+            "slave_6": "Profil",
+            "slave_7": "Profil",
+            "slave_8": "Profil",
+            "slave_9": "Profil",
+            "slave_10": "Profil",
+            "slave_11": "Profil",
+            "slave_12": "Profil",
+            "slave_13": "Profil",
+            "slave_14": "Profil",
+            "slave_15": "Profil",
+            "slave_16": "Profil"
           },
           "data_description": {
-            "slave": "Modbus-Adresse des hinzuzufügenden Geräts, wie oben aufgeführt."
+            "slave": "Modbus-Adresse des hinzuzufügenden Geräts, wie oben aufgeführt.",
+            "slave_2": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_3": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_4": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_5": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_6": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_7": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_8": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_9": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_10": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_11": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_12": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_13": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_14": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_15": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_16": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält."
           }
         },
         "profile": {
@@ -481,7 +555,8 @@
         "entry_not_loaded": "Das Meltem-Gateway ist nicht geladen. Geräte lassen sich nur hinzufügen, solange es verbunden ist.",
         "cannot_connect": "Verbindung zum Meltem-Gateway fehlgeschlagen.",
         "no_new_units": "Das Gateway meldet keine Geräte, die noch nicht eingerichtet sind. Füge das Gerät zuerst in der Meltem-App hinzu.",
-        "already_configured": "Dieses Gerät ist bereits eingerichtet."
+        "already_configured": "Dieses Gerät ist bereits eingerichtet.",
+        "reconfigure_successful": "Das Gerät wurde aktualisiert."
       }
     }
   }

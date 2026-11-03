@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
     ModbusConnectionError,
+    ModbusProtocolError,
     ModbusSerialParams,
     ModbusTimeoutError,
 )
@@ -19,14 +20,18 @@ from custom_components.meltem_ventilation.const import (
     BASE_SUPPORTED_ENTITY_KEYS,
     REGISTER_APP_SETUP_CODE,
     REGISTER_CO2_EXTRACT_AIR,
+    REGISTER_CO2_SUPPLY_AIR,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_PRODUCT_ID,
+    REGISTER_VOC_EXTRACT_AIR,
     REGISTER_VOC_SUPPLY_AIR,
+    TRANSPORT_READ_RECOVERY_SECONDS,
 )
 from custom_components.meltem_ventilation.device import PolicyUnit
+from custom_components.meltem_ventilation.device.transport import ReadQuarantinedError
 from custom_components.meltem_ventilation.modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
@@ -137,6 +142,10 @@ class TestLinkSetup:
         assert unit.message_spacing == 0.1
         assert unit.required_timeout == 0.8
 
+    def test_network_timeout_scales_the_quiet_window(self) -> None:
+        assert new_transport_policy()._link_quiet_seconds == 10.0
+        assert new_transport_policy(timeout=5.0)._link_quiet_seconds == 20.0
+
 
 # ---------------------------------------------------------------------------
 #  Gateway discovery
@@ -206,6 +215,15 @@ class TestDiscoverGatewayNodes:
 
         assert await _discover(gateway) == []
 
+    async def test_connection_timeout_is_a_connection_error(self) -> None:
+        link = MockModbusConnection()
+        gateway = link.for_unit(1)
+        with patch.object(
+            link, "_connect_client", new=AsyncMock(side_effect=ModbusTimeoutError("open"))
+        ):
+            with pytest.raises(MeltemConnectionError, match=_PORT):
+                await _discover(gateway)
+
     async def test_an_unreadable_address_list_yields_no_units(
         self, gateway: MockModbusUnit
     ) -> None:
@@ -220,6 +238,31 @@ class TestDiscoverGatewayNodes:
         with pytest.raises(MeltemConnectionError, match=_PORT):
             await _discover(gateway)
 
+    @pytest.mark.parametrize(
+        ("register", "error"),
+        [
+            (REGISTER_GATEWAY_NUMBER_OF_NODES, ModbusTimeoutError("silent")),
+            (REGISTER_GATEWAY_NODE_ADDRESS_1, IllegalDataAddressError()),
+        ],
+    )
+    async def test_strict_discovery_raises_instead_of_reporting_no_units(
+        self, gateway: MockModbusUnit, register: int, error: Exception
+    ) -> None:
+        gateway.holding[REGISTER_GATEWAY_NUMBER_OF_NODES] = 2
+        gateway.fail_read(register, error)
+
+        with pytest.raises(MeltemModbusError) as err:
+            await discover_gateway_nodes(gateway, _PORT, start=2, end=16, strict=True)
+
+        assert not isinstance(err.value, MeltemConnectionError)
+
+    async def test_strict_discovery_still_reports_a_gateway_without_units(
+        self, gateway: MockModbusUnit
+    ) -> None:
+        gateway.holding[REGISTER_GATEWAY_NUMBER_OF_NODES] = 0
+
+        assert await discover_gateway_nodes(gateway, _PORT, start=2, end=16, strict=True) == []
+
 
 # ---------------------------------------------------------------------------
 #  Setup probe
@@ -227,13 +270,21 @@ class TestDiscoverGatewayNodes:
 
 
 class TestDetectSlaveDetails:
-    async def test_detects_voc_profile_with_minimal_reads(self, unit: MockModbusUnit) -> None:
+    @pytest.fixture(autouse=True)
+    def _no_recovery_pause(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.modbus_helpers.async_sleep", AsyncMock()
+        )
+
+    async def test_detects_voc_profile_from_sensor_reads(self, unit: MockModbusUnit) -> None:
         unit.holding.update(
             {
                 REGISTER_PRODUCT_ID: _PRODUCT_ID_WORDS,
                 REGISTER_APP_SETUP_CODE: [0x0001, 0x0000],
                 REGISTER_HUMIDITY_EXTRACT_AIR: 45,
                 REGISTER_CO2_EXTRACT_AIR: 800,
+                REGISTER_CO2_SUPPLY_AIR: 850,
+                REGISTER_VOC_EXTRACT_AIR: 100,
                 REGISTER_HUMIDITY_SUPPLY_AIR: 48,
                 REGISTER_VOC_SUPPLY_AIR: 120,
             }
@@ -243,7 +294,7 @@ class TestDetectSlaveDetails:
 
         assert result == UnitProbeResult(
             profile="fc_voc",
-            preview="R-Code R000001 | ID 116852 | VOC",
+            preview="R-Code R000001 | ID 116852 | App: M-WRG-II (VMD-22RPS44) | VOC",
             product_id=116852,
             app_setup_code="R000001",
         )
@@ -265,7 +316,23 @@ class TestDetectSlaveDetails:
 
         result = await detect_slave_details(unit)
 
-        assert result == UnitProbeResult("plain", "ID 116852 | basic", 116852)
+        assert result == UnitProbeResult(
+            "plain", "ID 116852 | App: M-WRG-II (VMD-22RPS44) | basic", 116852
+        )
+
+    async def test_app_only_sensor_registers_do_not_decide_the_profile(
+        self, unit: MockModbusUnit
+    ) -> None:
+        # 41008 and 41012 come from the app's register map only (docs/dev/MELTEM.md).
+        unit.holding.update({REGISTER_CO2_SUPPLY_AIR: 850, REGISTER_VOC_EXTRACT_AIR: 0})
+        unit.fail_read(REGISTER_PRODUCT_ID, IllegalDataAddressError())
+        for register in _CAPABILITY_REGISTERS:
+            unit.fail_read(register, IllegalDataAddressError())
+
+        assert await detect_slave_details(unit) == UnitProbeResult("plain", "basic")
+        read_addresses = {address for address, _count in _reads(unit)}
+        assert REGISTER_CO2_SUPPLY_AIR not in read_addresses
+        assert REGISTER_VOC_EXTRACT_AIR not in read_addresses
 
     async def test_an_unreadable_app_setup_code_does_not_fail_profile_detection(
         self, unit: MockModbusUnit
@@ -277,7 +344,9 @@ class TestDetectSlaveDetails:
 
         result = await detect_slave_details(unit)
 
-        assert result == UnitProbeResult("plain", "ID 116852 | basic", 116852)
+        assert result == UnitProbeResult(
+            "plain", "ID 116852 | App: M-WRG-II (VMD-22RPS44) | basic", 116852
+        )
 
     async def test_app_setup_code_timeout_does_not_fail_profile_detection(
         self, unit: MockModbusUnit
@@ -289,7 +358,26 @@ class TestDetectSlaveDetails:
 
         result = await detect_slave_details(unit)
 
-        assert result == UnitProbeResult("plain", "ID 116852 | basic", 116852)
+        assert result == UnitProbeResult(
+            "plain", "ID 116852 | App: M-WRG-II (VMD-22RPS44) | basic", 116852
+        )
+
+    @pytest.mark.parametrize(
+        ("product_id", "preview"),
+        [
+            (116819, "ID 116819 | App: M-WRG (VMD-22RES22) | basic"),
+            (116852, "ID 116852 | App: M-WRG-II (VMD-22RPS44) | basic"),
+            (123456, "ID 123456 | basic"),
+        ],
+    )
+    async def test_product_catalog_only_adds_a_preview(
+        self, unit: MockModbusUnit, product_id: int, preview: str
+    ) -> None:
+        unit.holding[REGISTER_PRODUCT_ID] = [product_id & 0xFFFF, product_id >> 16]
+        for register in _CAPABILITY_REGISTERS:
+            unit.fail_read(register, IllegalDataAddressError())
+
+        assert await detect_slave_details(unit) == UnitProbeResult("plain", preview, product_id)
 
     async def test_implausible_values_do_not_count_as_capabilities(
         self, unit: MockModbusUnit
@@ -308,6 +396,25 @@ class TestDetectSlaveDetails:
 
         assert result == UnitProbeResult("plain", "basic")
 
+    @pytest.mark.parametrize(
+        ("register", "sentinel"),
+        [
+            (REGISTER_HUMIDITY_EXTRACT_AIR, 239),
+            (REGISTER_CO2_EXTRACT_AIR, 32767),
+            (REGISTER_VOC_SUPPLY_AIR, 32767),
+        ],
+    )
+    async def test_air_quality_sensor_sentinels_do_not_suggest_a_profile(
+        self, unit: MockModbusUnit, register: int, sentinel: int
+    ) -> None:
+        unit.holding[register] = sentinel
+        unit.fail_read(REGISTER_PRODUCT_ID, IllegalDataAddressError())
+        for capability_register in _CAPABILITY_REGISTERS:
+            if capability_register != register:
+                unit.fail_read(capability_register, IllegalDataAddressError())
+
+        assert await detect_slave_details(unit) == UnitProbeResult("plain", "basic")
+
     async def test_a_silent_unit_is_probed_as_plain(self, unit: MockModbusUnit) -> None:
         unit.fail_requests(ModbusTimeoutError("silent"))
 
@@ -316,6 +423,87 @@ class TestDetectSlaveDetails:
         assert result == UnitProbeResult("plain", "basic")
         # The remaining probes would only time out as well.
         assert _reads(unit) == [(REGISTER_PRODUCT_ID, 2)]
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(ModbusTimeoutError("lost"), id="lost-reply"),
+            pytest.param(ModbusProtocolError("bad CRC"), id="garbled-reply"),
+            pytest.param(ReadQuarantinedError("paused"), id="recovery-pause"),
+        ],
+    )
+    async def test_one_failed_read_of_an_answering_unit_is_read_again_after_the_pause(
+        self, unit: MockModbusUnit, monkeypatch: pytest.MonkeyPatch, error: Exception
+    ) -> None:
+        unit.holding.update(
+            {
+                REGISTER_PRODUCT_ID: _PRODUCT_ID_WORDS,
+                REGISTER_HUMIDITY_EXTRACT_AIR: 45,
+                REGISTER_HUMIDITY_SUPPLY_AIR: 48,
+                REGISTER_CO2_EXTRACT_AIR: 800,
+                REGISTER_APP_SETUP_CODE: [0x0001, 0x0000],
+            }
+        )
+        unit.fail_read(REGISTER_VOC_SUPPLY_AIR, IllegalDataAddressError())
+        unit.fail_read(REGISTER_HUMIDITY_EXTRACT_AIR, error)
+        sleeps: list[float] = []
+
+        async def pause(seconds: float) -> None:
+            sleeps.append(seconds)
+            unit.fail_read(REGISTER_HUMIDITY_EXTRACT_AIR, None)
+
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.modbus_helpers.async_sleep", pause
+        )
+
+        result = await detect_slave_details(unit)
+
+        assert result.profile == "fc"
+        assert result.app_setup_code == "R000001"
+        assert sleeps == [TRANSPORT_READ_RECOVERY_SECONDS]
+        assert _reads(unit).count((REGISTER_HUMIDITY_EXTRACT_AIR, 1)) == 2
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(ModbusTimeoutError("gone"), id="lost-replies"),
+            pytest.param(ModbusProtocolError("bad CRC"), id="garbled-replies"),
+        ],
+    )
+    async def test_a_unit_that_stops_answering_is_given_up_after_one_retry(
+        self, unit: MockModbusUnit, monkeypatch: pytest.MonkeyPatch, error: Exception
+    ) -> None:
+        unit.holding[REGISTER_PRODUCT_ID] = _PRODUCT_ID_WORDS
+        unit.fail_read(REGISTER_HUMIDITY_EXTRACT_AIR, error)
+        sleeps: list[float] = []
+
+        async def pause(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        monkeypatch.setattr(
+            "custom_components.meltem_ventilation.modbus_helpers.async_sleep", pause
+        )
+
+        result = await detect_slave_details(unit)
+
+        assert result == UnitProbeResult(
+            "plain", "ID 116852 | App: M-WRG-II (VMD-22RPS44) | basic", 116852
+        )
+        assert sleeps == [TRANSPORT_READ_RECOVERY_SECONDS]
+        assert _reads(unit) == [
+            (REGISTER_PRODUCT_ID, 2),
+            (REGISTER_HUMIDITY_EXTRACT_AIR, 1),
+            (REGISTER_HUMIDITY_EXTRACT_AIR, 1),
+        ]
+
+    async def test_a_connect_timeout_is_a_connection_error(self) -> None:
+        link = MockModbusConnection()
+        unit = link.for_unit(4)
+        with patch.object(
+            link, "_connect_client", new=AsyncMock(side_effect=ModbusTimeoutError("open"))
+        ):
+            with pytest.raises(MeltemConnectionError):
+                await detect_slave_details(unit)
 
     async def test_a_dead_link_is_raised(self, unit: MockModbusUnit) -> None:
         unit.fail_requests(ModbusConnectionError("no port"))
@@ -353,6 +541,8 @@ class TestPlausibilityChecks:
             ("humidity_extract_air", 0, 100),
             ("humidity_supply_air", 0, 100),
             ("co2_extract_air", 250, 10000),
+            ("co2_supply_air", 250, 10000),
+            ("voc_extract_air", 0, 10000),
             ("voc_supply_air", 0, 10000),
         ],
     )

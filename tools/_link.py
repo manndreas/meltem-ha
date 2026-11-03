@@ -20,7 +20,7 @@ from modbus_connection import (
     ModbusError,
     ModbusSerialParams,
 )
-from modbus_connection.tmodbus import ModbusConnection
+from modbus_connection.tmodbus import ModbusConnection, TmodbusUnit
 
 DEFAULT_PORT = "/dev/ttyACM0"
 GATEWAY_DEVICE_ID = 1
@@ -31,9 +31,52 @@ MAX_REGISTERS_PER_READ = 120
 REGISTER_GATEWAY_NUMBER_OF_NODES = 43901
 REGISTER_GATEWAY_NODE_ADDRESS_1 = 43902
 
+# The Meltem app's gateway setup writes the cloud credential, the cloud URL and
+# a GUID field here (docs/dev/APK_ANALYSIS.md), so no tool may read the block.
+GATEWAY_SETUP_BLOCK = (41030, 41098)
+
 
 class LinkOpenError(Exception):
     """The serial port could not be opened, usually because it is in use."""
+
+
+class ForbiddenReadError(Exception):
+    """A tool tried to read registers that must never be read."""
+
+
+def check_read_allowed(unit_id: int, address: int, count: int) -> None:
+    """Raise ``ForbiddenReadError`` if a read touches the gateway's setup block."""
+
+    first, last = GATEWAY_SETUP_BLOCK
+    end = address + max(count, 1) - 1
+    if unit_id == GATEWAY_DEVICE_ID and address <= last and end >= first:
+        raise ForbiddenReadError(
+            f"refusing to read {address}..{end} on the gateway: "
+            f"{first}..{last} hold its cloud credential and binding"
+        )
+
+
+class GuardedUnit(TmodbusUnit):
+    """A unit that refuses reads of registers that must never be read."""
+
+    def __init__(self, connection: ModbusConnection, unit_id: int) -> None:
+        super().__init__(connection, unit_id)
+        self._guarded_unit_id = unit_id
+
+    async def read_holding_registers(self, address: int, count: int) -> list[int]:
+        check_read_allowed(self._guarded_unit_id, address, count)
+        return await super().read_holding_registers(address, count)
+
+    async def read_input_registers(self, address: int, count: int) -> list[int]:
+        check_read_allowed(self._guarded_unit_id, address, count)
+        return await super().read_input_registers(address, count)
+
+
+class GuardedModbusConnection(ModbusConnection):
+    """A connection whose units refuse reads of the gateway's setup block."""
+
+    def for_unit(self, unit_id: int) -> TmodbusUnit:
+        return GuardedUnit(self, unit_id)
 
 
 class ModbusReader(Protocol):
@@ -69,7 +112,9 @@ async def open_link(
     never counts as latency.
     """
 
-    link = ModbusConnection(serial_params(port), timeout=TIMEOUT, message_spacing=message_spacing)
+    link = GuardedModbusConnection(
+        serial_params(port), timeout=TIMEOUT, message_spacing=message_spacing
+    )
     try:
         await link.connect()
     except ModbusConnectionError as err:
@@ -187,6 +232,9 @@ def run(
     except LinkOpenError as err:
         print(f"ERROR: {err}")
         exit_code = 2
+    except ForbiddenReadError as err:
+        print(f"ERROR: {err}")
+        exit_code = 1
     except (ModbusConnectionError, *lost_link_errors) as err:
         print(f"ERROR: lost the serial connection: {err}")
         exit_code = 2

@@ -35,6 +35,9 @@ from .const import (
     DEFAULT_SCAN_SLAVE_START,
     DIRECT_OPERATION_MODES,
     DOMAIN,
+    EXTERNAL_INPUT_REFRESH_SECONDS,
+    EXTERNAL_INPUT_REGISTERS,
+    EXTERNAL_INPUT_STALE_SECONDS,
     GATEWAY_CONNECTED_DEVICES_REFRESH_SECONDS,
     GATEWAY_CONNECTED_DEVICES_STALE_SECONDS,
     GATEWAY_RF_STATISTICS_REFRESH_SECONDS,
@@ -142,7 +145,26 @@ _READBACK_PLANS: dict[str, RefreshPlan] = {
 }
 
 
+def _levels_reported_since(
+    state: RoomState, flow_control_baseline: ReadHealth, flow_baseline: ReadHealth
+) -> bool:
+    """Return whether the group the unit's levels come from was read after the baselines.
+
+    Without a fresh mode status map the levels come from the measured airflow
+    (``levels.reported_levels``), so a unit whose map cannot be read is settled
+    by a later airflow read instead of waiting for the map forever.
+    """
+
+    if read_health.read_since(state, "flow_control", flow_control_baseline):
+        return True
+    return not read_health.group_fresh(state, "flow_control") and read_health.read_since(
+        state, "flow", flow_baseline
+    )
+
+
 class _CoordinatorClient(Protocol):
+    async def async_disconnect_gateway(self) -> None: ...
+
     async def async_read_gateway_uptime(self) -> int: ...
 
     async def async_read_gateway_mac(self) -> str: ...
@@ -155,11 +177,15 @@ class _CoordinatorClient(Protocol):
 
     async def async_read_room_app_setup_code(self, room: RoomConfig) -> str | None: ...
 
+    async def async_read_external_input_setting(self, room: RoomConfig, key: str) -> int: ...
+
     def seconds_since_successful_read(self, slave: int) -> float | None: ...
 
     def transport_diagnostics(self) -> dict[str, float | int | None]: ...
 
-    async def discover_gateway_units(self, start: int, end: int) -> list[int]: ...
+    async def discover_gateway_units(
+        self, start: int, end: int, *, strict: bool = False
+    ) -> list[int]: ...
 
     async def probe_slave_details(self, slave: int) -> UnitProbeResult: ...
 
@@ -293,12 +319,14 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             stale_seconds=GATEWAY_RF_STATISTICS_STALE_SECONDS,
         )
         # Not tied to an entity: it raises a repair issue for units not set up yet.
+        # A failed check must raise: an empty list would delete an ignored issue.
         self.new_unit_issue = NewUnitIssue(hass, config_entry.entry_id)
+        self.new_unit_issue.restore(room.slave for room in rooms)
         self._gateway_units = OptionalGatewayRead[list[int]](
             hass,
             "unit list",
             lambda: self.client.discover_gateway_units(
-                DEFAULT_SCAN_SLAVE_START, DEFAULT_SCAN_SLAVE_END
+                DEFAULT_SCAN_SLAVE_START, DEFAULT_SCAN_SLAVE_END, strict=True
             ),
             refresh_seconds=NEW_UNIT_CHECK_SECONDS,
             stale_seconds=2 * NEW_UNIT_CHECK_SECONDS,
@@ -318,6 +346,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 "unit_list": self._gateway_units,
             }
         )
+        self.optional_room_reads: dict[tuple[str, str], OptionalGatewayRead[int]] = {}
 
         super().__init__(
             hass,
@@ -533,10 +562,20 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         async with self._gateway_lock:
             return await self.client.async_read_gateway_mac()
 
+    async def async_validate_replacement(self, validate: Callable[[], Awaitable[None]]) -> None:
+        """Validate a replacement while polling cannot reopen the old link."""
+
+        async with self._gateway_lock:
+            await self.client.async_disconnect_gateway()
+            await validate()
+
     async def async_shutdown(self) -> None:
         self._polling_stopped = True
         self._async_cancel_poll_timer()
         for read in self.optional_gateway_reads.values():
+            for consumer in read.consumers:
+                read.set_enabled(consumer, False)
+        for read in self.optional_room_reads.values():
             for consumer in read.consumers:
                 read.set_enabled(consumer, False)
         for overlay in self._overlays.values():
@@ -596,18 +635,56 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         self._set_optional_read_enabled(self._gateway_rf_statistics, key, enabled)
 
+    def set_external_input_enabled(self, room_key: str, key: str, enabled: bool) -> None:
+        """Read an external-input setting only while its entity is enabled."""
+
+        room = self._rooms_by_key[room_key]
+        if key not in EXTERNAL_INPUT_REGISTERS or not room.supports(key):
+            raise ValueError(f"Unsupported external input setting {key!r} for {room_key}")
+        read_key = (room_key, key)
+        read = self.optional_room_reads.get(read_key)
+        if read is None:
+            if not enabled:
+                return
+            read = self.optional_room_reads[read_key] = OptionalGatewayRead[int](
+                self.hass,
+                f"{room_key} {key}",
+                lambda: self.client.async_read_external_input_setting(room, key),
+                refresh_seconds=EXTERNAL_INPUT_REFRESH_SECONDS,
+                stale_seconds=EXTERNAL_INPUT_STALE_SECONDS,
+                clear_on_disable=True,
+            )
+        self._set_optional_read_enabled(read, key, enabled)
+
+    def external_input_value(self, room_key: str, key: str) -> int | None:
+        """Return one enabled external-input reading while it is recent."""
+
+        read = self.optional_room_reads.get((room_key, key))
+        return read.value if read is not None and read.enabled else None
+
     def _set_optional_read_enabled(
         self, read: OptionalGatewayRead[Any], consumer: str, enabled: bool
     ) -> None:
         if read.set_enabled(consumer, enabled):
             self._schedule_next_tick()
 
-    async def _async_read_optional_gateway_values_due(self) -> None:
-        """Read optional gateway values in order while holding the gateway lock."""
+    async def _async_read_optional_gateway_values_due(self) -> set[str]:
+        """Read due optional values under the lock and return affected room keys."""
 
         for read in self.optional_gateway_reads.values():
             if await read.async_read_if_due():
                 self._last_read_started = time.monotonic()
+        due_reads = [
+            (due, room_key, read)
+            for (room_key, _key), read in self.optional_room_reads.items()
+            if (due := read.seconds_until_due()) is not None and due <= 0
+        ]
+        if due_reads:
+            _, room_key, read = min(due_reads, key=lambda item: item[0])
+            if await read.async_read_if_due():
+                self._last_read_started = time.monotonic()
+                return {room_key}
+        return set()
 
     def room_available(self, room_key: str) -> bool:
         """Return whether one room still delivers usable data.
@@ -729,9 +806,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         if runtime.uncertain_flow is None:
             return False
         state = self.safe_data.get(room_key)
-        if state is not None and read_health.read_since(
-            state, "flow_control", runtime.uncertain_flow
-        ):
+        if state is not None and _levels_reported_since(state, *runtime.uncertain_flow):
             runtime.uncertain_flow = None
             return False
         return True
@@ -797,15 +872,14 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 now = time.monotonic()
                 job, startup = self._select_poll_job(now)
                 if job is None:
-                    await self._async_read_optional_gateway_values_due()
+                    optional_rooms = await self._async_read_optional_gateway_values_due()
                     self._schedule_next_tick()
                     if self._startup_states:
                         raise UpdateFailed(
                             translation_domain=DOMAIN,
                             translation_key="gateway_communication_failed",
                         ) from self._last_job_error
-                    # No unit was read, so only gateway entities can change.
-                    self._limit_next_update_to(())
+                    self._limit_next_update_to(optional_rooms)
                     return self.safe_data
 
                 # Move the job forward before running it so a failing read
@@ -816,7 +890,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 self._last_job_link_failure = False
                 self._last_job_attempted = False
                 updated_data = await self._read_one_job(self.safe_data or self._startup_states, job)
-                await self._async_read_optional_gateway_values_due()
+                optional_rooms = (
+                    set()
+                    if self._last_job_link_failure
+                    else await self._async_read_optional_gateway_values_due()
+                )
                 never_read = job.never_read(self._rooms_by_key[job.room_key], updated_data)
                 if startup or never_read:
                     job.next_due = time.monotonic() + self._job_interval(job, never_read=never_read)
@@ -837,7 +915,7 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 # The coordinator notifies the listeners once the new data is set.
                 self._confirm_pending_writes(updated_data, notify=False)
                 self._schedule_next_tick()
-                self._limit_next_update_to((job.room_key,))
+                self._limit_next_update_to({job.room_key, *optional_rooms})
                 return updated_data
         except MeltemModbusError as err:
             # Before any state arrives, an unsuccessful job is a startup failure.
@@ -909,6 +987,9 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             now=time.monotonic(),
         )
         for read in self.optional_gateway_reads.values():
+            if (due_in := read.seconds_until_due()) is not None:
+                seconds = min(seconds, max(self._tick_seconds, due_in))
+        for read in self.optional_room_reads.values():
             if (due_in := read.seconds_until_due()) is not None:
                 seconds = min(seconds, max(self._tick_seconds, due_in))
         self._async_set_next_poll_delay(seconds)
@@ -1216,7 +1297,10 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
             write_result = await write_method(*write_args)
         except asyncio.CancelledError:
             if write_group(write_key) == "flow_control":
-                self._runtimes[room.key].uncertain_flow = baseline
+                self._runtimes[room.key].uncertain_flow = (
+                    baseline,
+                    self._group_health(room.key, "flow"),
+                )
                 for previous_key, flow_overlay in self._overlays.items():
                     if write_group(previous_key) == "flow_control":
                         flow_overlay.clear(room.key)
@@ -1343,9 +1427,15 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
 
         updated_states = {**self.safe_data, room.key: refreshed_room}
         if refreshed_room != previous_state:
+            self._confirm_pending_writes(updated_states, notify=False)
             self._limit_next_update_to((room.key,))
-            self.async_set_updated_data(updated_states)
-        self._confirm_pending_writes(updated_states)
+            if failed and not self.last_update_success:
+                self.data = updated_states
+                self.async_update_listeners()
+            else:
+                self.async_set_updated_data(updated_states)
+        else:
+            self._confirm_pending_writes(updated_states, updated_rooms=(room.key,))
 
     async def _read_balanced_target_if_pending(
         self,
@@ -1433,7 +1523,11 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
         )
 
     def _confirm_pending_writes(
-        self, states: Mapping[str, RoomState], *, notify: bool = True
+        self,
+        states: Mapping[str, RoomState],
+        *,
+        notify: bool = True,
+        updated_rooms: Iterable[str] | None = None,
     ) -> None:
         """Judge pending writes and optimistic values by the latest readbacks."""
 
@@ -1455,6 +1549,8 @@ class MeltemDataUpdateCoordinator(DataUpdateCoordinator[dict[str, RoomState]]):
                 runtime.level_fallback = None
                 changed = True
         if changed and notify:
+            if updated_rooms is not None:
+                self._limit_next_update_to(updated_rooms)
             self.async_update_listeners()
 
     def _record_write_issue(self, room_key: str, write_key: str, status: WriteStatus) -> None:

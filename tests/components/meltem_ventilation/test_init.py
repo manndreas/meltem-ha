@@ -40,13 +40,18 @@ from custom_components.meltem_ventilation import (
 )
 from custom_components.meltem_ventilation.const import (
     BASE_SUPPORTED_ENTITY_KEYS,
+    CONF_CONNECTION_TYPE,
+    CONF_HOST,
     CONF_MAX_REQUESTS_PER_SECOND,
+    CONF_NETWORK_PORT,
     CONF_PORT,
     CONF_ROOMS,
+    CONNECTION_RTU_OVER_TCP,
     DOMAIN,
     FIXED_TIMEOUT,
     MODE_MANUAL,
     MODE_UNBALANCED,
+    NETWORK_TIMEOUT,
     PLATFORMS,
     PRESET_MODE_CODE_HIGH,
     PRESET_MODE_CODE_INTENSIVE,
@@ -103,6 +108,7 @@ def _entry(
     rooms: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
     entry_id: str = "test-entry-id",
+    minor_version: int = 2,
 ) -> MockConfigEntry:
     """Return a current entry whose units are config subentries."""
     entry = MockConfigEntry(
@@ -113,7 +119,7 @@ def _entry(
         subentries_data=[unit_subentry_data(room) for room in deepcopy(rooms or [_ROOM])],
         entry_id=entry_id,
         version=2,
-        minor_version=1,
+        minor_version=minor_version,
         source="user",
     )
     entry.add_to_hass(hass)
@@ -204,6 +210,29 @@ def setup_mocks(hass: HomeAssistant) -> Iterator[_SetupMocks]:
 
 
 class TestAsyncSetupEntry:
+    async def test_network_setup_builds_rtu_socket_client(
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks
+    ) -> None:
+        entry = _entry(hass)
+        data = {
+            CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+            CONF_HOST: "bridge.local",
+            CONF_NETWORK_PORT: 5020,
+        }
+        hass.config_entries.async_update_entry(entry, data=data)
+        with patch.object(
+            entry,
+            "async_create_background_task",
+            side_effect=lambda _hass, coro, _name, **_kwargs: coro.close(),
+        ):
+            assert await async_setup_entry(hass, entry)
+        unit_factory = setup_mocks.client_cls.call_args.args[0]
+        assert unit_factory.args[2].device == "socket://bridge.local:5020"
+        assert unit_factory.args[2].framer == "rtu"
+        assert setup_mocks.client_cls.call_args.kwargs["timeout"] == NETWORK_TIMEOUT
+        setup_mocks.resolve_port.assert_not_called()
+        assert entry.runtime_data.setup_snapshot[CONF_HOST] == "bridge.local"
+
     async def test_setup_creates_coordinator_and_forwards_platforms(
         self,
         hass: HomeAssistant,
@@ -219,6 +248,7 @@ class TestAsyncSetupEntry:
             assert await async_setup_entry(hass, entry) is True
 
         setup_mocks.client_cls.assert_called_once()
+        assert setup_mocks.client_cls.call_args.kwargs["timeout"] == FIXED_TIMEOUT
         setup_mocks.coordinator_cls.assert_called_once()
         setup_mocks.forward.assert_awaited_once_with(entry, PLATFORMS)
         # The first refresh runs in the background so setup stays fast.
@@ -546,7 +576,7 @@ class TestAsyncMigrateEntry:
         migrated = er.async_get(hass).async_get(legacy.entity_id)
         assert migrated is not None
         assert migrated.unique_id == room_entity_unique_id(entry.entry_id, "unit_1", "data_health")
-        assert (entry.version, entry.minor_version) == (2, 1)
+        assert (entry.version, entry.minor_version) == (2, 2)
         assert CONF_MAX_REQUESTS_PER_SECOND not in entry.data
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 2.0
 
@@ -569,7 +599,7 @@ class TestAsyncMigrateEntry:
         assert migrated_current.unique_id == room_entity_unique_id(
             entry.entry_id, "unit_1", "data_health"
         )
-        assert (entry.version, entry.minor_version) == (2, 1)
+        assert (entry.version, entry.minor_version) == (2, 2)
 
     async def test_migration_preserves_an_existing_request_rate_option(
         self, hass: HomeAssistant
@@ -584,7 +614,7 @@ class TestAsyncMigrateEntry:
 
         assert CONF_MAX_REQUESTS_PER_SECOND not in entry.data
         assert entry.options[CONF_MAX_REQUESTS_PER_SECOND] == 5.0
-        assert (entry.version, entry.minor_version) == (2, 1)
+        assert (entry.version, entry.minor_version) == (2, 2)
 
     async def test_migration_moves_identity_values_from_preview(self, hass: HomeAssistant) -> None:
         entry = _legacy_entry(
@@ -599,7 +629,7 @@ class TestAsyncMigrateEntry:
         assert unit["preview"] == "R-Code R000001 | ID 116852 | basic"
         assert unit["product_id"] == 116852
         assert unit["app_setup_code"] == "R000001"
-        assert (entry.version, entry.minor_version) == (2, 1)
+        assert (entry.version, entry.minor_version) == (2, 2)
 
     @pytest.mark.parametrize(
         ("room", "expected"),
@@ -629,7 +659,54 @@ class TestAsyncMigrateEntry:
         assert await async_migrate_entry(hass, entry) is True
 
         assert (dict(entry.data), dict(entry.options), set(entry.subentries)) == before
-        assert (entry.version, entry.minor_version) == (2, 1)
+        assert (entry.version, entry.minor_version) == (2, 2)
+
+    async def test_migration_renames_the_device_fault_entity(self, hass: HomeAssistant) -> None:
+        entry = _entry(hass, minor_version=1)
+        old = _register_entity(hass, entry, "binary_sensor", "rf_fault_status")
+        registry = er.async_get(hass)
+        registry.async_update_entity(old.entity_id, name="Fault")
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        migrated = registry.async_get(old.entity_id)
+        assert migrated is not None
+        assert migrated.unique_id == room_entity_unique_id(entry.entry_id, "unit_1", "device_fault")
+        assert migrated.name == "Fault"
+        assert (entry.version, entry.minor_version) == (2, 2)
+
+    async def test_migration_keeps_an_existing_device_fault_entity(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = _entry(hass, minor_version=1)
+        old = _register_entity(hass, entry, "binary_sensor", "rf_fault_status")
+        current = _register_entity(hass, entry, "binary_sensor", "device_fault")
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        registry = er.async_get(hass)
+        kept_old = registry.async_get(old.entity_id)
+        kept_current = registry.async_get(current.entity_id)
+        assert kept_old is not None
+        assert kept_current is not None
+        # The setup cleanup removes the leftover old entity later.
+        assert kept_old.unique_id == old.unique_id
+        assert kept_current.unique_id == current.unique_id
+        assert (entry.version, entry.minor_version) == (2, 2)
+
+    async def test_legacy_migration_renames_the_device_fault_entity(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = _legacy_entry(hass)
+        legacy = _register_legacy_entity(hass, entry, "binary_sensor", "rf_fault_status")
+
+        assert await async_migrate_entry(hass, entry) is True
+
+        migrated = er.async_get(hass).async_get(legacy.entity_id)
+        assert migrated is not None
+        assert migrated.unique_id == room_entity_unique_id(entry.entry_id, "unit_1", "device_fault")
+        assert migrated.config_subentry_id == _units(entry)[0].subentry_id
+        assert (entry.version, entry.minor_version) == (2, 2)
 
     async def test_migration_moves_units_with_their_devices_and_entities_to_subentries(
         self, hass: HomeAssistant

@@ -15,17 +15,40 @@
 
 ### New Features (5.0.0)
 
+- Connect to the gateway over raw Modbus RTU over TCP by entering a bridge
+  hostname or IP address and port (default `5020`). Reconfigure can switch
+  between USB serial and RTU over TCP without replacing the integration entry.
+  This connection has so far only been tested against software simulators, not
+  with a real bridge and gateway.
 - Add a unit that was paired in the Meltem app after the initial setup with
   **Add unit** on the integration page, and delete a single unit together with
-  its device and entities.
+  its device and entities. When several units are available, select the
+  address and profile in the same form.
 - Show a repair notice when the gateway reports units that are not set up in
   Home Assistant. The gateway's unit list is checked hourly. An ignored notice
-  stays ignored when the integration reloads.
+  stays ignored when the integration reloads or a check fails.
 - **Scan for new units** lists the units the gateway no longer reports and
   removes them only after you confirm.
+- Calculate optional absolute extract- and supply-air humidity sensors from
+  the existing temperature and humidity readings, without additional Modbus
+  requests.
+- Include the raw current-mode registers in the diagnostics download.
+- Add optional supply-air CO2 (`41012`) and extract-air VOC (`41008`) sensors
+  to the `O/VOC-AUL` profile. Only the Meltem app's register map describes
+  these registers and no unit has reported a value there yet, so both are
+  disabled by default, add no requests, and raise no repair notice.
+- Show the configured airflow, switch-on delay, and run-on time of the external
+  control input as optional, read-only diagnostics. Each sensor is disabled by
+  default and reads only its own register while enabled. A failed read is
+  retried after a minute instead of an hour.
+- Add Spanish, French, Italian, Polish, Portuguese, Turkish, Ukrainian, and
+  Arabic translations of the setup flows, entities, and repair notices.
 
 ### Improvements (5.0.0)
 
+- Show known app-catalog product identifiers in unit device details and setup
+  previews. The selected profile remains unchanged; the older M-WRG mapping
+  has not yet been verified on hardware.
 - Combine supply-air temperature and air-quality readings into fewer gateway
   requests on units with humidity, CO2, or VOC sensors.
 - Reduce repeated requests when a unit returns a temporary error. Normal polling
@@ -43,13 +66,18 @@
   reading it again. This reduces, but does not eliminate, the risk of delayed
   replies being mistaken for current readings. A single unanswered read no
   longer makes the unit unavailable; that still happens after three failed
-  reads in a row or two minutes without an answer.
+  reads in a row or two minutes without an answer. Setup and rescans read a
+  unit again after this pause when one of its replies is lost, instead of
+  proposing the basic profile for it.
 - Show the last read error of each unit with its time on the system
   information page and in the diagnostics download.
 - Update only the entities of the unit that was just read, which reduces the
   load on Home Assistant with several units.
 - Log a warning when a command would also apply settings that an interrupted
   earlier command left on the unit.
+- Rename the optional **RF fault status** diagnostic (`40103`) to **Device
+  fault**, the name the Meltem app uses. Existing entities keep their entity
+  ID and settings.
 
 ### Fixes (5.0.0)
 
@@ -71,15 +99,16 @@
   available during communication failures.
 - Keep ordinary words in diagnostics downloads readable while app setup codes
   stay hidden.
-- Improve recovery from a disconnected USB gateway by allowing more time for
-  the connection to return before retrying.
+- Wait five seconds before repeating a command after the USB connection was
+  lost, so a gateway that is briefly disconnected has time to return.
 - Stop a running intensive ventilation override when switching a unit off.
 - Keep unreachable units marked unavailable when the gateway still reports
   their radio diagnostics, and avoid flagging **Read health** when a unit does
   not support optional diagnostics.
 - After an interrupted airflow change, keep the target unknown and prevent
   changes that depend on the previous airflow until the unit reports its state
-  again.
+  again. On units whose mode status cannot be read, the next airflow reading
+  counts as that report.
 - Update the displayed fan target when a balanced airflow is changed on the
   unit or in the Meltem app back to a 10 m³/h step.
 - Keep a unit's saved app setup code when a later read fails, and persist
@@ -88,6 +117,8 @@
   messages and unit details.
 - Close the gateway connection reliably when setup is interrupted or unloading
   encounters an error.
+- Show a confirmation text after reconfiguring the gateway connection, and an
+  explanation when setup of the same gateway is already in progress.
 
 ### Other Changes (5.0.0)
 
@@ -96,8 +127,8 @@
 - The diagnostics download lists the units of the gateway and reports
   `next_poll_delay_seconds` and `poll_scheduled` instead of
   `update_interval_seconds`.
-- The unique IDs of unit entities include the configuration entry, so units of
-  different gateways can never collide. Existing entities are migrated.
+- The unique IDs of unit entities now include the configuration entry ID.
+  Existing entities are migrated and keep their entity IDs.
 
 ## 4.6.1
 

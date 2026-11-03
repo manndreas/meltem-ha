@@ -39,6 +39,10 @@ from .const import (
 from .coordinator import MeltemDataUpdateCoordinator
 from .cumulative_diagnostics import CumulativeDiagnostics
 from .entity import gateway_device_info, room_entity_platforms
+from .gateway_connection import (
+    SerialGatewayConnection,
+    gateway_connection_from_data,
+)
 from .identifiers import (
     APP_SETUP_CODE_IDENTIFIER_PREFIX,
     gateway_entity_unique_id,
@@ -50,7 +54,6 @@ from .migration import async_migrate_entry
 from .modbus_client import MeltemModbusClient
 from .modbus_helpers import (
     MeltemModbusError,
-    build_serial_params,
     resolve_preferred_port_path,
 )
 from .models import MeltemIntegrationConfigEntry, MeltemRuntimeData, RoomConfig
@@ -191,7 +194,10 @@ async def _async_initial_refresh_and_gateway_mac(
 async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> bool:
     """Set up Meltem Modbus from a config entry."""
 
-    port = await _async_normalize_port(hass, entry)
+    connection = gateway_connection_from_data(entry.data)
+    if isinstance(connection, SerialGatewayConnection):
+        connection = SerialGatewayConnection(await _async_normalize_port(hass, entry))
+    port = connection.unique_id
     rooms = _room_configs(entry)
     max_requests_per_second = _max_requests_per_second(entry)
     _LOGGER.info(
@@ -207,8 +213,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
     # All rooms share one client, and the client asks Home Assistant's modbus
     # integration for its units, so the gateway only ever sees one connection.
     client = MeltemModbusClient(
-        partial(async_get_unit, hass, entry, build_serial_params(port)),
+        partial(async_get_unit, hass, entry, connection.modbus_params()),
         port=port,
+        timeout=connection.timeout,
         max_requests_per_second=max_requests_per_second,
         on_request=cumulative_diagnostics.record_request,
         on_link_recycle=cumulative_diagnostics.record_link_recycle,
@@ -228,7 +235,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigE
         # Another integration already uses this port with other link settings.
         client.shutdown()
         await cumulative_diagnostics.async_flush()
-        _LOGGER.warning("Serial port %s cannot be used by the Meltem gateway: %s", port, err)
+        _LOGGER.warning("Connection %s cannot be used by the Meltem gateway: %s", port, err)
         raise ConfigEntryError(
             translation_domain=DOMAIN,
             translation_key="port_in_use",
@@ -271,7 +278,7 @@ def _setup_snapshot(entry: MeltemIntegrationConfigEntry) -> dict[str, object]:
     """Return what setup reads from the entry, apart from the live request rate."""
 
     return {
-        CONF_PORT: entry.data[CONF_PORT],
+        **gateway_connection_from_data(entry.data).as_data(),
         "units": {
             subentry.subentry_id: (subentry.title, dict(subentry.data))
             for subentry in unit_subentries(entry)

@@ -78,6 +78,7 @@ class _FakeClient:
     """Stand-in for MeltemModbusClient with no serial port dependency."""
 
     def __init__(self) -> None:
+        self.disconnect_calls = 0
         self.discover_calls: list[tuple[int, int]] = []
         self.probe_calls: list[int] = []
         self.read_calls: list[tuple[str, RefreshPlan]] = []
@@ -90,7 +91,12 @@ class _FakeClient:
         self.silent_seconds_by_slave: dict[int, float] = {}
         self.next_read_state = RoomState(target_level=42)
 
-    async def discover_gateway_units(self, start: int, end: int) -> list[int]:
+    async def async_disconnect_gateway(self) -> None:
+        self.disconnect_calls += 1
+
+    async def discover_gateway_units(
+        self, start: int, end: int, *, strict: bool = False
+    ) -> list[int]:
         self.discover_calls.append((start, end))
         return [2, 3, 4]
 
@@ -111,6 +117,9 @@ class _FakeClient:
 
     async def async_read_room_app_setup_code(self, room: RoomConfig) -> str | None:
         raise AssertionError("Optional app setup code reads are disabled in these tests")
+
+    async def async_read_external_input_setting(self, room: RoomConfig, key: str) -> int:
+        raise AssertionError("External input diagnostics are disabled in these tests")
 
     async def probe_slave_details(self, slave: int) -> UnitProbeResult:
         self.probe_calls.append(slave)
@@ -995,6 +1004,21 @@ class TestEffectiveLevels:
             coordinator.write_confirmations.by_room["unit_1"]["airflow_levels"].status == "failed"
         )
 
+    async def test_failed_write_and_refresh_during_outage_keep_last_update_failed(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = {"unit_1": RoomState(operation_mode="manual", target_level=40)}
+        coordinator.last_update_success = False
+        client.write_unbalanced_levels = _failing("write offline")
+        client.read_room = _failing("read offline")  # type: ignore[method-assign]
+
+        with pytest.raises(HomeAssistantError):
+            await coordinator.async_set_unbalanced_levels("unit_1", 10, 90)
+
+        assert coordinator.last_update_success is False
+        assert coordinator.safe_data["unit_1"].read_health_for("flow").last_error == "read offline"
+
     async def test_programming_errors_in_a_write_are_not_reported_as_write_failures(
         self,
         hass: HomeAssistant,
@@ -1320,6 +1344,48 @@ class TestDirectionalWrites:
         assert client.write_unbalanced_calls == [("unit_1", 40, 60)]
         assert client.write_level_calls == [("unit_1", 40)]
 
+    async def test_replacement_validation_serializes_writes_and_releases_lock_on_cancel(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        coordinator.data = _fresh(RoomState(operation_mode="manual", target_level=60))
+        validation_started = asyncio.Event()
+        write_started = asyncio.Event()
+
+        async def validate() -> None:
+            validation_started.set()
+            await asyncio.Event().wait()
+
+        async def write() -> None:
+            write_started.set()
+            await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 40)
+
+        validation = asyncio.create_task(coordinator.async_validate_replacement(validate))
+        pending_write: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(validation_started.wait(), 5)
+            assert client.disconnect_calls == 1
+            pending_write = asyncio.create_task(write())
+            await asyncio.wait_for(write_started.wait(), 5)
+            assert not pending_write.done()
+            assert not client.write_unbalanced_calls
+            validation.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await validation
+            await asyncio.wait_for(pending_write, 5)
+        finally:
+            validation.cancel()
+            if pending_write is not None:
+                pending_write.cancel()
+            await asyncio.gather(
+                validation,
+                *([pending_write] if pending_write is not None else []),
+                return_exceptions=True,
+            )
+
+        assert client.write_unbalanced_calls == [("unit_1", 40, 60)]
+        assert not coordinator._gateway_lock.locked()
+
     async def test_concurrent_fan_commands_from_a_scene_end_balanced(
         self,
         hass: HomeAssistant,
@@ -1588,6 +1654,60 @@ class TestCancelledWrites:
             await coordinator.async_set_operation_mode("unit_1", "manual")
         assert client.write_unbalanced_calls == []
         assert client.write_operating_mode_calls == []
+
+    async def test_an_airflow_read_settles_a_cancelled_write_without_a_mode_status_map(
+        self, hass: HomeAssistant
+    ) -> None:
+        """A unit that refuses 41100..41102 reports measured airflow instead."""
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        refused = ReadHealth(
+            last_attempt=dt_util.utcnow(), consecutive_failures=3, last_error="refused"
+        )
+        measured = RoomState(supply_air_flow=30, extract_air_flow=30)
+        coordinator.async_set_updated_data(
+            {
+                "unit_1": _with_fresh_read_groups(measured, "flow").with_read_health(
+                    "flow_control", refused
+                )
+            }
+        )
+        client.write_level = AsyncMock(side_effect=asyncio.CancelledError)
+        with pytest.raises(asyncio.CancelledError):
+            await coordinator.async_set_level("unit_1", 80)
+        with pytest.raises(HomeAssistantError):
+            await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 40)
+
+        coordinator.async_set_updated_data(
+            {
+                "unit_1": _with_fresh_read_groups(
+                    RoomState(supply_air_flow=80, extract_air_flow=80), "flow"
+                ).with_read_health("flow_control", refused)
+            }
+        )
+
+        assert coordinator.effective_levels("unit_1") == (80, 80)
+        client.write_level = AsyncMock()
+        await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 40)
+        assert client.write_unbalanced_calls == [("unit_1", 40, 80)]
+
+    async def test_an_airflow_read_alone_does_not_settle_a_unit_with_a_mode_status_map(
+        self, hass: HomeAssistant
+    ) -> None:
+        coordinator, client = _build_coordinator(hass, [_UNIT_1])
+        state = _fresh(RoomState(operation_mode="manual", target_level=30))["unit_1"]
+        coordinator.async_set_updated_data({"unit_1": state})
+        client.write_level = AsyncMock(side_effect=asyncio.CancelledError)
+        with pytest.raises(asyncio.CancelledError):
+            await coordinator.async_set_level("unit_1", 80)
+
+        # Only the airflow was read again; the map from before the write is still fresh.
+        coordinator.async_set_updated_data(
+            {"unit_1": _with_fresh_read_groups(replace(state, supply_air_flow=50), "flow")}
+        )
+
+        assert coordinator.effective_levels("unit_1") == (None, None)
+        with pytest.raises(HomeAssistantError):
+            await coordinator.async_set_direction_level("unit_1", DIRECTION_SUPPLY, 40)
 
     async def test_cancelled_queued_write_does_not_invalidate_previous_write(
         self, hass: HomeAssistant
@@ -2227,6 +2347,27 @@ class TestConfigFlowHelpers:
         )
 
         assert [room["key"] for room in rooms] == ["slave_3", "slave_3_2"]
+
+    def test_a_new_unit_does_not_take_the_key_of_a_unit_that_moved_away(self) -> None:
+        # Unit A was set up at address 2; after pairing again it sits at 3 and
+        # a new unit took address 2.
+        rooms = build_rooms_from_profiles(
+            [2, 3],
+            {"slave_2": "ii_plain", "slave_3": "ii_plain"},
+            probe_results_by_slave={
+                2: UnitProbeResult("plain", None, app_setup_code="R0000CC"),
+                3: UnitProbeResult("plain", None, app_setup_code="R0000AA"),
+            },
+            existing_rooms_by_slave={
+                2: {"key": "slave_2", "name": "Unit 1", "app_setup_code": "R0000AA"}
+            },
+        )
+
+        assert [(room["key"], room["slave"], room["name"]) for room in rooms] == [
+            ("slave_2_2", 2, "Unit 2"),
+            ("slave_2", 3, "Unit 1"),
+        ]
+        assert [room["app_setup_code"] for room in rooms] == ["R0000CC", "R0000AA"]
 
     async def test_failed_probe_leaves_the_unit_plain_without_preview(self) -> None:
         async def _probe(slave: int) -> UnitProbeResult:

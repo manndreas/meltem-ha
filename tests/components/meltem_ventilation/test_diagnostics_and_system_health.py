@@ -6,7 +6,7 @@ import json
 import types
 from copy import deepcopy
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -18,7 +18,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.json import ExtendedJSONEncoder, JSONEncoder
 from pytest_homeassistant.common import MockConfigEntry
 
-from custom_components.meltem_ventilation.const import CONF_PORT, CONF_ROOMS, DOMAIN
+from custom_components.meltem_ventilation.const import (
+    CONF_CONNECTION_TYPE,
+    CONF_HOST,
+    CONF_NETWORK_PORT,
+    CONF_PORT,
+    CONF_ROOMS,
+    CONNECTION_RTU_OVER_TCP,
+    DOMAIN,
+)
 from custom_components.meltem_ventilation.coordinator import MeltemDataUpdateCoordinator
 from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
 from custom_components.meltem_ventilation.diagnostics import (
@@ -106,6 +114,70 @@ def _dump(diagnostics: dict[str, Any]) -> str:
 
 
 class TestDiagnostics:
+    @pytest.mark.parametrize("fresh", [True, False])
+    async def test_raw_mode_registers_report_freshness_without_normalizing(
+        self, hass: HomeAssistant, fresh: bool
+    ) -> None:
+        entry = _entry(hass)
+        coordinator = entry.runtime_data.coordinator
+        read_at = datetime.now(UTC)
+        coordinator.safe_data = {
+            "unit_1": RoomState(mode_status_raw=(2, 176, 0)).with_read_health(
+                "flow_control",
+                ReadHealth(
+                    last_attempt=read_at if fresh else read_at + timedelta(seconds=1),
+                    last_successful_read=read_at,
+                    consecutive_failures=0 if fresh else 1,
+                    last_error=None if fresh else "read failed",
+                ),
+            )
+        }
+
+        result = await async_get_config_entry_diagnostics(hass, entry)
+        raw = result["coordinator"]["room_states"]["unit_1"]["mode_status_raw"]
+        assert raw == {"41100": 2, "41101": 176, "41102": 0, "fresh": fresh}
+
+    async def test_raw_mode_registers_are_unknown_before_any_read(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = _entry(hass)
+        result = await async_get_config_entry_diagnostics(hass, entry)
+        assert result["coordinator"]["room_states"]["unit_1"]["mode_status_raw"] is None
+
+    def test_raw_mode_registers_alone_do_not_make_a_room_available(self) -> None:
+        assert not RoomState(mode_status_raw=(2, 80, 0)).has_data
+
+    @pytest.mark.parametrize("with_runtime", [False, True])
+    async def test_network_host_is_redacted(self, hass: HomeAssistant, with_runtime: bool) -> None:
+        entry = _entry(hass, with_runtime=with_runtime)
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "private-bridge.local",
+                CONF_NETWORK_PORT: 5020,
+            },
+        )
+        if with_runtime:
+            coordinator = entry.runtime_data.coordinator
+            coordinator.last_job_error = MeltemModbusError("socket://private-bridge.local:5020")
+            coordinator.async_discover_gateway_units.side_effect = MeltemModbusError(
+                "private-bridge.local is unavailable"
+            )
+            coordinator.last_room_errors = {
+                "unit_1": RoomReadError(
+                    "private-bridge.local failed", datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+                )
+            }
+            coordinator.safe_data = {
+                "unit_1": RoomState().with_read_health(
+                    "flow", ReadHealth(last_error="private-bridge.local failed")
+                )
+            }
+        result = await async_get_config_entry_diagnostics(hass, entry)
+        assert "private-bridge.local" not in _dump(result)
+        assert result["entry"]["data"][CONF_HOST] == REDACTED
+
     @pytest.mark.parametrize("with_runtime", [False, True])
     async def test_setup_codes_are_redacted_everywhere_without_mutating_sources(
         self, hass: HomeAssistant, with_runtime: bool
@@ -362,6 +434,24 @@ class TestDiagnostics:
 
 
 class TestSystemHealth:
+    async def test_redacts_network_host_in_errors(self, hass: HomeAssistant) -> None:
+        entry = _entry(hass)
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_HOST: "private-bridge.local",
+                CONF_NETWORK_PORT: 5020,
+            },
+        )
+        entry.mock_state(hass, ConfigEntryState.LOADED)
+        entry.runtime_data.coordinator.last_job_error = MeltemModbusError(
+            "socket://private-bridge.local:5020"
+        )
+        info = await system_health_info(hass)
+        assert "private-bridge.local" not in str(info)
+        assert info["last_job_error"] == f"socket://{REDACTED}:5020"
+
     async def test_reports_nothing_without_entries(self, hass: HomeAssistant) -> None:
         assert await system_health_info(hass) == {"loaded_entries": 0}
 

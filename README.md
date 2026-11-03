@@ -6,7 +6,8 @@
 [![License](https://img.shields.io/github/license/manndreas/meltem-ha)](https://github.com/manndreas/meltem-ha/blob/main/LICENSE)
 
 Home Assistant custom integration for Meltem `M-WRG-S` and `M-WRG-II`
-ventilation units via the Meltem `M-WRG-GW` gateway and Modbus RTU over USB.
+ventilation units via the Meltem `M-WRG-GW` gateway and Modbus RTU over USB or
+a raw RTU-over-TCP bridge.
 
 Use this integration at your own risk. It is an unofficial project and comes
 with no warranty. The authors are not liable for damage to Meltem devices,
@@ -18,21 +19,30 @@ gateways, Home Assistant hosts, or other connected equipment.
 - automatic discovery of configured units via the `M-WRG-GW` gateway
 - per-unit profile selection during setup
 - temperature, airflow, filter and operating-hour sensors, plus humidity, CO2
-  and VOC sensors depending on the profile
+  and VOC sensors depending on the profile; optional absolute-humidity sensors
+  are calculated from the existing temperature and humidity readings
 - separate supply air and extract air fan entities per unit
 - app-style quick modes, sensor-driven control modes and an intensive
   ventilation switch
 - writable humidity and CO2 control thresholds for supported profiles
+- optional, read-only absolute-humidity estimates and external-control-input
+  settings; these diagnostics are disabled by default and do not write to the unit
+- CO2 measurement for extract air on the `-FC` profiles and VOC measurement for
+  supply air on the `O/VOC-AUL` profile, reported in ppm and enabled by default.
+  The `O/VOC-AUL` profile also offers supply-air CO2 and extract-air VOC, which
+  only the Meltem app's register map describes; these two are disabled by
+  default until a unit with those sensors confirms them
 - gateway connected-device count, measured airflow totals and delta, connection
   diagnostics, and optional RF, uptime, UTC clock, and communication-quality sensors
 - per-unit reachability, read health, last successful update, measured airflow
-  balance, and optional RF, fan-hour, and app-setup-code diagnostics
+  balance, and optional RF, fan-hour, app-setup-code and external-input diagnostics
 - automation triggers and conditions for a due filter change
 - each unit as its own entry under the gateway, with **Add unit** and a
   per-unit profile change
 - repair notices for units the gateway reports but Home Assistant does not have
   yet, and for sensors of the selected profile that report no value
 - USB discovery for the Meltem gateway
+- manual setup of raw RTU-over-TCP bridges (not yet tested with a real bridge)
 
 ## Controls
 
@@ -63,8 +73,14 @@ automation that runs intensive ventilation while a room is occupied.
 - Home Assistant `2026.11.0` or newer
 - a Meltem `M-WRG-GW` gateway
 - supported `M-WRG-S` / `M-WRG-II` units already added in the Meltem app
-- the gateway connected to the Home Assistant host via USB
+- either the gateway connected to the Home Assistant host via USB, or a
+  network bridge that transports raw Modbus RTU frames over TCP
   > **Note:** Use a USB cable that is fully wired for data — charge-only cables will not work.
+
+RTU-over-TCP uses raw RTU frames, not Modbus TCP/MBAP. Network connections have
+no encryption or authentication: use them only on a trusted local network.
+RTU over TCP has so far only been tested against software simulators, not with
+a real network bridge and gateway. Reports from users who try it are welcome.
 
 ### Marketplace
 
@@ -88,14 +104,18 @@ To remove the config entry and uninstall the integration, follow the
 1. Open `Settings` -> `Devices & Services`
 2. Click `Add Integration`
 3. Search for `Meltem Modbus`
-4. Select the serial port of the `M-WRG-GW` gateway
+4. Choose USB serial and enter the gateway's serial port, or choose RTU over TCP
+   and enter the bridge hostname or IP address and TCP port (default `5020`)
 5. Let the integration read the configured unit list from the gateway
 6. Assign the correct profile to each detected unit
 
 The profile list shows each unit's App setup code when available. Match it to
 the code below the DataMatrix on the unit label to identify which Modbus
 address belongs to each physical unit. Profile selection still uses the model
-information on the type plate.
+information on the type plate. For known product IDs, the setup preview also
+shows a series and product identifier from the app catalog; the older-series
+mapping has not yet been verified on hardware. Existing units with a known ID
+show the identifier in their device details.
 
 Units are listed by their Modbus address and initially named `Unit 1`, `Unit 2`
 and so on. Each unit appears as its own entry under the gateway on the
@@ -143,8 +163,11 @@ Open the integration options via `Settings` -> `Devices & Services` -> `Meltem M
   changed in the same step. Units the gateway no longer reports are listed for
   confirmation before they are removed together with their devices
 
-To move the gateway to another serial port, choose `Reconfigure` in the menu
-of the integration entry. The new port is checked before it is saved.
+To change the gateway connection or switch between USB serial and RTU over
+TCP, choose `Reconfigure` in the menu of the integration entry. The new
+connection is checked before it is saved; existing units and entity IDs remain.
+Hostnames, including `.local` names, must be resolvable by the Home Assistant
+host. Automatic network discovery is not supported.
 
 ## Polling and diagnostics
 
@@ -167,7 +190,7 @@ gateway UTC clock can be enabled in the entity settings.
 
 Check that:
 
-- the gateway is powered and reachable over USB
+- the gateway is powered and reachable over the configured connection
 - the units were already added in the Meltem app
 - the units are fully configured in the `M-WRG-GW` gateway
 

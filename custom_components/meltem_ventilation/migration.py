@@ -4,6 +4,7 @@
 - 1.3 moved the request rate from ``data`` to ``options``
 - 1.4 moved identity values out of the display preview
 - 2.1 moved every unit into a config subentry and scoped entity unique IDs by the entry
+- 2.2 renamed the unit entity key ``rf_fault_status`` to ``device_fault``
 """
 
 from __future__ import annotations
@@ -27,6 +28,9 @@ from .const import (
 from .identifiers import legacy_room_entity_unique_id, room_entity_unique_id
 from .models import MeltemIntegrationConfigEntry
 from .units import unit_subentry_data
+
+# Unit entity keys renamed in 2.2, mapped to their new key.
+RENAMED_ENTITY_KEYS: dict[str, str] = {"rf_fault_status": "device_fault"}
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: MeltemIntegrationConfigEntry) -> bool:
@@ -60,6 +64,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: MeltemIntegrationConfi
             hass.config_entries.async_update_entry(entry, data=data, minor_version=4)
 
         _async_migrate_units_to_subentries(hass, entry)
+
+    if entry.minor_version < 2:
+        _async_migrate_renamed_entity_keys(hass, entry)
 
     return True
 
@@ -95,7 +102,8 @@ def _async_migrate_units_to_subentries(
             unique_id=subentry_data["unique_id"],
         )
         hass.config_entries.async_add_subentry(entry, subentry)
-        for entity_key in ENTITY_PLATFORM_BY_KEY:
+        # Renamed keys keep their old name here; the 2.2 step renames them.
+        for entity_key in (*ENTITY_PLATFORM_BY_KEY, *RENAMED_ENTITY_KEYS):
             entity = entities.get(legacy_room_entity_unique_id(room_key, entity_key))
             if entity is not None:
                 entity_registry.async_update_entity(
@@ -156,3 +164,29 @@ def _async_migrate_data_health_entities(
             continue
         registry.async_update_entity(old_entity.entity_id, new_unique_id=new_unique_id)
         entry_entities[new_unique_id] = old_entity
+
+
+def _async_migrate_renamed_entity_keys(
+    hass: HomeAssistant, entry: MeltemIntegrationConfigEntry
+) -> None:
+    """Give unit entities with a renamed key their new unique ID.
+
+    The entity keeps its entity ID, its history, and all user settings. If an
+    entity with the new unique ID already exists, the old one is left for the
+    setup cleanup to remove.
+    """
+
+    registry = er.async_get(hass)
+    entities = er.async_entries_for_config_entry(registry, entry.entry_id)
+    unique_ids = {entity.unique_id for entity in entities}
+    for entity in entities:
+        for old_key, new_key in RENAMED_ENTITY_KEYS.items():
+            old_suffix = f"_{old_key}"
+            if not entity.unique_id.endswith(old_suffix):
+                continue
+            new_unique_id = f"{entity.unique_id.removesuffix(old_suffix)}_{new_key}"
+            if new_unique_id in unique_ids:
+                continue
+            registry.async_update_entity(entity.entity_id, new_unique_id=new_unique_id)
+            unique_ids.add(new_unique_id)
+    hass.config_entries.async_update_entry(entry, minor_version=2)

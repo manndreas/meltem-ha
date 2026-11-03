@@ -9,6 +9,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, cast
 
 import probatio as vol
+from homeassistant import data_entry_flow
 from homeassistant.components.modbus import async_get_temporary_unit
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -17,11 +18,18 @@ from homeassistant.helpers import selector
 from modbus_connection import ModbusUnit
 
 from .const import (
+    CONF_CONNECTION_TYPE,
+    CONF_HOST,
+    CONF_NETWORK_PORT,
     CONF_PORT,
     CONF_PROFILE,
     CONF_SLAVE,
     CONF_UNIT_KEY,
+    CONNECTION_RTU_OVER_TCP,
+    CONNECTION_SERIAL,
     DEFAULT_GATEWAY_DEVICE_ID,
+    DEFAULT_NETWORK_PORT,
+    DEFAULT_PORT,
     DEFAULT_SCAN_SLAVE_END,
     DEFAULT_SCAN_SLAVE_START,
     DOMAIN,
@@ -29,10 +37,10 @@ from .const import (
     MIN_MAX_REQUESTS_PER_SECOND,
     MODEL_PROFILE_LABELS,
 )
+from .gateway_connection import GatewayConnection, RtuTcpGatewayConnection, SerialGatewayConnection
 from .modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
-    build_serial_params,
     detect_slave_details,
     discover_gateway_nodes,
     new_transport_policy,
@@ -76,6 +84,52 @@ type _Probe = Callable[[int], Awaitable[UnitProbeResult]]
 
 def port_schema(default: str) -> vol.Schema:
     return vol.Schema({vol.Required(CONF_PORT, default=default): str})
+
+
+def connection_schema(
+    connection: GatewayConnection, values: Mapping[str, Any] | None = None
+) -> vol.Schema:
+    """Build the form for either a local serial device or a network bridge."""
+
+    if isinstance(connection, RtuTcpGatewayConnection):
+        connection_type = CONNECTION_RTU_OVER_TCP
+        serial_port = DEFAULT_PORT
+        host = connection.host
+        network_port = connection.port
+    else:
+        connection_type = CONNECTION_SERIAL
+        serial_port = connection.port
+        host = ""
+        network_port = DEFAULT_NETWORK_PORT
+    values = values or {}
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_CONNECTION_TYPE, default=values.get(CONF_CONNECTION_TYPE, connection_type)
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[CONNECTION_SERIAL, CONNECTION_RTU_OVER_TCP],
+                    translation_key="connection_type",
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            data_entry_flow.Optional(
+                CONF_PORT,
+                default=values.get(CONF_PORT, serial_port),
+                visible={"field": CONF_CONNECTION_TYPE, "value": CONNECTION_SERIAL},
+            ): str,
+            data_entry_flow.Optional(
+                CONF_HOST,
+                default=values.get(CONF_HOST, host),
+                visible={"field": CONF_CONNECTION_TYPE, "value": CONNECTION_RTU_OVER_TCP},
+            ): str,
+            data_entry_flow.Optional(
+                CONF_NETWORK_PORT,
+                default=values.get(CONF_NETWORK_PORT, network_port),
+                visible={"field": CONF_CONNECTION_TYPE, "value": CONNECTION_RTU_OVER_TCP},
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+        }
+    )
 
 
 def profiles_form(
@@ -250,6 +304,11 @@ def build_rooms_from_profiles(
         if result.app_setup_code is not None
     }
     used_room_keys: set[str] = set()
+    # A unit matched to an existing room keeps that room's key, wherever its
+    # address now sorts; a new unit must not take it first.
+    reserved_room_keys = {
+        str(room["key"]) for room in matched_rooms.values() if room.get("key") is not None
+    }
     # Kept units keep their names, so a new unit must not reuse one.
     used_names = {
         str(matched_rooms[slave]["name"])
@@ -261,10 +320,12 @@ def build_rooms_from_profiles(
         existing_room = matched_rooms.get(slave, {})
         probe_result = probe_results_by_slave.get(slave)
         selected_profile = str(selected_profiles[profile_field_key(slave)])
-        preferred_room_key = str(existing_room.get("key") or f"slave_{slave}")
+        existing_key = existing_room.get("key")
+        preferred_room_key = str(existing_key or f"slave_{slave}")
+        taken = used_room_keys if existing_key is not None else used_room_keys | reserved_room_keys
         room_key = preferred_room_key
         suffix = 2
-        while room_key in used_room_keys:
+        while room_key in taken:
             room_key = f"{preferred_room_key}_{suffix}"
             suffix += 1
         used_room_keys.add(room_key)
@@ -315,15 +376,16 @@ class PortInUseError(MeltemConnectionError):
 
 @asynccontextmanager
 async def temporary_units(
-    hass: HomeAssistant, port: str
+    hass: HomeAssistant, port: str | RtuTcpGatewayConnection
 ) -> AsyncGenerator[Callable[[int], Awaitable[ModbusUnit]], None]:
     """Hold units on the gateway link for one flow step.
 
     The link closes again on exit unless a loaded entry also holds it.
     """
 
-    params = build_serial_params(port)
-    policy = new_transport_policy()
+    connection = SerialGatewayConnection(port) if isinstance(port, str) else port
+    params = connection.modbus_params()
+    policy = new_transport_policy(timeout=connection.timeout)
     async with AsyncExitStack() as stack:
 
         async def unit_for(slave: int) -> ModbusUnit:
@@ -333,7 +395,7 @@ async def temporary_units(
                 )
             except HomeAssistantError as err:
                 raise PortInUseError(str(err)) from err
-            return prepare_unit(unit, slave, policy)
+            return prepare_unit(unit, slave, policy, timeout=connection.timeout)
 
         yield unit_for
 
@@ -375,7 +437,7 @@ def probe_profiles(results: Mapping[int, UnitProbeResult]) -> dict[int, str]:
 
 
 async def async_discover_units(
-    hass: HomeAssistant, port: str
+    hass: HomeAssistant, port: str | RtuTcpGatewayConnection
 ) -> tuple[list[int], dict[int, UnitProbeResult]]:
     """Read the unit list from the gateway and probe every unit on one link.
 
@@ -386,7 +448,7 @@ async def async_discover_units(
         _LOGGER.info("Starting Meltem gateway-backed unit discovery on %s", port)
         slaves = await discover_gateway_nodes(
             await unit_for(DEFAULT_GATEWAY_DEVICE_ID),
-            port,
+            port if isinstance(port, str) else port.unique_id,
             start=DEFAULT_SCAN_SLAVE_START,
             end=DEFAULT_SCAN_SLAVE_END,
         )
@@ -398,8 +460,8 @@ async def async_discover_units(
     return slaves, probe_results
 
 
-async def async_validate_port(hass: HomeAssistant, port: str) -> None:
-    """Check that a gateway answers on the given serial port."""
+async def async_validate_port(hass: HomeAssistant, port: str | RtuTcpGatewayConnection) -> None:
+    """Check that a gateway answers on the given connection."""
 
     async with temporary_units(hass, port) as unit_for:
         await read_gateway_node_count(await unit_for(DEFAULT_GATEWAY_DEVICE_ID))

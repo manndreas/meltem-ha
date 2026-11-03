@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 import probatio as vol
+from homeassistant import data_entry_flow
 from homeassistant.config_entries import (
     ConfigEntryState,
     ConfigSubentryFlow,
@@ -26,6 +27,7 @@ from .flow_helpers import (
     new_unit,
     probe_previews,
     probe_profiles,
+    profile_field_key,
     unit_details,
 )
 from .modbus_helpers import MeltemModbusError
@@ -53,11 +55,11 @@ class MeltemUnitSubentryFlow(ConfigSubentryFlow):
         return runtime_data.coordinator if runtime_data is not None else None
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        """Choose one of the units the gateway reports that is not set up yet."""
+        """Choose an unconfigured unit and its profile."""
 
         if user_input is not None:
-            self._slave = int(user_input[CONF_SLAVE])
-            return await self.async_step_profile()
+            slave = int(user_input[CONF_SLAVE])
+            return self._create_unit(slave, str(user_input[profile_field_key(slave)]))
 
         if (coordinator := self._coordinator()) is None:
             return self.async_abort(reason="entry_not_loaded")
@@ -76,6 +78,7 @@ class MeltemUnitSubentryFlow(ConfigSubentryFlow):
             self._slave = self._slaves[0]
             return await self.async_step_profile()
 
+        detected_profiles = probe_profiles(self._probe_results_by_slave)
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
@@ -85,7 +88,15 @@ class MeltemUnitSubentryFlow(ConfigSubentryFlow):
                             options=[str(slave) for slave in self._slaves],
                             mode=selector.SelectSelectorMode.LIST,
                         )
-                    )
+                    ),
+                    **{
+                        data_entry_flow.Required(
+                            profile_field_key(slave),
+                            default=detected_profile_default(slave, detected_profiles),
+                            visible={"field": CONF_SLAVE, "value": str(slave)},
+                        ): PROFILE_SELECTOR
+                        for slave in self._slaves
+                    },
                 }
             ),
             description_placeholders={
@@ -103,15 +114,7 @@ class MeltemUnitSubentryFlow(ConfigSubentryFlow):
 
         slave = self._slave
         if user_input is not None:
-            room = new_unit(
-                slave,
-                str(user_input[CONF_PROFILE]),
-                self._probe_results_by_slave.get(slave),
-                unit_rooms(self._get_entry()).values(),
-            )
-            return self.async_create_entry(
-                title=str(room["name"]), data=unit_data(room), unique_id=str(slave)
-            )
+            return self._create_unit(slave, str(user_input[CONF_PROFILE]))
 
         return self.async_show_form(
             step_id="profile",
@@ -129,6 +132,22 @@ class MeltemUnitSubentryFlow(ConfigSubentryFlow):
                 "slave": str(slave),
                 "unit_details": unit_details([slave], probe_previews(self._probe_results_by_slave)),
             },
+        )
+
+    def _create_unit(self, slave: int, profile: str) -> SubentryFlowResult:
+        """Create the selected unit using its probed details."""
+
+        existing_rooms = unit_rooms(self._get_entry())
+        if slave in existing_rooms:
+            return self.async_abort(reason="already_configured")
+        room = new_unit(
+            slave,
+            profile,
+            self._probe_results_by_slave.get(slave),
+            existing_rooms.values(),
+        )
+        return self.async_create_entry(
+            title=str(room["name"]), data=unit_data(room), unique_id=str(slave)
         )
 
     async def async_step_reconfigure(

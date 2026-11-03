@@ -138,7 +138,10 @@ Notes:
   and 84).
 - `41008`, `41012`..`41015`, `41019`, `41022`..`41026` and `41028`..`41029`
   are not documented. The VOC register `41013` used by this integration does
-  not appear in any collected document.
+  not appear in any collected document. On the `O/VOC-AUL` profile the
+  integration also decodes `41008` (extract VOC) and `41012` (supply CO2) from
+  the Meltem app's register map only, as disabled-by-default sensors; see
+  [../MELTEM.md](../MELTEM.md#registers-not-covered-by-the-collected-manufacturer-documents).
 
 ## Configuration registers (read/write)
 
@@ -249,7 +252,8 @@ can be changed via Modbus (`42007..42009`).
   with step 1 (II) or 10 (S). On `M-WRG-S` it is unclear whether `100 %`
   means 97 m³/h or 100 m³/h.
 - **`41013` (VOC)**: used by this integration for the `O/VOC-AUL` profile but
-  absent from every collected document.
+  absent from every collected document. The same holds for `41008` and
+  `41012`, which that profile offers as disabled-by-default sensors.
 - **Application timing of the `41132` commit:** the manuals say to write
   `41132` last but do not describe the live readback timing. On slave `4`,
   W-6 kept the measured airflow unchanged until the final `41132=0` write;

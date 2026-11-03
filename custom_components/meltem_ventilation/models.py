@@ -159,7 +159,11 @@ class RoomState:
     supply_air_temperature: float | None = None
     humidity_extract_air: int | None = None
     humidity_supply_air: int | None = None
+    absolute_humidity_extract_air: float | None = None
+    absolute_humidity_supply_air: float | None = None
     co2_extract_air: int | None = None
+    co2_supply_air: int | None = None
+    voc_extract_air: int | None = None
     voc_supply_air: int | None = None
     extract_air_flow: int | None = None
     supply_air_flow: int | None = None
@@ -168,12 +172,13 @@ class RoomState:
     filter_change_due: bool | None = None
     frost_protection_active: bool | None = None
     rf_comm_status: bool | None = None
-    rf_fault_status: bool | None = None
+    device_fault: bool | None = None
     value_error_status: bool | None = None
 
     operation_mode: str | None = None
     preset_mode: str | None = None
     intensive_active: bool | None = None
+    mode_status_raw: tuple[int, int, int] | None = None
     target_level: int | None = None
     balanced_target_readback: int | None = None
     extract_target_level: int | None = None
@@ -213,7 +218,9 @@ class RoomState:
 
 
 _ROOM_VALUE_FIELDS: tuple[str, ...] = tuple(
-    item.name for item in fields(RoomState) if item.name != "group_read_health"
+    item.name
+    for item in fields(RoomState)
+    if item.name not in {"group_read_health", "mode_status_raw"}
 )
 EMPTY_ROOM_STATE = RoomState()
 
@@ -264,7 +271,7 @@ class RefreshPlan:
         if self.refresh_operating_hours:
             groups.extend(("hours", "fan_hours"))
         if self.refresh_rf_diagnostics:
-            groups.extend(("rf_last_seen", "rf_signal", "rf_fault", "value_error"))
+            groups.extend(("rf_last_seen", "rf_signal", "device_fault", "value_error"))
         if self.refresh_control_settings:
             groups.append("control_settings")
         return tuple(groups)

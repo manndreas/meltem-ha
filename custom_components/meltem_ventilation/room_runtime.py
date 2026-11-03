@@ -26,7 +26,8 @@ class RoomRuntime:
     unavailable_logged: bool = False
     # Whether the set-side target read failed last time, so a streak logs once.
     target_read_failing: bool = False
-    # Mode-group health when a flow write was interrupted; a later read clears it.
-    uncertain_flow: ReadHealth | None = None
+    # Mode-group and airflow-group health when a flow write was interrupted; a
+    # later read of the group the levels come from clears it.
+    uncertain_flow: tuple[ReadHealth, ReadHealth] | None = None
     # Fallback of the last fan write and the mode-group health it was made at.
     level_fallback: tuple[LevelWriteFallback, ReadHealth] | None = None

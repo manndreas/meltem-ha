@@ -9,6 +9,7 @@ import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant.common import MockConfigEntry, snapshot_platform
@@ -18,6 +19,7 @@ from custom_components.meltem_ventilation.const import CONF_PORT, DOMAIN, PLATFO
 from custom_components.meltem_ventilation.diagnostics import (
     async_get_config_entry_diagnostics,
 )
+from custom_components.meltem_ventilation.environment import absolute_humidity
 from custom_components.meltem_ventilation.models import (
     GatewayRfStatistics,
     ReadHealth,
@@ -41,7 +43,7 @@ _GROUPS = (
     "fan_hours",
     "rf_last_seen",
     "rf_signal",
-    "rf_fault",
+    "device_fault",
     "value_error",
     "control_settings",
 )
@@ -60,7 +62,11 @@ def _full_state() -> RoomState:
         supply_air_temperature=19.0,
         humidity_extract_air=48,
         humidity_supply_air=41,
+        absolute_humidity_extract_air=absolute_humidity(21.5, 48),
+        absolute_humidity_supply_air=absolute_humidity(19.0, 41),
         co2_extract_air=780,
+        co2_supply_air=850,
+        voc_extract_air=420,
         voc_supply_air=120,
         extract_air_flow=40,
         supply_air_flow=42,
@@ -68,11 +74,12 @@ def _full_state() -> RoomState:
         filter_change_due=False,
         frost_protection_active=False,
         rf_comm_status=False,
-        rf_fault_status=False,
+        device_fault=False,
         value_error_status=False,
         operation_mode="manual",
         preset_mode=None,
         intensive_active=False,
+        mode_status_raw=(3, 80, 0),
         target_level=40,
         days_until_filter_change=120,
         operating_hours=12_345,
@@ -109,6 +116,7 @@ def setup_entry_fixture(
         "async_read_gateway_node_count": 1,
         "async_read_gateway_rf_statistics": GatewayRfStatistics(75, 147, 0.26, 0.04),
         "async_read_room_app_setup_code": "R000001",
+        "async_read_external_input_setting": 60,
         "discover_gateway_units": [2],
         "read_room": RoomRead(RoomState(), ReadJobOutcome()),
     }.items():
@@ -153,7 +161,8 @@ def setup_entry_fixture(
         coordinator = entry.runtime_data.coordinator
         coordinator.async_set_updated_data({"slave_2": _full_state()})
         # A poll tick would read the optional gateway values the enabled entities need.
-        await coordinator._async_read_optional_gateway_values_due()
+        for _ in range(3):
+            await coordinator._async_read_optional_gateway_values_due()
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
         return entry
@@ -182,4 +191,26 @@ async def test_diagnostics(
     entry = await setup_entry([Platform.SENSOR])
 
     assert await async_get_config_entry_diagnostics(hass, entry) == snapshot
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_device_registry_refreshes_catalog_model_id(
+    hass: HomeAssistant, setup_entry: SetupEntry
+) -> None:
+    entry = await setup_entry([Platform.SENSOR])
+    registry = dr.async_get(hass)
+    device = registry.async_get_device_by_identifier((DOMAIN, "slave_2"), entry.entry_id)
+    assert device is not None
+    assert (device.model_id, device.hw_version) == ("VMD-22RPS44", "116852")
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    (unit,) = entry.subentries.values()
+    hass.config_entries.async_update_subentry(entry, unit, data={**unit.data, "product_id": 123456})
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    device = registry.async_get_device_by_identifier((DOMAIN, "slave_2"), entry.entry_id)
+    assert device is not None
+    assert (device.model_id, device.hw_version) == (None, "123456")
+    assert device.model == "M-WRG-II (O/VOC-AUL)"
     assert await hass.config_entries.async_unload(entry.entry_id)

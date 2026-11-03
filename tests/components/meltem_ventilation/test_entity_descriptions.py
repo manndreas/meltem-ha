@@ -28,6 +28,8 @@ from custom_components.meltem_ventilation.condition import (
 )
 from custom_components.meltem_ventilation.const import (
     ALL_PROFILES,
+    DEFAULT_SCAN_SLAVE_END,
+    DEFAULT_SCAN_SLAVE_START,
     DOMAIN,
     OPERATION_MODE_INACTIVE,
     PRESET_MODE_OPTIONS,
@@ -41,6 +43,7 @@ from custom_components.meltem_ventilation.number import (
 from custom_components.meltem_ventilation.sensor import (
     APP_SETUP_CODE_DESCRIPTION,
     CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS,
+    EXTERNAL_INPUT_SENSOR_DESCRIPTIONS,
     GATEWAY_CONNECTED_DEVICES_DESCRIPTION,
     GATEWAY_SENSOR_DESCRIPTIONS,
     GATEWAY_UPTIME_DESCRIPTION,
@@ -65,6 +68,7 @@ _ICONS = _COMPONENT_DIR / "icons.json"
 
 _ALL_DESCRIPTIONS = (
     *SENSOR_DESCRIPTIONS,
+    *EXTERNAL_INPUT_SENSOR_DESCRIPTIONS,
     *BINARY_SENSOR_DESCRIPTIONS,
     *CONTROL_SETTING_DESCRIPTIONS,
 )
@@ -254,6 +258,8 @@ class TestDescriptionMetadata:
             ("humidity_extract_air", "humidity", "measurement"),
             ("humidity_supply_air", "humidity", "measurement"),
             ("co2_extract_air", "carbon_dioxide", "measurement"),
+            ("co2_supply_air", "carbon_dioxide", "measurement"),
+            ("voc_extract_air", "volatile_organic_compounds_parts", "measurement"),
             ("voc_supply_air", "volatile_organic_compounds_parts", "measurement"),
             ("extract_air_flow", "volume_flow_rate", "measurement"),
             ("supply_air_flow", "volume_flow_rate", "measurement"),
@@ -279,11 +285,34 @@ class TestDescriptionMetadata:
         )
 
     def test_concentration_entities_use_ratio_unit(self) -> None:
-        for key in ("co2_extract_air", "voc_supply_air", "co2_starting_point"):
+        for key in (
+            "co2_extract_air",
+            "co2_supply_air",
+            "voc_extract_air",
+            "voc_supply_air",
+            "co2_starting_point",
+        ):
             assert (
                 getattr(_DESCRIPTIONS[key], "native_unit_of_measurement", None)
                 == UnitOfRatio.PARTS_PER_MILLION
             )
+
+    @pytest.mark.parametrize(
+        ("key", "enabled_by_default"),
+        [
+            ("co2_extract_air", True),
+            ("voc_supply_air", True),
+            # Only the app's register map knows these two, see docs/dev/MELTEM.md.
+            ("co2_supply_air", False),
+            ("voc_extract_air", False),
+        ],
+    )
+    def test_air_quality_measurements_are_not_diagnostics(
+        self, key: str, enabled_by_default: bool
+    ) -> None:
+        description = _DESCRIPTIONS[key]
+        assert description.entity_category is None
+        assert description.entity_registry_enabled_default is enabled_by_default
 
     @pytest.mark.parametrize(
         ("key", "entity_category"),
@@ -394,19 +423,44 @@ class TestPurposeSpecificAutomation:
 # ---------------------------------------------------------------------------
 
 
+_LANGUAGES = ["en", "de", "es", "fr", "it", "pl", "pt", "tr", "uk", "ar"]
+
+
 class TestTranslations:
     # en.json must exist because HA core does not compile strings.json for custom integrations.
-    @pytest.mark.parametrize("language", ["en", "de"])
+    @pytest.mark.parametrize("language", _LANGUAGES)
     def test_translation_files_match_strings_json(self, language: str) -> None:
         translations = _load_json(_COMPONENT_DIR / "translations" / f"{language}.json")
 
         assert _flatten_keys(translations) == _flatten_keys(_load_json(_STRINGS))
 
+    def test_abort_reasons_set_by_home_assistant_are_translated(self) -> None:
+        # Home Assistant ends these flows with its own reasons; custom integrations
+        # must ship the text, as their strings.json is not compiled with core's.
+        strings = _load_json(_STRINGS)
+
+        assert {"already_in_progress", "reconfigure_successful"} <= set(strings["config"]["abort"])
+        assert "reconfigure_successful" in strings["config_subentries"]["unit"]["abort"]
+
+    @pytest.mark.parametrize("language", _LANGUAGES)
+    def test_add_unit_profile_fields_are_translated(self, language: str) -> None:
+        translations = _load_json(_COMPONENT_DIR / "translations" / f"{language}.json")
+        labels = translations["config_subentries"]["unit"]["step"]["user"]["data"]
+        for slave in range(DEFAULT_SCAN_SLAVE_START, DEFAULT_SCAN_SLAVE_END + 1):
+            assert labels[f"slave_{slave}"]
+
     def test_all_config_flow_fields_have_descriptions(self) -> None:
         strings = _load_json(_STRINGS)
 
-        for flow_type in ("config", "options"):
-            for step_id, step in strings[flow_type]["step"].items():
+        step_groups = (
+            *((flow_type, strings[flow_type]["step"]) for flow_type in ("config", "options")),
+            *(
+                (f"config_subentries.{subentry_type}", subentry["step"])
+                for subentry_type, subentry in strings.get("config_subentries", {}).items()
+            ),
+        )
+        for flow_type, steps in step_groups:
+            for step_id, step in steps.items():
                 fields = set(step.get("data", {}))
                 descriptions = set(step.get("data_description", {}))
                 assert descriptions == fields, f"{flow_type}.{step_id}"
@@ -416,6 +470,7 @@ class TestTranslations:
 
         assert set(strings["sensor"]) == {
             *_keys(SENSOR_DESCRIPTIONS),
+            *_keys(EXTERNAL_INPUT_SENSOR_DESCRIPTIONS),
             *_keys(GATEWAY_SENSOR_DESCRIPTIONS),
             *_keys(CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS),
             *_keys(ROOM_DIAGNOSTIC_DESCRIPTIONS),
@@ -457,7 +512,7 @@ class TestTranslations:
                     "frost_protection_active": {"default": "mdi:snowflake-thermometer"},
                     "gateway_connectivity": {"default": "mdi:connection"},
                     "rf_comm_status": {"default": "mdi:wifi-alert"},
-                    "rf_fault_status": {"default": "mdi:alert-circle-outline"},
+                    "device_fault": {"default": "mdi:alert-circle-outline"},
                     "value_error_status": {"default": "mdi:alert-circle-outline"},
                 },
                 "fan": {

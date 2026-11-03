@@ -14,14 +14,17 @@ The config flow imports exclusively from here. The runtime client in
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from enum import Enum, auto
 from pathlib import Path
 from typing import cast
 
 from modbus_connection import (
     ModbusConnectionError,
     ModbusError,
+    ModbusProtocolError,
     ModbusSerialParams,
     ModbusTimeoutError,
     ModbusUnit,
@@ -32,19 +35,18 @@ from .const import (
     CONTROL_SETTING_LIMITS,
     CONTROL_SETTING_REGISTERS,
     DEFAULT_GATEWAY_DEVICE_ID,
-    FIXED_BAUDRATE,
-    FIXED_BYTESIZE,
-    FIXED_PARITY,
-    FIXED_STOPBITS,
     FIXED_TIMEOUT,
     PROFILE_METADATA,
     REQUEST_GAP_SECONDS,
     TRANSPORT_DISCONNECT_AFTER_TIMEOUTS,
     TRANSPORT_LINK_QUIET_SECONDS,
+    TRANSPORT_READ_RECOVERY_SECONDS,
     TRANSPORT_RETRY_DELAY_SECONDS,
+    product_metadata,
 )
 from .device import MeltemGateway, MeltemProbe, PolicyUnit, TransportPolicy
 from .device.transport import RequestOutcome
+from .gateway_connection import SerialGatewayConnection
 from .models import UnitProbeResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,8 +64,9 @@ class MeltemModbusError(Exception):
 class MeltemConnectionError(MeltemModbusError):
     """Raised when the serial connection to the gateway cannot be established.
 
-    Optional reads swallow ordinary Modbus errors, but never this one: a dead
-    transport must reach the coordinator instead of looking like "no change".
+    Room component and mode reads swallow ordinary Modbus errors, but never
+    this one: a dead transport must reach the coordinator instead of looking
+    like "no change".
     """
 
 
@@ -102,17 +105,12 @@ def resolve_preferred_port_path(port: str) -> str:
 def build_serial_params(port: str) -> ModbusSerialParams:
     """Return the fixed serial link parameters of the Meltem gateway."""
 
-    return ModbusSerialParams(
-        device=port,
-        baudrate=FIXED_BAUDRATE,
-        bytesize=FIXED_BYTESIZE,
-        parity=FIXED_PARITY,
-        stopbits=FIXED_STOPBITS,
-    )
+    return SerialGatewayConnection(port).modbus_params()
 
 
 def new_transport_policy(
     *,
+    timeout: float = FIXED_TIMEOUT,
     on_request: Callable[[RequestOutcome], None] | None = None,
     on_link_recycle: Callable[[], None] | None = None,
 ) -> TransportPolicy:
@@ -120,7 +118,10 @@ def new_transport_policy(
 
     return TransportPolicy(
         disconnect_after_timeouts=TRANSPORT_DISCONNECT_AFTER_TIMEOUTS,
-        link_quiet_seconds=TRANSPORT_LINK_QUIET_SECONDS,
+        link_quiet_seconds=max(
+            TRANSPORT_LINK_QUIET_SECONDS,
+            timeout * TRANSPORT_DISCONNECT_AFTER_TIMEOUTS + TRANSPORT_READ_RECOVERY_SECONDS,
+        ),
         connection_retry_delay=TRANSPORT_RETRY_DELAY_SECONDS,
         on_request=on_request,
         on_link_recycle=on_link_recycle,
@@ -133,6 +134,7 @@ def prepare_unit(
     policy: TransportPolicy,
     *,
     message_spacing: float = REQUEST_GAP_SECONDS,
+    timeout: float = FIXED_TIMEOUT,
 ) -> ModbusUnit:
     """Ask the link for the gateway's timing and wrap the unit in the retry policy.
 
@@ -142,7 +144,7 @@ def prepare_unit(
     """
 
     unit.set_message_spacing(message_spacing)
-    unit.require_timeout(FIXED_TIMEOUT)
+    unit.require_timeout(timeout)
     # PolicyUnit overrides the register requests the integration sends and
     # hands every other ModbusUnit member to the wrapped unit via __getattr__,
     # which the protocol check cannot see.
@@ -171,18 +173,22 @@ async def read_gateway_node_count(unit: ModbusUnit) -> int:
         raise MeltemModbusError(str(err)) from err
 
 
-async def discover_gateway_nodes(unit: ModbusUnit, port: str, *, start: int, end: int) -> list[int]:
+async def discover_gateway_nodes(
+    unit: ModbusUnit, port: str, *, start: int, end: int, strict: bool = False
+) -> list[int]:
     """Discover configured unit addresses via the Airios-style bridge registers.
 
     Raises ``MeltemConnectionError`` when the serial link cannot be opened; a
-    gateway that does not answer just yields no units.
+    gateway that does not answer just yields no units, unless ``strict`` asks
+    for a ``MeltemModbusError`` instead, so a failed check cannot pass for an
+    empty unit list.
     """
 
     gateway = MeltemGateway(unit)
     try:
         node_count = await gateway.async_read_node_count()
     except ModbusError as err:
-        return _discovery_failed(err, port, "node count")
+        return _discovery_failed(err, unit, port, "node count", strict=strict)
     if node_count <= 0:
         _LOGGER.warning(
             "Meltem gateway discovery on %s via device %s reported zero configured units",
@@ -194,7 +200,7 @@ async def discover_gateway_nodes(unit: ModbusUnit, port: str, *, start: int, end
     try:
         addresses = await gateway.async_read_node_addresses(min(_MAX_NODE_ADDRESSES, node_count))
     except ModbusError as err:
-        return _discovery_failed(err, port, "node address list")
+        return _discovery_failed(err, unit, port, "node address list", strict=strict)
 
     discovered: list[int] = []
     for address in addresses:
@@ -213,11 +219,17 @@ async def discover_gateway_nodes(unit: ModbusUnit, port: str, *, start: int, end
     return discovered
 
 
-def _discovery_failed(err: ModbusError, port: str, what: str) -> list[int]:
+def _discovery_failed(
+    err: ModbusError, unit: ModbusUnit, port: str, what: str, *, strict: bool
+) -> list[int]:
     """Raise a dead link as ``MeltemConnectionError``; log any other error as no units."""
 
-    if isinstance(err, ModbusConnectionError):
-        raise MeltemConnectionError(f"Could not open serial connection on {port}: {err}") from err
+    if isinstance(err, ModbusConnectionError) or (
+        isinstance(err, ModbusTimeoutError) and not unit.connected
+    ):
+        raise MeltemConnectionError(f"Could not open connection on {port}: {err}") from err
+    if strict:
+        raise MeltemModbusError(f"Could not read the {what} of the gateway: {err}") from err
     _LOGGER.warning(
         "Meltem gateway discovery on %s via device %s could not read the %s: %s",
         port,
@@ -232,7 +244,9 @@ def _discovery_failed(err: ModbusError, port: str, what: str) -> list[int]:
 #  Setup-time profile detection
 # ---------------------------------------------------------------------------
 
-# Read in this order by the setup probe; the product ID only feeds the preview.
+# Read in this order by the setup probe; the product ID does not determine capabilities.
+# Only the sensors of the manufacturer's matrix and the supply-air VOC sensor
+# decide the profile; the app-only registers 41008 and 41012 are not probed.
 _PROBE_COMPONENTS = (
     "product_id",
     "humidity_extract_air",
@@ -246,6 +260,8 @@ PLAUSIBLE_RANGES: dict[str, tuple[int, int]] = {
     "humidity_extract_air": (0, 100),
     "humidity_supply_air": (0, 100),
     "co2_extract_air": (250, 10000),
+    "co2_supply_air": (250, 10000),
+    "voc_extract_air": (0, 10000),
     "voc_supply_air": (0, 10000),
 }
 
@@ -256,6 +272,49 @@ _SUFFIXES: tuple[tuple[str, str, frozenset[str]], ...] = (
     ("f", "humidity", frozenset({"humidity_extract_air", "humidity_supply_air"})),
 )
 
+# Patched by tests; the probe waits out the transport's recovery pause before a retry.
+async_sleep = asyncio.sleep
+
+
+class _ProbeOutcome(Enum):
+    VALUE = auto()
+    # The unit answered with an exception response, so the register is absent.
+    ABSENT = auto()
+    SILENT = auto()
+
+
+async def _probe_read[T](
+    unit: ModbusUnit, read: Callable[[], Awaitable[T]], *, answered: bool
+) -> tuple[_ProbeOutcome, T | None]:
+    """Run one probe read and classify how the unit answered.
+
+    A lost or garbled reply pauses further reads of the unit in the transport,
+    so the retry waits for that pause. A unit that never answered is not
+    retried after a timeout: it is most likely switched off, and every further
+    read would only time out as well.
+    """
+
+    retried = False
+    while True:
+        try:
+            return _ProbeOutcome.VALUE, await read()
+        except ModbusConnectionError as err:
+            raise MeltemConnectionError(str(err)) from err
+        except ModbusTimeoutError as err:
+            # A timeout without an open link failed to connect, for example to a bridge.
+            if not unit.connected:
+                raise MeltemConnectionError(str(err)) from err
+            if retried or not answered:
+                return _ProbeOutcome.SILENT, None
+        except ModbusProtocolError:
+            # Paused after an earlier lost reply, or a garbled answer arrived.
+            if retried:
+                return _ProbeOutcome.SILENT, None
+        except ModbusError:
+            return _ProbeOutcome.ABSENT, None
+        retried = True
+        await async_sleep(TRANSPORT_READ_RECOVERY_SECONDS)
+
 
 async def detect_slave_details(unit: ModbusUnit) -> UnitProbeResult:
     """Run the minimal setup-time probe on one unit.
@@ -263,35 +322,31 @@ async def detect_slave_details(unit: ModbusUnit) -> UnitProbeResult:
     Returns the detected sensor suffix and a short preview for the setup form.
     The entities follow the profile the user picks, not the probe.
 
-    Raises ``MeltemConnectionError`` when the serial link is down; every other
-    read error just leaves that capability undetected.
+    Raises ``MeltemConnectionError`` when the link is down or cannot be opened;
+    an exception response just leaves that capability undetected. A unit that
+    stays silent is given up, but one lost or garbled reply of a unit that is
+    answering is read once more, so it does not turn a sensor unit into a
+    plain one.
     """
 
     probe = MeltemProbe(unit)
     values: dict[str, int] = {}
-    probe_timed_out = False
+    answered = silent = False
     for name in _PROBE_COMPONENTS:
         component = getattr(probe, name)
-        try:
-            await component.async_update()
-        except ModbusConnectionError as err:
-            raise MeltemConnectionError(str(err)) from err
-        except ModbusTimeoutError:
-            # A silent unit would only time out on every further probe.
-            probe_timed_out = True
+        outcome, _ = await _probe_read(unit, component.async_update, answered=answered)
+        if outcome is _ProbeOutcome.SILENT:
+            silent = True
             break
-        except ModbusError:
-            continue
-        values[name] = component.product_id if name == "product_id" else component.value
+        answered = True
+        if outcome is _ProbeOutcome.VALUE:
+            values[name] = component.product_id if name == "product_id" else component.value
 
     app_setup_code = None
-    if not probe_timed_out:
-        try:
-            app_setup_code = await probe.async_read_app_setup_code()
-        except ModbusConnectionError as err:
-            raise MeltemConnectionError(str(err)) from err
-        except ModbusTimeoutError, ModbusError:
-            pass
+    if not silent:
+        _, app_setup_code = await _probe_read(
+            unit, probe.async_read_app_setup_code, answered=answered
+        )
 
     detected = {key for key in PLAUSIBLE_RANGES if is_plausible(key, values.get(key))}
     detected_profile, capability_preview = next(
@@ -302,6 +357,8 @@ async def detect_slave_details(unit: ModbusUnit) -> UnitProbeResult:
     preview_parts = [f"R-Code {app_setup_code}"] if app_setup_code is not None else []
     if product_id is not None:
         preview_parts.append(f"ID {product_id}")
+        if product := product_metadata(product_id):
+            preview_parts.append(f"App: {product.series} ({product.model_id})")
     preview_parts.append(capability_preview)
     preview = " | ".join(preview_parts)
     return UnitProbeResult(
@@ -325,13 +382,16 @@ _CAPABILITY_ENTITY_KEYS: dict[str, frozenset[str]] = {
             "supply_air_temperature",
             "humidity_extract_air",
             "humidity_supply_air",
+            "absolute_humidity_extract_air",
+            "absolute_humidity_supply_air",
             "humidity_starting_point",
             "humidity_min_level",
             "humidity_max_level",
         }
     ),
     "co2": frozenset({"co2_extract_air", "co2_starting_point", "co2_min_level", "co2_max_level"}),
-    "voc": frozenset({"voc_supply_air"}),
+    # Supply-air CO2 shares the VOC profile's register block, see ENTITY_PROFILES.
+    "voc": frozenset({"co2_supply_air", "voc_extract_air", "voc_supply_air"}),
 }
 
 

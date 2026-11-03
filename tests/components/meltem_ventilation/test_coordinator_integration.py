@@ -37,7 +37,10 @@ from custom_components.meltem_ventilation.binary_sensor import (
 )
 from custom_components.meltem_ventilation.const import (
     DOMAIN,
+    EXTERNAL_INPUT_REFRESH_SECONDS,
+    OPTIONAL_READ_RETRY_SECONDS,
     REGISTER_CO2_EXTRACT_AIR,
+    REGISTER_DEVICE_FAULT,
     REGISTER_ERROR_STATUS,
     REGISTER_EXTRACT_AIR_FLOW,
     REGISTER_EXTRACT_AIR_TEMPERATURE,
@@ -45,7 +48,6 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_MODE_STATUS,
     REGISTER_RF_COMM_STATUS,
-    REGISTER_RF_FAULT_STATUS,
     REGISTER_RF_LAST_SEEN_AGE,
     REGISTER_RF_SIGNAL_STRENGTH,
     REGISTER_SUPPLY_AIR_TEMPERATURE,
@@ -61,6 +63,7 @@ from custom_components.meltem_ventilation.coordinator import (
     MeltemDataUpdateCoordinator,
 )
 from custom_components.meltem_ventilation.cumulative_diagnostics import CumulativeDiagnostics
+from custom_components.meltem_ventilation.gateway_reads import OptionalGatewayRead
 from custom_components.meltem_ventilation.missing_sensors import MISSING_SENSOR_ISSUE_AFTER_READS
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import (
@@ -123,6 +126,11 @@ class _FakeClient:
         self.node_count_error: MeltemModbusError | None = None
         self.rf_statistics_calls = 0
         self.rf_statistics_error: MeltemModbusError | None = None
+        self.external_input_calls: list[tuple[str, str]] = []
+        self.external_input_error: MeltemModbusError | None = None
+
+    async def async_disconnect_gateway(self) -> None:
+        raise AssertionError("Gateway disconnection is not expected in polling tests")
 
     async def async_read_gateway_uptime(self) -> int:
         self.uptime_calls += 1
@@ -158,7 +166,15 @@ class _FakeClient:
     async def async_read_room_app_setup_code(self, room: RoomConfig) -> str | None:
         raise AssertionError("App setup code reads are not expected in coordinator polling tests")
 
-    async def discover_gateway_units(self, start: int, end: int) -> list[int]:
+    async def async_read_external_input_setting(self, room: RoomConfig, key: str) -> int:
+        self.external_input_calls.append((room.key, key))
+        if self.external_input_error is not None:
+            raise self.external_input_error
+        return 60
+
+    async def discover_gateway_units(
+        self, start: int, end: int, *, strict: bool = False
+    ) -> list[int]:
         raise AssertionError("Gateway discovery is not expected in coordinator polling tests")
 
     async def probe_slave_details(self, slave: int) -> UnitProbeResult:
@@ -368,7 +384,7 @@ class TestGatewayRfStatistics:
         clock.now += NEW_UNIT_CHECK_FIRST_DELAY_SECONDS
         await run_tick(coordinator)
 
-        discover.assert_awaited_once_with(2, 16)
+        discover.assert_awaited_once_with(2, 16, strict=True)
         issue = issues.async_get_issue(DOMAIN, issue_id)
         assert issue is not None
         assert issue.translation_placeholders == {"count": "1", "addresses": "3"}
@@ -380,6 +396,38 @@ class TestGatewayRfStatistics:
         await coordinator.async_shutdown()
         # Unloading keeps the issue, so a user's "ignore" survives a reload.
         assert issues.async_get_issue(DOMAIN, issue_id) is not None
+
+    async def test_a_failed_unit_list_check_keeps_an_ignored_issue(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass)
+        discover = AsyncMock(return_value=[2, 3])
+        client.discover_gateway_units = discover  # type: ignore[method-assign]
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        skip_startup(coordinator)
+        _set_jobs_due(coordinator, clock.now + 99_999)
+        issue_id = f"new_units_{coordinator.entry_id}"
+        clock.now += NEW_UNIT_CHECK_FIRST_DELAY_SECONDS
+        await run_tick(coordinator)
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+
+        # The next check fails, for example because the gateway does not answer.
+        discover.side_effect = MeltemModbusError("no answer")
+        clock.now += NEW_UNIT_CHECK_SECONDS
+        await run_tick(coordinator)
+        issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.dismissed_version is not None
+
+        # A failed check is retried well before the next hourly check.
+        discover.side_effect = None
+        clock.now += OPTIONAL_READ_RETRY_SECONDS
+        await run_tick(coordinator)
+        assert discover.await_count == 3
+        issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.dismissed_version is not None
+        await coordinator.async_shutdown()
 
     async def test_shared_optional_reads_and_staleness(
         self, hass: HomeAssistant, clock: SimpleNamespace
@@ -436,6 +484,186 @@ class TestGatewayRfStatistics:
         await refresh
         assert not coordinator.optional_gateway_reads["rf_statistics"].consumers
         assert not coordinator.optional_gateway_reads["rf_statistics"].reading
+        await coordinator.async_shutdown()
+
+
+class TestExternalInputDiagnostics:
+    async def test_only_enabled_settings_are_read_one_per_tick(
+        self, hass: HomeAssistant, clock: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
+        original_read = client.async_read_external_input_setting
+
+        async def read_with_lock(room: RoomConfig, key: str) -> int:
+            assert coordinator._gateway_lock.locked()
+            return await original_read(room, key)
+
+        monkeypatch.setattr(client, "async_read_external_input_setting", read_with_lock)
+        coordinator.data = {
+            "unit_1": RoomState(target_level=30),
+            "unit_2": RoomState(target_level=30),
+        }
+        skip_startup(coordinator)
+        _set_jobs_due(coordinator, clock.now + 99_999)
+        coordinator._gateway_units.set_enabled("new_unit_issue", False)
+        await coordinator.async_refresh()
+        assert not client.external_input_calls
+        assert coordinator.optional_room_reads == {}
+
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        coordinator.set_external_input_enabled("unit_1", "external_input_on_delay", True)
+        coordinator.set_external_input_enabled("unit_2", "external_input_run_on", True)
+        for expected_count in range(1, 4):
+            clock.now += 1
+            await coordinator.async_refresh()
+            assert len(client.external_input_calls) == expected_count
+        assert client.external_input_calls == [
+            ("unit_1", "external_input_level"),
+            ("unit_1", "external_input_on_delay"),
+            ("unit_2", "external_input_run_on"),
+        ]
+        assert coordinator.external_input_value("unit_1", "external_input_level") == 60
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", False)
+        assert coordinator.external_input_value("unit_1", "external_input_level") is None
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        assert coordinator.external_input_value("unit_1", "external_input_level") is None
+        clock.now += 1
+        await coordinator.async_refresh()
+        assert client.external_input_calls[-1] == ("unit_1", "external_input_level")
+        await coordinator.async_shutdown()
+
+    async def test_failure_is_isolated_and_value_expires(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        skip_startup(coordinator)
+        _set_jobs_due(coordinator, clock.now + 99_999)
+        coordinator._gateway_units.set_enabled("new_unit_issue", False)
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        await coordinator.async_refresh()
+        assert coordinator.external_input_value("unit_1", "external_input_level") == 60
+
+        client.external_input_error = MeltemModbusError("unsupported")
+        clock.now += 3600
+        await coordinator.async_refresh()
+        assert coordinator.last_update_success
+        assert coordinator.external_input_value("unit_1", "external_input_level") == 60
+        clock.now += 7201
+        assert coordinator.external_input_value("unit_1", "external_input_level") is None
+        await coordinator.async_shutdown()
+
+    async def test_a_failed_first_read_is_retried_with_a_growing_delay(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        skip_startup(coordinator)
+        _set_jobs_due(coordinator, clock.now + 99_999)
+        coordinator._gateway_units.set_enabled("new_unit_issue", False)
+        # Units answered these registers with Acknowledge during radio warm-up.
+        client.external_input_error = MeltemModbusError("acknowledge")
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        await coordinator.async_refresh()
+        assert len(client.external_input_calls) == 1
+
+        for retry_after in (OPTIONAL_READ_RETRY_SECONDS, 2 * OPTIONAL_READ_RETRY_SECONDS):
+            clock.now += retry_after - 1
+            await coordinator.async_refresh()
+            calls = len(client.external_input_calls)
+            clock.now += 1
+            await coordinator.async_refresh()
+            assert len(client.external_input_calls) == calls + 1
+
+        client.external_input_error = None
+        clock.now += 4 * OPTIONAL_READ_RETRY_SECONDS
+        await coordinator.async_refresh()
+        assert coordinator.external_input_value("unit_1", "external_input_level") == 60
+        # After a success the regular hourly refresh applies again.
+        calls = len(client.external_input_calls)
+        clock.now += EXTERNAL_INPUT_REFRESH_SECONDS - 1
+        await coordinator.async_refresh()
+        assert len(client.external_input_calls) == calls
+        await coordinator.async_shutdown()
+
+    async def test_a_permanently_refused_read_keeps_retrying_at_the_refresh_interval(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        read = AsyncMock(side_effect=MeltemModbusError("refused"))
+        optional = OptionalGatewayRead(
+            hass, "uptime", read, refresh_seconds=60.0, stale_seconds=120.0, retry_seconds=5.0
+        )
+        optional.set_enabled("sensor", True)
+
+        # More than 1024 failures, where an uncapped 2**n no longer fits a float.
+        delays: list[float | None] = []
+        for _ in range(1100):
+            assert await optional.async_read_if_due()
+            delays.append(optional.seconds_until_due())
+            clock.now += 60.0
+
+        assert read.await_count == 1100
+        assert delays[:5] == pytest.approx([5.0, 10.0, 20.0, 40.0, 60.0])
+        assert delays[4:] == pytest.approx([60.0] * (len(delays) - 4))
+
+    async def test_optional_read_updates_its_room_alongside_another_rooms_job(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
+        coordinator.data = {
+            "unit_1": RoomState(target_level=30),
+            "unit_2": RoomState(target_level=30),
+        }
+        client.fresh_read_groups = ("flow", "flow_control")
+        skip_startup(coordinator)
+        _set_jobs_due(coordinator, clock.now + 99_999)
+        next(job for job in coordinator.poll_jobs if job.room_key == "unit_1").next_due = clock.now
+        coordinator.set_external_input_enabled("unit_2", "external_input_level", True)
+        seen: list[tuple[bool, bool]] = []
+        coordinator.async_add_listener(
+            lambda: seen.append(
+                (coordinator.room_updated("unit_1"), coordinator.room_updated("unit_2"))
+            )
+        )
+
+        await coordinator.async_refresh()
+
+        assert seen == [(True, True)]
+        assert client.external_input_calls == [("unit_2", "external_input_level")]
+        await coordinator.async_shutdown()
+
+    async def test_disabling_and_reenabling_during_a_read_retries_immediately(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        skip_startup(coordinator)
+        _set_jobs_due(coordinator, clock.now + 99_999)
+        started = asyncio.Event()
+        calls = 0
+
+        async def read(_room: RoomConfig, _key: str) -> int:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                started.set()
+                await asyncio.Future()
+            return 60
+
+        monkeypatch.setattr(client, "async_read_external_input_setting", read)
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        refresh = asyncio.create_task(coordinator.async_refresh())
+        await started.wait()
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", False)
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        await refresh
+
+        assert coordinator.last_update_success
+        assert coordinator.external_input_value("unit_1", "external_input_level") is None
+        clock.now += 1
+        await coordinator.async_refresh()
+        assert calls == 2
+        assert coordinator.external_input_value("unit_1", "external_input_level") == 60
         await coordinator.async_shutdown()
 
 
@@ -683,7 +911,7 @@ async def test_rf_diagnostic_rejections_do_not_mark_room_unavailable(
     coordinator, client = _build(hass)
     state = RoomState(target_level=42)
 
-    rf_groups = ("rf_last_seen", "rf_signal", "rf_fault", "value_error")
+    rf_groups = ("rf_last_seen", "rf_signal", "device_fault", "value_error")
 
     async def fail_rf_reads(*_args: object) -> RoomRead:
         health = ReadHealth().failed(dt_util.utcnow(), "unsupported RF read", timed_out=timed_out)
@@ -1021,7 +1249,9 @@ class TestFirstRefresh:
 
         await coordinator.async_refresh()
         assert not coordinator.last_update_success
-        assert coordinator.data is None
+        # A local keeps the type checker from narrowing the coordinator itself.
+        data = coordinator.data
+        assert data is None
         assert coordinator._consecutive_transport_failures == 1
         assert client.uptime_calls == 0
 
@@ -1032,7 +1262,8 @@ class TestFirstRefresh:
         await coordinator.async_refresh()
 
         assert not coordinator.last_update_success
-        assert coordinator.data is None
+        data = coordinator.data
+        assert data is None
         assert coordinator._consecutive_transport_failures == 1
         assert client.uptime_calls == 1
         assert coordinator.gateway_uptime == 123
@@ -1184,7 +1415,7 @@ class TestStartupWithRealClient:
             await coordinator.async_shutdown()
             client.shutdown()
 
-    async def test_mode_refusal_is_not_recounted_during_startup_backoff(
+    async def test_mode_refusal_is_flagged_without_recounting_during_startup_backoff(
         self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, clock: SimpleNamespace
     ) -> None:
         link = MockModbusConnection()
@@ -1222,8 +1453,10 @@ class TestStartupWithRealClient:
         mode_health = coordinator.safe_data["unit_1"].read_health_for("flow_control")
         assert mode_health.consecutive_failures == 1
         assert mode_health.last_error is not None
-        assert coordinator.read_group_stale("unit_1", "flow_control") is None
-        assert MeltemDataHealthBinarySensor(coordinator, _ROOM_1).is_on is False
+        # The refused map is never delivered, so Read health flags it right away
+        # instead of waiting for the backed-off retries.
+        assert coordinator.read_group_stale("unit_1", "flow_control") is True
+        assert MeltemDataHealthBinarySensor(coordinator, _ROOM_1).is_on is True
         client.shutdown()
 
     @pytest.mark.parametrize(
@@ -1837,7 +2070,7 @@ class TestReadOneJob:
         unit.holding.update(
             {
                 REGISTER_RF_LAST_SEEN_AGE: [25],
-                REGISTER_RF_FAULT_STATUS: [0],
+                REGISTER_DEVICE_FAULT: [0],
                 REGISTER_VALUE_ERROR_STATUS: [0],
                 REGISTER_RF_SIGNAL_STRENGTH: [65493],
             }
@@ -1983,13 +2216,13 @@ class TestReadOneJob:
             await coordinator.async_shutdown()
             client.shutdown()
 
-    async def test_mixed_rf_failures_skips_outage_and_recovery(
+    async def test_mixed_rf_failures_neither_mark_an_outage_nor_hide_the_recovery(
         self, hass: HomeAssistant, clock: SimpleNamespace
     ) -> None:
         link = MockModbusConnection()
         unit = link.for_unit(_ROOM_1.slave)
         refused_registers = (
-            REGISTER_RF_FAULT_STATUS,
+            REGISTER_DEVICE_FAULT,
             REGISTER_VALUE_ERROR_STATUS,
             REGISTER_RF_LAST_SEEN_AGE,
         )
@@ -2040,7 +2273,7 @@ class TestReadOneJob:
         await _poll_rf()
         second = coordinator.safe_data["unit_1"]
         assert second.read_health_for("rf_last_seen") == first.read_health_for("rf_last_seen")
-        assert second.read_health_for("rf_fault") == first.read_health_for("rf_fault")
+        assert second.read_health_for("device_fault") == first.read_health_for("device_fault")
         assert second.read_health_for("value_error") == first.read_health_for("value_error")
         assert second.read_health_for("rf_signal").consecutive_failures == 1
         assert unit.read_events[len(first_reads) :] == []
@@ -2059,9 +2292,17 @@ class TestReadOneJob:
         unit.fail_read(REGISTER_RF_SIGNAL_STRENGTH, None)
         for key in client._component_backoff.until:
             client._component_backoff.until[key] = time.monotonic() - 1
+        # The transport keeps its own clock; end the unit's recovery pause too.
+        client._policy._unanswered_reads[_ROOM_1.slave] = time.monotonic() - 1
         await _poll_rf()
         recovered = coordinator.safe_data["unit_1"]
-        assert recovered.group_read_health == second.group_read_health
+        for group in ("rf_last_seen", "rf_signal", "device_fault", "value_error"):
+            health = recovered.read_health_for(group)
+            assert health.consecutive_failures == 0, group
+            assert health.last_error is None, group
+            assert health.last_successful_read is not None, group
+        assert recovered.rf_signal_strength == 42
+        # Bridge-local RF answers still neither count as a unit answer nor end the streak.
         assert coordinator.room_runtime("unit_1").read_failures == 2
         assert client.seconds_since_successful_read(_ROOM_1.slave) is None
         assert coordinator.room_available("unit_1")
@@ -2635,8 +2876,12 @@ class TestReadOneJob:
         hass: HomeAssistant,
     ) -> None:
         coordinator, _ = _build(hass)
+        # A timeout says nothing about the unit, so it waits for the failure threshold.
         health = ReadHealth(
-            last_attempt=dt_util.utcnow(), consecutive_failures=1, last_error="read failed"
+            last_attempt=dt_util.utcnow(),
+            consecutive_failures=1,
+            last_error="read failed",
+            last_error_timed_out=True,
         )
         coordinator.data = {"unit_1": RoomState().with_read_health("flow", health)}
         coordinator.last_update_success = True

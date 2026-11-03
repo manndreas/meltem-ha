@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from modbus_connection import IllegalDataAddressError, IllegalDataValueError, ModbusTimeoutError
 from modbus_connection.mock import MockModbusConnection, WriteEvent
-from modbus_connection.tmodbus import ModbusConnection
+from modbus_connection.tmodbus import ModbusConnection, TmodbusUnit
 
 from custom_components.meltem_ventilation.const import (
     DEFAULT_GATEWAY_DEVICE_ID,
@@ -66,6 +66,65 @@ def test_link_settings_match_the_integration() -> None:
     assert _link.GATEWAY_DEVICE_ID == DEFAULT_GATEWAY_DEVICE_ID
     assert _link.REGISTER_GATEWAY_NUMBER_OF_NODES == REGISTER_GATEWAY_NUMBER_OF_NODES
     assert _link.REGISTER_GATEWAY_NODE_ADDRESS_1 == REGISTER_GATEWAY_NODE_ADDRESS_1
+
+
+class TestGatewaySetupBlockGuard:
+    """No tool may read the gateway block that holds its cloud credential."""
+
+    @pytest.mark.parametrize(
+        ("address", "count"),
+        [(41030, 1), (41098, 1), (41034, 57), (41000, 31), (41090, 20), (41000, 120)],
+    )
+    def test_gateway_reads_touching_the_block_are_refused(self, address: int, count: int) -> None:
+        with pytest.raises(_link.ForbiddenReadError):
+            _link.check_read_allowed(_link.GATEWAY_DEVICE_ID, address, count)
+
+    @pytest.mark.parametrize(
+        ("unit_id", "address", "count"),
+        [
+            (1, 41012, 3),
+            (1, 41019, 2),
+            (1, 41000, 30),
+            (1, 41099, 1),
+            (2, 41030, 4),
+            (4, 41000, 34),
+        ],
+    )
+    def test_other_reads_are_allowed(self, unit_id: int, address: int, count: int) -> None:
+        _link.check_read_allowed(unit_id, address, count)
+
+    async def test_guarded_unit_refuses_before_sending(self) -> None:
+        connection = _link.GuardedModbusConnection(_link.serial_params("/dev/ttyX"))
+        gateway = connection.for_unit(_link.GATEWAY_DEVICE_ID)
+        with (
+            patch.object(
+                TmodbusUnit, "read_holding_registers", AsyncMock(return_value=[0])
+            ) as hold,
+            patch.object(TmodbusUnit, "read_input_registers", AsyncMock(return_value=[0])) as inp,
+        ):
+            with pytest.raises(_link.ForbiddenReadError):
+                await gateway.read_holding_registers(41034, 57)
+            with pytest.raises(_link.ForbiddenReadError):
+                await gateway.read_input_registers(41030, 4)
+            assert await gateway.read_holding_registers(41012, 3) == [0]
+            assert await connection.for_unit(2).read_input_registers(41030, 4) == [0]
+
+        hold.assert_awaited_once_with(41012, 3)
+        inp.assert_awaited_once_with(41030, 4)
+
+    def test_tools_open_guarded_connections(self) -> None:
+        assert isinstance(bil.open_connection("/dev/ttyX"), _link.GuardedModbusConnection)
+
+    def test_run_reports_a_forbidden_read(self, capsys: pytest.CaptureFixture[str]) -> None:
+        async def main() -> int:
+            _link.check_read_allowed(_link.GATEWAY_DEVICE_ID, 41030, 1)
+            return 0
+
+        with pytest.raises(SystemExit) as exit_info:
+            _link.run(main)
+
+        assert exit_info.value.code == 1
+        assert "refusing to read 41030..41030 on the gateway" in capsys.readouterr().out
 
 
 def test_register_profile_scan_includes_mode_status_and_single_reads() -> None:
@@ -167,7 +226,9 @@ class TestIntegrationLikeBenchmark:
             {
                 40002: [1, 0],
                 41006: 45,
+                41008: 32767,
                 41011: 50,
+                41012: 32767,
                 41020: [30, 30],
                 41100: [3, 60, 0],
             }

@@ -82,6 +82,27 @@ async def test_an_ignored_issue_stays_ignored_after_a_reload(
     assert raised.dismissed_version is not None
 
 
+async def test_restore_drops_units_that_were_configured_before_reload(
+    hass: HomeAssistant, entry: MockConfigEntry
+) -> None:
+    NewUnitIssue(hass, entry.entry_id).restore([2])
+    assert _issue(hass, entry) is None
+
+    NewUnitIssue(hass, entry.entry_id).update([3, 5], configured=[2])
+    ir.async_ignore_issue(hass, DOMAIN, f"new_units_{entry.entry_id}", True)
+
+    restored = NewUnitIssue(hass, entry.entry_id)
+    restored.restore([2, 3])
+    raised = _issue(hass, entry)
+    assert raised is not None
+    assert raised.translation_placeholders == {"count": "1", "addresses": "5"}
+    assert raised.dismissed_version is not None
+    assert restored.new_units == (5,)
+
+    NewUnitIssue(hass, entry.entry_id).restore([2, 3, 5])
+    assert _issue(hass, entry) is None
+
+
 async def test_removing_the_entry_removes_the_issue(
     hass: HomeAssistant, entry: MockConfigEntry
 ) -> None:

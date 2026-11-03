@@ -1,25 +1,45 @@
 {
   "title": "Meltem Modbus",
+  "selector": {
+    "connection_type": {
+      "options": {
+        "serial": "USB serial",
+        "rtu_over_tcp": "RTU over TCP"
+      }
+    }
+  },
   "config": {
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "An M-WRG-GW gateway is required. It must already be set up with all supported Meltem M-WRG units in the Meltem app and connected to the Home Assistant host via USB. The integration then scans the configured units and asks for the exact profile of each detected unit.",
+        "description": "Set up the M-WRG-GW and its units in the Meltem app first. Choose USB serial or raw RTU over TCP. Network connections have no encryption or authentication; use a trusted local network only.",
         "data": {
-          "port": "Serial port"
+          "connection_type": "Connection type",
+          "port": "Serial port",
+          "host": "Bridge hostname or IP address",
+          "network_port": "Bridge TCP port"
         },
         "data_description": {
-          "port": "Serial device path of the M-WRG-GW gateway connected to this Home Assistant host over USB."
+          "connection_type": "Choose the connection used to reach the gateway.",
+          "port": "Device path for the USB serial connection.",
+          "host": "Hostname or IP address of the RTU-over-TCP bridge.",
+          "network_port": "TCP port for the raw RTU bridge."
         }
       },
       "reconfigure": {
-        "title": "Change serial port",
-        "description": "Update the serial port of the M-WRG-GW gateway. The integration reloads afterwards.",
+        "title": "Change gateway connection",
+        "description": "Change the gateway connection. Network connections have no encryption or authentication; use a trusted local network only. The integration reloads afterwards.",
         "data": {
-          "port": "Serial port"
+          "connection_type": "Connection type",
+          "port": "Serial port",
+          "host": "Bridge hostname or IP address",
+          "network_port": "Bridge TCP port"
         },
         "data_description": {
-          "port": "Select the new serial device path for the M-WRG-GW gateway. The port is checked before it is saved."
+          "connection_type": "Choose the connection used to reach the gateway.",
+          "port": "Device path for the USB serial connection.",
+          "host": "Hostname or IP address of the RTU-over-TCP bridge.",
+          "network_port": "TCP port for the raw RTU bridge."
         }
       },
       "confirm_usb": {
@@ -73,12 +93,15 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to the Meltem gateway.",
+      "invalid_connection": "Enter a valid serial device path or network hostname and TCP port.",
       "no_devices_found": "No supported Meltem M-WRG units were found on the gateway. Make sure the units are already added and configured in the M-WRG-GW gateway before setting them up in Home Assistant.",
-      "port_in_use": "Another integration already uses this serial port with different serial settings.",
+      "port_in_use": "Another integration already uses this connection with different settings.",
       "unknown": "Unexpected error. Check the Home Assistant log for details."
     },
     "abort": {
-      "already_configured": "This Meltem gateway is already configured."
+      "already_configured": "This Meltem gateway is already configured.",
+      "already_in_progress": "Setup of this Meltem gateway is already in progress.",
+      "reconfigure_successful": "The connection to the Meltem gateway was updated."
     }
   },
   "options": {
@@ -201,6 +224,27 @@
       "humidity_supply_air": {
         "name": "Supply air humidity"
       },
+      "absolute_humidity_extract_air": {
+        "name": "Absolute extract air humidity"
+      },
+      "absolute_humidity_supply_air": {
+        "name": "Absolute supply air humidity"
+      },
+      "external_input_level": {
+        "name": "External control input airflow"
+      },
+      "external_input_on_delay": {
+        "name": "External control input switch-on delay"
+      },
+      "external_input_run_on": {
+        "name": "External control input run-on time"
+      },
+      "voc_extract_air": {
+        "name": "Extract air VOC"
+      },
+      "co2_supply_air": {
+        "name": "Supply air CO2"
+      },
       "co2_extract_air": {
         "name": "Extract air CO2"
       },
@@ -232,7 +276,7 @@
         "name": "Modbus slave ID"
       },
       "modbus_device_path": {
-        "name": "Modbus device path"
+        "name": "Modbus endpoint"
       },
       "app_setup_code": {
         "name": "App setup code"
@@ -311,8 +355,8 @@
       "rf_comm_status": {
         "name": "RF communication status"
       },
-      "rf_fault_status": {
-        "name": "RF fault status"
+      "device_fault": {
+        "name": "Device fault"
       },
       "value_error_status": {
         "name": "Value error"
@@ -407,10 +451,10 @@
       "message": "The minimum level ({minimum} %) of {unit} must not be above its maximum level ({maximum} %)."
     },
     "gateway_unavailable": {
-      "message": "Could not connect to the Meltem gateway via serial port {port}. Check its USB connection and access permissions."
+      "message": "Could not connect to the Meltem gateway via {port}. Check the connection and, for USB, access permissions."
     },
     "port_in_use": {
-      "message": "The serial port is already in use with different serial settings."
+      "message": "The gateway connection is already in use with different settings."
     },
     "gateway_communication_failed": {
       "message": "Communication with the Meltem gateway failed. Check the USB connection and serial port."
@@ -448,12 +492,42 @@
       "step": {
         "user": {
           "title": "Add a Meltem M-WRG unit",
-          "description": "The gateway reports {device_count} units that are not set up yet. Choose the Modbus address of the unit to add.\n\n{unit_details}",
+          "description": "The gateway reports {device_count} units that are not set up yet. Choose the Modbus address and exact model profile of the unit to add. Check the unit label; detected sensors are only a hint.\n\n{unit_details}",
           "data": {
-            "slave": "Modbus address"
+            "slave": "Modbus address",
+            "slave_2": "Profile",
+            "slave_3": "Profile",
+            "slave_4": "Profile",
+            "slave_5": "Profile",
+            "slave_6": "Profile",
+            "slave_7": "Profile",
+            "slave_8": "Profile",
+            "slave_9": "Profile",
+            "slave_10": "Profile",
+            "slave_11": "Profile",
+            "slave_12": "Profile",
+            "slave_13": "Profile",
+            "slave_14": "Profile",
+            "slave_15": "Profile",
+            "slave_16": "Profile"
           },
           "data_description": {
-            "slave": "Modbus address of the unit to add, as listed above."
+            "slave": "Modbus address of the unit to add, as listed above.",
+            "slave_2": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_3": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_4": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_5": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_6": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_7": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_8": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_9": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_10": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_11": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_12": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_13": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_14": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_15": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_16": "The model profile on the type plate decides which entities the unit gets."
           }
         },
         "profile": {
@@ -481,7 +555,8 @@
         "entry_not_loaded": "The Meltem gateway is not loaded. Units can only be added while it is connected.",
         "cannot_connect": "Failed to connect to the Meltem gateway.",
         "no_new_units": "The gateway reports no units that are not set up yet. Add the unit in the Meltem app first.",
-        "already_configured": "This unit is already set up."
+        "already_configured": "This unit is already set up.",
+        "reconfigure_successful": "The unit was updated."
       }
     }
   }

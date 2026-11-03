@@ -8,10 +8,12 @@ The heavier runtime reads happen only after the config entry is created.
 from __future__ import annotations
 
 import logging
+from functools import partial
 from typing import Any
 
 from homeassistant import config_entries
 from homeassistant.config_entries import (
+    ConfigEntryState,
     ConfigFlowResult,
     ConfigSubentryFlow,
 )
@@ -19,7 +21,11 @@ from homeassistant.core import callback
 from homeassistant.helpers.service_info.usb import UsbServiceInfo
 
 from .const import (
+    CONF_CONNECTION_TYPE,
+    CONF_HOST,
+    CONF_NETWORK_PORT,
     CONF_PORT,
+    CONNECTION_RTU_OVER_TCP,
     DEFAULT_PORT,
     DOMAIN,
     GATEWAY_NAME,
@@ -31,11 +37,18 @@ from .flow_helpers import (
     async_validate_port,
     build_rooms_from_profiles,
     connection_error,
+    connection_schema,
     port_schema,
     probe_previews,
     probe_profiles,
     profile_defaults,
     profiles_form,
+)
+from .gateway_connection import (
+    GatewayConnection,
+    RtuTcpGatewayConnection,
+    SerialGatewayConnection,
+    gateway_connection_from_data,
 )
 from .models import MeltemIntegrationConfigEntry, UnitProbeResult
 from .options_flow import MeltemVentilationOptionsFlow
@@ -49,10 +62,11 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Meltem Modbus."""
 
     VERSION = 2
-    MINOR_VERSION = 1
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         self._port = DEFAULT_PORT
+        self._connection: GatewayConnection = SerialGatewayConnection(DEFAULT_PORT)
         self._discovered_slaves: list[int] = []
         self._preview_by_slave: dict[int, str] = {}
         self._probe_results_by_slave: dict[int, UnitProbeResult] = {}
@@ -78,23 +92,30 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return {SUBENTRY_TYPE_UNIT: MeltemUnitSubentryFlow}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Collect the serial port and scan for connected units."""
+        """Collect the connection and scan for connected units."""
 
         errors: dict[str, str] = {}
         if user_input is not None:
-            port = await async_resolve_port(self.hass, user_input[CONF_PORT])
-            # Abort before the slow scan when this gateway is already set up.
-            await self.async_set_unique_id(port)
-            self._abort_if_unique_id_configured()
-            if (error := await self._async_scan(port)) is None:
-                return await self.async_step_profiles()
-            errors["base"] = error
-            # Offer the entered port again, not the default.
-            self._port = str(user_input[CONF_PORT])
+            try:
+                connection = await self._async_connection(user_input)
+            except ValueError:
+                errors["base"] = "invalid_connection"
+            else:
+                self._connection = connection
+                await self.async_set_unique_id(connection.unique_id)
+                self._abort_if_unique_id_configured()
+                endpoint = (
+                    connection.port
+                    if isinstance(connection, SerialGatewayConnection)
+                    else connection
+                )
+                if (error := await self._async_scan(endpoint)) is None:
+                    return await self.async_step_profiles()
+                errors["base"] = error
 
         return self.async_show_form(
             step_id="user",
-            data_schema=port_schema(self._port),
+            data_schema=connection_schema(self._connection, user_input if errors else None),
             errors=errors,
         )
 
@@ -158,13 +179,25 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self._show_confirm_usb_form(errors={"base": error})
         return await self.async_step_profiles()
 
-    async def _async_scan(self, port: str) -> str | None:
+    async def _async_connection(self, data: dict[str, Any]) -> GatewayConnection:
+        """Validate network input or resolve a stable serial device path."""
+
+        if data.get(CONF_CONNECTION_TYPE) == CONNECTION_RTU_OVER_TCP:
+            return RtuTcpGatewayConnection(data.get(CONF_HOST, ""), data[CONF_NETWORK_PORT])
+        port = data.get(CONF_PORT, "").strip()
+        if not port:
+            raise ValueError("Serial device path is required")
+        return SerialGatewayConnection(await async_resolve_port(self.hass, port))
+
+    async def _async_scan(self, port: str | RtuTcpGatewayConnection) -> str | None:
         """Scan the gateway and keep its units; return the form error on failure."""
 
         try:
             slaves, probe_results = await async_discover_units(self.hass, port)
         except Exception as err:
-            return connection_error(err, "scanning", port)
+            return connection_error(
+                err, "scanning", port if isinstance(port, str) else port.unique_id
+            )
 
         _LOGGER.info(
             "Read configured Meltem units from gateway on %s and found addresses: %s",
@@ -175,7 +208,9 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.warning("No supported Meltem M-WRG units found on gateway at %s", port)
             return "no_devices_found"
 
-        self._port = port
+        self._connection = SerialGatewayConnection(port) if isinstance(port, str) else port
+        if isinstance(port, str):
+            self._port = port
         self._discovered_slaves = slaves
         self._probe_results_by_slave = probe_results
         self._preview_by_slave = probe_previews(probe_results)
@@ -198,7 +233,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             return self.async_create_entry(
                 title=GATEWAY_NAME,
-                data={CONF_PORT: self._port},
+                data=self._connection.as_data(),
                 subentries=[unit_subentry_data(room) for room in rooms],
             )
 
@@ -216,37 +251,69 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Change the serial port of the gateway."""
+        """Change the gateway connection without replacing the entry."""
 
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
-        current_port = str(entry.data[CONF_PORT])
+        current = gateway_connection_from_data(entry.data)
 
         if user_input is not None:
-            port = await async_resolve_port(self.hass, user_input[CONF_PORT])
-            # The stored path may predate a /dev/serial/by-id symlink, so it has
-            # to be normalized too before deciding that the port changed.
-            if port != await async_resolve_port(self.hass, current_port):
-                try:
-                    await async_validate_port(self.hass, port)
-                except Exception as err:
-                    errors["base"] = connection_error(err, "opening", port)
-            if not errors:
-                if entry.update_listeners:
-                    # The loaded entry's update listener reloads it on a new port.
-                    return self.async_update_and_abort(
-                        entry, unique_id=port, data_updates={CONF_PORT: port}
+            try:
+                connection = await self._async_connection(user_input)
+            except ValueError:
+                errors["base"] = "invalid_connection"
+            else:
+                if isinstance(current, SerialGatewayConnection):
+                    current = SerialGatewayConnection(
+                        await async_resolve_port(self.hass, current.port)
                     )
-                return self.async_update_reload_and_abort(
-                    entry,
-                    unique_id=port,
-                    data_updates={CONF_PORT: port},
-                    reload_even_if_entry_is_unchanged=False,
+                existing = self.hass.config_entries.async_entry_for_domain_unique_id(
+                    DOMAIN, connection.unique_id
                 )
-            current_port = str(user_input[CONF_PORT])
+                if existing is not None and existing.entry_id != entry.entry_id:
+                    return self.async_abort(reason="already_configured")
+                if connection != current:
+                    endpoint = (
+                        connection.port
+                        if isinstance(connection, SerialGatewayConnection)
+                        else connection
+                    )
+                    try:
+                        runtime = getattr(entry, "runtime_data", None)
+                        if (
+                            isinstance(current, RtuTcpGatewayConnection)
+                            and isinstance(connection, RtuTcpGatewayConnection)
+                            and entry.state is ConfigEntryState.LOADED
+                            and runtime is not None
+                        ):
+                            await runtime.coordinator.async_validate_replacement(
+                                partial(async_validate_port, self.hass, endpoint)
+                            )
+                        else:
+                            await async_validate_port(self.hass, endpoint)
+                    except Exception as err:
+                        errors["base"] = connection_error(err, "opening", connection.unique_id)
+                if not errors:
+                    data = {
+                        key: value
+                        for key, value in entry.data.items()
+                        if key
+                        not in {CONF_PORT, CONF_CONNECTION_TYPE, CONF_HOST, CONF_NETWORK_PORT}
+                    } | connection.as_data()
+                    if entry.update_listeners:
+                        return self.async_update_and_abort(
+                            entry, unique_id=connection.unique_id, data=data
+                        )
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        unique_id=connection.unique_id,
+                        data=data,
+                        reload_even_if_entry_is_unchanged=False,
+                    )
+                current = connection
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=port_schema(current_port),
+            data_schema=connection_schema(current, user_input if errors else None),
             errors=errors,
         )

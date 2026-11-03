@@ -109,33 +109,8 @@ class _RtuGateway:
             address = int.from_bytes(request[2:4], "big")
             value = int.from_bytes(request[4:6], "big")
             self.requests.append((unit, function, address, value))
-            if function == 4:
-                action = (
-                    self.actions.popleft()
-                    if self.actions and self.actions[0].startswith("sync_")
-                    else "sync_normal"
-                )
-                if action == "sync_timeout":
-                    continue
-                if action in ("sync_late", "sync_late_twice"):
-                    if self.late_response is None:
-                        self.errors.append("No delayed response available")
-                    else:
-                        os.write(self.master, self.late_response)
-                        if action == "sync_late_twice":
-                            os.write(self.master, self.late_response)
-                        self.late_response = None
-                os.write(self.master, _frame(bytes((unit, function | 0x80, 1))))
-                continue
             action = self.actions.popleft() if self.actions else "normal"
             if action == "timeout":
-                continue
-            if action == "send_late":
-                if self.late_response is None:
-                    self.errors.append("No delayed response available")
-                else:
-                    os.write(self.master, self.late_response)
-                    self.late_response = None
                 continue
             registers = self.registers.get(unit, {})
             if action == "exception":
@@ -524,7 +499,7 @@ async def test_two_late_replies_cannot_be_accepted_as_a_filter_value(
 
 
 @pytest.mark.parametrize("reply_count", [1, 2])
-async def test_late_replies_during_recovery_pause_are_not_used_as_new_values(
+async def test_late_replies_arriving_in_the_recovery_pause_are_discarded_afterwards(
     serial_gateway: _RtuGateway, monkeypatch: pytest.MonkeyPatch, reply_count: int
 ) -> None:
     clock = SimpleNamespace(now=time.monotonic())
@@ -538,18 +513,26 @@ async def test_late_replies_during_recovery_pause_are_not_used_as_new_values(
     client = MeltemModbusClient(connection.for_unit, port=serial_gateway.device)
     room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_plain", slave=2)
     serial_gateway.actions.append("late")
+    filter_days = RefreshPlan.only(refresh_filter_days=True)
     try:
         with pytest.raises(MeltemModbusError):
             await client.read_balanced_target_readback(room)
+        # Inside the pause the unit is not asked again, so no request is open
+        # that the late replies could be taken for.
+        paused = await client.read_room_state(
+            room, RoomState(days_until_filter_change=25), filter_days
+        )
+        assert paused.days_until_filter_change == 25
+        assert serial_gateway.requests == [(2, 3, REGISTER_CURRENT_LEVEL, 1)]
+
         assert serial_gateway.late_response is not None
         os.write(serial_gateway.master, serial_gateway.late_response * reply_count)
         serial_gateway.late_response = None
         await asyncio.sleep(0)
         clock.now += TRANSPORT_READ_RECOVERY_SECONDS
+        # The replies that arrived meanwhile are dropped before the next request.
         state = await client.read_room_state(
-            room,
-            RoomState(days_until_filter_change=25),
-            RefreshPlan.only(refresh_filter_days=True),
+            room, RoomState(days_until_filter_change=25), filter_days
         )
         assert state.days_until_filter_change == 90
         assert state.read_health_for("filter").last_error is None
