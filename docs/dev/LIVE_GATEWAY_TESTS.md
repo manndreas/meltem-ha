@@ -226,12 +226,23 @@ Create `$out\SUMMARY.md` with the table from
 
 - **Checks:** 19200 baud, 8E1 ("Startbits 8" means 8 data bits,
   [reference/modbus.md](reference/modbus.md#serial-settings)); the gateway
-  answers as bridge on `device_id=1`, including `41998..42001` and the uptime
-  at `41019`.
+  answers as bridge on `device_id=1`, including discovery and the uptime
+  at `41019`. The tested gateway rejects `41998..42001` with `0x02`; this is
+  known behavior, not a requirement that those undocumented fields exist
+  ([MELTEM.md](MELTEM.md#gateway-registers-and-function-codes)).
 - **Type:** R
-- **Run:** the output of P-3; repeat once after 5 minutes.
-- **Pass:** all bridge registers answer; uptime grows by about 300 s between
-  the two runs. Record the values.
+- **Run:** take the output of P-3 and read `41998`, `41999`, `42000`, and
+  `42001` individually with `tools.raw_requests`; repeat both after at least
+  5 minutes. P-3's `None` alone does not distinguish an exception from a
+  timeout. `raw_requests` exits with code `1` when the expected `0x02`
+  responses occur, so inspect the individual error classes rather than
+  treating its exit code as a pass.
+- **Pass on the tested gateway:** each of the four individual reads returns
+  `IllegalDataAddressError` (`0x02`), discovery count and address list are
+  valid and stable, and the 32-bit uptime increases by approximately the
+  elapsed time. A timeout, `0x05`, connection failure, unexpected exception,
+  or unstable discovery fails the check. A different gateway's responses are
+  inconclusive until reviewed; do not treat them as equivalent automatically.
 
 ### G-3 — Discovery stability
 
@@ -1307,6 +1318,7 @@ Restore from the `before-<ID>` snapshot. Write in the order shown, with
 | `3` (manual or preset) | `41120=3`, `41121=<raw or 228..230>`, `41132=0` |
 | `4` (unbalanced or shortcut) | `41120=4`, `41121=<value>`, `41122=<value>`, `41132=0` |
 | unreadable (HW-4) | Do not infer a restoration target from `41021`; stop unless an explicit nonzero balanced restore target and sequence were approved. |
+| `0` or another unrecognised value | No restoration sequence is established; stop until a separate restoration plan has been reviewed. |
 
 - If the snapshot shows intensive (`41123=3`, `41124=227`), restore the base
   mode only; restarting intensive would restart its timer. Record it.

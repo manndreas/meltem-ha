@@ -4,6 +4,10 @@ These are leads from a local, static inspection of the Android app bundle, not
 manufacturer Modbus documentation or new hardware measurements. The app was
 not installed or executed for this analysis.
 
+Subsequent, separate hardware checks of selected leads are recorded in
+[MELTEM.md](MELTEM.md#app-derived-register-survey-on-2026-11-03) and the
+[app time-program comparison](MELTEM.md#app-time-program-comparison-on-2026-11-03).
+
 ## Source and limitations
 
 - Package `com.meltem.cloudapp`, app version `1.17`, version code `117`.
@@ -40,6 +44,52 @@ but an old stored setup preview is not rewritten until a fresh probe.
 To confirm the M-WRG entry, compare `40002` and `40011` on an M-WRG-S unit
 with its type plate, as described in
 [R-1](LIVE_GATEWAY_TESTS.md#r-1--product-and-identity-registers).
+
+## Sensor-capability detection
+
+The app's `M-WRG` and `M-WRG-II` product entries use the same active-register
+list. It includes the unit's exhaust humidity register `41006` and exhaust
+CO2 register `41007`. The app requests those live values and checks them
+against the per-register metadata. The range endpoints are not both inclusive:
+the check uses strict comparisons for nonzero bounds, while a zero minimum is
+treated as no lower bound:
+
+| Register | App label | Values accepted by the app's check | Value that marks the feature disabled |
+| --- | --- | --- | ---: |
+| `41006` | Exhaust humidity | `2..99` | `239` |
+| `41007` | Exhaust CO2 | `0..32765` | `32767` |
+
+For both registers, the app first requires a numeric value and address, then
+checks the configured range. If the range check fails and the raw value is
+exactly the listed sentinel, it marks humidity or CO2 as disabled. Those flags
+are passed from the live device screen to time-program screens, so this is
+runtime sensor-value detection used to gate controls. It is not a product-ID
+lookup for `-F` / `-FC` variants.
+
+The classification is narrow: an unreadable value or a different
+out-of-range value is not the same as the explicit sentinel. In particular,
+the bundle does not provide a robust, separate “unknown” state for those
+cases. Its limits also differ from this integration's setup probe; app
+metadata should not be copied as a Modbus specification without hardware
+confirmation.
+
+## Relevance to this integration
+
+The setup probe already checks local values from `41006` (humidity),
+`41007` (CO2), `41011` (supply humidity), and `41013` (VOC) to suggest a
+capability suffix. It does not derive or silently change the selected profile.
+That is preferable to treating app sensor flags as proof of the exact `-F` or
+`-FC` model. Its existing plausible-value bounds already reject the app's
+`41006 = 239` and `41007 = 32767` sentinels; focused setup-probe regression
+tests now preserve that behavior.
+
+No further change to the detection thresholds is justified by the bundle: its
+exclusive humidity limits differ from the integration's plausibility policy
+and are not confirmed as manufacturer limits. Keep communication errors and
+other implausible values distinct from a confirmed missing sensor, and retain
+manual profile confirmation. A runtime capability UI or repair hint would be
+a separate feature and should use fresh read-health data rather than changing
+the configured profile or entity set from one poll.
 
 ## Register and mode leads
 

@@ -340,6 +340,24 @@ class TestDetectSlaveDetails:
 
         assert result == UnitProbeResult("plain", "basic")
 
+    @pytest.mark.parametrize(
+        ("register", "sentinel"),
+        [
+            (REGISTER_HUMIDITY_EXTRACT_AIR, 239),
+            (REGISTER_CO2_EXTRACT_AIR, 32767),
+        ],
+    )
+    async def test_app_sensor_sentinels_do_not_suggest_a_profile(
+        self, unit: MockModbusUnit, register: int, sentinel: int
+    ) -> None:
+        unit.holding[register] = sentinel
+        unit.fail_read(REGISTER_PRODUCT_ID, IllegalDataAddressError())
+        for capability_register in _CAPABILITY_REGISTERS:
+            if capability_register != register:
+                unit.fail_read(capability_register, IllegalDataAddressError())
+
+        assert await detect_slave_details(unit) == UnitProbeResult("plain", "basic")
+
     async def test_a_silent_unit_is_probed_as_plain(self, unit: MockModbusUnit) -> None:
         unit.fail_requests(ModbusTimeoutError("silent"))
 

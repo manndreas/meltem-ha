@@ -55,6 +55,21 @@ The same gateway still answered uptime at `41019` and discovery at `43901` /
 `0`, report-server-ID `0x11`, and device-identification `0x2B/0x0E` returned
 Modbus exception `0x01` on the gateway and unit `2`.
 
+On 2026-11-03 the same four gateway registers again each returned `0x02`.
+Uptime increased from `259` to `630` seconds between probes, and discovery
+returned six units. A subsequent ten-round discovery matched the same list in
+every round. Under the G-2 pass criterion in force at the time, the missing
+registers meant a formal failure even though the exceptions matched the
+previous observation. Raw logs are local, not archived: `p3-gateway.txt`,
+`g2-repeat.txt`, and `g3-r12.txt`.
+
+With the user's agreement, G-2 was then corrected to recognize the four known
+`0x02` replies without accepting timeouts or unexpected errors. A new pair
+of checks at 01:16:18 and 01:22:10 passed the revised criterion: all eight
+individual reads returned `0x02`, the six-node list was unchanged, and uptime
+increased from `1613` to `1965` seconds over 352 seconds. The logs
+`g2-revised-first.txt` and `g2-revised-second.txt` are local, not archived.
+
 ### Network settings, MAC address, and uptime width
 
 Read-only gateway reads on 2026-10-21 established the following holding-register
@@ -80,6 +95,35 @@ and reads it as a 32-bit value. A live read of `41019..41020` returned
 still `0`. This confirms the low-word-first 32-bit seconds representation used
 by the integration. The gateway hardware was identified by the user as the
 same `BRDG-02EM23` model.
+
+### Read-only Modbus TCP comparison on 2026-11-03
+
+The user supplied the gateway's LAN address and reported that the official
+app could show the gateway and slave `4`. No reset, gateway configuration
+change, or Modbus write was performed for this test. The address and MAC are
+intentionally omitted.
+
+- A TCP connection to port `502` succeeded. An FC03 Modbus TCP read of the
+  gateway MAC matched the three MAC words read separately over USB serial;
+  the gateway unit count and ordered address list also matched.
+- Between 00:58:35 and 00:58:40 local time, a serial → TCP → serial comparison
+  on unit `4` returned identical values for all ten requested ranges:
+  `41100×3`, `41016×3`, `41020×2`, `41103`, `41104`, `41105`, `41106`,
+  `42007`, `42008`, and `42009`. In particular, mode was `[3, 230, 0]`,
+  flags `[0, 0, 0]`, and airflow `[60, 60]` on all three paths. The two
+  transports were not used concurrently.
+- A later attempt to reconnect using `modbus-connection 4.12.7` / `tmodbus
+  1.1.0` failed at TCP connect with `ConnectionRefusedError`; no Modbus request
+  was sent by that attempt. Independent connection attempts at 01:01:49,
+  01:02:28, 01:07:18, 01:16:57, and 01:22:29 were also refused.
+
+The LAN port was therefore usable for a short read-only observation, not
+reliably available throughout the session. The cause of the later refusal,
+whether cloud state or startup timing matters, sustained operation, writes,
+and coexistence with another client remain unverified. This does not justify
+changing gateway mode, resetting it, or treating the existing RTU-over-TCP
+implementation as Modbus TCP. Local, unarchived evidence:
+`tcp-serial-compare.txt`, `tcp-values.json`, and `tcp-reconnect-result.txt`.
 
 ### Request pacing and block reads
 
@@ -233,6 +277,34 @@ or expanded into a blind full-range scan without a specific hypothesis.
 A read-only probe of `30000..30002` on slave `4` on 2026-11-02 ([R-8](LIVE_GATEWAY_TESTS.md#r-8--setting-registers-30000--30002))
 returned `IllegalDataAddressError` (`0x02`) for holding-register reads (`0x03`)
 and `IllegalFunctionError` (`0x01`) for input-register reads (`0x04`).
+
+### App-derived register survey on 2026-11-03
+
+Two paced, single-register FC03 surveys covered units `2..7`. Unit `5`
+reported software version `2584`; the others reported `2326`. The user
+identified the test unit as M-WRG-II without humidity, CO2, or VOC sensors;
+sensor-equipped variants were not available for a positive sensor test.
+The second survey, after initial `0x05` responses had cleared, found:
+
+| Unit registers | Result on all six units | Interpretation limit |
+| --- | --- | --- |
+| `41006`, `41011` | `239` | Consistent with absent humidity readings. |
+| `41007`, `41008`, `41012`, `41013` | `32767` | No valid sensor values; this does not establish sensor meaning or units. |
+| `41015`, `41019` | `49144` (`0xBFF8`), `31` | Same on units in different quick modes; semantics remain unknown. |
+| `41103..41105` | `0, 0, 0` | No active intensive/other override was verified in this survey. |
+| `41106` | `0` on units 2–4, `3` on units 5–7 | User reported no active app time program on units 4–7; see the controlled comparison below. |
+| `41113` | `425` (`0x01A9`) | Same despite LOW, MED and HIGH status; do not infer actual speed from this snapshot. |
+| `42006..42009` | `12, 60, 1, 15` | Repeatable raw settings, not evidence that any write is safe. |
+
+During the first survey, five units returned `0x05` for `41113` and
+`42006..42009`; unit `4` answered. The second survey returned the values above
+on all six. On unit `4`, read attempts at `40911` and `40949` returned
+`0x02`, while `40901` and `40954` returned `0x05`. These are **read** results:
+they do not prove whether a register is writable. No sensor label, range, or
+profile was changed from these observations. Five further reads on unit `4`,
+120 seconds apart, repeated all six sensor placeholders without errors.
+Raw output is local, not archived: `survey.json`, `survey-repeat.json`, and
+`sensor-long.txt`.
 
 ### Read-only spot-check of pyairios candidates (2026-10-21)
 
@@ -592,6 +664,61 @@ value matched the printed Device No. or Part No. Modbus function `0x2B/0x0E`
 (Read Device Identification) returned exception `0x01` (`Illegal Function`)
 on slave `4`. No writes were made. The `40000/40001` pair is the DataMatrix
 `R` code, not the printed Device No.; their relationship remains unknown.
+
+## App time-program comparison on 2026-11-03
+
+The user reported that slave `4` had no existing switch points and its
+time program was disabled. The user then created one temporary HIGH switch
+point for Wednesday at 12:00 in the official app, enabled the program,
+disabled it, and removed the test point. The assistant used only FC03 reads;
+the app operations themselves changed device state.
+
+| App state | Unit `41106` | Unit `49000`, `49001`, `49002` | Unit `49011..49017` |
+| --- | ---: | --- | --- |
+| Initially disabled, no points | `0` | `49001=0`; other requested schedule registers returned `0x05` in the earlier survey | `0x05` in the earlier survey |
+| Temporary point saved and program enabled | `1`, three reads | `[4, 3, 0]` | `[0, 2, 12, 0, 3, 230, 0]` |
+| Program disabled, point retained | `3`, two reads | `[4, 3, 0]` | `[0, 2, 12, 0, 3, 230, 0]` |
+| Test point removed, program disabled | `0`, two reads | `[3, 3, 0]` | `[0, 0, 0, 0, 0, 0, 0]` |
+
+Throughout the controlled readings, `41100..41102` remained `[3, 230, 0]`,
+measured airflow `[60, 60]`, and `41016..41018` `[0, 0, 0]`. The user
+confirmed the final app state as HIGH, 60/60, with an empty disabled program.
+This is one M-WRG-II unit: it supports `1` as active and `3` as inactive in
+this sequence, not a general mapping for all other values or firmware. Five
+follow-up reads at 120-second intervals continued to show the same status,
+airflow and error flags, with `41106=0` after the program was removed.
+
+The observed `49012=2`, `49013=12`, `49014=0`, `49015=3`, and `49016=230`
+match the selected Wednesday, 12:00 and HIGH app point. The time was in the
+future and the point was removed before execution; actual weekday execution
+and the cloud API payload were not captured. The result supports the
+Monday-zero app interpretation, but does not by itself prove the server's
+weekday semantics. The schedule registers becoming readable after the app
+operation also does not establish a general local schedule-read or write
+protocol.
+
+The required all-known snapshots were taken before and after the app
+interaction. Beforehand `41120..41124` and `41132` returned `0x05`; afterward
+they read as zero. Several shadow/meta words also differed, as did some
+configuration fields that had initially returned `0x05`. Thus the user's
+reported final program and the observed operating state were restored, but
+the initially unreadable internal set-register state cannot be proven
+identical. The shadow changes are not decoded as schedule data. Raw captures
+and per-phase output are local, not archived: `snapshot-before.txt`,
+`snapshot-after-schedule.txt`, `schedule-before.txt`, `schedule-active.txt`,
+`schedule-disabled.txt`, `schedule-restored.txt`, and
+`schedule-registers-active.txt`.
+
+At 01:16, two more reads on unit `4` still found set-side
+`41120..41124=[0, 0, 0, 0, 0]` and `41132=0`, while the read-only status
+remained `[3, 230, 0]`, airflow `60/60`, and error `0`. The test plan has no
+established restoration sequence for a set-side mode of `0`; the observed
+current HIGH state is not proof that writing HIGH would restore those set
+registers. Even with the user's permission to write unit `4`, direct
+write-based follow-ups were therefore not started. The final read at 01:22
+confirmed the same unit `4` state and no `41016` error on any of the six units.
+The read-only checks are local, not archived: `restore-state-check.txt` and
+`final-state.txt`.
 
 ## Temperature register quirk
 

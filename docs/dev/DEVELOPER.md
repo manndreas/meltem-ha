@@ -14,6 +14,7 @@ Related documents:
 - `docs/dev/LIVE_GATEWAY_TESTS.md`: how to measure them
 - `docs/dev/MOCK_GATEWAY.md`: how to run software-only RTU-over-TCP smoke tests
 - `docs/dev/SETTING_RE_BACKLOG.md`: parked reverse engineering of app settings
+- `docs/dev/APK_ANALYSIS.md`: static Android app and cloud-protocol reference
 
 ## Safety and liability
 
@@ -139,27 +140,18 @@ Supported series/profiles:
 
 ## Gateway network interface
 
-Current working assumption:
+Previous app traffic captures showed cloud communication for normal control,
+and earlier LAN probes did not find a useful local service. A later
+[read-only comparison](MELTEM.md#read-only-modbus-tcp-comparison-on-2026-11-03)
+did obtain matching gateway and unit values over native Modbus TCP, but the
+port subsequently refused new connections. The reason and the conditions for
+reliable access remain unknown.
 
-- the `M-WRG-GW` gateway is not meaningfully controllable via a local LAN API
-- the Meltem mobile app communicates with Meltem's internet services rather
-  than directly with a local gateway API for normal control flows
-- local Home Assistant integration should use Modbus RTU, directly over USB
-  serial or through a raw RTU-over-TCP bridge
-
-Observed basis for that assumption:
-
-- previous app traffic captures showed internet communication rather than a
-  usable local control channel
-- direct probing of the gateway IP on the tested setup did not reveal any
-  useful local TCP service, SSDP response, mDNS service, or other obvious LAN
-  control surface
-
-Practical consequence:
-
-- further reverse engineering effort is better spent on Modbus RTU behavior
-  or, if ever needed, on the app's cloud traffic rather than on the gateway's
-  local network API
+The integration therefore continues to use Modbus RTU over USB serial or raw
+RTU-over-TCP. The latter is not Modbus TCP/MBAP. Do not reset or reconfigure
+the gateway merely to make its LAN port accessible, and do not assume normal
+control, write support, or coexistence with the app from the short read-only
+observation.
 
 ## Gateway and Modbus behavior
 
