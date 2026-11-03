@@ -1803,7 +1803,8 @@ Tests: [H-10](LIVE_GATEWAY_TESTS.md#h-10--rtu-over-tcp-through-a-real-bridge).
 ## HW-12 — Legacy mode word `41113`
 
 Priority: low
-Status: open
+Status: in progress (H-11 app-mode watch completed on slave `4`; other units,
+one-sided modes, and sensor modes remain untested)
 Affected code: none yet; candidates are `mode_codec.py` and the raw register
 diagnostics of [TODO-5](TODO.md#todo-5--raw-register-diagnostics)
 
@@ -1812,7 +1813,7 @@ diagnostics of [TODO-5](TODO.md#todo-5--raw-register-diagnostics)
 `41113` is readable on some units and returns `0x05` on others; see
 [MELTEM.md](MELTEM.md#slave-5-compared-with-the-other-units). Two values are
 on record: `425` (`0x01A9`) on all six units in LOW, MED or HIGH during the
-[2026-11-03 survey](MELTEM.md#app-derived-register-survey-on-2026-11-03), and
+[earlier 2026-11-03 survey](MELTEM.md#app-derived-register-survey-on-2026-11-03), and
 `1449` (`0x05A9`) on slave `4` while it reported `[4, 0, 228]`
 ([measurement](measurements/2026-10-09/pe-compare-slave4.txt)).
 
@@ -1826,26 +1827,40 @@ its decoded `41113` value, so this is a correlation of two data points, not an
 established meaning
 ([APK_ANALYSIS.md](APK_ANALYSIS.md#legacy-mode-word-41113--41133)).
 
+The read-only H-11 watch on slave `4` then observed `41113 = 0x41A9` in
+MANUAL 40, `0x02A9` in app-started BOOST, and `0x00A9` in standby. LOW, MED,
+and HIGH all returned `0x01A9`, while `41101` distinguished them as `228`,
+`229`, and `230`. LOW briefly returned `6` before returning to `425`.
+Measured airflow remained `10/10 m³/h` in MED despite the saved MED setting
+being `30 m³/h`; it returned to `60/60` in HIGH. The mismatch is unexplained.
+The detailed capture is in
+[MELTEM.md](MELTEM.md#app-selected-modes-and-legacy-word-41113-on-2026-11-03).
+A passive six-node spot check after H-11 found `41113` answering only on
+slaves `2` and `4`, with exception `0x05` on slaves `3`, `5`, `6`, and `7`;
+the earlier same-day all-six read therefore does not establish consistent
+availability. The detailed table is in the same MELTEM section.
+
 ### Why this needs a live check (HW-12)
 
-1. Two data points cannot separate a mode field from coincidence, and the
-   speed nibble was `0` although the airflow was not.
-2. If the mode nibble follows the active program, `41113` could tell
-   intensive ventilation (`2` / `3`) and the shortcut direction (`4` / `5`)
-   apart. That would help where `41100..41102` reads `[0, 0, 0]` during
-   intensive ventilation
-   ([HW-1](#hw-1--intensive-shadow-registers-survive-a-power-off-write)).
+1. The controlled app-mode evidence supports the APK bit layout for MANUAL,
+   BOOST, and standby, but only on slave `4`; the extract/supply shortcuts,
+   sensor modes, and other units have not been tested under controlled mode
+   changes.
+2. Presets all use mode `1` in `41113`; `41100..41102` carries the distinct
+   LOW/MED/HIGH subcodes. This word therefore does not replace the current
+   status map for preset identification.
 3. Its availability is inconsistent, so any use must stay optional and must
    not change existing register ranges without a benchmark.
 
 ### What to measure (HW-12)
 
-1. Read `41113` together with `41100..41105` and `41020..41021` on one unit
-   while the person selects LOW, MED, HIGH, MANUAL, the extract and supply
-   buttons, intensive ventilation and standby in the app; on sensor units also
-   AUTO, CO2 and humidity.
-2. Record per unit whether `41113` answers or returns `0x05`, and whether that
-   changes over time.
+1. Complete the app-mode comparison for extract/supply on a unit that supports
+   those shortcuts, and for AUTO, CO2, and humidity on a sensor-equipped unit.
+   The extract/supply buttons opened a two-airflow settings dialog during H-11;
+   cancel it without saving unless a separate test is authorized.
+2. Compare `41113` with `41100..41105` and `41020..41021` on other units in
+   their available operating modes. Record whether each read answers or
+   returns `0x05`, and whether that changes over time.
 
 Tests: [H-11](LIVE_GATEWAY_TESTS.md#h-11--app-modes-and-41113).
 
@@ -1863,7 +1878,8 @@ Tests: [H-11](LIVE_GATEWAY_TESTS.md#h-11--app-modes-and-41113).
 ## HW-13 — Temporary override status `41103..41105`
 
 Priority: medium
-Status: open
+Status: in progress (app-started BOOST observed on 2026-11-03; keypad and
+other override sources remain untested)
 Affected code: `mode_codec._mode_status_reports_intensive`,
 `mode_codec.apply_mode_read`, `device/components.ModeStatus`
 
@@ -1885,6 +1901,15 @@ ventilation by writing `3/227` to `41123/41124`. In the 2026-11-03 survey,
 without an override, all six units returned `41103..41105 = 0, 0, 0`
 ([MELTEM.md](MELTEM.md#app-derived-register-survey-on-2026-11-03)).
 
+In the app-started BOOST test on slave `4` on 2026-11-03, the base status
+changed from `[3, 230, 0]` to `[0, 0, 0]`, while `41103..41105` read
+`[3, 227, 0]` and airflow reached `80/80` m³/h. Selecting HIGH in the app
+restored base status `[3, 230, 0]`, cleared the override registers, and
+returned airflow to `60/60`. This supports the app's documented fallback for
+BOOST on this unit; it does not yet validate keypad-started or external-input
+overrides. Details and the timing caveat are in
+[MELTEM.md](MELTEM.md#app-started-boost-override-status-on-2026-11-03).
+
 In the app's model, `0` in `41100` means "a temporary override is active", not
 specifically intensive ventilation. Another override, such as the external
 control input (`42006` priority override mode `12`, "ventilation level of the
@@ -1896,9 +1921,10 @@ capture.
 
 ### Why this needs a live check (HW-13)
 
-1. `41103..41105` have never been read while an override was active.
-2. It is unknown whether the external input, a keypad-started intensive run,
-   or the app's interval and temperature programs also set `41100` to `0`.
+1. The app-started BOOST code is observed, but keypad-started intensive and
+   other override sources have not been compared.
+2. It is unknown whether the external input or the app's interval and
+   temperature programs also set `41100` to `0`.
 3. Reading `41103..41105` with the status map changes `ModeStatus`'s
    `register_ranges` from `41100..41102` to `41100..41105`; the readable
    island `41100..41112` makes that plausible, but a block-read benchmark has
@@ -1907,8 +1933,9 @@ capture.
 ### What to measure (HW-13)
 
 1. Read `41100..41106` and `41020..41021` while intensive ventilation runs,
-   started from the app, from the keypad and from the integration, and after
-   it has ended.
+   started from the keypad and from the integration, and after it has ended.
+   The app-started case is recorded in
+   [MELTEM.md](MELTEM.md#app-started-boost-override-status-on-2026-11-03).
 2. Where a unit has a wired external input, read the same registers while the
    input is active and after its run-on time.
 3. Benchmark the block `41100..41106` against `41100..41102` on all units.
@@ -1920,10 +1947,12 @@ and the extra reads in
 
 ### Candidate solutions (HW-13)
 
-- **A — no change** if `41103..41105` stay `0` during intensive ventilation.
-- **B — decode intensive ventilation from `41103/41104 = 3/227`** and report
-  any other active override as an unknown quick mode instead of intensive.
-  This needs the wider `ModeStatus` block.
+- **A — keep the current base-only read** if the wider status block is
+  unreliable or causes read failures on any supported profile.
+- **B — decode app-started intensive ventilation from
+  `41103/41104 = 3/227`** and report any other active override as an unknown
+  quick mode instead of intensive. The value is observed on one unit; keypad
+  and external-input behavior and the wider-block benchmark remain open.
 - **C — B plus the external input** as its own read-only state, if its
   override code is distinct and repeatable.
 

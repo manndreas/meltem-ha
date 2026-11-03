@@ -60,6 +60,14 @@ What is already clear:
   unconfirmed scan-context lead, not a local setting register. The three
   exhaustive snapshots are archived under
   [measurements/2026-11-03/med-full-range](measurements/2026-11-03/med-full-range/).
+- A read-only H-12 watch while loading Settings, Interval and Temperature
+  Program pages saw `40901` step through sampled values; the last samples
+  matched tags `76`, `68`, and `82`, respectively. The one-second sampling
+  missed intermediates, so this supports the app's page-load selector path
+  but does not map local Modbus setting registers. See
+  [MELTEM.md](MELTEM.md#read-only-app-settings-page-selector-watch-on-2026-11-03)
+  and the archived
+  [trace](measurements/2026-11-03/app-settings-selector-watch.txt).
 
 What is not yet justified:
 

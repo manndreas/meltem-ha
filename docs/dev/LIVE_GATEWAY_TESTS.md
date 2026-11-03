@@ -1320,6 +1320,16 @@ repeats if needed.
   `15..12` and `11..8`, and `41100..41105`. The nibble matches the app layout
   if presets and MANUAL give `1`, intensive `2` or `3`, the supply button `4`
   and the extract button `5`.
+- **Partial result (2026-11-03, slave `4`):** LOW, MED, HIGH, MANUAL 40, BOOST,
+  and standby were observed; `41113` was `0x01A9`, `0x41A9`, `0x02A9`, and
+  `0x00A9` respectively, with a brief unclassified LOW transition value `6`.
+  The extract/supply buttons opened a two-airflow settings dialog at `60/60`;
+  it was cancelled without saving. A subsequent passive read found `41113`
+  answering on slaves `2` and `4`, with exception `0x05` on slaves `3`, `5`,
+  `6`, and `7`; `41100..41102` and `41020..41021` answered on all six. See
+  [HW-12](HARDWARE_BACKLOG.md#hw-12--legacy-mode-word-41113). For any follow-up,
+  cancel that dialog without saving unless a separate one-sided-flow test is
+  explicitly authorized.
 
 ### H-12 — App settings page and `40901`
 
@@ -1355,8 +1365,9 @@ repeats if needed.
   `& $py -m tools.watch_register_changes --port $port --slave $s --range 41100:7 --range 41020:2 --interval 2`
   in the background. Ask the person for one step at a time, with at least
   60 s between steps:
-  1. start intensive ventilation in the app, and stop it in the app after
-     two minutes;
+  1. start intensive ventilation in the app, and after two minutes select the
+     unit's original mode again; in the 2026-11-03 run, tapping BOOST a second
+     time did not stop the override;
   2. start intensive ventilation on the unit's keypad, and stop it there;
   3. only where the unit has a wired external input: activate it until the
      airflow changes, release it, and wait for its run-on time (`42009`);

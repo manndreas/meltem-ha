@@ -930,16 +930,97 @@ expose the configured intensive airflow/duration. The separate T-10
 observation on slave `5` used the set-side `41120..41124` block and was
 uncontrolled; it is not needed as evidence for this status-map result.
 
+#### App-started BOOST override status on 2026-11-03
+
+On slave `4`, the app's BOOST button was tapped while the unit was in manual
+HIGH at `60/60` m³/h. The read-only watcher observed:
+
+| Phase | `41100..41102` | `41103..41105` | `41106` | `41020..41021` | `41016..41018` |
+| --- | --- | --- | ---: | --- | --- |
+| Before BOOST | `[3, 230, 0]` | `[0, 0, 0]` | `0` | `[60, 60]` | `[0, 0, 0]` |
+| BOOST active | `[0, 0, 0]` | `[3, 227, 0]` | `0` | `[80, 80]` | `[0, 0, 0]` |
+| HIGH restored | `[3, 230, 0]` | `[0, 0, 0]` | `0` | `[60, 60]` | `[0, 0, 0]` |
+
+The override status appeared at `23:10:38`; measured airflow was `80/80` by
+`23:10:42`. Selecting HIGH at `23:13:47` cleared `41103..41105` and restored
+`60/60` by `23:13:52`. A second tap on the BOOST icon did not stop the
+override, so the original HIGH mode was selected instead. The override ran
+for about 3 min 9 s rather than the intended two minutes, still below the
+configured 15-minute run-on. No errors or Modbus writes occurred. This
+confirms the app-started BOOST fallback to `41103/41104 = 3/227` on this unit;
+keypad-started and external-input overrides remain untested. The raw watcher
+trace is archived at
+[h13-app-boost-status-watch.txt](measurements/2026-11-03/h13-app-boost-status-watch.txt).
+
+#### App-selected modes and legacy word `41113` on 2026-11-03
+
+A read-only watcher on slave `4` recorded `41100..41106`, `41113`, airflow,
+and error flags while selecting modes in the app. The table shows the stable
+status after each selection; LOW briefly returned `41113 = 6` before it
+returned to `425`.
+
+| App selection | `41100..41102` | `41103..41105` | `41106` | `41113` | `41020..41021` |
+| --- | --- | --- | ---: | ---: | --- |
+| HIGH before test | `[3, 230, 0]` | `[0, 0, 0]` | `0` | `425` (`0x01A9`) | `[60, 60]` |
+| LOW | `[3, 228, 0]` | `[0, 0, 0]` | `0` | `425` (`0x01A9`) | `[10, 10]` |
+| MED | `[3, 229, 0]` | `[0, 0, 0]` | `0` | `425` (`0x01A9`) | stayed `[10, 10]` |
+| HIGH | `[3, 230, 0]` | `[0, 0, 0]` | `0` | `425` (`0x01A9`) | `[60, 60]` |
+| MANUAL 40 | `[3, 204, 0]` | `[0, 0, 0]` | `0` | `16809` (`0x41A9`) | `[40, 40]` |
+| BOOST | `[0, 0, 0]` | `[3, 227, 0]` | `0` | `681` (`0x02A9`) | `[80, 80]` |
+| HIGH restored | `[3, 230, 0]` | `[0, 0, 0]` | `0` | `425` (`0x01A9`) | `[60, 60]` |
+| Standby | `[1, 0, 0]` | `[0, 0, 0]` | `0` | `169` (`0x00A9`) | `[0, 0]` |
+| HIGH restored | `[3, 230, 0]` | `[0, 0, 0]` | `0` | `425` (`0x01A9`) | `[60, 60]` |
+
+Error flags `41016..41018` stayed `[0, 0, 0]`. MANUAL 40 briefly reported
+`41101 = 206` before settling at `204`. The LOW transition value `6` appeared
+at `23:21:03` and had returned to `425` by `23:21:05`; it is not interpreted
+as a stable mode word. The app-selected MED status was `41101 = 229`, but the
+measured airflow remained at `10/10` despite the saved MED setting being
+`30 m³/h`; HIGH subsequently restored `60/60`. The cause of this MED mismatch
+is unknown.
+
+The stable `41113` values fit the APK's legacy bit layout on this unit:
+MANUAL 40 is speed step `4`, continuous mode `1`; BOOST is mode `2`; and
+standby is mode `0`. LOW, MED, and HIGH all use continuous mode `1`, so this
+word does not distinguish the three presets; their `41101` subcodes were
+`228`, `229`, and `230`. This is evidence from one unit, not a manufacturer
+guarantee or proof of a local write path. The app's extract/supply controls
+opened a dialog containing both airflow sliders at `60/60`; it was cancelled
+without changing or saving either value. Sensor modes and one-sided operation
+remain untested. No Modbus writes occurred. The raw trace is archived at
+[h11-app-modes-41113-watch.txt](measurements/2026-11-03/h11-app-modes-41113-watch.txt);
+two post-test reads confirmed HIGH `60/60`, zero error flags, and `41113 =
+425`.
+
+The follow-up single-read survey of all six nodes found `41113` readable only
+on slaves `2` and `4`; slaves `3`, `5`, `6`, and `7` returned Modbus exception
+`0x05`. The other two requested ranges answered on all nodes:
+
+| Slave | `41113` | `41100..41102` | `41020..41021` |
+| ---: | --- | --- | --- |
+| 2 | `425` | `[3, 230, 0]` | `[50, 50]` |
+| 3 | exception `0x05` | `[3, 201, 0]` | `[10, 10]` |
+| 4 | `425` | `[3, 230, 0]` | `[60, 60]` |
+| 5 | exception `0x05` | `[3, 205, 0]` | `[50, 50]` |
+| 6 | exception `0x05` | `[3, 228, 0]` | `[10, 10]` |
+| 7 | exception `0x05` | `[3, 228, 0]` | `[10, 10]` |
+
+This was a passive availability spot check, not a controlled mode comparison
+on those units. It differs from the earlier 2026-11-03 survey that recorded
+`425` on all six; treat `41113` readability as inconsistent and capture it
+again whenever the register is evaluated.
+
 #### Status values without hardware evidence
 
 The ioBroker script decodes sensor control from `41100=2` with subcodes `112`
 (humidity), `176` (CO2), and `48` (automatic), and intensive from `3/227` as
-well as `0/0`. None of the six units was in sensor control during the captures,
-and only `0/0/0` was seen for intensive. The sensor subcodes fit the write
-values `112`, `144`, and `16` with bit `32` set. The integration additionally
-accepts `144` as CO2 control, which ioBroker does not list. Any other subcode
-decodes to an unknown operating mode; the raw status is neither logged nor
-included in the diagnostics. Open checks are listed under HW-4 in
+well as `0/0`. None of the six units was in sensor control during the captures.
+The app-started BOOST test above saw base mode `0/0/0` together with override
+mode/sub-mode `3/227`. The sensor subcodes fit the write values `112`, `144`,
+and `16` with bit `32` set. The integration additionally accepts `144` as CO2
+control, which ioBroker does not list. Any other subcode decodes to an unknown
+operating mode; the raw status is neither logged nor included in the
+diagnostics. Open checks are listed under HW-4 in
 [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md#remaining-validation).
 
 A user-authorized app test on slave `2` changed only the intensive run-on time
@@ -1456,6 +1537,33 @@ registers were unavailable; a later single-register read of `40901` returned
 `AcknowledgeError (0x05)`. The documented `42000..42005` block remained
 readable and unchanged. The scan does not identify a safe local write
 sequence. The raw snapshots are preserved above for follow-up analysis.
+
+### Read-only app settings-page selector watch on 2026-11-03
+
+After confirming MED `30` m³/h, the intensive airflow `80` m³/h and run-on
+`15` min, a one-second watcher recorded local FC03 reads of `40901` and
+`41100..41102` while opening the app's Settings, Interval, and Temperature
+Program pages. No setting was changed; no Modbus write was sent.
+
+The Settings page displayed humidity `60 %` with min/max airflow `10/60`,
+CO2 `600 ppm` with min/max `10/60`, intensive airflow `80` and run-on `15`,
+and LOW/MED/HIGH `10/30/60` m³/h. While the page loaded, the watcher captured
+`40901` values `80, 15, 30, 80, 0, unavailable, 80, 1500, 10, 60, 20, 1`.
+The final `1` matches the app's last ordinary settings tag, buzzer tag `76`.
+The Interval page showed pause airflow `0`, run airflow `30`, pause/run times
+`60/60` min; the watcher saw `0` and `60`, with the latter matching final tag
+`68`. The Temperature Program page showed airflow `30`, min `3 °C`, max
+`30 °C`; the watcher saw `30` then raw `60`, matching final tag `82` after its
+`0.5 °C` scale.
+
+The observations are consistent with the app selecting and reading a
+sequence of tags as its pages load. The one-second sampling missed
+intermediate values (the Temperature page's min tag, for example), and one
+sample was unavailable; do not treat the whole sequence as a complete
+tag-to-value map. `41100..41102` remained `[3, 230, 0]`. This confirms neither
+a local Modbus write address nor a safe local write sequence. The read-only
+trace is archived at
+[app-settings-selector-watch.txt](measurements/2026-11-03/app-settings-selector-watch.txt).
 
 ## Unit and link lifecycle
 
