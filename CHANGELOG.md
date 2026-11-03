@@ -15,120 +15,69 @@
 
 ### New Features (5.0.0)
 
-- Connect to the gateway over raw Modbus RTU over TCP by entering a bridge
-  hostname or IP address and port (default `5020`). Reconfigure can switch
-  between USB serial and RTU over TCP without replacing the integration entry.
-  This connection has so far only been tested against software simulators, not
-  with a real bridge and gateway.
-- Add a unit that was paired in the Meltem app after the initial setup with
-  **Add unit** on the integration page, and delete a single unit together with
-  its device and entities. When several units are available, select the
-  address and profile in the same form.
-- Show a repair notice when the gateway reports units that are not set up in
-  Home Assistant. The gateway's unit list is checked hourly. An ignored notice
-  stays ignored when the integration reloads or a check fails.
-- **Scan for new units** lists the units the gateway no longer reports and
-  removes them only after you confirm.
-- Calculate optional absolute extract- and supply-air humidity sensors from
-  the existing temperature and humidity readings, without additional Modbus
-  requests.
-- Include the raw current-mode registers in the diagnostics download.
-- Add optional supply-air CO2 (`41012`) and extract-air VOC (`41008`) sensors
-  to the `O/VOC-AUL` profile. Only the Meltem app's register map describes
-  these registers and no unit has reported a value there yet, so both are
-  disabled by default, add no requests, and raise no repair notice.
-- Show the configured airflow, switch-on delay, and run-on time of the external
-  control input as optional, read-only diagnostics. Each sensor is disabled by
-  default and reads only its own register while enabled. A failed read is
-  retried after a minute instead of an hour.
-- Add Spanish, French, Italian, Polish, Portuguese, Turkish, Ukrainian, and
-  Arabic translations of the setup flows, entities, and repair notices.
+- **Network connection:** Connect the gateway through a raw RTU-over-TCP
+  bridge, or switch between USB and TCP without replacing the integration
+  entry. TCP connections are unencrypted and unauthenticated; use them only on
+  a trusted local network. This option has only been tested with software
+  simulators, not a real bridge and gateway. See the
+  [installation requirements](./README.md#requirements).
+- **Unit management:** Add or remove individual units from the integration
+  page. Home Assistant shows a repair notice when the gateway reports units
+  that have not been added, and asks for confirmation before removing units
+  that are no longer reported during a scan.
+- **Humidity:** Optional sensors estimate absolute supply- and extract-air
+  humidity on units with humidity sensors.
+- **Air quality:** The `O/VOC-AUL` profile offers optional supply-air CO2 and
+  extract-air VOC sensors. These have not yet been confirmed on hardware and
+  are disabled by default.
+- **External control input:** Optional, read-only diagnostics show its
+  configured airflow and switch-on and run-on delays.
+- **More languages:** Setup, entities, and repair notices are now also
+  available in Spanish, French, Italian, Polish, Portuguese, Turkish,
+  Ukrainian, and Arabic.
 
 ### Improvements (5.0.0)
 
-- Show known app-catalog product identifiers in unit device details and setup
-  previews. The selected profile remains unchanged; the older M-WRG mapping
-  has not yet been verified on hardware.
-- Combine supply-air temperature and air-quality readings into fewer gateway
-  requests on units with humidity, CO2, or VOC sensors.
-- Reduce repeated requests when a unit returns a temporary error. Normal polling
-  resumes when the affected readings succeed again.
-- Change the profile of a unit without probing the gateway again.
-- Poll each unit at exactly the planned time, and apply a new request rate
-  right away instead of after the current polling interval.
-- Confirm quick modes, intensive ventilation, and operating-mode changes
-  faster and keep polling the other units sooner afterwards: the readback now
-  follows after half a second instead of 1.5 seconds and is no longer
-  repeated. A change the readback misses is confirmed by the next regular poll.
-- Keep diagnostic counts and gateway availability accurate when some readings
-  are delayed or skipped.
-- After a unit does not answer or a read is cancelled, wait five seconds before
-  reading it again. This reduces, but does not eliminate, the risk of delayed
-  replies being mistaken for current readings. A single unanswered read no
-  longer makes the unit unavailable; that still happens after three failed
-  reads in a row or two minutes without an answer. Setup and rescans read a
-  unit again after this pause when one of its replies is lost, instead of
-  proposing the basic profile for it.
-- Show the last read error of each unit with its time on the system
-  information page and in the diagnostics download.
-- Update only the entities of the unit that was just read, which reduces the
-  load on Home Assistant with several units.
-- Log a warning when a command would also apply settings that an interrupted
-  earlier command left on the unit.
-- Rename the optional **RF fault status** diagnostic (`40103`) to **Device
-  fault**, the name the Meltem app uses. Existing entities keep their entity
-  ID and settings.
+- Known product information is shown during setup and in unit details to help
+  identify devices. The mapping for older units has not yet been verified on
+  hardware.
+- Communication and updates are more efficient and recover more reliably from
+  temporary errors. A unit is no longer marked unavailable after a single
+  unanswered read.
+- Quick modes, intensive ventilation, and operating-mode changes are confirmed
+  faster. Changing a unit's profile no longer requires another gateway probe.
+- Unit updates put less load on Home Assistant when several units are
+  configured.
+- The last read error for each unit is available in system information and the
+  diagnostics download. See the [diagnostics guide](./docs/DIAGNOSTICS.md) for
+  details.
+- The optional **RF fault status** diagnostic is now called **Device fault**,
+  matching the Meltem app. Existing entity IDs and settings are kept.
 
 ### Fixes (5.0.0)
 
-- Show humidity, CO2, and VOC as unknown when the unit reports that a sensor
-  has no reading, instead of keeping the last value. A repair issue points to
-  a possibly wrong profile when this lasts for several minutes.
-- Keep all entities of units that changed their gateway address, for example
-  after pairing them again, once they are rescanned. Previously Home Assistant
-  could drop every entity of such units.
-- Accept new readings after the system clock was set back, instead of
-  refusing airflow changes until the clock caught up again. A system clock
-  that jumps forward, for example at the first time sync after boot, no longer
-  makes readings unavailable until their next read.
-- Keep the entered serial port in the setup form after a connection error.
-- Refresh the optional cumulative communication counters once a minute as
-  intended, not twice.
-- Refresh **Read health** locally even while polling is paused, so stale
-  readings and command deadlines appear without another read. Keep it
-  available during communication failures.
-- Keep ordinary words in diagnostics downloads readable while app setup codes
-  stay hidden.
-- Wait five seconds before repeating a command after the USB connection was
-  lost, so a gateway that is briefly disconnected has time to return.
-- Stop a running intensive ventilation override when switching a unit off.
-- Keep unreachable units marked unavailable when the gateway still reports
-  their radio diagnostics, and avoid flagging **Read health** when a unit does
-  not support optional diagnostics.
-- After an interrupted airflow change, keep the target unknown and prevent
-  changes that depend on the previous airflow until the unit reports its state
-  again. On units whose mode status cannot be read, the next airflow reading
-  counts as that report.
-- Update the displayed fan target when a balanced airflow is changed on the
-  unit or in the Meltem app back to a 10 m³/h step.
-- Keep a unit's saved app setup code when a later read fails, and persist
-  cumulative diagnostic counts reliably between updates.
-- Hide app setup codes in diagnostics downloads, including codes in error
-  messages and unit details.
-- Close the gateway connection reliably when setup is interrupted or unloading
-  encounters an error.
-- Show a confirmation text after reconfiguring the gateway connection, and an
-  explanation when setup of the same gateway is already in progress.
+- Humidity, CO2, and VOC sensors now show an unknown value when a reading is
+  missing instead of retaining an outdated value. A repair notice can point
+  out a potentially incorrect profile.
+- Units keep their entities after a rescan even if their gateway address has
+  changed.
+- Switching off a unit also stops an active intensive ventilation override.
+  Fan targets also update correctly after changes on the unit or in the app.
+- After an interrupted airflow change, dependent changes wait until the unit
+  reports its state again.
+- Connection interruptions, system clock changes, and setup errors are
+  handled more reliably. Unit availability and read health also remain more
+  accurate during communication problems.
+- App setup codes are hidden in diagnostics downloads, including in error
+  messages and unit details. Diagnostic counters and saved setup codes are
+  preserved more reliably.
 
 ### Other Changes (5.0.0)
 
 - List the integration in the fans and ventilation category in the Home
   Assistant community catalog.
-- The diagnostics download lists the units of the gateway and reports
-  `next_poll_delay_seconds` and `poll_scheduled` instead of
-  `update_interval_seconds`.
-- The unique IDs of unit entities now include the configuration entry ID.
-  Existing entities are migrated and keep their entity IDs.
+- The diagnostics download format has changed and now includes more unit and
+  operating-mode details.
 
 ## 4.6.1
 
