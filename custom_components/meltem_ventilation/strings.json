@@ -99,7 +99,9 @@
       "unknown": "Unexpected error. Check the Home Assistant log for details."
     },
     "abort": {
-      "already_configured": "This Meltem gateway is already configured."
+      "already_configured": "This Meltem gateway is already configured.",
+      "already_in_progress": "Setup of this Meltem gateway is already in progress.",
+      "reconfigure_successful": "The connection to the Meltem gateway was updated."
     }
   },
   "options": {
@@ -353,8 +355,8 @@
       "rf_comm_status": {
         "name": "RF communication status"
       },
-      "rf_fault_status": {
-        "name": "RF fault status"
+      "device_fault": {
+        "name": "Device fault"
       },
       "value_error_status": {
         "name": "Value error"
@@ -510,7 +512,22 @@
             "slave_16": "Profile"
           },
           "data_description": {
-            "slave": "Modbus address of the unit to add, as listed above."
+            "slave": "Modbus address of the unit to add, as listed above.",
+            "slave_2": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_3": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_4": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_5": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_6": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_7": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_8": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_9": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_10": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_11": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_12": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_13": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_14": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_15": "The model profile on the type plate decides which entities the unit gets.",
+            "slave_16": "The model profile on the type plate decides which entities the unit gets."
           }
         },
         "profile": {
@@ -538,7 +555,8 @@
         "entry_not_loaded": "The Meltem gateway is not loaded. Units can only be added while it is connected.",
         "cannot_connect": "Failed to connect to the Meltem gateway.",
         "no_new_units": "The gateway reports no units that are not set up yet. Add the unit in the Meltem app first.",
-        "already_configured": "This unit is already set up."
+        "already_configured": "This unit is already set up.",
+        "reconfigure_successful": "The unit was updated."
       }
     }
   }

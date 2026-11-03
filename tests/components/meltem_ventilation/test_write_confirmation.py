@@ -220,14 +220,14 @@ def test_balanced_target_readback_persists_during_lag_and_clears_after_external_
     confirmations = WriteConfirmations()
     now = dt_util.utcnow()
     health = ReadHealth(last_attempt=now, last_successful_read=now)
-    confirmations.record_pending("unit_1", "airflow_levels", (65, 65))
-    confirmations.set_status("unit_1", "airflow_levels", "confirmed", actual_value=(65, 65))
+    confirmations.record_pending("unit_1", "airflow_levels", (66, 66))
+    confirmations.set_status("unit_1", "airflow_levels", "confirmed", actual_value=(66, 66))
 
     # Post-write lag: measured flow is still 60/60 while write is recent and has not yet converged
     lagging_previous = RoomState(
         operation_mode=OPERATION_MODE_MANUAL,
         target_level=60,
-        balanced_target_readback=65,
+        balanced_target_readback=66,
         supply_air_flow=60,
         extract_air_flow=60,
         group_read_health=(("flow", health), ("flow_control", health)),
@@ -237,18 +237,30 @@ def test_balanced_target_readback_persists_during_lag_and_clears_after_external_
         "unit_1", lagging_next, lagging_previous
     )
     assert not should_read
-    assert preserved.balanced_target_readback == 65
+    assert preserved.balanced_target_readback == 66
 
-    # Once measured flow converged to 65/65, a later external change back to 60/60 clears 65
-    converged_previous = replace(lagging_previous, supply_air_flow=65, extract_air_flow=65)
-    reset_to_60 = replace(
+    # Once measured flow converged to 66/66, a multi-step ramp (66 -> 63 -> 60) clears 66
+    converged_previous = replace(lagging_previous, supply_air_flow=66, extract_air_flow=66)
+    ramping = replace(
         converged_previous,
+        balanced_target_readback=None,
+        supply_air_flow=63,
+        extract_air_flow=63,
+    )
+    ramping_state, should_read = confirmations.prepare_balanced_target_readback(
+        "unit_1", ramping, converged_previous
+    )
+    assert not should_read
+    assert ramping_state.balanced_target_readback == 66
+
+    reset_to_60 = replace(
+        ramping_state,
         balanced_target_readback=None,
         supply_air_flow=60,
         extract_air_flow=60,
     )
     cleared, should_read = confirmations.prepare_balanced_target_readback(
-        "unit_1", reset_to_60, converged_previous
+        "unit_1", reset_to_60, ramping_state
     )
     assert not should_read
     assert cleared.balanced_target_readback is None

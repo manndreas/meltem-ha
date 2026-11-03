@@ -1,69 +1,101 @@
-"""Run a stateful RTU-over-TCP mock of a Meltem M-WRG-GW and its units."""
+"""Run a stateful RTU-over-TCP mock of a Meltem M-WRG-GW and its units.
+
+The register model and the hardware behavior it follows are in
+``tools/_mock_model.py``. This module adds the network side, fault injection,
+runtime commands, and the command line; see ``docs/dev/MOCK_GATEWAY.md``.
+"""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import struct
+import json
+import random
+import sys
+import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
-from custom_components.meltem_ventilation.const import (
-    MODE_MANUAL,
-    MODE_SENSOR_CONTROL,
-    MODE_UNBALANCED,
-    PRESET_MODE_CODE_INTENSIVE,
-    PRODUCT_ID_M_WRG,
-    PRODUCT_ID_M_WRG_II,
-    PROFILE_METADATA,
-    REGISTER_APP_SETUP_CODE,
-    REGISTER_APPLY,
-    REGISTER_CO2_EXTRACT_AIR,
-    REGISTER_CO2_MAX_LEVEL,
-    REGISTER_CO2_MIN_LEVEL,
-    REGISTER_CO2_STARTING_POINT,
-    REGISTER_CURRENT_LEVEL,
-    REGISTER_DAYS_UNTIL_FILTER_CHANGE,
-    REGISTER_ERROR_STATUS,
-    REGISTER_EXHAUST_AIR_TEMPERATURE,
-    REGISTER_EXTRACT_AIR_FLOW,
-    REGISTER_EXTRACT_AIR_TARGET_LEVEL,
-    REGISTER_EXTRACT_AIR_TEMPERATURE,
-    REGISTER_EXTRACT_MODE_STATUS,
-    REGISTER_FAN_MOTOR_HOURS,
-    REGISTER_FILTER_CHANGE_DUE,
-    REGISTER_FROST_PROTECTION_ACTIVE,
-    REGISTER_GATEWAY_MAC_START,
-    REGISTER_GATEWAY_NODE_ADDRESS_1,
-    REGISTER_GATEWAY_NUMBER_OF_NODES,
-    REGISTER_GATEWAY_RF_LOAD_CURRENT_HOUR,
-    REGISTER_GATEWAY_RF_LOAD_PREVIOUS_HOUR,
-    REGISTER_GATEWAY_RF_MESSAGES_CURRENT_HOUR,
-    REGISTER_GATEWAY_RF_MESSAGES_PREVIOUS_HOUR,
-    REGISTER_GATEWAY_UPTIME,
-    REGISTER_GATEWAY_UTC_CLOCK,
-    REGISTER_HUMIDITY_EXTRACT_AIR,
-    REGISTER_HUMIDITY_MAX_LEVEL,
-    REGISTER_HUMIDITY_MIN_LEVEL,
-    REGISTER_HUMIDITY_STARTING_POINT,
-    REGISTER_HUMIDITY_SUPPLY_AIR,
-    REGISTER_MODE,
-    REGISTER_MODE_STATUS,
-    REGISTER_OPERATING_HOURS,
-    REGISTER_OUTDOOR_AIR_TEMPERATURE,
-    REGISTER_PRESET_MODE,
-    REGISTER_PRESET_VALUE,
-    REGISTER_PRODUCT_ID,
-    REGISTER_SUPPLY_AIR_FLOW,
-    REGISTER_SUPPLY_AIR_TEMPERATURE,
-    REGISTER_SUPPLY_MODE_STATUS,
-    REGISTER_VOC_SUPPLY_AIR,
+from tools._mock_model import (
+    MAX_REGISTER_COUNT,
+    NO_HUMIDITY_VALUE,
+    NO_SENSOR_VALUE,
+    MockGatewayModel,
+    RegisterRange,
+    load_register_map,
+    parse_register_range,
+    validate_profile,
+    validate_unit_address,
 )
+
+__all__ = [
+    "DEFAULT_UNITS",
+    "FAULT_ACTIONS",
+    "MAX_REGISTER_COUNT",
+    "NO_HUMIDITY_VALUE",
+    "NO_SENSOR_VALUE",
+    "RtuTcpMockGateway",
+    "build_gateway",
+    "main",
+    "parse_args",
+    "parse_units",
+    "request_echo",
+    "rtu_frame",
+]
 
 DEFAULT_UNITS = "2:ii_fc_voc,3:ii_f"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5020
-MAX_REGISTER_COUNT = 125
+FRAGMENT_PAUSE_SECONDS = 0.02
+
+# Exception replies the integration maps to distinct errors.
+EXCEPTION_FAULTS = {
+    "illegal-address": 0x02,
+    "ack": 0x05,
+    "busy": 0x06,
+    "gateway-path": 0x0A,
+    "gateway-target": 0x0B,
+}
+FRAME_FAULTS = (
+    "bad-crc",
+    "short",
+    "wrong-unit",
+    "wrong-function",
+    "wrong-length",
+    "wrong-address",
+    "wrong-value",
+    "fragmented",
+    "late",
+)
+FAULT_ACTIONS = ("timeout", "lost-reply", *EXCEPTION_FAULTS, *FRAME_FAULTS)
+
+HELP = f"""Commands (ADDR 1 is the gateway):
+  help                               show this list
+  status                             show the simulated state
+  pair ADDR PROFILE                  add or re-pair a unit and list it in the gateway
+  unpair ADDR                        remove a unit from the gateway list; its requests time out
+  silent ADDR on|off                 drop or answer requests to a unit
+  set ADDR REG VALUE                 set a raw register
+  get ADDR REG [COUNT]               show raw registers, ignoring the read rules
+  refuse ADDR REG[-REG]              answer reads and writes there with 0x02
+  allow ADDR REG[-REG]               undo refuse
+  flag ADDR error|filter|frost on|off
+                                     set a status flag of a unit
+  app ADDR off|low|medium|high|intensive
+  app ADDR SUPPLY [EXTRACT]          change a unit as the Meltem app would (airflow in m3/h)
+  reboot [WARMUP_S]                  restart the gateway: uptime 0, warm-up, set registers lock
+  warmup SECONDS                     start an RF warm-up now
+  clock OFFSET_S                     shift the gateway's UTC clock
+  settle MS                          delay status and airflow after each committed write
+  delay MS | delay ADDR MS           delay all replies, or the replies of one unit
+  drop-rate P | corrupt-rate P       drop or corrupt this share of replies (0..1)
+  fault ADDR|* ACTION [COUNT]        script the next replies; ACTION is one of
+                                     {", ".join(FAULT_ACTIONS)}
+  fault clear                        remove all scripted faults
+  dump FILE                          write the current registers as a register map"""
 
 
 def parse_units(value: str) -> dict[int, str]:
@@ -77,110 +109,107 @@ def parse_units(value: str) -> dict[int, str]:
         if not separator or not address_text or not profile:
             raise argparse.ArgumentTypeError(f"invalid unit {item!r}; expected address:profile")
         try:
-            address = int(address_text)
+            address = validate_unit_address(int(address_text))
+            validate_profile(profile)
         except ValueError as err:
-            raise argparse.ArgumentTypeError(f"invalid Modbus address {address_text!r}") from err
-        if not 2 <= address <= 16:
-            raise argparse.ArgumentTypeError("unit addresses must be between 2 and 16")
+            raise argparse.ArgumentTypeError(str(err)) from err
         if address in units:
             raise argparse.ArgumentTypeError(f"duplicate unit address {address}")
-        if profile not in PROFILE_METADATA:
-            available = ", ".join(PROFILE_METADATA)
-            raise argparse.ArgumentTypeError(
-                f"unknown profile {profile!r}; choose from {available}"
-            )
         units[address] = profile
     return units
 
 
-def _word_swapped_u32(address: int, value: int) -> dict[int, int]:
-    return {address: value & 0xFFFF, address + 1: (value >> 16) & 0xFFFF}
+def _split_address_option(value: str, expected: str) -> tuple[int, str]:
+    address_text, separator, rest = value.partition(":")
+    try:
+        if not separator or not rest:
+            raise ValueError
+        return int(address_text), rest
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"invalid {value!r}; expected {expected}") from err
 
 
-def _word_swapped_float(address: int, value: float) -> dict[int, int]:
-    high_word, low_word = struct.unpack(">HH", struct.pack(">f", value))
-    return {address: low_word, address + 1: high_word}
+def parse_refusal(value: str) -> tuple[int, RegisterRange]:
+    """Parse ``ADDR:REG`` or ``ADDR:FIRST-LAST``."""
+
+    address, registers = _split_address_option(value, "ADDR:REG or ADDR:FIRST-LAST")
+    try:
+        return address, parse_register_range(registers)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(str(err)) from err
 
 
-def _unit_registers(profile: str, app_setup_code: int) -> dict[int, int]:
-    """Build readable registers with sensor values matching the selected profile."""
+def parse_unit_delay(value: str) -> tuple[int, float]:
+    """Parse ``ADDR:MS``."""
 
-    registers = {
-        address: 0
-        for start, end in (
-            (40000, 40004),
-            (40100, 40109),
-            (41000, 41033),
-            (41100, 41132),
-            (42000, 42005),
-        )
-        for address in range(start, end + 1)
-    }
-    capabilities = PROFILE_METADATA[profile].capabilities
-    product_id = PRODUCT_ID_M_WRG if profile.startswith("s_") else PRODUCT_ID_M_WRG_II
-    registers.update(_word_swapped_u32(REGISTER_PRODUCT_ID, product_id))
-    registers[REGISTER_APP_SETUP_CODE] = app_setup_code
-    registers[REGISTER_APP_SETUP_CODE + 1] = 0
-    registers[REGISTER_HUMIDITY_EXTRACT_AIR] = 48 if "humidity" in capabilities else 0xFFFF
-    registers[REGISTER_HUMIDITY_SUPPLY_AIR] = 44 if "humidity" in capabilities else 0xFFFF
-    registers[REGISTER_CO2_EXTRACT_AIR] = 720 if "co2" in capabilities else 0xFFFF
-    registers[REGISTER_VOC_SUPPLY_AIR] = 360 if "voc" in capabilities else 0xFFFF
-    for address, temperature in (
-        (REGISTER_EXTRACT_AIR_TEMPERATURE, 21.5),
-        (REGISTER_OUTDOOR_AIR_TEMPERATURE, 8.0),
-        (REGISTER_EXHAUST_AIR_TEMPERATURE, 19.0),
-        (REGISTER_SUPPLY_AIR_TEMPERATURE, 17.5),
-    ):
-        registers.update(_word_swapped_float(address, temperature))
-    registers.update(_word_swapped_u32(REGISTER_OPERATING_HOURS, 12345))
-    registers.update(_word_swapped_u32(REGISTER_FAN_MOTOR_HOURS, 6789))
-    registers[REGISTER_DAYS_UNTIL_FILTER_CHANGE] = 120
-    registers[REGISTER_EXTRACT_AIR_FLOW] = 40
-    registers[REGISTER_SUPPLY_AIR_FLOW] = 40
-    registers[REGISTER_ERROR_STATUS] = 0
-    registers[REGISTER_FILTER_CHANGE_DUE] = 0
-    registers[REGISTER_FROST_PROTECTION_ACTIVE] = 0
-    registers[REGISTER_HUMIDITY_STARTING_POINT] = 55
-    registers[REGISTER_HUMIDITY_MIN_LEVEL] = 20
-    registers[REGISTER_HUMIDITY_MAX_LEVEL] = 60
-    registers[REGISTER_CO2_STARTING_POINT] = 800
-    registers[REGISTER_CO2_MIN_LEVEL] = 30
-    registers[REGISTER_CO2_MAX_LEVEL] = 50
-    registers[REGISTER_MODE] = MODE_MANUAL
-    registers[REGISTER_CURRENT_LEVEL] = 80
-    registers[REGISTER_EXTRACT_AIR_TARGET_LEVEL] = 80
-    registers[REGISTER_MODE_STATUS] = MODE_MANUAL
-    registers[REGISTER_SUPPLY_MODE_STATUS] = 80
-    registers[REGISTER_EXTRACT_MODE_STATUS] = 80
-    return registers
+    address, delay_text = _split_address_option(value, "ADDR:MS")
+    try:
+        delay = float(delay_text)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"invalid delay {delay_text!r}") from err
+    if delay < 0:
+        raise argparse.ArgumentTypeError("delays must be non-negative")
+    return address, delay
 
 
-def _gateway_registers(units: Mapping[int, str], no_units: bool) -> dict[int, int]:
-    registers = {
-        REGISTER_GATEWAY_NUMBER_OF_NODES: 0 if no_units else len(units),
-        REGISTER_GATEWAY_MAC_START: 0x0200,
-        REGISTER_GATEWAY_MAC_START + 1: 0,
-        REGISTER_GATEWAY_MAC_START + 2: 1,
-        REGISTER_GATEWAY_RF_MESSAGES_CURRENT_HOUR: 75,
-        REGISTER_GATEWAY_RF_MESSAGES_PREVIOUS_HOUR: 147,
-    }
-    if not no_units:
-        registers.update(
-            {
-                REGISTER_GATEWAY_NODE_ADDRESS_1 + index: address
-                for index, address in enumerate(sorted(units))
-            }
-        )
-    timestamp = int(time.time())
-    registers.update(_word_swapped_u32(REGISTER_GATEWAY_UPTIME, 12345))
-    registers.update(_word_swapped_u32(REGISTER_GATEWAY_UTC_CLOCK, timestamp))
-    registers.update(_word_swapped_float(REGISTER_GATEWAY_RF_LOAD_CURRENT_HOUR, 18.5))
-    registers.update(_word_swapped_float(REGISTER_GATEWAY_RF_LOAD_PREVIOUS_HOUR, 12.25))
-    return registers
+def _validate_rate(rate: float, name: str) -> float:
+    if not 0 <= rate <= 1:
+        raise ValueError(f"the {name} must be between 0 and 1")
+    return rate
+
+
+def _validate_delay(seconds: float) -> float:
+    if seconds < 0:
+        raise ValueError("delays must be non-negative")
+    return seconds
+
+
+def request_echo(address: int, value: int) -> bytes:
+    return address.to_bytes(2, "big") + value.to_bytes(2, "big")
+
+
+def rtu_frame(payload: bytes) -> bytes:
+    crc = 0xFFFF
+    for byte in payload:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ (0xA001 if crc & 1 else 0)
+    return payload + crc.to_bytes(2, "little")
+
+
+def _exception_frame(unit_id: int, function: int, code: int) -> bytes:
+    return rtu_frame(bytes((unit_id, function | 0x80, code)))
+
+
+def _distort(action: str | None, response: bytes, address: int, value: int) -> bytes:
+    """Return ``response`` as broken by a frame fault."""
+
+    if action == "bad-crc":
+        return response[:-1] + bytes((response[-1] ^ 0xFF,))
+    if action == "short":
+        return response[:-2]
+    if action == "wrong-unit":
+        return rtu_frame(bytes(((response[0] % 247) + 1,)) + response[1:-2])
+    if action == "wrong-function":
+        return rtu_frame(response[:1] + bytes((4,)) + response[2:-2])
+    if response[1] == 3 and action == "wrong-length":
+        return rtu_frame(response[:2] + bytes((response[2] + 2,)) + response[3:-2] + b"\0\0")
+    if response[1] == 6 and action == "wrong-address":
+        return rtu_frame(response[:2] + request_echo((address + 1) & 0xFFFF, value))
+    if response[1] == 6 and action == "wrong-value":
+        return rtu_frame(response[:2] + request_echo(address, (value + 1) & 0xFFFF))
+    return response
+
+
+@dataclass(slots=True)
+class _Fault:
+    address: int | None
+    action: str
+    remaining: int
 
 
 class RtuTcpMockGateway:
-    """A small stateful RTU-over-TCP server for Home Assistant smoke tests."""
+    """A stateful RTU-over-TCP server for Home Assistant smoke tests."""
 
     def __init__(
         self,
@@ -190,52 +219,128 @@ class RtuTcpMockGateway:
         silent_units: Sequence[int] = (),
         response_delay: float = 0,
         single_client: bool = False,
+        warmup_seconds: float = 0,
+        settle_seconds: float = 0,
+        refused: Iterable[tuple[int, RegisterRange]] = (),
+        unit_delays: Mapping[int, float] | None = None,
+        drop_rate: float = 0,
+        corrupt_rate: float = 0,
+        seed: int | None = None,
+        register_maps: Iterable[Mapping[str, Any]] = (),
+        clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
-        if response_delay < 0:
-            raise ValueError("response_delay must be non-negative")
-        unknown_silent_units = set(silent_units) - set(units)
-        if unknown_silent_units:
-            raise ValueError(f"silent units are not configured: {sorted(unknown_silent_units)}")
-        self.units = dict(units)
-        self.no_units = no_units
-        self.silent_units = frozenset(silent_units)
-        self.response_delay = response_delay
+        self.model = MockGatewayModel(
+            units,
+            no_units=no_units,
+            silent_units=silent_units,
+            warmup_seconds=warmup_seconds,
+            settle_seconds=settle_seconds,
+            clock=clock,
+            wall_clock=wall_clock,
+        )
+        for data in register_maps:
+            self.model.apply_register_map(data)
+        for address, registers in refused:
+            self.model.refuse(address, registers)
+        self.response_delay = _validate_delay(response_delay)
+        self.unit_delays: dict[int, float] = {}
+        for address, delay in (unit_delays or {}).items():
+            self.set_delay(delay, address)
         self.single_client = single_client
-        self.registers = {
-            1: _gateway_registers(self.units, no_units),
-            **{
-                address: _unit_registers(profile, 0xA000 + address)
-                for address, profile in self.units.items()
-            },
-        }
+        self.drop_rate = _validate_rate(drop_rate, "drop rate")
+        self.corrupt_rate = _validate_rate(corrupt_rate, "corrupt rate")
+        self._random = random.Random(seed)
+        self._faults: list[_Fault] = []
         self.requests = 0
-        self.writes = 0
         self._active_clients = 0
         self._writers: set[asyncio.StreamWriter] = set()
         self._server: asyncio.Server | None = None
+        self._control_server: asyncio.Server | None = None
 
-    async def start(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> int:
-        """Start listening and return the bound port."""
+    @property
+    def registers(self) -> dict[int, dict[int, int]]:
+        return self.model.registers
+
+    @property
+    def writes(self) -> int:
+        return self.model.writes
+
+    # -- Faults and delays ------------------------------------------------
+
+    def inject_fault(self, action: str, address: int | None = None, count: int = 1) -> None:
+        """Apply ``action`` to the next ``count`` replies to ``address`` (any if ``None``)."""
+
+        if action not in FAULT_ACTIONS:
+            raise ValueError(f"unknown fault {action!r}; choose from {', '.join(FAULT_ACTIONS)}")
+        if count < 1:
+            raise ValueError("the fault count must be at least 1")
+        self._faults.append(_Fault(address, action, count))
+
+    def clear_faults(self) -> None:
+        self._faults.clear()
+
+    def set_delay(self, seconds: float, address: int | None = None) -> None:
+        """Delay all replies, or with ``address`` additionally the replies of that unit."""
+
+        _validate_delay(seconds)
+        if address is None:
+            self.response_delay = seconds
+            return
+        self.model.check_address(address)
+        if seconds:
+            self.unit_delays[address] = seconds
+        else:
+            self.unit_delays.pop(address, None)
+
+    def _take_fault(self, address: int) -> str | None:
+        for fault in self._faults:
+            if fault.address in (None, address):
+                fault.remaining -= 1
+                if not fault.remaining:
+                    self._faults.remove(fault)
+                return fault.action
+        if self.drop_rate and self._random.random() < self.drop_rate:
+            return "timeout"
+        if self.corrupt_rate and self._random.random() < self.corrupt_rate:
+            return "bad-crc"
+        return None
+
+    # -- Server -----------------------------------------------------------
+
+    async def start(self, host: str = DEFAULT_HOST, port: int = 0) -> int:
+        """Start listening and return the bound port; port ``0`` picks a free one."""
 
         if self._server is not None:
             raise RuntimeError("mock gateway is already running")
         self._server = await asyncio.start_server(self._handle_client, host, port)
-        if not self._server.sockets:
-            raise RuntimeError("mock gateway has no listening socket")
-        return int(self._server.sockets[0].getsockname()[1])
+        return _bound_port(self._server)
+
+    async def start_control(self, host: str = DEFAULT_HOST, port: int = 0) -> int:
+        """Accept line-based runtime commands; return the bound port."""
+
+        if self._control_server is not None:
+            raise RuntimeError("the control port is already open")
+        self._control_server = await asyncio.start_server(self._handle_control, host, port)
+        return _bound_port(self._control_server)
 
     async def close(self) -> None:
         """Stop listening and close active client connections."""
 
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
+        servers = [server for server in (self._server, self._control_server) if server]
+        self._server = self._control_server = None
+        for server in servers:
+            server.close()
+        # Waiting for the servers first would block while a client stays connected.
         writers = tuple(self._writers)
         for writer in writers:
             writer.close()
         if writers:
-            await asyncio.gather(*(writer.wait_closed() for writer in writers))
+            await asyncio.gather(
+                *(writer.wait_closed() for writer in writers), return_exceptions=True
+            )
+        for server in servers:
+            await server.wait_closed()
 
     async def serve_forever(self) -> None:
         """Wait for clients until the server is cancelled or closed."""
@@ -256,6 +361,7 @@ class RtuTcpMockGateway:
         self._writers.add(writer)
         peer = writer.get_extra_info("peername")
         print(f"Client connected: {peer}", flush=True)
+        late_reply: bytes | None = None
         try:
             while True:
                 try:
@@ -270,19 +376,47 @@ class RtuTcpMockGateway:
                     )
                     return
                 request = prefix + await reader.readexactly(6)
-                if _rtu_frame(request[:-2]) != request:
+                if rtu_frame(request[:-2]) != request:
                     print(f"Invalid RTU CRC from {peer}; closing client.", flush=True)
                     return
                 self.requests += 1
                 address = int.from_bytes(request[2:4], "big")
                 value = int.from_bytes(request[4:6], "big")
-                if unit_id in self.silent_units:
+                if not self.model.answers(unit_id):
                     print(f"DROP unit={unit_id} function=0x{function:02X} address={address}")
                     continue
-                response = self._respond(unit_id, function, address, value)
-                if self.response_delay:
-                    await asyncio.sleep(self.response_delay)
-                writer.write(response)
+                fault = self._take_fault(unit_id)
+                if fault is not None:
+                    print(
+                        f"FAULT {fault} unit={unit_id} function=0x{function:02X} address={address}",
+                        flush=True,
+                    )
+                if fault == "timeout":
+                    continue
+                if fault in EXCEPTION_FAULTS:
+                    response = _exception_frame(unit_id, function, EXCEPTION_FAULTS[fault])
+                else:
+                    response = self._respond(unit_id, function, address, value)
+                    if fault == "lost-reply":
+                        continue
+                    response = _distort(fault, response, address, value)
+                delay = self.response_delay + self.unit_delays.get(unit_id, 0)
+                if delay:
+                    await asyncio.sleep(delay)
+                if late_reply is not None:
+                    writer.write(late_reply)
+                    late_reply = None
+                if fault == "late":
+                    # Held back and sent just before the next reply, like a
+                    # reply that arrives after the client gave up.
+                    late_reply = response
+                elif fault == "fragmented":
+                    writer.write(response[:3])
+                    await writer.drain()
+                    await asyncio.sleep(FRAGMENT_PAUSE_SECONDS)
+                    writer.write(response[3:])
+                else:
+                    writer.write(response)
                 await writer.drain()
         except (ConnectionError, OSError) as err:
             print(f"Client {peer} disconnected: {err}", flush=True)
@@ -294,69 +428,253 @@ class RtuTcpMockGateway:
             print(f"Client disconnected: {peer}", flush=True)
 
     def _respond(self, unit_id: int, function: int, address: int, value: int) -> bytes:
-        registers = self.registers.get(unit_id)
-        if registers is None:
-            return _exception_frame(unit_id, function, 11)
         if function == 3:
-            count = value
-            if not 1 <= count <= MAX_REGISTER_COUNT or address + count > 0x10000:
-                return _exception_frame(unit_id, function, 3)
-            values = [registers.get(register, 0) for register in range(address, address + count)]
-            print(f"READ unit={unit_id} {address} x{count} -> {values}", flush=True)
-            payload = bytes((unit_id, function, count * 2)) + b"".join(
-                register.to_bytes(2, "big") for register in values
+            result = self.model.read(unit_id, address, value)
+            if isinstance(result, int):
+                print(f"READ unit={unit_id} {address} x{value} -> exception 0x{result:02X}")
+                return _exception_frame(unit_id, function, result)
+            print(f"READ unit={unit_id} {address} x{value} -> {result}", flush=True)
+            payload = bytes((unit_id, function, value * 2)) + b"".join(
+                register.to_bytes(2, "big") for register in result
             )
-            return _rtu_frame(payload)
-        if unit_id == 1:
-            print("Rejecting writes to gateway unit 1.", flush=True)
-            return _exception_frame(unit_id, function, 2)
-        registers[address] = value
-        self.writes += 1
+            return rtu_frame(payload)
+        error = self.model.write(unit_id, address, value)
+        if error is not None:
+            print(f"WRITE unit={unit_id} {address} = {value} -> exception 0x{error:02X}")
+            return _exception_frame(unit_id, function, error)
         print(f"WRITE unit={unit_id} {address} = {value}", flush=True)
-        if address == REGISTER_APPLY and value == 0:
-            self._commit_mode(registers)
-        return _rtu_frame(bytes((unit_id, function)) + request_echo(address, value))
+        return rtu_frame(bytes((unit_id, function)) + request_echo(address, value))
 
-    @staticmethod
-    def _commit_mode(registers: dict[int, int]) -> None:
-        mode = registers.get(REGISTER_MODE, MODE_MANUAL)
-        current_level = registers.get(REGISTER_CURRENT_LEVEL, 0)
-        extract_level = registers.get(REGISTER_EXTRACT_AIR_TARGET_LEVEL, current_level)
-        if (
-            mode == MODE_MANUAL
-            and registers.get(REGISTER_PRESET_MODE) == MODE_MANUAL
-            and registers.get(REGISTER_PRESET_VALUE) == PRESET_MODE_CODE_INTENSIVE
-        ):
-            current_level = PRESET_MODE_CODE_INTENSIVE
-        registers[REGISTER_MODE_STATUS] = mode
-        registers[REGISTER_SUPPLY_MODE_STATUS] = current_level
-        registers[REGISTER_EXTRACT_MODE_STATUS] = (
-            extract_level if mode == MODE_UNBALANCED else current_level
+    async def _handle_control(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        self._writers.add(writer)
+        try:
+            while line := await reader.readline():
+                output = self.execute(line.decode(errors="replace"))
+                writer.write((output + "\n").encode())
+                await writer.drain()
+        except ConnectionError, OSError:
+            pass
+        finally:
+            self._writers.discard(writer)
+            writer.close()
+            await writer.wait_closed()
+
+    # -- Runtime commands -------------------------------------------------
+
+    def execute(self, line: str) -> str:
+        """Run one runtime command and return its output."""
+
+        words = line.split()
+        if not words or words[0].startswith("#"):
+            return ""
+        command, args = words[0].lower(), words[1:]
+        handler = self._commands().get(command)
+        if handler is None:
+            return f"error: unknown command {command!r}; type 'help' for the list"
+        try:
+            return handler(args)
+        except ValueError as err:
+            return f"error: {err}"
+
+    def _commands(self) -> dict[str, Callable[[list[str]], str]]:
+        return {
+            "help": lambda args: HELP,
+            "status": self._cmd_status,
+            "pair": self._cmd_pair,
+            "unpair": self._cmd_unpair,
+            "silent": self._cmd_silent,
+            "set": self._cmd_set,
+            "get": self._cmd_get,
+            "refuse": self._cmd_refuse,
+            "allow": self._cmd_allow,
+            "flag": self._cmd_flag,
+            "app": self._cmd_app,
+            "reboot": self._cmd_reboot,
+            "warmup": self._cmd_warmup,
+            "clock": self._cmd_clock,
+            "settle": self._cmd_settle,
+            "delay": self._cmd_delay,
+            "drop-rate": self._cmd_drop_rate,
+            "corrupt-rate": self._cmd_corrupt_rate,
+            "fault": self._cmd_fault,
+            "dump": self._cmd_dump,
+        }
+
+    def _cmd_status(self, args: list[str]) -> str:
+        _expect(args, 0, 0, "status")
+        unit_delays = ", ".join(
+            f"{address}: {delay * 1000:.0f} ms"
+            for address, delay in sorted(self.unit_delays.items())
         )
-        if mode == MODE_SENSOR_CONTROL:
-            registers[REGISTER_EXTRACT_MODE_STATUS] = current_level
+        faults = ", ".join(
+            f"{'*' if fault.address is None else fault.address} {fault.action} x{fault.remaining}"
+            for fault in self._faults
+        )
+        transport = (
+            f"transport: delay {self.response_delay * 1000:.0f} ms"
+            f"{f' (units {unit_delays})' if unit_delays else ''}, "
+            f"drop rate {self.drop_rate:g}, corrupt rate {self.corrupt_rate:g}, "
+            f"scripted faults [{faults}], requests {self.requests}, writes {self.writes}"
+        )
+        return f"{self.model.describe()}\n{transport}"
+
+    def _cmd_pair(self, args: list[str]) -> str:
+        _expect(args, 2, 2, "pair ADDR PROFILE")
+        address = _int(args[0], "address")
+        self.model.pair(address, args[1])
+        return f"unit {address} paired as {args[1]}; the gateway lists {self.model.paired}"
+
+    def _cmd_unpair(self, args: list[str]) -> str:
+        _expect(args, 1, 1, "unpair ADDR")
+        address = _int(args[0], "address")
+        self.model.unpair(address)
+        return f"unit {address} unpaired; the gateway lists {self.model.paired}"
+
+    def _cmd_silent(self, args: list[str]) -> str:
+        _expect(args, 2, 2, "silent ADDR on|off")
+        address = _int(args[0], "address")
+        silent = _on_off(args[1])
+        self.model.set_silent(address, silent)
+        return f"unit {address} {'drops' if silent else 'answers'} requests"
+
+    def _cmd_set(self, args: list[str]) -> str:
+        _expect(args, 3, 3, "set ADDR REG VALUE")
+        address, register, value = (_int(arg, "number") for arg in args)
+        self.model.set_register(address, register, value)
+        return f"address {address} register {register} = {value}"
+
+    def _cmd_get(self, args: list[str]) -> str:
+        _expect(args, 2, 3, "get ADDR REG [COUNT]")
+        address, register = _int(args[0], "address"), _int(args[1], "register")
+        count = _int(args[2], "count") if len(args) == 3 else 1
+        if not 1 <= count <= MAX_REGISTER_COUNT:
+            raise ValueError(f"the count must be between 1 and {MAX_REGISTER_COUNT}")
+        return f"{register}: {self.model.peek(address, register, count)}"
+
+    def _cmd_refuse(self, args: list[str], refused: bool = True) -> str:
+        _expect(args, 2, 2, f"{'refuse' if refused else 'allow'} ADDR REG[-REG]")
+        address = _int(args[0], "address")
+        self.model.refuse(address, parse_register_range(args[1]), refused)
+        return f"address {address} {'refuses' if refused else 'allows'} {args[1]}"
+
+    def _cmd_allow(self, args: list[str]) -> str:
+        return self._cmd_refuse(args, refused=False)
+
+    def _cmd_flag(self, args: list[str]) -> str:
+        _expect(args, 3, 3, "flag ADDR error|filter|frost on|off")
+        address = _int(args[0], "address")
+        self.model.set_flag(address, args[1], _on_off(args[2]))
+        return f"unit {address} {args[1]} {args[2]}"
+
+    def _cmd_app(self, args: list[str]) -> str:
+        _expect(args, 2, 3, "app ADDR off|low|medium|high|intensive|SUPPLY [EXTRACT]")
+        address = _int(args[0], "address")
+        self.model.app_change(address, args[1].lower(), args[2] if len(args) == 3 else None)
+        return f"unit {address} changed as from the app"
+
+    def _cmd_reboot(self, args: list[str]) -> str:
+        _expect(args, 0, 1, "reboot [WARMUP_S]")
+        self.model.reboot(_float(args[0], "warm-up") if args else None)
+        return f"gateway restarted; warm-up {self.model.warmup_remaining:.0f} s"
+
+    def _cmd_warmup(self, args: list[str]) -> str:
+        _expect(args, 1, 1, "warmup SECONDS")
+        self.model.start_warmup(_float(args[0], "warm-up"))
+        return f"warm-up {self.model.warmup_remaining:.0f} s"
+
+    def _cmd_clock(self, args: list[str]) -> str:
+        _expect(args, 1, 1, "clock OFFSET_S")
+        self.model.clock_offset = _int(args[0], "offset")
+        return f"gateway clock offset {self.model.clock_offset} s"
+
+    def _cmd_settle(self, args: list[str]) -> str:
+        _expect(args, 1, 1, "settle MS")
+        self.model.settle_seconds = _validate_delay(_float(args[0], "settle time") / 1000)
+        return f"settle {self.model.settle_seconds * 1000:.0f} ms"
+
+    def _cmd_delay(self, args: list[str]) -> str:
+        _expect(args, 1, 2, "delay MS | delay ADDR MS")
+        if len(args) == 1:
+            self.set_delay(_float(args[0], "delay") / 1000)
+            return f"reply delay {self.response_delay * 1000:.0f} ms"
+        address = _int(args[0], "address")
+        self.set_delay(_float(args[1], "delay") / 1000, address)
+        return f"extra reply delay for address {address}: {args[1]} ms"
+
+    def _cmd_drop_rate(self, args: list[str]) -> str:
+        _expect(args, 1, 1, "drop-rate P")
+        self.drop_rate = _validate_rate(_float(args[0], "rate"), "drop rate")
+        return f"drop rate {self.drop_rate:g}"
+
+    def _cmd_corrupt_rate(self, args: list[str]) -> str:
+        _expect(args, 1, 1, "corrupt-rate P")
+        self.corrupt_rate = _validate_rate(_float(args[0], "rate"), "corrupt rate")
+        return f"corrupt rate {self.corrupt_rate:g}"
+
+    def _cmd_fault(self, args: list[str]) -> str:
+        if args == ["clear"]:
+            self.clear_faults()
+            return "scripted faults cleared"
+        _expect(args, 2, 3, "fault ADDR|* ACTION [COUNT] | fault clear")
+        address = None if args[0] == "*" else _int(args[0], "address")
+        if address is not None:
+            self.model.check_address(address)
+        count = _int(args[2], "count") if len(args) == 3 else 1
+        self.inject_fault(args[1], address, count)
+        return f"next {count} repl{'y' if count == 1 else 'ies'} to {args[0]}: {args[1]}"
+
+    def _cmd_dump(self, args: list[str]) -> str:
+        _expect(args, 1, 1, "dump FILE")
+        try:
+            write_register_map(self, args[0])
+        except OSError as err:
+            raise ValueError(f"cannot write {args[0]}: {err}") from err
+        return f"register map written to {args[0]}"
 
 
-def request_echo(address: int, value: int) -> bytes:
-    return address.to_bytes(2, "big") + value.to_bytes(2, "big")
+def _expect(args: list[str], minimum: int, maximum: int, usage: str) -> None:
+    if not minimum <= len(args) <= maximum:
+        raise ValueError(f"usage: {usage}")
 
 
-def _rtu_frame(payload: bytes) -> bytes:
-    crc = 0xFFFF
-    for byte in payload:
-        crc ^= byte
-        for _ in range(8):
-            crc = (crc >> 1) ^ (0xA001 if crc & 1 else 0)
-    return payload + crc.to_bytes(2, "little")
+def _int(text: str, name: str) -> int:
+    try:
+        return int(text)
+    except ValueError as err:
+        raise ValueError(f"invalid {name} {text!r}") from err
 
 
-def _exception_frame(unit_id: int, function: int, code: int) -> bytes:
-    return _rtu_frame(bytes((unit_id, function | 0x80, code)))
+def _float(text: str, name: str) -> float:
+    try:
+        return float(text)
+    except ValueError as err:
+        raise ValueError(f"invalid {name} {text!r}") from err
+
+
+def _on_off(text: str) -> bool:
+    if text.lower() not in ("on", "off"):
+        raise ValueError(f"expected on or off, not {text!r}")
+    return text.lower() == "on"
+
+
+def _bound_port(server: asyncio.Server) -> int:
+    if not server.sockets:
+        raise RuntimeError("mock gateway has no listening socket")
+    return int(server.sockets[0].getsockname()[1])
+
+
+def write_register_map(gateway: RtuTcpMockGateway, path: str | Path) -> None:
+    Path(path).write_text(
+        json.dumps(gateway.model.to_register_map(), indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a local, stateful RTU-over-TCP mock for the Meltem integration."
+        description="Run a local, stateful RTU-over-TCP mock for the Meltem integration.",
+        epilog="Type 'help' on standard input or the control port for the runtime commands.",
     )
     parser.add_argument("--host", default=DEFAULT_HOST, help="Bind address (default: loopback).")
     parser.add_argument(
@@ -371,7 +689,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-units",
         action="store_true",
-        help="Report zero configured units so the setup flow shows no_devices_found.",
+        help=(
+            "Report zero configured units so the setup flow shows no_devices_found; "
+            "requests to unit addresses then time out."
+        ),
     )
     parser.add_argument(
         "--silent-unit",
@@ -388,50 +709,161 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Delay every Modbus response by this many milliseconds.",
     )
     parser.add_argument(
+        "--unit-delay",
+        type=parse_unit_delay,
+        action="append",
+        default=[],
+        metavar="ADDR:MS",
+        help="Additionally delay the replies of one unit; repeat for more.",
+    )
+    parser.add_argument(
         "--single-client",
         action="store_true",
         help="Reject another connection while one client is connected.",
     )
+    parser.add_argument(
+        "--warmup-seconds",
+        type=float,
+        default=0,
+        help="Answer the sensor, status, and airflow blocks with Acknowledge for this long.",
+    )
+    parser.add_argument(
+        "--settle-ms",
+        type=float,
+        default=0,
+        help="Delay the status map and airflow after each committed write.",
+    )
+    parser.add_argument(
+        "--refuse",
+        type=parse_refusal,
+        action="append",
+        default=[],
+        metavar="ADDR:REG[-REG]",
+        help="Answer these registers with Illegal Data Address; repeat for more.",
+    )
+    parser.add_argument(
+        "--drop-rate",
+        type=float,
+        default=0,
+        help="Share of replies to drop, between 0 and 1.",
+    )
+    parser.add_argument(
+        "--corrupt-rate",
+        type=float,
+        default=0,
+        help="Share of replies to send with a broken CRC, between 0 and 1.",
+    )
+    parser.add_argument("--seed", type=int, help="Seed for the drop and corrupt rates.")
+    parser.add_argument(
+        "--register-map",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="Apply a register map or capture_setting_family capture; repeat for more.",
+    )
+    parser.add_argument(
+        "--dump-register-map",
+        metavar="FILE",
+        help="Write the resulting registers as a register map and exit.",
+    )
+    parser.add_argument(
+        "--control-port",
+        type=int,
+        help="Also accept runtime commands on this TCP port (0 picks a free one).",
+    )
     args = parser.parse_args(argv)
-    if not 0 <= args.port <= 65535:
-        parser.error("--port must be between 0 and 65535")
-    if args.response_delay_ms < 0:
-        parser.error("--response-delay-ms must be non-negative")
-    if set(args.silent_unit) - set(args.units):
-        parser.error("--silent-unit must name an address from --units")
+    for name in ("port", "control_port"):
+        value = getattr(args, name)
+        if value is not None and not 0 <= value <= 65535:
+            parser.error(f"--{name.replace('_', '-')} must be between 0 and 65535")
+    for name in ("response_delay_ms", "warmup_seconds", "settle_ms"):
+        if getattr(args, name) < 0:
+            parser.error(f"--{name.replace('_', '-')} must be non-negative")
+    for name in ("drop_rate", "corrupt_rate"):
+        if not 0 <= getattr(args, name) <= 1:
+            parser.error(f"--{name.replace('_', '-')} must be between 0 and 1")
     return args
 
 
-async def _serve(args: argparse.Namespace) -> None:
-    gateway = RtuTcpMockGateway(
+def build_gateway(args: argparse.Namespace) -> RtuTcpMockGateway:
+    """Build the gateway from parsed arguments; raises ``ValueError`` on bad input."""
+
+    return RtuTcpMockGateway(
         args.units,
         no_units=args.no_units,
         silent_units=args.silent_unit,
         response_delay=args.response_delay_ms / 1000,
         single_client=args.single_client,
+        warmup_seconds=args.warmup_seconds,
+        settle_seconds=args.settle_ms / 1000,
+        refused=args.refuse,
+        unit_delays={address: delay / 1000 for address, delay in args.unit_delay},
+        drop_rate=args.drop_rate,
+        corrupt_rate=args.corrupt_rate,
+        seed=args.seed,
+        register_maps=[load_register_map(path) for path in args.register_map],
     )
+
+
+def _run_command(gateway: RtuTcpMockGateway, line: str) -> None:
+    if output := gateway.execute(line):
+        print(output, flush=True)
+
+
+def _read_stdin_commands(loop: asyncio.AbstractEventLoop, gateway: RtuTcpMockGateway) -> None:
+    stream = sys.stdin
+    if stream is None:
+        return
+
+    def read() -> None:
+        for line in stream:
+            try:
+                loop.call_soon_threadsafe(_run_command, gateway, line)
+            except RuntimeError:
+                return
+
+    threading.Thread(target=read, name="mock-gateway-commands", daemon=True).start()
+
+
+async def _serve(args: argparse.Namespace, gateway: RtuTcpMockGateway) -> None:
     port = await gateway.start(args.host, args.port)
     print(f"Mock Meltem gateway listening on {args.host}:{port}", flush=True)
+    paired = gateway.model.paired
     print(
         "Reported units: "
         + (
-            "none"
-            if args.no_units
-            else ", ".join(f"{key}={value}" for key, value in args.units.items())
+            ", ".join(f"{address}={gateway.model.units[address]}" for address in paired)
+            if paired
+            else "none"
         ),
         flush=True,
     )
-    print("Press Ctrl+C to stop.", flush=True)
+    if args.control_port is not None:
+        control_port = await gateway.start_control(args.host, args.control_port)
+        print(f"Runtime commands on {args.host}:{control_port}", flush=True)
+    _read_stdin_commands(asyncio.get_running_loop(), gateway)
+    print("Type 'help' for runtime commands. Press Ctrl+C to stop.", flush=True)
     try:
         await gateway.serve_forever()
     finally:
         await gateway.close()
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
     try:
-        asyncio.run(_serve(args))
+        gateway = build_gateway(args)
+    except ValueError as err:
+        raise SystemExit(f"Could not start mock gateway: {err}") from err
+    if args.dump_register_map:
+        try:
+            write_register_map(gateway, args.dump_register_map)
+        except OSError as err:
+            raise SystemExit(f"Could not write {args.dump_register_map}: {err}") from err
+        print(f"Register map written to {args.dump_register_map}", flush=True)
+        return
+    try:
+        asyncio.run(_serve(args, gateway))
     except KeyboardInterrupt:
         print("Mock Meltem gateway stopped.", flush=True)
     except OSError as err:

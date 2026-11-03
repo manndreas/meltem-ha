@@ -42,6 +42,7 @@
           'co2_starting_point': 800,
           'co2_supply_air': 850,
           'days_until_filter_change': 120,
+          'device_fault': False,
           'error_status': False,
           'exhaust_temperature': 8.5,
           'extract_air_flow': 40,
@@ -53,6 +54,16 @@
           'group_read_health': tuple(
             tuple(
               'control_settings',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
+              'device_fault',
               dict({
                 'consecutive_failures': 0,
                 'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
@@ -113,16 +124,6 @@
             ),
             tuple(
               'intensive',
-              dict({
-                'consecutive_failures': 0,
-                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
-                'last_error': None,
-                'last_error_timed_out': False,
-                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
-              }),
-            ),
-            tuple(
-              'rf_fault',
               dict({
                 'consecutive_failures': 0,
                 'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
@@ -199,7 +200,6 @@
           'outdoor_air_temperature': 4.0,
           'preset_mode': None,
           'rf_comm_status': False,
-          'rf_fault_status': False,
           'rf_last_seen_age_seconds': 12,
           'rf_signal_strength': -43,
           'software_version': 2326,
@@ -233,6 +233,7 @@
             'co2_supply_air',
             'connectivity',
             'days_until_filter_change',
+            'device_fault',
             'error_status',
             'exhaust_temperature',
             'external_input_level',
@@ -257,7 +258,6 @@
             'outdoor_air_temperature',
             'preset_mode',
             'rf_comm_status',
-            'rf_fault_status',
             'rf_last_seen_age_seconds',
             'rf_signal_strength',
             'supply_air_flow',
@@ -288,7 +288,7 @@
         'port': '**REDACTED**',
       }),
       'entry_id': '01JMELTEMSNAPSHOTENTRY0000',
-      'minor_version': 1,
+      'minor_version': 2,
       'options': dict({
       }),
       'state': 'ConfigEntryState.LOADED',
@@ -408,6 +408,57 @@
     }),
     'context': <ANY>,
     'entity_id': 'binary_sensor.meltem_modbus_unit_1_device_error',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'off',
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_device_fault-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
+    'device_class': None,
+    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_device_fault',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Device fault',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.PROBLEM: 'problem'>,
+    'original_icon': None,
+    'original_name': 'Device fault',
+    'platform': 'meltem_ventilation',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'device_fault',
+    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_device_fault',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_device_fault-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'problem',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 Device fault',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.meltem_modbus_unit_1_device_fault',
     'last_changed': <ANY>,
     'last_reported': <ANY>,
     'last_updated': <ANY>,
@@ -614,6 +665,13 @@
         'stale': False,
       }),
       <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'problem',
+      'device_fault': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
       'fan_hours': dict({
         'consecutive_failures': 0,
         'last_attempt': '2026-11-02T12:00:00+00:00',
@@ -651,13 +709,6 @@
         'stale': False,
       }),
       'intensive': dict({
-        'consecutive_failures': 0,
-        'last_attempt': '2026-11-02T12:00:00+00:00',
-        'last_error': None,
-        'last_successful_read': '2026-11-02T12:00:00+00:00',
-        'stale': False,
-      }),
-      'rf_fault': dict({
         'consecutive_failures': 0,
         'last_attempt': '2026-11-02T12:00:00+00:00',
         'last_error': None,
@@ -755,57 +806,6 @@
     }),
     'context': <ANY>,
     'entity_id': 'binary_sensor.meltem_modbus_unit_1_rf_communication_status',
-    'last_changed': <ANY>,
-    'last_reported': <ANY>,
-    'last_updated': <ANY>,
-    'state': 'off',
-  })
-# ---
-# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_rf_fault_status-entry]
-  EntityRegistryEntrySnapshot({
-    'aliases': list([
-      None,
-    ]),
-    'area_id': None,
-    'capabilities': None,
-    'config_entry_id': <ANY>,
-    'config_subentry_id': <ConfigSubentry subentry_type='unit' title='Unit 1'>,
-    'device_class': None,
-    'device_id': <DeviceEntry identifiers=[('meltem_ventilation', 'app_setup_code:R000001'), ('meltem_ventilation', 'slave_2')]>,
-    'disabled_by': None,
-    'domain': 'binary_sensor',
-    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
-    'entity_id': 'binary_sensor.meltem_modbus_unit_1_rf_fault_status',
-    'has_entity_name': True,
-    'hidden_by': None,
-    'icon': None,
-    'id': <ANY>,
-    'labels': set({
-    }),
-    'name': None,
-    'object_id_base': 'RF fault status',
-    'options': dict({
-    }),
-    'original_device_class': <BinarySensorDeviceClass.PROBLEM: 'problem'>,
-    'original_icon': None,
-    'original_name': 'RF fault status',
-    'platform': 'meltem_ventilation',
-    'previous_unique_id': None,
-    'suggested_object_id': None,
-    'supported_features': 0,
-    'translation_key': 'rf_fault_status',
-    'unique_id': 'meltem_ventilation_01JMELTEMSNAPSHOTENTRY0000_slave_2_rf_fault_status',
-    'unit_of_measurement': None,
-  })
-# ---
-# name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_rf_fault_status-state]
-  StateSnapshot({
-    'attributes': ReadOnlyDict({
-      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'problem',
-      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Meltem Modbus Unit 1 RF fault status',
-    }),
-    'context': <ANY>,
-    'entity_id': 'binary_sensor.meltem_modbus_unit_1_rf_fault_status',
     'last_changed': <ANY>,
     'last_reported': <ANY>,
     'last_updated': <ANY>,

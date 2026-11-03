@@ -151,7 +151,16 @@ the same stored parameters.
   InControl. They are device parameters (IDs 13-15), not app-local values.
 - **Abluft / Zuluft shortcuts store their own airflows.** This matches the
   observation in [../MELTEM.md](../MELTEM.md) that the app sends a configured
-  airflow for these shortcuts.
+  airflow for these shortcuts. The static app analysis shows where: the app
+  keeps both sides on the phone, per unit, and sends them with every command
+  ([../APK_ANALYSIS.md](../APK_ANALYSIS.md#extract-only-and-supply-only-airflows)).
+- **The app does not enforce every limit in this manual.** The analysed app
+  version checks neither the 20-character gateway name
+  ([gateway naming](../APK_ANALYSIS.md#gateway-naming-result-screens-and-unbinding))
+  nor six switching points per day
+  ([schedules](../APK_ANALYSIS.md#weekly-schedules-and-templates)), and it does
+  not hide the temperature program on units without a humidity sensor
+  ([settings pages](../APK_ANALYSIS.md#settings-page-layout)).
 - **Operating hours update once a day** in the app. A slow polling interval
   for `41030` / `41032` loses nothing.
 - **Time, interval and temperature programs** run on the unit and are

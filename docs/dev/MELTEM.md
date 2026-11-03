@@ -88,6 +88,14 @@ registers continued to report the fallback configuration. They are therefore
 not a reliable source for the current DHCP lease. The active address was
 identified separately from the LAN's ARP mapping and is omitted.
 
+The Meltem app reads the MAC at `41012..41014` and its cloud URL at
+`41034..41090` over Modbus TCP, and its setup writes a credential to
+`41030..41033`, the URL with the bridge ID to `41034..41090` and a zero GUID
+field to `41091..41098` on the gateway
+([APK_ANALYSIS.md](APK_ANALYSIS.md#gateway-modbus-tcp-frames)). No
+measurement documented here has read those gateway registers, and none
+should: they hold the gateway's credential and cloud binding.
+
 The Airios `BRDG-02EM23` implementation in
 [`pyairios`](https://github.com/scabrero/pyairios) identifies `41019` as uptime
 and reads it as a 32-bit value. A live read of `41019..41020` returned
@@ -134,7 +142,9 @@ implementation as Modbus TCP. Local, unarchived evidence:
 - setup scans are sensitive to short timeouts
 - stable block reads: airflow `41020..41021`, status `41016..41018`,
   temperatures `41000..41005`, and air quality plus supply temperature
-  `41006..41011` (`41006..41013` on `O/VOC-AUL`)
+  `41006..41011` (`41006..41013` on `O/VOC-AUL`); the air-quality block has
+  only been read on sensorless units so far, see
+  [HW-10](HARDWARE_BACKLOG.md#hw-10--merged-air-quality-block-on-sensor-equipped-units)
 - over tmodbus (since `4.0.0`), simple reads took about `16 ms` on average,
   slightly faster than with the earlier pymodbus client (`18.6..19.5 ms`)
 - in the one request-gap sweep, gaps of `0.05..0.3 s` passed, while gap `0`
@@ -259,7 +269,8 @@ Potentially useful but still unclassified areas are:
 - within the reported `41000..41029` island: `41008`, `41012..41015`,
   `41022..41026`, and `41028..41029` have no manufacturer-documented
   semantics. The integration follows the APK mapping for `41008` (extract VOC),
-  `41012` (supply CO2), and `41013` (supply VOC), using ppm for these sensors.
+  `41012` (supply CO2), and `41013` (supply VOC), using ppm for these sensors;
+  `41008` and `41012` only on the `O/VOC-AUL` profile and disabled by default.
 - `41019` behaved as gateway uptime on address `1`; that meaning should not be
   assumed for room-unit addresses.
 - `40103` and `40104` returned stable values in separate probes, but are not
@@ -292,10 +303,10 @@ The second survey, after initial `0x05` responses had cleared, found:
 | `41006`, `41011` | `239` | Consistent with absent humidity readings. |
 | `41007`, `41008`, `41012`, `41013` | `32767` | No valid sensor values; this does not establish sensor meaning or units. |
 | `41015`, `41019` | `49144` (`0xBFF8`), `31` | Same on units in different quick modes; semantics remain unknown. |
-| `41103..41105` | `0, 0, 0` | No active intensive/other override was verified in this survey. |
+| `41103..41105` | `0, 0, 0` | No active intensive/other override was verified in this survey. The app reads the active override from these registers when `41100` is `0`; see [HW-13](HARDWARE_BACKLOG.md#hw-13--temporary-override-status-4110341105). |
 | `41106` | `0` on units 2–4, `3` on units 5–7 | User reported no active app time program on units 4–7; see the controlled comparison below. |
-| `41113` | `425` (`0x01A9`) | Same despite LOW, MED and HIGH status; do not infer actual speed from this snapshot. |
-| `42006..42009` | `12, 60, 1, 15` | Repeatable raw settings, not evidence that any write is safe. |
+| `41113` | `425` (`0x01A9`) | Same despite LOW, MED and HIGH status; do not infer actual speed from this snapshot. In the app's legacy mode-word layout this is mode `1` (continuous) with speed `0`; see [HW-12](HARDWARE_BACKLOG.md#hw-12--legacy-mode-word-41113). |
+| `42006..42009` | `12, 60, 1, 15` | Repeatable raw settings, not evidence that any write is safe. They equal the app's defaults for tags `95`, `54`, `55` and `56` ([APK_ANALYSIS.md](APK_ANALYSIS.md#service-metadata-compared-with-other-sources)). |
 
 During the first survey, five units returned `0x05` for `41113` and
 `42006..42009`; unit `4` answered. The second survey returned the values above
@@ -322,7 +333,7 @@ On gateway address `1`:
 | --- | --- | --- |
 | `41015..41016` | `[39440, 27352]`, then `[39450, 27352]` | UTC time; low-word-first decoding advanced from `2026-10-21 10:55:12` to `10:55:22 UTC`. |
 | `41017..41018` | `[46640, 27352]`, then `[46650, 27352]` | Local time; decoded values were exactly 7200 seconds ahead of UTC. |
-| `41021` / `41022` | `4` / `60` | Daylight-saving type and timezone-offset registers; the meaning of code `4` and the relationship of `60` to the observed +2-hour offset are not established. |
+| `41021` / `41022` | `4` / `60` | Daylight-saving type and timezone-offset registers; the meaning of code `4` and the relationship of `60` to the observed +2-hour offset are not established. The Meltem app sends exactly `daylightSavingType = 4`, `timeZoneOffset = 60` to the cloud after gateway setup ([APK_ANALYSIS.md](APK_ANALYSIS.md#gateway-discovery-and-setup-on-the-local-network)). |
 | `42100` / `42101` | `14` / `40` | RF messages sent in the current and previous hour; unchanged over the 10-second repeat. |
 | `42102..42103` | `[23096, 15340]` | RF load, current hour; pyairios `FloatRegister` decoding gives `0.0072129`. An earlier read gave `[15127, 15348]` (`0.0074533`). Upstream reports the decoded value directly in percent; physical calibration on Meltem remains unverified. |
 | `42104..42105` | `[28241, 15401]` | RF load, previous hour; decoded `0.0103412`, unchanged in the repeated sample. |
@@ -578,7 +589,12 @@ The integration follows the APK map for `41008` (VOC, extract air), `41012`
 (CO2, supply air), and `41013` (VOC, supply air), and uses ppm for all three.
 None of the documents collected in `docs/meltem/` contains these registers or
 the `O/VOC-AUL` option. The 2026-11-03 survey covered only sensorless units, so
-it did not capture positive sensor readings; see the survey above.
+it did not capture positive sensor readings; see the survey above. The app's
+normal overview does not poll `41008` or `41012` either
+([APK_ANALYSIS.md](APK_ANALYSIS.md)). The integration therefore offers those
+two only on the `O/VOC-AUL` profile, disabled by default, and uses neither for
+profile detection or repair issues; the `-FC` profiles do not read `41012`,
+since the manufacturer's unit matrix gives them an extract-air CO2 sensor only.
 
 ### Slave 5 compared with the other units
 
@@ -609,7 +625,10 @@ slave `4` and one read of the same identity fields across all six showed:
 - `41113` returned repeatable but differing values on slaves `4` and `5`, while
   other units returned exception `0x05` in that sweep. It was also unavailable
   on slaves `3` and `5` in the 2026-10-02 scan, so its availability is
-  inconsistent and its meaning remains unknown.
+  inconsistent and its meaning remains unknown. Slave `4` returned `1449`
+  (`0x05A9`) while in `[4, 0, 228]`; in the app's legacy mode-word layout that
+  is mode `5` (`OM_CROSS_AIR_SMT_OUT`), see
+  [HW-12](HARDWARE_BACKLOG.md#hw-12--legacy-mode-word-41113).
 - `52010` was `118` on both `4` and `5` in this latest comparison. Its earlier
   per-unit offset in the idle captures was not reproduced, so it is not a
   reliable model marker.
@@ -696,7 +715,11 @@ and the cloud API payload were not captured. The result supports the
 Monday-zero app interpretation, but does not by itself prove the server's
 weekday semantics. The schedule registers becoming readable after the app
 operation also does not establish a general local schedule-read or write
-protocol.
+protocol. The values `49000 = 4` after saving and `3` after removing the
+point, `49001 = 3` and `49002 = 0`, and the tuple order match the action
+codes, "finished" and "OK" values and tuple layout of an uncalled `490xx`
+helper in the app
+([APK_ANALYSIS.md](APK_ANALYSIS.md#legacy-490xx-helper)).
 
 The required all-known snapshots were taken before and after the app
 interaction. Beforehand `41120..41124` and `41132` returned `0x05`; afterward
@@ -827,6 +850,12 @@ Observed on tested `M-WRG-GW` gateways:
 The 2026-10-02 scan could not re-evaluate the swap: all six discovered units
 were `ii_plain`; `41000` and `41002` decoded as NaN, while `41004` was a
 plausible room temperature. Repeat the swap test on a sensor-equipped variant.
+
+The Meltem app 1.17 labels the cloud values the same way: `41000` as extract
+air (`Abluft`), `41004` as exhaust air (`Fortluft`), and it pairs `41000` with
+extract humidity `41006` for absolute humidity. That is static app metadata,
+not a measurement; see
+[APK_ANALYSIS.md](APK_ANALYSIS.md#overview-display).
 
 ## Operating mode and set registers
 
@@ -1136,6 +1165,10 @@ Current interpretation:
   write them; since 3.0.0 it expresses supply-only and extract-only operation
   by setting one fan to zero, because the airflow stored for the shortcut is
   not readable
+- the static app analysis shows where that airflow comes from: the app keeps
+  both sides of each shortcut on the phone, per device, and sends them with
+  every command; it does not use an airflow stored on the unit
+  ([APK_ANALYSIS.md](APK_ANALYSIS.md#extract-only-and-supply-only-airflows))
 
 Important limitation:
 
@@ -1431,7 +1464,9 @@ units for this run, but not how the gateway obtains the powered-off unit's
 unchanged values. They may be retained or cached; the client marked the reads
 successful, so it could not measure a recovery time after power-up. Treat H-1
 as partial/inconclusive for detecting a silent powered-off unit, not as proof
-that the reported airflow was physically present.
+that the reported airflow was physically present. Whether `40101` or `40100`
+reveal such a unit is the open question in
+[HW-14](HARDWARE_BACKLOG.md#hw-14--detecting-a-silent-unit-through-40101).
 
 After power-up in the first run, `41020..41021` read `[80, 0]`, matching the
 Meltem app and the physical airflow, while the then-used set-register read
@@ -1603,7 +1638,7 @@ room has only one consecutive failure and is not stale.
 ### H-3 repeat on 2026-10-14
 
 The kernel recorded USB loss at `19:49:13 CEST` and re-enumerated the same
-same adapter as `/dev/ttyACM0` at `19:50:39`, an 86-second
+adapter as `/dev/ttyACM0` at `19:50:39`, an 86-second
 gap. The action log separately records the user's unplug confirmation at
 `19:49:24`, the reconnect prompt at `19:49:54`, and the user's replug
 confirmation at `19:50:45`; these are not physical USB event timestamps.

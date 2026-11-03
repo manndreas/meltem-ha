@@ -19,6 +19,9 @@ coordinator behavior transport-neutral.
   config-entry ID and entity identities when Reconfigure changes the endpoint.
 - Document that the ESP bridge has no TLS or authentication and is intended
   only for a trusted local network.
+- Do not claim hardware validation: no ESP32 or Meltem gateway was available
+  for this implementation. The live check is
+  [HW-11](../HARDWARE_BACKLOG.md#hw-11--rtu-over-tcp-through-a-real-bridge).
 
 ## Work items
 
@@ -48,7 +51,9 @@ coordinator behavior transport-neutral.
   `modbus-connection 4.12.7`, and `tmodbus 1.1.0`: three RTU reads succeeded
   over one TCP connection using the integration's `prepare_unit`.
 - The initial transport spike used a local test server to exercise RTU frames
-  over a TCP connection.
+  over a TCP connection, not the ESP firmware or physical Meltem hardware.
+  The implementation has been tested against the same kind of software
+  servers and the [local mock gateway](../MOCK_GATEWAY.md) only.
 - Validate each implementation stage with focused tests. Finish with the
   relevant Ruff, mypy/Pyright, and integration tests; do not change release
   metadata unless a release is requested.

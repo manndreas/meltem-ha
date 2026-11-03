@@ -340,11 +340,14 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
         value_fn=lambda state: state.co2_extract_air,
     ),
+    # The app's register map is the only source for the next two; no reading
+    # from a sensor-equipped unit has been captured yet (docs/dev/MELTEM.md).
     MeltemSensorDescription(
         key="co2_supply_air",
         device_class=SensorDeviceClass.CO2,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
+        entity_registry_enabled_default=False,
         value_fn=lambda state: state.co2_supply_air,
     ),
     MeltemSensorDescription(
@@ -352,6 +355,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
+        entity_registry_enabled_default=False,
         value_fn=lambda state: state.voc_extract_air,
     ),
     MeltemSensorDescription(

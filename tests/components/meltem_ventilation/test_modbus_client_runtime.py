@@ -44,6 +44,7 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_PRESET_MODE,
     REGISTER_PRESET_VALUE,
     REGISTER_PRODUCT_ID,
+    TRANSPORT_RETRY_DELAY_SECONDS,
 )
 from custom_components.meltem_ventilation.modbus_client import MeltemModbusClient
 from custom_components.meltem_ventilation.modbus_helpers import (
@@ -173,6 +174,27 @@ class TestGatewayOperations:
             await client.async_validate_gateway()
 
         assert not isinstance(err.value, MeltemModbusError)
+
+    async def test_disconnect_gateway_ignores_a_dead_link(
+        self,
+        client: MeltemModbusClient,
+        link: MockModbusConnection,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        disconnected = False
+
+        async def _fail_disconnect() -> None:
+            nonlocal disconnected
+            disconnected = True
+            raise ModbusConnectionError("already gone")
+
+        monkeypatch.setattr(
+            link.for_unit(DEFAULT_GATEWAY_DEVICE_ID), "disconnect", _fail_disconnect
+        )
+
+        await client.async_disconnect_gateway()
+
+        assert disconnected
 
     async def test_unexpected_gateway_error_is_logged_and_passed_through(
         self,
@@ -437,6 +459,19 @@ class TestWriteLevel:
         with pytest.raises(MeltemModbusError):
             await client.write_level(_ROOM, 50)
 
+    async def test_a_lost_write_link_is_retried_once_after_the_usb_recovery_delay(
+        self, client: MeltemModbusClient, link: MockModbusConnection, sleeps: list[float]
+    ) -> None:
+        unit = link.for_unit(2)
+        unit.fail_requests(ModbusConnectionError("unplugged"))
+
+        with pytest.raises(MeltemConnectionError):
+            await client.write_level(_ROOM, 50)
+
+        # The client uses the production delay that lets a USB endpoint re-enumerate.
+        assert sleeps == [TRANSPORT_RETRY_DELAY_SECONDS]
+        assert TRANSPORT_RETRY_DELAY_SECONDS == 5.0
+
 
 class TestWriteUnbalancedLevels:
     @pytest.mark.parametrize(
@@ -683,6 +718,13 @@ class TestWritePresetMode:
             await client.write_unbalanced_levels(_ROOM, 60, 40)
         unit.fail_write(REGISTER_EXTRACT_AIR_TARGET_LEVEL, None)
 
+        # A command that fails before APPLY has not applied the staged registers yet.
+        unit.fail_write(REGISTER_PRESET_MODE, IllegalDataValueError())
+        with pytest.raises(MeltemModbusError):
+            await client.clear_intensive(_ROOM)
+        assert not [record for record in caplog.records if record.levelname == "WARNING"]
+        unit.fail_write(REGISTER_PRESET_MODE, None)
+
         await client.clear_intensive(_ROOM)
 
         # The command itself is unchanged; only the log shows the staged registers.
@@ -694,13 +736,32 @@ class TestWritePresetMode:
         warnings = [record for record in caplog.records if record.levelname == "WARNING"]
         assert len(warnings) == 1
         assert "clearing intensive mode also applies" in warnings[0].getMessage()
-        assert "current_level, extract_target_level, mode" in warnings[0].getMessage()
+        # The refused extract target never reached the unit, so it is not staged.
+        assert "applies current_level, mode, left staged" in warnings[0].getMessage()
 
         caplog.clear()
         await client.write_unbalanced_levels(_ROOM, 30, 50)
         await client.clear_intensive(_ROOM)
 
         assert not [record for record in caplog.records if record.levelname == "WARNING"]
+
+    async def test_a_write_without_an_answer_counts_as_staged(
+        self,
+        client: MeltemModbusClient,
+        link: MockModbusConnection,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        unit = link.for_unit(_ROOM.slave)
+        unit.fail_write(REGISTER_EXTRACT_AIR_TARGET_LEVEL, ModbusTimeoutError("lost"))
+        with pytest.raises(MeltemModbusError):
+            await client.write_unbalanced_levels(_ROOM, 60, 40)
+        unit.fail_write(REGISTER_EXTRACT_AIR_TARGET_LEVEL, None)
+
+        await client.clear_intensive(_ROOM)
+
+        warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "current_level, extract_target_level, mode" in warnings[0].getMessage()
 
 
 class TestWriteControlSetting:

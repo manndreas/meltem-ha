@@ -201,12 +201,12 @@ class TransportPolicy:
             except ClientClosedError:
                 raise
             except ModbusConnectionError:
-                if is_read and unit_id in self._unanswered_reads:
+                if is_read and self.read_delayed(unit_id):
                     raise
                 await async_sleep(self._connection_retry_delay)
                 result = await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
             except _RETRYABLE_ERRORS:
-                if is_read and unit_id in self._unanswered_reads:
+                if is_read and self.read_delayed(unit_id):
                     raise
                 result = await self._attempt(unit, unit_id, operation, *args, is_read=is_read)
 

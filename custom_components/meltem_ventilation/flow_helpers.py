@@ -304,6 +304,11 @@ def build_rooms_from_profiles(
         if result.app_setup_code is not None
     }
     used_room_keys: set[str] = set()
+    # A unit matched to an existing room keeps that room's key, wherever its
+    # address now sorts; a new unit must not take it first.
+    reserved_room_keys = {
+        str(room["key"]) for room in matched_rooms.values() if room.get("key") is not None
+    }
     # Kept units keep their names, so a new unit must not reuse one.
     used_names = {
         str(matched_rooms[slave]["name"])
@@ -315,10 +320,12 @@ def build_rooms_from_profiles(
         existing_room = matched_rooms.get(slave, {})
         probe_result = probe_results_by_slave.get(slave)
         selected_profile = str(selected_profiles[profile_field_key(slave)])
-        preferred_room_key = str(existing_room.get("key") or f"slave_{slave}")
+        existing_key = existing_room.get("key")
+        preferred_room_key = str(existing_key or f"slave_{slave}")
+        taken = used_room_keys if existing_key is not None else used_room_keys | reserved_room_keys
         room_key = preferred_room_key
         suffix = 2
-        while room_key in used_room_keys:
+        while room_key in taken:
             room_key = f"{preferred_room_key}_{suffix}"
             suffix += 1
         used_room_keys.add(room_key)
@@ -378,7 +385,7 @@ async def temporary_units(
 
     connection = SerialGatewayConnection(port) if isinstance(port, str) else port
     params = connection.modbus_params()
-    policy = new_transport_policy()
+    policy = new_transport_policy(timeout=connection.timeout)
     async with AsyncExitStack() as stack:
 
         async def unit_for(slave: int) -> ModbusUnit:

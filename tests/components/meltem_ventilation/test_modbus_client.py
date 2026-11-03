@@ -273,7 +273,7 @@ async def test_rf_diagnostics_read_separate_registers(
     ("fault", "value_error", "expected_fault", "expected_value_error"),
     [(0, 0, False, False), (1, 1, True, True), (2, 2, True, None), (65535, 65535, None, None)],
 )
-async def test_rf_fault_and_value_error_decoding(
+async def test_device_fault_and_value_error_decoding(
     client: MeltemModbusClient,
     unit: MockModbusUnit,
     fault: int,
@@ -283,13 +283,13 @@ async def test_rf_fault_and_value_error_decoding(
 ) -> None:
     unit.holding[40103] = [fault]
     unit.holding[40104] = [value_error]
-    previous = RoomState(rf_fault_status=True, value_error_status=True)
+    previous = RoomState(device_fault=True, value_error_status=True)
 
     state = await client.read_room_state(
         _PLAIN, previous, RefreshPlan.only(refresh_rf_diagnostics=True)
     )
 
-    assert state.rf_fault_status is expected_fault
+    assert state.device_fault is expected_fault
     assert state.value_error_status is expected_value_error
 
 
@@ -538,9 +538,11 @@ class TestRequestShapes:
         assert _reads(unit) == []
         assert state.read_health_for("control_settings").last_attempt is None
 
-    async def test_humidity_profile_skips_co2_and_voc_registers_and_switches_cleanly(
+    async def test_humidity_profile_reads_one_block_without_the_voc_register(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
+        # The block includes 41007/41008, which no -F unit has been read with
+        # yet; that check is HW-10 in docs/dev/HARDWARE_BACKLOG.md.
         await client.read_room_state(_PLAIN, RoomState(), _TEMPERATURES)
         unit.read_events.clear()
         unit.holding.update(
@@ -675,9 +677,10 @@ class TestMeasuredValues:
         }
         assert _values(state, expected) == expected
 
-    async def test_co2_only_profile_reads_supply_co2_without_expanding_group_range(
+    async def test_co2_only_profile_does_not_read_supply_co2(
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
+        # The -FC variants only carry an extract-air CO2 sensor (unit matrix).
         unit.holding.update(
             {
                 REGISTER_EXTRACT_AIR_TEMPERATURE: (
@@ -686,15 +689,16 @@ class TestMeasuredValues:
                 REGISTER_SUPPLY_AIR_TEMPERATURE: _float_words(18.5),
                 REGISTER_HUMIDITY_EXTRACT_AIR: [44, 780],
                 REGISTER_HUMIDITY_SUPPLY_AIR: [46],
-                REGISTER_CO2_SUPPLY_AIR: [850],
+                REGISTER_CO2_SUPPLY_AIR: [32767],
             }
         )
 
-        state = await client.read_room_state(_FC, RoomState(), _TEMPERATURES)
+        state, outcome = await client.read_room(_FC, RoomState(), _TEMPERATURES)
 
         assert state.co2_extract_air == 780
-        assert state.co2_supply_air == 850
-        assert _reads(unit) == [(41000, 6), (41006, 6), (REGISTER_CO2_SUPPLY_AIR, 1)]
+        assert state.co2_supply_air is None
+        assert "co2_supply_air" not in outcome.missing_sensor_values
+        assert _reads(unit) == [(41000, 6), (41006, 6)]
 
     async def test_nan_temperature_keeps_the_previous_value(
         self, client: MeltemModbusClient, unit: MockModbusUnit

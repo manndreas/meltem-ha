@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 
+from .const import OPTIONAL_READ_RETRY_SECONDS
 from .modbus_helpers import MeltemModbusError
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,7 +21,10 @@ class OptionalGatewayRead[T]:
     """One optional value, read only while at least one consumer needs it.
 
     Its read runs in the coordinator's poll tick under the gateway lock, and
-    disabling the last consumer cancels a read that is still waiting.
+    disabling the last consumer cancels a read that is still waiting. A failed
+    read is retried after ``retry_seconds``, doubling with each further failure
+    up to the regular ``refresh_seconds``, so one refused request does not hide
+    a rarely refreshed value until its next regular read.
     """
 
     def __init__(
@@ -30,6 +35,7 @@ class OptionalGatewayRead[T]:
         *,
         refresh_seconds: float,
         stale_seconds: float,
+        retry_seconds: float = OPTIONAL_READ_RETRY_SECONDS,
         first_read_delay: float = 0.0,
         on_value: Callable[[T], None] | None = None,
         clear_on_disable: bool = False,
@@ -39,6 +45,15 @@ class OptionalGatewayRead[T]:
         self._read = read
         self._refresh_seconds = refresh_seconds
         self._stale_seconds = stale_seconds
+        self._retry_seconds = min(retry_seconds, refresh_seconds)
+        # Doublings until a retry waits the full refresh interval; capping the
+        # failure count there keeps the power of two from overflowing a float.
+        self._max_failures = 1 + (
+            math.ceil(math.log2(refresh_seconds / self._retry_seconds))
+            if self._retry_seconds > 0
+            else 0
+        )
+        self._failures = 0
         self._first_read_delay = first_read_delay
         self._on_value = on_value
         self._clear_on_disable = clear_on_disable
@@ -108,22 +123,25 @@ class OptionalGatewayRead[T]:
             return False
         generation = self._disable_generation
         self._task = self._hass.async_create_task(self._read(), f"Meltem gateway {self.name}")
+        delay = self._refresh_seconds
         try:
             self._value = value = await self._task
             self._read_at = time.monotonic()
+            self._failures = 0
             if self._on_value is not None:
                 self._on_value(value)
         except asyncio.CancelledError:
             if self._disable_generation == generation:
                 raise
         except MeltemModbusError as err:
-            _LOGGER.debug("Optional gateway %s read failed: %s", self.name, err)
+            self._failures = min(self._failures + 1, self._max_failures)
+            delay = min(self._refresh_seconds, self._retry_seconds * 2 ** (self._failures - 1))
+            _LOGGER.debug(
+                "Optional gateway %s read failed, retrying in %.0f s: %s", self.name, delay, err
+            )
         finally:
             self._task = None
-            delay = (
-                self._first_read_delay
-                if self.enabled and self._disable_generation != generation
-                else self._refresh_seconds
-            )
+            if self.enabled and self._disable_generation != generation:
+                delay = self._first_read_delay
             self._next_due = time.monotonic() + delay
         return True

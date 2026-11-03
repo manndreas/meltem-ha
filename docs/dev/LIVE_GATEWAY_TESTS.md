@@ -6,7 +6,7 @@ the Python tools also run on Linux/POSIX from the repository root with
 `.venv/bin/python` and a port such as `/dev/ttyACM0` or `/dev/serial/by-id/...`.
 Adapt only the shell-specific loops, paths, and process-control commands. The
 plan checks the hardware assumptions the integration relies on and works through
-the open items in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) (HW-1 to HW-9),
+the open items in [HARDWARE_BACKLOG.md](HARDWARE_BACKLOG.md) (HW-1 to HW-14),
 [SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md), and [TODO.md](TODO.md). HW-7
 is the [post-release validation checklist](#hw-7--post-release-tmodbus-validation)
 for the tmodbus transport introduced in `4.0.0`.
@@ -51,6 +51,12 @@ assumptions or replace this plan.
   makes a unit unreachable on the bus. Never write `40xxx`, `41000..41099`,
   `42006..42009`, `43xxx`, the shadow ranges `511xx` / `520xx`, or anything on
   the gateway itself (slave `1`).
+- **Never read** `41030..41098` on the gateway (slave `1`), not even in a
+  window scan: the Meltem app's setup writes the gateway's credential and its
+  cloud binding there
+  ([APK_ANALYSIS.md](APK_ANALYSIS.md#gateway-modbus-tcp-frames)). The tools in
+  `tools/` refuse such reads and exit with an error. On units,
+  `41030..41033` are the ordinary operating-hour registers.
 - **Allowed writes**, only on slaves released in [P-4](#p-4--ask-the-person-once):
   - `41120`, `41121`, `41122`, `41123`, `41124`, `41132` with values from the
     documented tables in [reference/modbus.md](reference/modbus.md#setting-the-ventilation-level)
@@ -672,6 +678,38 @@ Run R on every unit unless the test says otherwise.
   config flow's scan is paced by the request gap only and is evaluated
   separately.
 
+### T-12 — Merged air-quality block on sensor units
+
+- **Checks:** HW-10: `-F`, `-FC`, and `O/VOC-AUL` units answer the
+  `AirQuality` block in one request, including registers they have no sensor
+  for (`41007`/`41008` on `-F`, `41008` on `-FC`). T-8 ran on sensorless
+  units only.
+- **Type:** R; needs at least one sensor-equipped unit. Ask in
+  [P-4](#p-4--ask-the-person-once) which slaves are `-F`, `-FC`, or
+  `O/VOC-AUL` according to the type plate; skip if there is none.
+- **Run:** [`raw_requests`](#b1--raw-requests-with-exception-class-and-latency)
+  with `--rounds 30` per sensor unit, the merged block against the 4.6.1
+  split reads of the same unit: `--read 41006:6` against
+  `--read 41006:1 --read 41009:2 --read 41011:1` (`-F`) or
+  `--read 41006:2 --read 41009:2 --read 41011:1` (`-FC`), and
+  `--read 41006:8` against `--read 41006:2 --read 41009:2 --read 41011:3`
+  (`O/VOC-AUL`).
+- **Pass:** 30/30 merged reads succeed with the same values as the split
+  reads. Any exception response on the merged block fails HW-10. Record what
+  each variant returns in the registers it has no sensor for.
+
+### T-13 — Mode status block with override registers
+
+- **Checks:** HW-13 candidate B: the wider status block `41100..41106` is as
+  reliable as the current `41100..41102` block on every unit.
+- **Type:** R
+- **Run:** [`raw_requests`](#b1--raw-requests-with-exception-class-and-latency)
+  with `--rounds 30` per unit: `--read 41100:7` against `--read 41100:3`.
+- **Pass:** 30/30 wide reads succeed on every unit that answers the narrow
+  block, with the same `41100..41102` values. Any exception response on the
+  wide block fails candidate B for that unit. Record success rate and total
+  time per variant.
+
 ## W — Writes on a released test unit
 
 Only on slaves released in [P-4](#p-4--ask-the-person-once), one unit at a
@@ -835,6 +873,8 @@ Notes on the tools:
     `operation_mode`).
   - Record the `41100..41102` status for the integration's own intensive
     write: only `0/0/0` from an app-started override has been observed.
+  - In run A, also read `41103..41106` together with `41100..41102` after
+    30 s and after the power-off write (HW-13).
 - **Pass:** informational, decides HW-1:
   - fans stop and `41123/41124` are `0` in run A: candidate D
   - fans stop but `41124` stays `227` in run A: candidate C, or A if run B
@@ -1238,6 +1278,118 @@ repeats if needed.
   behavior is covered by in-memory tests, not yet verified on the live host.
 - **Pass:** no new transient read failures compared with the previous release;
   every recycle explained.
+
+### H-10 — RTU over TCP through a real bridge
+
+- **Checks:** HW-11: setup, polling, writes, reconnects, and reconfigure over
+  a raw RTU-over-TCP bridge (for example the ESP32 bridge from
+  [issue #7](https://github.com/manndreas/meltem-ha/issues/7)) that exposes
+  the gateway's serial link. The gateway's own LAN interface is not part of
+  this test.
+- **Type:** H; the person sets up the bridge, gives its address and port, and
+  restarts it or pulls its network cable on request. Writes only on a unit
+  released in [P-4](#p-4--ask-the-person-once).
+- **Run:** in a throwaway harness test or a real Home Assistant instance, set
+  up the integration with **RTU over TCP**, accept the detected profiles, and
+  let it poll for at least an hour with `tmodbus.raw_traffic` logging. Then
+  send one fan command and one quick mode to the released unit, ask the person
+  to restart the bridge and later to pull its network cable for a minute, and
+  finally reconfigure the entry from the IP address to the hostname and to USB
+  and back. Export diagnostics before and after.
+- **Pass:** the discovered units and profiles match USB; response times,
+  timeouts, and link recycles are comparable with a USB baseline of the same
+  units apart from the bridge's added latency; both writes are confirmed by
+  their readbacks; polling recovers by itself after each interruption; the
+  reconfigured entry keeps its units, devices, and entities. Record the
+  bridge's firmware and frame-gap setting and the longest response time.
+
+### H-11 — App modes and `41113`
+
+- **Checks:** HW-12: whether bits `11..8` of `41113` follow the program
+  selected in the app, as the app's legacy mode-word layout suggests.
+- **Type:** H, read-only; the person selects modes in the app. No Modbus write.
+- **Run:** on one unit that answers `41113`, run
+  `& $py -m tools.watch_register_changes --port $port --slave $s --range 41100:6 --range 41113:1 --range 41020:2 --interval 2`
+  in the background. Ask the person to select, one at a time with about 30 s
+  in between: LOW, MED, HIGH, MANUAL 40, the extract button, the supply
+  button, intensive ventilation and standby; on a sensor unit also AUTO, CO2
+  and humidity. Finally ask the person to restore the original mode. Repeat
+  single reads of `41113` on the other units to record which answer with
+  `0x05`.
+- **Pass:** informational. For every step record `41113` in hex, its bits
+  `15..12` and `11..8`, and `41100..41105`. The nibble matches the app layout
+  if presets and MANUAL give `1`, intensive `2` or `3`, the supply button `4`
+  and the extract button `5`.
+
+### H-12 — App settings page and `40901`
+
+- **Checks:** [SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md): whether simply
+  opening the app's Settings page makes local `40901` step through the values
+  of the page's tags, as the app's selector sequence suggests
+  ([APK_ANALYSIS.md](APK_ANALYSIS.md#reads-triggered-by-opening-a-page)).
+- **Type:** H, read-only; the person only opens and closes app pages and
+  changes nothing. No Modbus write, and no read of `40911`, `40949` or
+  `40954`.
+- **Run:** on a unit where `40901` is readable, run
+  `& $py -m tools.watch_register_changes --port $port --slave $s --range 40901:1 --range 41100:3 --interval 1`
+  in the background. Ask the person to open the unit's Settings page in the
+  app, wait until every value is shown, note the displayed values in page
+  order, and close the page. Repeat with the Interval page and the
+  Temperature page.
+- **Pass:** informational. The hypothesis is supported if `40901` changes
+  while a page loads and its last value equals the last tag of the page
+  (Settings: `76`, the buzzer; Interval: `68`; Temperature: `82` in raw units
+  of 0.5 °C); it is refuted if `40901` stays constant. Intermediate values
+  may be missed at a 1 s interval.
+
+### H-13 — Override and program status
+
+- **Checks:** HW-13: what `41103..41105` report while an override is active,
+  and whether other overrides also read `0/0` in `41100/41101`.
+  [TODO-8](TODO.md#todo-8--name-the-app-programs-and-the-time-program-state):
+  the status codes of the app's interval and temperature programs and the
+  time-program state in `41106`.
+- **Type:** H, read-only; the person operates the app, the keypad or an
+  external input. No Modbus write.
+- **Run:** on one unit, run
+  `& $py -m tools.watch_register_changes --port $port --slave $s --range 41100:7 --range 41020:2 --interval 2`
+  in the background. Ask the person for one step at a time, with at least
+  60 s between steps:
+  1. start intensive ventilation in the app, and stop it in the app after
+     two minutes;
+  2. start intensive ventilation on the unit's keypad, and stop it there;
+  3. only where the unit has a wired external input: activate it until the
+     airflow changes, release it, and wait for its run-on time (`42009`);
+  4. start the interval program on the app's Interval page;
+  5. start the temperature program on the app's Temperature page;
+  6. only if the unit already has a time program: activate it in the app and
+     deactivate it again. Do not create or change switch points.
+
+  Finally ask the person to restore the original mode in the app and confirm
+  it with a snapshot.
+- **Pass:** informational. Record `41100..41106` for every step. HW-13
+  candidate B is supported if intensive ventilation reads `3/227` in
+  `41103/41104` while `41100/41101` read `0/0`; record the override code of
+  the external input separately. For TODO-8, record whether the interval and
+  temperature programs read `3/231` and `2/224` in `41100/41101`, and the
+  `41106` values for an active and an inactive time program.
+
+### H-14 — Silent unit and `40101`
+
+- **Checks:** HW-14: whether `40101` reports a powered-off unit, after how
+  long, and how `40100` behaves meanwhile.
+- **Type:** H, read-only, about 50 minutes. This test deliberately keeps one
+  unit off longer than the five minutes of H-1. Run it only if the person
+  explicitly agrees for that unit and its room, and stop as soon as they ask.
+- **Run:** ask the person which unit may stay off for 35 minutes. Start
+  `& $py -m tools.raw_requests --port $port --slave $s --read 40100:2 --read 41020:2 --read 41100:3 --rounds 110 --interval 30`
+  in the background (about 55 minutes). Ask the person to switch the unit off
+  at the fuse or plug and note the time, to wait at least 35 minutes, and then
+  to switch it on again; keep reading until the rounds end.
+- **Pass:** informational. Record when `40101` changes to `1` and back to
+  `0`, the course of `40100`, and whether any read of the unit fails while it
+  is off. HW-14 candidate B needs `40101 = 1` within the off period; candidate
+  C needs `40100` to rise steadily while the unit is off.
 
 ## HW-7 — Post-release tmodbus validation
 

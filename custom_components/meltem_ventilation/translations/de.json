@@ -99,7 +99,9 @@
       "unknown": "Unerwarteter Fehler. Details stehen im Home-Assistant-Log."
     },
     "abort": {
-      "already_configured": "Dieses Meltem-Gateway ist bereits eingerichtet."
+      "already_configured": "Dieses Meltem-Gateway ist bereits eingerichtet.",
+      "already_in_progress": "Die Einrichtung dieses Meltem-Gateways läuft bereits.",
+      "reconfigure_successful": "Die Verbindung zum Meltem-Gateway wurde aktualisiert."
     }
   },
   "options": {
@@ -353,8 +355,8 @@
       "rf_comm_status": {
         "name": "RF-Kommunikationsstatus"
       },
-      "rf_fault_status": {
-        "name": "RF-Fehlerstatus"
+      "device_fault": {
+        "name": "Gerätestörung"
       },
       "value_error_status": {
         "name": "Messwertfehler"
@@ -510,7 +512,22 @@
             "slave_16": "Profil"
           },
           "data_description": {
-            "slave": "Modbus-Adresse des hinzuzufügenden Geräts, wie oben aufgeführt."
+            "slave": "Modbus-Adresse des hinzuzufügenden Geräts, wie oben aufgeführt.",
+            "slave_2": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_3": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_4": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_5": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_6": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_7": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_8": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_9": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_10": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_11": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_12": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_13": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_14": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_15": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält.",
+            "slave_16": "Das Modellprofil auf dem Typenschild bestimmt, welche Entitäten das Gerät erhält."
           }
         },
         "profile": {
@@ -538,7 +555,8 @@
         "entry_not_loaded": "Das Meltem-Gateway ist nicht geladen. Geräte lassen sich nur hinzufügen, solange es verbunden ist.",
         "cannot_connect": "Verbindung zum Meltem-Gateway fehlgeschlagen.",
         "no_new_units": "Das Gateway meldet keine Geräte, die noch nicht eingerichtet sind. Füge das Gerät zuerst in der Meltem-App hinzu.",
-        "already_configured": "Dieses Gerät ist bereits eingerichtet."
+        "already_configured": "Dieses Gerät ist bereits eingerichtet.",
+        "reconfigure_successful": "Das Gerät wurde aktualisiert."
       }
     }
   }

@@ -73,15 +73,16 @@ _HUMIDITY_SENSORS = {
     "absolute_humidity_extract_air",
     "absolute_humidity_supply_air",
 }
-_CO2_SENSORS = {"co2_extract_air", "co2_supply_air"}
-_VOC_SENSORS = {"voc_extract_air", "voc_supply_air"}
+_CO2_SENSORS = {"co2_extract_air"}
+# Supply-air CO2 comes from the VOC profile's register block, see const.ENTITY_PROFILES.
+_VOC_SENSORS = {"co2_supply_air", "voc_extract_air", "voc_supply_air"}
 
 _BASE_BINARY_SENSORS = {
     "error_status",
     "frost_protection_active",
     "filter_change_due",
     "rf_comm_status",
-    "rf_fault_status",
+    "device_fault",
     "value_error_status",
     "data_health",
     "connectivity",
@@ -280,7 +281,7 @@ def test_profile_has_only_supported_read_health_groups(profile: str) -> None:
         "fan_hours",
         "rf_last_seen",
         "rf_signal",
-        "rf_fault",
+        "device_fault",
         "value_error",
     }
     if _PROFILE_CAPABILITIES[profile] & {"humidity", "co2"}:
@@ -324,7 +325,7 @@ async def test_unit_devices_hang_off_the_gateway_device(
     assert all(device.via_device_id == gateway.id for device in units)
     entry = hass.config_entries.async_get_entry(entry_id)
     assert entry is not None
-    assert (entry.version, entry.minor_version) == (2, 1)
+    assert (entry.version, entry.minor_version) == (2, 2)
     # Every unit device belongs to its own subentry, the gateway to the entry itself.
     assert {device.config_subentry_id for device in units} == set(entry.subentries)
     assert gateway.config_subentry_id is None
@@ -545,7 +546,7 @@ async def test_gateway_rf_activation_updates_and_unload(
     assert not coordinator.optional_gateway_reads["rf_statistics"].reading
 
 
-@pytest.mark.parametrize("key", ["rf_fault_status", "value_error_status"])
+@pytest.mark.parametrize("key", ["device_fault", "value_error_status"])
 async def test_room_rf_error_diagnostics_follow_updates(
     hass: HomeAssistant, setup_profile: SetupProfile, key: str
 ) -> None:
@@ -563,10 +564,10 @@ async def test_room_rf_error_diagnostics_follow_updates(
     coordinator = entry.runtime_data.coordinator
     await coordinator.async_shutdown()
     now = dt_util.utcnow()
-    group = "rf_fault" if key == "rf_fault_status" else "value_error"
+    group = "device_fault" if key == "device_fault" else "value_error"
     for value, expected in [(True, "on"), (False, "off"), (None, "unknown")]:
         state = RoomState(
-            rf_fault_status=value, value_error_status=value, supply_air_flow=30
+            device_fault=value, value_error_status=value, supply_air_flow=30
         ).with_read_health(group, ReadHealth(last_attempt=now, last_successful_read=now))
         coordinator.async_set_updated_data({"unit_1": state})
         await hass.async_block_till_done()
@@ -718,44 +719,42 @@ async def test_external_input_sensor_reads_only_while_enabled(
 
 
 @pytest.mark.parametrize(
-    ("key", "profile_with_sensor", "profile_without_sensor", "device_class"),
+    ("key", "device_class"),
     [
-        ("co2_supply_air", "ii_fc", "ii_f", "carbon_dioxide"),
-        (
-            "voc_extract_air",
-            "ii_fc_voc",
-            "ii_fc",
-            "volatile_organic_compounds_parts",
-        ),
+        ("co2_supply_air", "carbon_dioxide"),
+        ("voc_extract_air", "volatile_organic_compounds_parts"),
     ],
 )
-async def test_air_quality_sensor_is_enabled_only_for_profiles_with_that_sensor(
+async def test_app_only_air_quality_sensors_are_optional_on_the_voc_profile(
     hass: HomeAssistant,
     setup_profile: SetupProfile,
     key: str,
-    profile_with_sensor: str,
-    profile_without_sensor: str,
     device_class: str,
 ) -> None:
     registry = er.async_get(hass)
-    entry_id = await setup_profile(profile_with_sensor)
+    entry_id = await setup_profile("ii_fc_voc")
     entity_id = registry.async_get_entity_id(
         Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_{key}"
     )
     assert entity_id is not None
     registered = registry.async_get(entity_id)
     assert registered is not None
-    assert registered.disabled_by is None
+    assert registered.disabled_by is er.RegistryEntryDisabler.INTEGRATION
     assert registered.entity_category is None
+
+    registry.async_update_entity(entity_id, disabled_by=None)
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
     state = hass.states.get(entity_id)
     assert state is not None
     assert state.attributes["device_class"] == device_class
     assert state.attributes["unit_of_measurement"] == "ppm"
 
-    plain_entry_id = await setup_profile(profile_without_sensor)
+    # The -FC variants carry only an extract-air CO2 sensor (unit matrix).
+    fc_entry_id = await setup_profile("ii_fc")
     assert (
         registry.async_get_entity_id(
-            Platform.SENSOR, DOMAIN, f"{DOMAIN}_{plain_entry_id}_unit_1_{key}"
+            Platform.SENSOR, DOMAIN, f"{DOMAIN}_{fc_entry_id}_unit_1_{key}"
         )
         is None
     )

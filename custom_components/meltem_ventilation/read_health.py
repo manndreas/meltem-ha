@@ -93,7 +93,10 @@ def group_stale(state: RoomState, group_key: str) -> bool | None:
     if health.consecutive_failures >= READ_FAILURE_THRESHOLD:
         return True
     if health.last_successful_read is None:
-        return None
+        # A group the unit refused before ever delivering it is only retried
+        # after a backoff, while its entities are already unavailable. A
+        # timeout says nothing about the unit and waits for the threshold.
+        return True if health.last_error is not None and not health.last_error_timed_out else None
     return read_too_old(group_key, health)
 
 

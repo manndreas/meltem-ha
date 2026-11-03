@@ -172,7 +172,7 @@ class RoomState:
     filter_change_due: bool | None = None
     frost_protection_active: bool | None = None
     rf_comm_status: bool | None = None
-    rf_fault_status: bool | None = None
+    device_fault: bool | None = None
     value_error_status: bool | None = None
 
     operation_mode: str | None = None
@@ -271,7 +271,7 @@ class RefreshPlan:
         if self.refresh_operating_hours:
             groups.extend(("hours", "fan_hours"))
         if self.refresh_rf_diagnostics:
-            groups.extend(("rf_last_seen", "rf_signal", "rf_fault", "value_error"))
+            groups.extend(("rf_last_seen", "rf_signal", "device_fault", "value_error"))
         if self.refresh_control_settings:
             groups.append("control_settings")
         return tuple(groups)

@@ -196,24 +196,6 @@ class SupplyTemperature(Component):
     supply_air_temperature = _float32(REGISTER_SUPPLY_AIR_TEMPERATURE)
 
 
-class ExtractAirQuality(Component):
-    """Extract air humidity and CO2."""
-
-    register_ranges = ((REGISTER_HUMIDITY_EXTRACT_AIR, REGISTER_CO2_EXTRACT_AIR),)
-
-    humidity_extract_air = raw_register(REGISTER_HUMIDITY_EXTRACT_AIR)
-    co2_extract_air = raw_register(REGISTER_CO2_EXTRACT_AIR)
-
-
-class SupplyAirQuality(Component):
-    """Supply air humidity and VOC."""
-
-    register_ranges = ((REGISTER_HUMIDITY_SUPPLY_AIR, REGISTER_VOC_SUPPLY_AIR),)
-
-    humidity_supply_air = raw_register(REGISTER_HUMIDITY_SUPPLY_AIR)
-    voc_supply_air = raw_register(REGISTER_VOC_SUPPLY_AIR)
-
-
 class OperatingHours(Component):
     """Operating hours counter."""
 

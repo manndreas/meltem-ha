@@ -832,11 +832,15 @@ short-read availability after power loss.
   M-WRG-S is still open. See
   [W-17 under HW-2](#w-17-home-assistant-write-confirmation-on-2026-10-14).
 - **Sensor-mode subcodes:** the read-side codes `48` (automatic), `112`
-  (humidity control), and `176` (CO2 control) come only from the ioBroker
-  script's decode; none of the six units was in sensor control during the
+  (humidity control), and `176` (CO2 control) come from the ioBroker script's
+  decode and, independently, from the Meltem app's catalog, which lists
+  automatic `16, 80, 48`, CO2 `144, 208, 176` and humidity `112` and uses
+  these lists to classify the displayed mode
+  ([APK_ANALYSIS.md](APK_ANALYSIS.md#mode-buttons-and-displayed-state)). Both
+  are static sources; none of the six units was in sensor control during the
   captures. They fit read value = write value with bit `32` set (`16 -> 48`,
-  `144 -> 176`; `112` already has it). The integration also maps `144` to CO2
-  control as an unverified fallback that ioBroker does not list. Unknown
+  `144 -> 176`; `112` already has it). The integration maps all app-listed
+  codes, including `80`, `144` and `208`. Unknown
   subcodes decode to an unknown operating mode without a log message, and
   diagnostics only contain the decoded state. Verify with
   [W-13](LIVE_GATEWAY_TESTS.md#w-13--sensor-control-modes) on units with the
@@ -877,7 +881,8 @@ Tests: [W-12](LIVE_GATEWAY_TESTS.md#w-12--single-direction-start-from-off).
 ### Candidate solutions (HW-5)
 
 - **A — keep the current behaviour.** Safe and documented.
-- **B — allow
+- **B — allow direct single-direction start** if the measurement shows the unit
+  accepts it.
 
 ### W-12 measurement on 2026-11-02
 
@@ -889,8 +894,7 @@ immediately: at 10 s, 30 s, and 60 s, `41100..41102` reported `[4, 0, 204]`,
 accepts a direct one-sided start from off. Candidate **A** is intentionally
 kept because the two directional fan entities are the integration's primary
 on/off control and turning a stopped unit back on is documented to start both
-directions. direct single-direction start** if the measurement shows the unit
-  accepts it.
+directions.
 
 ---
 
@@ -1190,8 +1194,8 @@ logs and snapshots were local-only and are not part of the repository.
   The real Home Assistant coordinator confirmed balanced writes in W-17 after
   a fix, see [W-17](#w-17-home-assistant-write-confirmation-on-2026-10-14).
 - **6 — USB replug (H-3):** on 2026-10-14, kernel events recorded USB
-  disconnect at 19:49:13 CEST and re-enumeration at 19:50:39; the adapter
-  same adapter returned as `/dev/ttyACM0`. The actual cable gap was
+  disconnect at 19:49:13 CEST and re-enumeration at 19:50:39; the same
+  adapter returned as `/dev/ttyACM0`. The actual cable gap was
   about 86 seconds, not the planned 30. The running HA integration resumed
   airflow reads, but not within one airflow round: unit `3` was fresh by
   about 19:51:35, unit `1` by about 19:52:45, units `4` and `5` by 19:54:10,
@@ -1291,7 +1295,7 @@ the reconnect period.
 
 Kernel events recorded USB disconnect at `12:41:34.176 CEST` and
 re-enumeration at `12:42:05.099 CEST`, a `30.923 s` gap. The same adapter
-same adapter returned on `/dev/ttyACM0`. This was a read-only
+returned on `/dev/ttyACM0`. This was a read-only
 reconnect; no writes or competing serial client were used.
 
 Initial airflow reads from all room RTU slaves `2–7` returned Modbus
@@ -1685,3 +1689,300 @@ logs) stay with H-9. Local raw log, not archived: `hw9-events.jsonl`.
   meant to guarantee on its own.
 - **B — restore the late wake-up** by adding the former half-second margin to
   `next_poll_delay`, if the gateway turns out to need more idle time.
+
+---
+
+## HW-10 — Merged air-quality block on sensor-equipped units
+
+Priority: medium
+Status: open
+Affected code: `device/components.AirQuality`, `device/device.MeltemRoomDevice`,
+`modbus_client._due_fields`
+
+### Observation (HW-10)
+
+Since 5.0.0 the `AirQuality` component reads the extract-air sensors, the
+supply-air temperature, and the supply-air sensors in one request:
+`41006..41011` on `-F` and `-FC` units, `41006..41013` on `O/VOC-AUL`.
+Version 4.6.1 read `41006:1` (`-F`) or `41006:2` (`-FC`), `41009:2`, and
+`41011:1` (or `41011:3` with VOC) separately; that split was the fix for review
+item P2-2, which kept registers a unit has no sensor for out of the request.
+The merged block now includes `41007` (CO2) and `41008` (app-only VOC) on
+`-F` units and `41008` on `-FC` units.
+
+The T-8 block-read benchmark of 2026-11-02 in
+[MELTEM.md](MELTEM.md#request-pacing-and-block-reads) passed
+30/30 for `41000..41013`, but only on slaves `4`, `6`, and `7`, which are
+sensorless `M-WRG-II` units. Those units never send this request at runtime;
+they read `41004..41005` only.
+
+### Why this needs a live check (HW-10)
+
+1. A block read fails as a whole as soon as one register in it is unreadable
+   ([MELTEM.md](MELTEM.md#product-registers-and-readable-islands)). All sensorless
+   units surveyed so far answered `41007`, `41008`, `41012`, and `41013` with
+   the `32767` placeholder, but no sensor-equipped unit has been read.
+2. If a `-F` unit refused `41007`, the whole block would fail. `AirQuality`
+   is not an optional component, so no component backoff applies, and the
+   error lands in the `temperature` group: after three jobs every
+   temperature, humidity, CO2, and VOC entity of that unit would become
+   unavailable.
+
+### What to measure (HW-10)
+
+1. On each available `-F`, `-FC`, and `O/VOC-AUL` unit, read the merged block
+   30 times and compare it with the 4.6.1 split reads of the same unit.
+2. Record what the unit returns in the registers it has no sensor for.
+
+Tests: [T-12](LIVE_GATEWAY_TESTS.md#t-12--merged-air-quality-block-on-sensor-units).
+
+### Candidate solutions (HW-10)
+
+- **A — no change** if every sensor-equipped variant answers the merged block
+  as reliably as the split reads.
+- **B — restore the split reads for the affected variants** by narrowing
+  `AirQuality.register_ranges` per profile, as 4.6.1 did, if a variant
+  refuses a register in the block.
+
+---
+
+## HW-11 — RTU over TCP through a real bridge
+
+Priority: medium
+Status: open
+Affected code: `gateway_connection.RtuTcpGatewayConnection`, `config_flow.py`,
+`flow_helpers.py`, `modbus_helpers.detect_slave_details`,
+`modbus_helpers.discover_gateway_nodes`
+
+### Observation (HW-11)
+
+Version 5.0.0 connects to the gateway over raw Modbus RTU over TCP, as
+requested for network bridges such as an ESP32 that exposes the gateway's
+serial link ([GitHub issue #7](https://github.com/manndreas/meltem-ha/issues/7)).
+The link is opened as a `socket://host:port` device with RTU framing and a
+5-second `NETWORK_TIMEOUT` that covers connecting and every response. It has
+only been tested against local software servers, including the
+[mock gateway](MOCK_GATEWAY.md); no bridge, gateway, or unit was involved.
+
+### Why this needs a live check (HW-11)
+
+1. The bridge's own timing is unknown: its frame delimiting (the ESP firmware
+   uses a 40 ms idle gap), how it splits a response across TCP packets, and
+   how it behaves when the gateway does not answer.
+2. A real bridge may accept only one client, drop idle connections, or need
+   time after a reconnect; reconfigure, reload, and the link recycle all
+   depend on that.
+3. The 5-second timeout makes every unanswered request expensive. Whether a
+   shorter value suffices depends on the bridge's latency on top of the
+   gateway's radio round trip.
+
+### What to measure (HW-11)
+
+1. Set up the integration through the bridge, let it poll all units for at
+   least an hour, and compare response times, timeouts, and link recycles with
+   a USB baseline of the same units.
+2. Send one fan command and one quick mode, and confirm the readbacks.
+3. Restart the bridge and pull its network cable while polling runs; record
+   how long recovery takes and whether the integration logs a link recycle.
+4. Reconfigure the entry from the bridge's IP address to its hostname, and
+   from the bridge to USB and back.
+
+Tests: [H-10](LIVE_GATEWAY_TESTS.md#h-10--rtu-over-tcp-through-a-real-bridge).
+
+### Candidate solutions (HW-11)
+
+- **A — no change** if polling, writes, and recovery match the USB baseline
+  apart from the bridge's added latency.
+- **B — tune the network timeout** (`NETWORK_TIMEOUT`) or the request gap for
+  network links if the bridge needs different timing.
+- **C — document bridge settings** (frame gap, single client, keepalive) that
+  the integration relies on.
+
+---
+
+## HW-12 — Legacy mode word `41113`
+
+Priority: low
+Status: open
+Affected code: none yet; candidates are `mode_codec.py` and the raw register
+diagnostics of [TODO-5](TODO.md#todo-5--raw-register-diagnostics)
+
+### Observation (HW-12)
+
+`41113` is readable on some units and returns `0x05` on others; see
+[MELTEM.md](MELTEM.md#slave-5-compared-with-the-other-units). Two values are
+on record: `425` (`0x01A9`) on all six units in LOW, MED or HIGH during the
+[2026-11-03 survey](MELTEM.md#app-derived-register-survey-on-2026-11-03), and
+`1449` (`0x05A9`) on slave `4` while it reported `[4, 0, 228]`
+([measurement](measurements/2026-10-09/pe-compare-slave4.txt)).
+
+The Meltem app's catalog describes `41113` and `41133` as one word: speed step
+in bits `15..12`, mode in bits `11..8` (`0` off, `1` continuous, `2` boost,
+`3` boost end, `4` / `5` cross-air in / out, `6..8` automatic humidity / CO2 /
+full, `9` unknown), and `169` (`0xA9`) in the low byte of a write. Both local
+values fit: mode `1` (continuous) for the presets and mode `5` (cross-air out)
+for the extract-only state, each with speed step `0`. The app itself discards
+its decoded `41113` value, so this is a correlation of two data points, not an
+established meaning
+([APK_ANALYSIS.md](APK_ANALYSIS.md#legacy-mode-word-41113--41133)).
+
+### Why this needs a live check (HW-12)
+
+1. Two data points cannot separate a mode field from coincidence, and the
+   speed nibble was `0` although the airflow was not.
+2. If the mode nibble follows the active program, `41113` could tell
+   intensive ventilation (`2` / `3`) and the shortcut direction (`4` / `5`)
+   apart. That would help where `41100..41102` reads `[0, 0, 0]` during
+   intensive ventilation
+   ([HW-1](#hw-1--intensive-shadow-registers-survive-a-power-off-write)).
+3. Its availability is inconsistent, so any use must stay optional and must
+   not change existing register ranges without a benchmark.
+
+### What to measure (HW-12)
+
+1. Read `41113` together with `41100..41105` and `41020..41021` on one unit
+   while the person selects LOW, MED, HIGH, MANUAL, the extract and supply
+   buttons, intensive ventilation and standby in the app; on sensor units also
+   AUTO, CO2 and humidity.
+2. Record per unit whether `41113` answers or returns `0x05`, and whether that
+   changes over time.
+
+Tests: [H-11](LIVE_GATEWAY_TESTS.md#h-11--app-modes-and-41113).
+
+### Candidate solutions (HW-12)
+
+- **A — no change** if the mode nibble does not follow the app modes.
+- **B — diagnostics only:** include `41113` in raw register diagnostics if it
+  carries information but is unreliable.
+- **C — secondary state indicator** for intensive ventilation and the
+  shortcut direction, if the nibble is consistent on all units and readable
+  without errors; this needs a request-budget review before adding a read.
+
+---
+
+## HW-13 — Temporary override status `41103..41105`
+
+Priority: medium
+Status: open
+Affected code: `mode_codec._mode_status_reports_intensive`,
+`mode_codec.apply_mode_read`, `device/components.ModeStatus`
+
+### Observation (HW-13)
+
+The integration reports intensive ventilation when the read-only status map
+`41100..41101` reads `0/0` (or the community decode `3/227`). `0/0/0` was
+observed on slave `4` for both app-started and integration-started intensive
+ventilation ([W-8 under HW-1](#w-8-measurement-on-2026-11-02)).
+
+The Meltem app reads the same state differently
+([APK_ANALYSIS.md](APK_ANALYSIS.md#mode-buttons-and-displayed-state)): when
+`41100` is `0`, it takes the mode from `41103`, and when `41101` is `0`, the
+sub-mode from `41104`. It lights its BOOST button for `3/227` there. Its
+catalog names `41103..41105` "Temporary Override Ventilation Mode / Sub Mode /
+Sub Mode Continuous Exhaust"; they mirror the set registers `41123..41125` the
+same way `41100..41102` mirror `41120..41122`, and the app starts intensive
+ventilation by writing `3/227` to `41123/41124`. In the 2026-11-03 survey,
+without an override, all six units returned `41103..41105 = 0, 0, 0`
+([MELTEM.md](MELTEM.md#app-derived-register-survey-on-2026-11-03)).
+
+In the app's model, `0` in `41100` means "a temporary override is active", not
+specifically intensive ventilation. Another override, such as the external
+control input (`42006` priority override mode `12`, "ventilation level of the
+external control input" in
+[reference/device-parameters.md](reference/device-parameters.md)), could
+therefore also produce `0/0` and would then be reported as intensive
+ventilation. That is a hypothesis; no external input was active in any
+capture.
+
+### Why this needs a live check (HW-13)
+
+1. `41103..41105` have never been read while an override was active.
+2. It is unknown whether the external input, a keypad-started intensive run,
+   or the app's interval and temperature programs also set `41100` to `0`.
+3. Reading `41103..41105` with the status map changes `ModeStatus`'s
+   `register_ranges` from `41100..41102` to `41100..41105`; the readable
+   island `41100..41112` makes that plausible, but a block-read benchmark has
+   to back it.
+
+### What to measure (HW-13)
+
+1. Read `41100..41106` and `41020..41021` while intensive ventilation runs,
+   started from the app, from the keypad and from the integration, and after
+   it has ended.
+2. Where a unit has a wired external input, read the same registers while the
+   input is active and after its run-on time.
+3. Benchmark the block `41100..41106` against `41100..41102` on all units.
+
+Tests: [H-13](LIVE_GATEWAY_TESTS.md#h-13--override-and-program-status),
+[T-13](LIVE_GATEWAY_TESTS.md#t-13--mode-status-block-with-override-registers),
+and the extra reads in
+[W-8](LIVE_GATEWAY_TESTS.md#w-8--intensive-and-power-off).
+
+### Candidate solutions (HW-13)
+
+- **A — no change** if `41103..41105` stay `0` during intensive ventilation.
+- **B — decode intensive ventilation from `41103/41104 = 3/227`** and report
+  any other active override as an unknown quick mode instead of intensive.
+  This needs the wider `ModeStatus` block.
+- **C — B plus the external input** as its own read-only state, if its
+  override code is distinct and repeatable.
+
+---
+
+## HW-14 — Detecting a silent unit through `40101`
+
+Priority: medium
+Status: open
+Affected code: `coordinator` availability (`ROOM_SILENT_AFTER_SECONDS`),
+`read_health.py`, the `rf_comm_status` binary sensor
+
+### Observation (HW-14)
+
+In H-1, slave `4` was powered off for about 3 min 22 s. The gateway kept
+answering every request for it with the last values (`60/60 m³/h`, manual,
+HIGH, no error); see
+[MELTEM.md](MELTEM.md#reads-while-a-unit-is-powered-off). The integration
+marks a unit unavailable only after failed reads or two minutes without an
+answer, and bridge-local `401xx` answers do not count. A powered-off unit can
+therefore stay available with stale values for an unknown time.
+
+The integration already reads `40101` in every status job (every
+`STATUS_REFRESH_SECONDS = 60` s) but exposes it only as the disabled
+diagnostic **RF communication status**. pyairios defines `40101 = 1` as "no
+data received for 30 minutes". The Meltem app names the register "RF
+Communication Problem" and lists a unit as offline when it reads `1`
+([APK_ANALYSIS.md](APK_ANALYSIS.md#device-list-and-error-check)). `40100`
+probably counts the seconds since the unit's last radio frame
+([MELTEM.md](MELTEM.md#read-only-spot-check-of-pyairios-candidates-2026-10-21)).
+Neither register has been observed during a power-off: `40101` was `0` in
+every capture, and H-1 did not log `40100`.
+
+### Why this needs a live check (HW-14)
+
+1. Whether and when `40101` changes to `1` for a silent Meltem unit is
+   unknown; the 30-minute threshold comes from another product.
+2. Whether `40100` keeps rising while the unit is off, and could warn earlier,
+   is unknown.
+3. Whether the gateway keeps serving the old values for longer than 30
+   minutes, or eventually returns errors, is unknown.
+
+### What to measure (HW-14)
+
+1. Power one unit off for at least 35 minutes and read `40100..40101` every
+   30 s and `41020..41021` and `41100..41102` every 60 s.
+2. Record the time `40101` changes, the `40100` values, and whether reads of
+   the unit start to fail.
+3. After power-up, record when `40101` returns to `0` and `40100` resets.
+
+Tests: [H-14](LIVE_GATEWAY_TESTS.md#h-14--silent-unit-and-40101).
+
+### Candidate solutions (HW-14)
+
+- **A — no change** if `40101` never changes for a powered-off unit.
+- **B — treat `40101 = 1` as a silent unit:** mark its measurement and
+  control entities unavailable and log it once, as for a unit that does not
+  answer. This uses the existing status read and adds no request.
+- **C — B plus an `40100` age limit** (for example 10 minutes) as an earlier
+  warning in **Read health**, if `40100` proves to be a reliable age.
+- **D — enable RF communication status by default** if B is not adopted, so
+  users can at least see the condition.

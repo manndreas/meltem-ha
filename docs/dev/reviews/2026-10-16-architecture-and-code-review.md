@@ -3,7 +3,7 @@
 Review date: **2026-10-16**
 Reviewed state: version `4.2.0`
 
-## Status of the findings (as of 2026-11-02, version `5.0.0`)
+## Status of the findings (as of 2026-11-03, version `5.0.0`)
 
 The evidence below describes the state of `4.2.0`; line numbers there apply only to that state.
 
@@ -14,7 +14,7 @@ The evidence below describes the state of `4.2.0`; line numbers there apply only
 | P1-3 | fixed | The exact readback value of `41121` is carried over further airflow polls (`write_confirmation.prepare_balanced_target_readback`). |
 | P1-4 | fixed | `levels.target_levels` no longer copies the supply air to the extract air, and `level_source` stays `measured` in quick-select mode. |
 | P2-1 | fixed | `_fresh_values` discards sentinels via `PLAUSIBLE_RANGES`; since `5.0.0` the field becomes `unknown` instead of frozen, and a repair issue reports a permanently missing sensor. |
-| P2-2 | fixed | `MeltemRoomDevice` restricts the air quality components to the profile; the device cache is keyed by address and profile. |
+| P2-2 | partly reverted | The device cache is keyed by address and profile. Since `5.0.0` the `AirQuality` component reads `41006..41011` (`41006..41013` on `O/VOC-AUL`) in one block again, so `-F` units also read `41007`/`41008`; whether sensor-equipped units answer that block is tracked as [HW-10](../HARDWARE_BACKLOG.md#hw-10--merged-air-quality-block-on-sensor-equipped-units). |
 | P2-3 | open | The meaning of values above `200` in the target registers cannot be clarified without a measurement; tracked as HW-3 in the [hardware backlog](../HARDWARE_BACKLOG.md#hw-3--ambiguous-encoding-above-200-in-the-unbalanced-target-registers). |
 | P3-1 | fixed | The diagnostics download reads the transport counters before the live discovery read. |
 | P3-2 | fixed | Since `5.0.0`, mode writes read back exactly once after `0.5 s`; the retry loop including `POST_WRITE_REFRESH_*` has been removed. The measurement for this is under [HW-2](../HARDWARE_BACKLOG.md#decision-and-validation-on-2026-11-02). |

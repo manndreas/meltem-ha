@@ -80,6 +80,8 @@ GATEWAY_RF_STATISTICS_REFRESH_SECONDS = 60.0
 GATEWAY_RF_STATISTICS_STALE_SECONDS = 180.0
 EXTERNAL_INPUT_REFRESH_SECONDS = 3600.0
 EXTERNAL_INPUT_STALE_SECONDS = 3 * EXTERNAL_INPUT_REFRESH_SECONDS
+# First retry of a failed optional read; it doubles up to the read's refresh interval.
+OPTIONAL_READ_RETRY_SECONDS = 60.0
 
 GATEWAY_ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
     "modbus_device_path": Platform.SENSOR,
@@ -303,7 +305,7 @@ REGISTER_APP_SETUP_CODE = 40000
 REGISTER_SOFTWARE_VERSION = 40004
 REGISTER_RF_LAST_SEEN_AGE = 40100
 REGISTER_RF_COMM_STATUS = 40101
-REGISTER_RF_FAULT_STATUS = 40103
+REGISTER_DEVICE_FAULT = 40103
 REGISTER_VALUE_ERROR_STATUS = 40104
 REGISTER_RF_SIGNAL_STRENGTH = 40109
 
@@ -311,7 +313,7 @@ BRIDGE_RF_REGISTERS: frozenset[int] = frozenset(
     {
         REGISTER_RF_LAST_SEEN_AGE,
         REGISTER_RF_COMM_STATUS,
-        REGISTER_RF_FAULT_STATUS,
+        REGISTER_DEVICE_FAULT,
         REGISTER_VALUE_ERROR_STATUS,
         REGISTER_RF_SIGNAL_STRENGTH,
     }
@@ -440,13 +442,13 @@ READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
     "fan_hours": frozenset({"fan_motor_hours"}),
     "rf_last_seen": frozenset({"rf_last_seen_age_seconds"}),
     "rf_signal": frozenset({"rf_signal_strength"}),
-    "rf_fault": frozenset({"rf_fault_status"}),
+    "device_fault": frozenset({"device_fault"}),
     "value_error": frozenset({"value_error_status"}),
     "control_settings": frozenset(CONTROL_SETTING_REGISTERS),
 }
 
 OPTIONAL_DIAGNOSTIC_READ_GROUPS: frozenset[str] = frozenset(
-    {"rf_last_seen", "rf_signal", "rf_fault", "value_error", "fan_hours"}
+    {"rf_last_seen", "rf_signal", "device_fault", "value_error", "fan_hours"}
 )
 
 BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
@@ -466,7 +468,7 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
         "filter_change_due",
         "intensive",
         "rf_comm_status",
-        "rf_fault_status",
+        "device_fault",
         "value_error_status",
         "operation_mode",
         "preset_mode",
@@ -515,7 +517,7 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "frost_protection_active",
             "filter_change_due",
             "rf_comm_status",
-            "rf_fault_status",
+            "device_fault",
             "value_error_status",
             "data_health",
             "connectivity",
@@ -542,7 +544,8 @@ ENTITY_PROFILES: dict[str, frozenset[str]] = {
     "absolute_humidity_extract_air": HUMIDITY_PROFILES,
     "absolute_humidity_supply_air": HUMIDITY_PROFILES,
     "co2_extract_air": CO2_PROFILES,
-    "co2_supply_air": CO2_PROFILES,
+    # From the app's register map only; read in the VOC profile's existing block.
+    "co2_supply_air": VOC_PROFILES,
     "voc_extract_air": VOC_PROFILES,
     "voc_supply_air": VOC_PROFILES,
     **{

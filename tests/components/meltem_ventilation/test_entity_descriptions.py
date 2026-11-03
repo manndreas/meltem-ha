@@ -298,13 +298,21 @@ class TestDescriptionMetadata:
             )
 
     @pytest.mark.parametrize(
-        "key",
-        ["co2_extract_air", "co2_supply_air", "voc_extract_air", "voc_supply_air"],
+        ("key", "enabled_by_default"),
+        [
+            ("co2_extract_air", True),
+            ("voc_supply_air", True),
+            # Only the app's register map knows these two, see docs/dev/MELTEM.md.
+            ("co2_supply_air", False),
+            ("voc_extract_air", False),
+        ],
     )
-    def test_air_quality_measurements_are_enabled_and_not_diagnostics(self, key: str) -> None:
+    def test_air_quality_measurements_are_not_diagnostics(
+        self, key: str, enabled_by_default: bool
+    ) -> None:
         description = _DESCRIPTIONS[key]
         assert description.entity_category is None
-        assert description.entity_registry_enabled_default is True
+        assert description.entity_registry_enabled_default is enabled_by_default
 
     @pytest.mark.parametrize(
         ("key", "entity_category"),
@@ -415,15 +423,26 @@ class TestPurposeSpecificAutomation:
 # ---------------------------------------------------------------------------
 
 
+_LANGUAGES = ["en", "de", "es", "fr", "it", "pl", "pt", "tr", "uk", "ar"]
+
+
 class TestTranslations:
     # en.json must exist because HA core does not compile strings.json for custom integrations.
-    @pytest.mark.parametrize("language", ["en", "de"])
+    @pytest.mark.parametrize("language", _LANGUAGES)
     def test_translation_files_match_strings_json(self, language: str) -> None:
         translations = _load_json(_COMPONENT_DIR / "translations" / f"{language}.json")
 
         assert _flatten_keys(translations) == _flatten_keys(_load_json(_STRINGS))
 
-    @pytest.mark.parametrize("language", ["en", "de"])
+    def test_abort_reasons_set_by_home_assistant_are_translated(self) -> None:
+        # Home Assistant ends these flows with its own reasons; custom integrations
+        # must ship the text, as their strings.json is not compiled with core's.
+        strings = _load_json(_STRINGS)
+
+        assert {"already_in_progress", "reconfigure_successful"} <= set(strings["config"]["abort"])
+        assert "reconfigure_successful" in strings["config_subentries"]["unit"]["abort"]
+
+    @pytest.mark.parametrize("language", _LANGUAGES)
     def test_add_unit_profile_fields_are_translated(self, language: str) -> None:
         translations = _load_json(_COMPONENT_DIR / "translations" / f"{language}.json")
         labels = translations["config_subentries"]["unit"]["step"]["user"]["data"]
@@ -433,8 +452,15 @@ class TestTranslations:
     def test_all_config_flow_fields_have_descriptions(self) -> None:
         strings = _load_json(_STRINGS)
 
-        for flow_type in ("config", "options"):
-            for step_id, step in strings[flow_type]["step"].items():
+        step_groups = (
+            *((flow_type, strings[flow_type]["step"]) for flow_type in ("config", "options")),
+            *(
+                (f"config_subentries.{subentry_type}", subentry["step"])
+                for subentry_type, subentry in strings.get("config_subentries", {}).items()
+            ),
+        )
+        for flow_type, steps in step_groups:
+            for step_id, step in steps.items():
                 fields = set(step.get("data", {}))
                 descriptions = set(step.get("data_description", {}))
                 assert descriptions == fields, f"{flow_type}.{step_id}"
@@ -486,7 +512,7 @@ class TestTranslations:
                     "frost_protection_active": {"default": "mdi:snowflake-thermometer"},
                     "gateway_connectivity": {"default": "mdi:connection"},
                     "rf_comm_status": {"default": "mdi:wifi-alert"},
-                    "rf_fault_status": {"default": "mdi:alert-circle-outline"},
+                    "device_fault": {"default": "mdi:alert-circle-outline"},
                     "value_error_status": {"default": "mdi:alert-circle-outline"},
                 },
                 "fan": {

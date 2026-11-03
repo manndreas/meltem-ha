@@ -27,8 +27,11 @@ gateways, Home Assistant hosts, or other connected equipment.
 - writable humidity and CO2 control thresholds for supported profiles
 - optional, read-only absolute-humidity estimates and external-control-input
   settings; these diagnostics are disabled by default and do not write to the unit
-- CO2 and VOC measurements for extract and supply air, reported in ppm and
-  enabled by default on profiles that support each sensor
+- CO2 measurement for extract air on the `-FC` profiles and VOC measurement for
+  supply air on the `O/VOC-AUL` profile, reported in ppm and enabled by default.
+  The `O/VOC-AUL` profile also offers supply-air CO2 and extract-air VOC, which
+  only the Meltem app's register map describes; these two are disabled by
+  default until a unit with those sensors confirms them
 - gateway connected-device count, measured airflow totals and delta, connection
   diagnostics, and optional RF, uptime, UTC clock, and communication-quality sensors
 - per-unit reachability, read health, last successful update, measured airflow
@@ -39,7 +42,7 @@ gateways, Home Assistant hosts, or other connected equipment.
 - repair notices for units the gateway reports but Home Assistant does not have
   yet, and for sensors of the selected profile that report no value
 - USB discovery for the Meltem gateway
-- manual setup of raw RTU-over-TCP bridges
+- manual setup of raw RTU-over-TCP bridges (not yet tested with a real bridge)
 
 ## Controls
 
@@ -76,6 +79,8 @@ automation that runs intensive ventilation while a room is occupied.
 
 RTU-over-TCP uses raw RTU frames, not Modbus TCP/MBAP. Network connections have
 no encryption or authentication: use them only on a trusted local network.
+RTU over TCP has so far only been tested against software simulators, not with
+a real network bridge and gateway. Reports from users who try it are welcome.
 
 ### Marketplace
 

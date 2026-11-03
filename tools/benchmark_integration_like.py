@@ -17,6 +17,7 @@ from modbus_connection.tmodbus import ModbusConnection
 
 from tools._link import (
     GATEWAY_DEVICE_ID,
+    GuardedModbusConnection,
     LinkOpenError,
     Sample,
     elapsed_ms,
@@ -127,7 +128,7 @@ def open_connection(port: str) -> ModbusConnection:
     timeout and spacing per unit before that.
     """
 
-    return ModbusConnection(build_serial_params(port))
+    return GuardedModbusConnection(build_serial_params(port))
 
 
 async def discover_rooms(

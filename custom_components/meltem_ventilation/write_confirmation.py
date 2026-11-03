@@ -74,6 +74,7 @@ class WriteConfirmations:
 
     def __init__(self, on_issue: Callable[[str, str, WriteStatus], None] | None = None) -> None:
         self.by_room: dict[str, dict[str, WriteConfirmation]] = {}
+        self._balanced_flow_converged: set[str] = set()
         self._on_issue = on_issue
 
     def record_pending(
@@ -90,6 +91,8 @@ class WriteConfirmations:
         only a read after the write changes it.
         """
 
+        if write_key == "airflow_levels":
+            self._balanced_flow_converged.discard(room_key)
         self.by_room.setdefault(room_key, {})[write_key] = WriteConfirmation(
             expected_value=expected_value,
             started_at=dt_util.utcnow(),
@@ -170,6 +173,8 @@ class WriteConfirmations:
 
         if not self.needs_confirmation(room_key, "airflow_levels"):
             readback = previous_state.balanced_target_readback
+            if readback is not None and _flow_reached_readback(state, previous_state, readback):
+                self._balanced_flow_converged.add(room_key)
             if (
                 readback is not None
                 and state.operation_mode == previous_state.operation_mode
@@ -179,7 +184,10 @@ class WriteConfirmations:
                     state,
                     previous_state,
                     readback,
-                    recent_write=self._has_recent_write(room_key, "airflow_levels"),
+                    recent_write=(
+                        self._has_recent_write(room_key, "airflow_levels")
+                        and room_key not in self._balanced_flow_converged
+                    ),
                 )
             ):
                 return (
@@ -189,6 +197,7 @@ class WriteConfirmations:
                     ),
                     False,
                 )
+            self._balanced_flow_converged.discard(room_key)
             return state, False
 
         return state, True
@@ -306,6 +315,15 @@ class WriteConfirmations:
 def _recent(confirmation: WriteConfirmation) -> bool:
     age = (dt_util.utcnow() - confirmation.started_at).total_seconds()
     return age <= WRITE_HEALTH_RETENTION_SECONDS
+
+
+def _flow_reached_readback(state: RoomState, previous_state: RoomState, readback: int) -> bool:
+    if not group_fresh(state, "flow"):
+        return False
+    expected = (readback, readback)
+    return levels_reached(
+        (state.supply_air_flow, state.extract_air_flow), expected
+    ) or levels_reached((previous_state.supply_air_flow, previous_state.extract_air_flow), expected)
 
 
 def _balanced_readback_superseded_by_flow(

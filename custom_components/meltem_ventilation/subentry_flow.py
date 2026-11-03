@@ -137,11 +137,14 @@ class MeltemUnitSubentryFlow(ConfigSubentryFlow):
     def _create_unit(self, slave: int, profile: str) -> SubentryFlowResult:
         """Create the selected unit using its probed details."""
 
+        existing_rooms = unit_rooms(self._get_entry())
+        if slave in existing_rooms:
+            return self.async_abort(reason="already_configured")
         room = new_unit(
             slave,
             profile,
             self._probe_results_by_slave.get(slave),
-            unit_rooms(self._get_entry()).values(),
+            existing_rooms.values(),
         )
         return self.async_create_entry(
             title=str(room["name"]), data=unit_data(room), unique_id=str(slave)

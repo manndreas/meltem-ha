@@ -1,0 +1,563 @@
+{
+  "title": "Meltem Modbus",
+  "selector": {
+    "connection_type": {
+      "options": {
+        "serial": "Seriale USB",
+        "rtu_over_tcp": "RTU su TCP"
+      }
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meltem Modbus",
+        "description": "Configura prima il gateway M-WRG-GW e le sue unità nell'app Meltem. Scegli la connessione seriale USB oppure RTU grezzo su TCP. Le connessioni di rete non sono né cifrate né autenticate; usa esclusivamente una rete locale attendibile.",
+        "data": {
+          "connection_type": "Tipo di connessione",
+          "port": "Porta seriale",
+          "host": "Nome host o indirizzo IP del bridge",
+          "network_port": "Porta TCP del bridge"
+        },
+        "data_description": {
+          "connection_type": "Scegli la connessione usata per raggiungere il gateway.",
+          "port": "Percorso del dispositivo per la connessione seriale USB.",
+          "host": "Nome host o indirizzo IP del bridge RTU su TCP.",
+          "network_port": "Porta TCP del bridge RTU grezzo."
+        }
+      },
+      "reconfigure": {
+        "title": "Modifica la connessione al gateway",
+        "description": "Modifica la connessione al gateway. Le connessioni di rete non sono né cifrate né autenticate; usa esclusivamente una rete locale attendibile. Al termine l'integrazione viene ricaricata.",
+        "data": {
+          "connection_type": "Tipo di connessione",
+          "port": "Porta seriale",
+          "host": "Nome host o indirizzo IP del bridge",
+          "network_port": "Porta TCP del bridge"
+        },
+        "data_description": {
+          "connection_type": "Scegli la connessione usata per raggiungere il gateway.",
+          "port": "Percorso del dispositivo per la connessione seriale USB.",
+          "host": "Nome host o indirizzo IP del bridge RTU su TCP.",
+          "network_port": "Porta TCP del bridge RTU grezzo."
+        }
+      },
+      "confirm_usb": {
+        "title": "Gateway Meltem Modbus rilevato",
+        "description": "Home Assistant ha trovato un dispositivo USB su {port} ({manufacturer}, {description}). È necessario un gateway M-WRG-GW. Deve essere già configurato nell'app Meltem con tutte le unità Meltem M-WRG supportate e collegato via USB all'host di Home Assistant.",
+        "data": {
+          "port": "Porta seriale"
+        },
+        "data_description": {
+          "port": "Conferma o modifica il percorso del dispositivo seriale USB che Home Assistant ha rilevato per il gateway."
+        }
+      },
+      "profiles": {
+        "title": "Unità Meltem M-WRG rilevate",
+        "description": "L'integrazione ha trovato {device_count} unità Meltem M-WRG. Scegli il profilo corrispondente per ogni unità rilevata.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Unità all'indirizzo Modbus 2",
+          "slave_3": "Unità all'indirizzo Modbus 3",
+          "slave_4": "Unità all'indirizzo Modbus 4",
+          "slave_5": "Unità all'indirizzo Modbus 5",
+          "slave_6": "Unità all'indirizzo Modbus 6",
+          "slave_7": "Unità all'indirizzo Modbus 7",
+          "slave_8": "Unità all'indirizzo Modbus 8",
+          "slave_9": "Unità all'indirizzo Modbus 9",
+          "slave_10": "Unità all'indirizzo Modbus 10",
+          "slave_11": "Unità all'indirizzo Modbus 11",
+          "slave_12": "Unità all'indirizzo Modbus 12",
+          "slave_13": "Unità all'indirizzo Modbus 13",
+          "slave_14": "Unità all'indirizzo Modbus 14",
+          "slave_15": "Unità all'indirizzo Modbus 15",
+          "slave_16": "Unità all'indirizzo Modbus 16"
+        },
+        "data_description": {
+          "slave_2": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_3": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_4": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_5": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_6": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_7": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_8": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_9": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_10": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_11": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_12": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_13": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_14": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_15": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_16": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossibile connettersi al gateway Meltem.",
+      "invalid_connection": "Inserisci un percorso di dispositivo seriale valido oppure un nome host di rete e una porta TCP.",
+      "no_devices_found": "Nel gateway non è stata trovata alcuna unità Meltem M-WRG supportata. Assicurati che le unità siano già aggiunte e configurate nel gateway M-WRG-GW prima di configurarle in Home Assistant.",
+      "port_in_use": "Un'altra integrazione usa già questa connessione con impostazioni diverse.",
+      "unknown": "Errore imprevisto. Controlla il log di Home Assistant per i dettagli."
+    },
+    "abort": {
+      "already_configured": "Questo gateway Meltem è già configurato.",
+      "already_in_progress": "La configurazione di questo gateway Meltem è già in corso.",
+      "reconfigure_successful": "La connessione al gateway Meltem è stata aggiornata."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configura Meltem Modbus",
+        "description": "Scegli se modificare la frequenza delle richieste o cercare nel gateway unità nuove, spostate o rimosse. Per modificare il profilo di una singola unità, usa Riconfigura su quell'unità.",
+        "menu_options": {
+          "edit_request_rate": "Modifica la frequenza delle richieste",
+          "rescan_units": "Cerca nuove unità"
+        }
+      },
+      "edit_request_rate": {
+        "title": "Modifica la frequenza delle richieste",
+        "description": "Imposta il limite condiviso delle richieste di lettura Modbus per tutte le unità configurate. Anche l'avvio dei job di polling è limitato a questa frequenza; un job può contenere più richieste di lettura. I nuovi tentativi e le riletture dopo una scrittura contano ai fini del limite. Per cambiare la porta seriale, riconfigura l'integrazione.",
+        "data": {
+          "max_requests_per_second": "Richieste massime al secondo"
+        },
+        "data_description": {
+          "max_requests_per_second": "Frequenza massima delle singole richieste di lettura per tutte le unità, inclusi i nuovi tentativi e le riletture dopo una scrittura. Anche l'avvio dei job di polling è limitato a questa frequenza; le sequenze di scrittura usano tempistiche hardware separate."
+        }
+      },
+      "rescan_units": {
+        "title": "Cerca nuove unità Meltem M-WRG",
+        "description": "Cerca nel gateway Meltem le unità Meltem M-WRG configurate e aggiorna i profili salvati. Le unità che il gateway non segnala più vengono rimosse insieme ai loro dispositivi, dopo la tua conferma."
+      },
+      "confirm_remove": {
+        "title": "Rimuovi unità",
+        "description": "Il gateway non segnala più {removed_count} delle unità configurate. Conferma per rimuoverle insieme ai loro dispositivi, entità e impostazioni delle entità:\n\n{removed_units}\n\nSe un'unità è solo spenta o fuori dalla portata radio, chiudi questa finestra e ripeti la ricerca più tardi."
+      },
+      "profiles": {
+        "title": "Unità Meltem M-WRG rilevate",
+        "description": "La nuova ricerca ha trovato {device_count} unità Meltem M-WRG. Scegli il profilo corrispondente per ogni unità rilevata.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Unità all'indirizzo Modbus 2",
+          "slave_3": "Unità all'indirizzo Modbus 3",
+          "slave_4": "Unità all'indirizzo Modbus 4",
+          "slave_5": "Unità all'indirizzo Modbus 5",
+          "slave_6": "Unità all'indirizzo Modbus 6",
+          "slave_7": "Unità all'indirizzo Modbus 7",
+          "slave_8": "Unità all'indirizzo Modbus 8",
+          "slave_9": "Unità all'indirizzo Modbus 9",
+          "slave_10": "Unità all'indirizzo Modbus 10",
+          "slave_11": "Unità all'indirizzo Modbus 11",
+          "slave_12": "Unità all'indirizzo Modbus 12",
+          "slave_13": "Unità all'indirizzo Modbus 13",
+          "slave_14": "Unità all'indirizzo Modbus 14",
+          "slave_15": "Unità all'indirizzo Modbus 15",
+          "slave_16": "Unità all'indirizzo Modbus 16"
+        },
+        "data_description": {
+          "slave_2": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_3": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_4": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_5": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_6": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_7": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_8": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_9": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_10": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_11": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_12": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_13": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_14": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_15": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.",
+          "slave_16": "Seleziona il profilo esatto del modello dell'unità a questo indirizzo Modbus. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossibile connettersi al gateway Meltem.",
+      "no_devices_found": "Nel gateway non è stata trovata alcuna unità Meltem M-WRG supportata. Assicurati che le unità siano già aggiunte e configurate nel gateway M-WRG-GW prima di configurarle in Home Assistant."
+    }
+  },
+  "triggers": {
+    "filter_change_due": {
+      "name": "Sostituzione del filtro necessaria",
+      "description": "Si attiva quando un'unità Meltem selezionata segnala che è necessaria la sostituzione del filtro.",
+      "fields": {
+        "behavior": {
+          "name": "Attiva quando"
+        },
+        "for": {
+          "name": "Per almeno"
+        }
+      }
+    }
+  },
+  "conditions": {
+    "filter_change_due": {
+      "name": "Sostituzione del filtro necessaria",
+      "description": "Verifica se un'unità Meltem selezionata segnala che è necessaria la sostituzione del filtro.",
+      "fields": {
+        "behavior": {
+          "name": "La condizione è soddisfatta se"
+        },
+        "for": {
+          "name": "Per almeno"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "exhaust_temperature": {
+        "name": "Temperatura dell'aria di espulsione"
+      },
+      "outdoor_air_temperature": {
+        "name": "Temperatura dell'aria esterna"
+      },
+      "extract_air_temperature": {
+        "name": "Temperatura dell'aria di estrazione"
+      },
+      "supply_air_temperature": {
+        "name": "Temperatura dell'aria di mandata"
+      },
+      "humidity_extract_air": {
+        "name": "Umidità dell'aria di estrazione"
+      },
+      "humidity_supply_air": {
+        "name": "Umidità dell'aria di mandata"
+      },
+      "absolute_humidity_extract_air": {
+        "name": "Umidità assoluta dell'aria di estrazione"
+      },
+      "absolute_humidity_supply_air": {
+        "name": "Umidità assoluta dell'aria di mandata"
+      },
+      "external_input_level": {
+        "name": "Portata d'aria dell'ingresso di comando esterno"
+      },
+      "external_input_on_delay": {
+        "name": "Ritardo di attivazione dell'ingresso di comando esterno"
+      },
+      "external_input_run_on": {
+        "name": "Tempo di funzionamento residuo dell'ingresso di comando esterno"
+      },
+      "voc_extract_air": {
+        "name": "COV dell'aria di estrazione"
+      },
+      "co2_supply_air": {
+        "name": "CO2 dell'aria di mandata"
+      },
+      "co2_extract_air": {
+        "name": "CO2 dell'aria di estrazione"
+      },
+      "voc_supply_air": {
+        "name": "COV dell'aria di mandata"
+      },
+      "extract_air_flow": {
+        "name": "Portata dell'aria di estrazione"
+      },
+      "supply_air_flow": {
+        "name": "Portata dell'aria di mandata"
+      },
+      "days_until_filter_change": {
+        "name": "Giorni alla sostituzione del filtro"
+      },
+      "operating_hours": {
+        "name": "Ore di funzionamento"
+      },
+      "fan_motor_hours": {
+        "name": "Ore di funzionamento del ventilatore"
+      },
+      "rf_last_seen_age_seconds": {
+        "name": "Tempo dall'ultimo segnale RF"
+      },
+      "rf_signal_strength": {
+        "name": "RSSI RF"
+      },
+      "modbus_slave_id": {
+        "name": "ID slave Modbus"
+      },
+      "modbus_device_path": {
+        "name": "Endpoint Modbus"
+      },
+      "app_setup_code": {
+        "name": "Codice di configurazione dell'app"
+      },
+      "gateway_last_answer": {
+        "name": "Ultima risposta Modbus"
+      },
+      "gateway_connected_devices": {
+        "name": "Numero di dispositivi connessi"
+      },
+      "gateway_rf_messages_current_hour": {
+        "name": "Messaggi RF inviati in quest'ora"
+      },
+      "gateway_rf_messages_previous_hour": {
+        "name": "Messaggi RF inviati nell'ora precedente"
+      },
+      "gateway_rf_load_current_hour": {
+        "name": "Carico RF in quest'ora"
+      },
+      "gateway_rf_load_previous_hour": {
+        "name": "Carico RF nell'ora precedente"
+      },
+      "gateway_response_time": {
+        "name": "Tempo medio di risposta"
+      },
+      "gateway_success_rate": {
+        "name": "Richieste Modbus riuscite (5 min)"
+      },
+      "gateway_supply_air_flow": {
+        "name": "Portata totale dell'aria di mandata"
+      },
+      "gateway_extract_air_flow": {
+        "name": "Portata totale dell'aria di estrazione"
+      },
+      "gateway_airflow_delta": {
+        "name": "Differenza totale di portata d'aria"
+      },
+      "gateway_uptime": {
+        "name": "Tempo di attività"
+      },
+      "gateway_utc_clock": {
+        "name": "Orologio UTC"
+      },
+      "gateway_modbus_attempts_total": {
+        "name": "Tentativi di richiesta Modbus"
+      },
+      "gateway_modbus_failures_total": {
+        "name": "Richieste Modbus non riuscite"
+      },
+      "gateway_link_recycles_total": {
+        "name": "Riavvii del collegamento Modbus"
+      },
+      "gateway_failed_read_groups_total": {
+        "name": "Gruppi di lettura non riusciti"
+      },
+      "gateway_write_issues_total": {
+        "name": "Problemi dei comandi di scrittura"
+      },
+      "airflow_balance": {
+        "name": "Bilanciamento delle portate d'aria"
+      },
+      "last_successful_update": {
+        "name": "Ultimo aggiornamento riuscito"
+      }
+    },
+    "binary_sensor": {
+      "error_status": {
+        "name": "Errore del dispositivo"
+      },
+      "frost_protection_active": {
+        "name": "Protezione antigelo attiva"
+      },
+      "filter_change_due": {
+        "name": "Sostituzione del filtro necessaria"
+      },
+      "rf_comm_status": {
+        "name": "Stato della comunicazione RF"
+      },
+      "device_fault": {
+        "name": "Guasto del dispositivo"
+      },
+      "value_error_status": {
+        "name": "Errore di valore"
+      },
+      "data_health": {
+        "name": "Stato della lettura"
+      },
+      "gateway_connectivity": {
+        "name": "Connessione Modbus"
+      },
+      "connectivity": {
+        "name": "Raggiungibile"
+      }
+    },
+    "switch": {
+      "intensive": {
+        "name": "Ventilazione intensiva"
+      }
+    },
+    "number": {
+      "humidity_starting_point": {
+        "name": "Soglia di attivazione dell'umidità"
+      },
+      "humidity_min_level": {
+        "name": "Livello minimo di umidità"
+      },
+      "humidity_max_level": {
+        "name": "Livello massimo di umidità"
+      },
+      "co2_starting_point": {
+        "name": "Soglia di attivazione del CO2"
+      },
+      "co2_min_level": {
+        "name": "Livello minimo di CO2"
+      },
+      "co2_max_level": {
+        "name": "Livello massimo di CO2"
+      }
+    },
+    "fan": {
+      "supply_level": {
+        "name": "Aria di mandata"
+      },
+      "extract_level": {
+        "name": "Aria di estrazione"
+      }
+    },
+    "select": {
+      "operation_mode": {
+        "name": "Regolazione a sensore",
+        "state": {
+          "inactive": "Spento",
+          "humidity_control": "Regolazione dell'umidità",
+          "co2_control": "Regolazione del CO2",
+          "automatic": "Automatico"
+        }
+      },
+      "preset_mode": {
+        "name": "Modalità rapida",
+        "state": {
+          "inactive": "Individuale",
+          "low": "Bassa",
+          "medium": "Media",
+          "high": "Alta"
+        }
+      }
+    }
+  },
+  "system_health": {
+    "info": {
+      "loaded_entries": "Voci di configurazione caricate",
+      "configured_units": "Unità configurate",
+      "state_units": "Unità con stato in tempo reale",
+      "last_update_success": "Ultimo aggiornamento riuscito",
+      "last_job_error": "Ultimo errore dello scheduler",
+      "last_unit_errors": "Ultimo errore di lettura per unità",
+      "unavailable_units": "Unità attualmente non disponibili",
+      "stale_read_groups": "Gruppi di lettura non aggiornati"
+    }
+  },
+  "exceptions": {
+    "write_failed": {
+      "message": "Impossibile inviare il comando a {unit}. Controlla il log di Home Assistant per i dettagli."
+    },
+    "opposite_airflow_unknown": {
+      "message": "La portata d'aria opposta di {unit} al momento non è nota, quindi non è possibile disattivare una sola direzione. Riprova quando l'unità segnala la propria portata d'aria."
+    },
+    "airflow_unknown": {
+      "message": "La portata d'aria attuale di {unit} non è nota, quindi la modalità di funzionamento non può essere modificata senza ipotizzare un livello. Imposta invece la portata d'aria con le entità ventilatore."
+    },
+    "control_level_range": {
+      "message": "Il livello minimo ({minimum} %) di {unit} non deve essere superiore al suo livello massimo ({maximum} %)."
+    },
+    "gateway_unavailable": {
+      "message": "Impossibile connettersi al gateway Meltem tramite {port}. Controlla la connessione e, per l'USB, i permessi di accesso."
+    },
+    "port_in_use": {
+      "message": "La connessione al gateway è già in uso con impostazioni diverse."
+    },
+    "gateway_communication_failed": {
+      "message": "La comunicazione con il gateway Meltem non è riuscita. Controlla la connessione USB e la porta seriale."
+    }
+  },
+  "issues": {
+    "missing_humidity_extract_air": {
+      "title": "{unit}: l'umidità dell'aria di estrazione non viene segnalata",
+      "description": "Il profilo {profile} di {unit} include un sensore di umidità dell'aria di estrazione, ma l'unità continua a segnalare che non è disponibile alcuna misurazione, quindi il sensore mostra «sconosciuto».\n\nVerifica che il profilo selezionato per l'unità corrisponda alla targhetta e, in caso contrario, riconfigura l'unità. Se il profilo è corretto, il sensore potrebbe essere difettoso. Questo messaggio scompare quando l'unità torna a segnalare un valore."
+    },
+    "missing_humidity_supply_air": {
+      "title": "{unit}: l'umidità dell'aria di mandata non viene segnalata",
+      "description": "Il profilo {profile} di {unit} include un sensore di umidità dell'aria di mandata, ma l'unità continua a segnalare che non è disponibile alcuna misurazione, quindi il sensore mostra «sconosciuto».\n\nVerifica che il profilo selezionato per l'unità corrisponda alla targhetta e, in caso contrario, riconfigura l'unità. Se il profilo è corretto, il sensore potrebbe essere difettoso. Questo messaggio scompare quando l'unità torna a segnalare un valore."
+    },
+    "missing_co2_extract_air": {
+      "title": "{unit}: il CO2 dell'aria di estrazione non viene segnalato",
+      "description": "Il profilo {profile} di {unit} include un sensore di CO2 dell'aria di estrazione, ma l'unità continua a segnalare che non è disponibile alcuna misurazione, quindi il sensore mostra «sconosciuto».\n\nVerifica che il profilo selezionato per l'unità corrisponda alla targhetta e, in caso contrario, riconfigura l'unità. Se il profilo è corretto, il sensore potrebbe essere difettoso. Questo messaggio scompare quando l'unità torna a segnalare un valore."
+    },
+    "missing_voc_supply_air": {
+      "title": "{unit}: i COV dell'aria di mandata non vengono segnalati",
+      "description": "Il profilo {profile} di {unit} include un sensore di COV dell'aria di mandata, ma l'unità continua a segnalare che non è disponibile alcuna misurazione, quindi il sensore mostra «sconosciuto».\n\nVerifica che il profilo selezionato per l'unità corrisponda alla targhetta e, in caso contrario, riconfigura l'unità. Se il profilo è corretto, il sensore potrebbe essere difettoso. Questo messaggio scompare quando l'unità torna a segnalare un valore."
+    },
+    "new_units_found": {
+      "title": "Il gateway Meltem segnala unità che non sono configurate",
+      "description": "Il gateway segnala {count} unità Meltem M-WRG che Home Assistant non ha ancora, all'indirizzo Modbus {addresses}.\n\nPer aggiungerle, apri l'integrazione Meltem Modbus e scegli **Aggiungi unità**, oppure esegui **Cerca nuove unità** nelle sue opzioni. Il profilo non può essere rilevato in modo affidabile, quindi lo scegli in base alla targhetta di ciascuna unità. Questo messaggio scompare quando tutte le unità segnalate dal gateway sono configurate."
+    }
+  },
+  "config_subentries": {
+    "unit": {
+      "entry_type": "Unità Meltem M-WRG",
+      "initiate_flow": {
+        "user": "Aggiungi unità",
+        "reconfigure": "Cambia profilo"
+      },
+      "step": {
+        "user": {
+          "title": "Aggiungi un'unità Meltem M-WRG",
+          "description": "Il gateway segnala {device_count} unità non ancora configurate. Scegli l'indirizzo Modbus e il profilo esatto del modello dell'unità da aggiungere. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.\n\n{unit_details}",
+          "data": {
+            "slave": "Indirizzo Modbus",
+            "slave_2": "Profilo",
+            "slave_3": "Profilo",
+            "slave_4": "Profilo",
+            "slave_5": "Profilo",
+            "slave_6": "Profilo",
+            "slave_7": "Profilo",
+            "slave_8": "Profilo",
+            "slave_9": "Profilo",
+            "slave_10": "Profilo",
+            "slave_11": "Profilo",
+            "slave_12": "Profilo",
+            "slave_13": "Profilo",
+            "slave_14": "Profilo",
+            "slave_15": "Profilo",
+            "slave_16": "Profilo"
+          },
+          "data_description": {
+            "slave": "Indirizzo Modbus dell'unità da aggiungere, come indicato sopra.",
+            "slave_2": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_3": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_4": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_5": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_6": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_7": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_8": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_9": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_10": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_11": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_12": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_13": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_14": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_15": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità.",
+            "slave_16": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità."
+          }
+        },
+        "profile": {
+          "title": "Profilo dell'unità all'indirizzo Modbus {slave}",
+          "description": "Scegli il profilo esatto del modello della nuova unità. Controlla l'etichetta dell'unità; i sensori rilevati sono solo un'indicazione.\n\n{unit_details}",
+          "data": {
+            "profile": "Profilo"
+          },
+          "data_description": {
+            "profile": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità."
+          }
+        },
+        "reconfigure": {
+          "title": "Cambia il profilo di {unit}",
+          "description": "Scegli il profilo esatto del modello dell'unità. Controlla l'etichetta dell'unità; al termine l'integrazione viene ricaricata.\n\n{unit_details}",
+          "data": {
+            "profile": "Profilo"
+          },
+          "data_description": {
+            "profile": "Il profilo del modello riportato sulla targhetta determina le entità dell'unità."
+          }
+        }
+      },
+      "abort": {
+        "entry_not_loaded": "Il gateway Meltem non è caricato. Le unità possono essere aggiunte solo mentre il gateway è connesso.",
+        "cannot_connect": "Impossibile connettersi al gateway Meltem.",
+        "no_new_units": "Il gateway non segnala unità non ancora configurate. Aggiungi prima l'unità nell'app Meltem.",
+        "already_configured": "Questa unità è già configurata.",
+        "reconfigure_successful": "L'unità è stata aggiornata."
+      }
+    }
+  }
+}

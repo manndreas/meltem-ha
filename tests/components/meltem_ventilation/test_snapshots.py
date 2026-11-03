@@ -43,7 +43,7 @@ _GROUPS = (
     "fan_hours",
     "rf_last_seen",
     "rf_signal",
-    "rf_fault",
+    "device_fault",
     "value_error",
     "control_settings",
 )
@@ -74,7 +74,7 @@ def _full_state() -> RoomState:
         filter_change_due=False,
         frost_protection_active=False,
         rf_comm_status=False,
-        rf_fault_status=False,
+        device_fault=False,
         value_error_status=False,
         operation_mode="manual",
         preset_mode=None,

@@ -1,0 +1,563 @@
+{
+  "title": "Meltem Modbus",
+  "selector": {
+    "connection_type": {
+      "options": {
+        "serial": "Połączenie szeregowe USB",
+        "rtu_over_tcp": "RTU przez TCP"
+      }
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meltem Modbus",
+        "description": "Najpierw skonfiguruj bramę M-WRG-GW i jej jednostki w aplikacji Meltem. Wybierz połączenie szeregowe USB lub surowe RTU przez TCP. Połączenia sieciowe nie są szyfrowane ani uwierzytelniane; używaj wyłącznie zaufanej sieci lokalnej.",
+        "data": {
+          "connection_type": "Typ połączenia",
+          "port": "Port szeregowy",
+          "host": "Nazwa hosta lub adres IP mostka",
+          "network_port": "Port TCP mostka"
+        },
+        "data_description": {
+          "connection_type": "Wybierz połączenie używane do komunikacji z bramą.",
+          "port": "Ścieżka urządzenia dla połączenia szeregowego USB.",
+          "host": "Nazwa hosta lub adres IP mostka RTU przez TCP.",
+          "network_port": "Port TCP surowego mostka RTU."
+        }
+      },
+      "reconfigure": {
+        "title": "Zmień połączenie z bramą",
+        "description": "Zmień połączenie z bramą. Połączenia sieciowe nie są szyfrowane ani uwierzytelniane; używaj wyłącznie zaufanej sieci lokalnej. Po zapisaniu integracja zostanie ponownie załadowana.",
+        "data": {
+          "connection_type": "Typ połączenia",
+          "port": "Port szeregowy",
+          "host": "Nazwa hosta lub adres IP mostka",
+          "network_port": "Port TCP mostka"
+        },
+        "data_description": {
+          "connection_type": "Wybierz połączenie używane do komunikacji z bramą.",
+          "port": "Ścieżka urządzenia dla połączenia szeregowego USB.",
+          "host": "Nazwa hosta lub adres IP mostka RTU przez TCP.",
+          "network_port": "Port TCP surowego mostka RTU."
+        }
+      },
+      "confirm_usb": {
+        "title": "Wykryto bramę Meltem Modbus",
+        "description": "Home Assistant znalazł urządzenie USB na porcie {port} ({manufacturer}, {description}). Wymagana jest brama M-WRG-GW. Musi być już skonfigurowana w aplikacji Meltem ze wszystkimi obsługiwanymi jednostkami Meltem M-WRG i połączona przez USB z hostem Home Assistant.",
+        "data": {
+          "port": "Port szeregowy"
+        },
+        "data_description": {
+          "port": "Potwierdź lub zmień ścieżkę szeregowego urządzenia USB, które Home Assistant wykrył jako bramę."
+        }
+      },
+      "profiles": {
+        "title": "Wykryte jednostki Meltem M-WRG",
+        "description": "Integracja znalazła jednostki Meltem M-WRG (liczba: {device_count}). Wybierz odpowiedni profil dla każdej wykrytej jednostki.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Jednostka pod adresem Modbus 2",
+          "slave_3": "Jednostka pod adresem Modbus 3",
+          "slave_4": "Jednostka pod adresem Modbus 4",
+          "slave_5": "Jednostka pod adresem Modbus 5",
+          "slave_6": "Jednostka pod adresem Modbus 6",
+          "slave_7": "Jednostka pod adresem Modbus 7",
+          "slave_8": "Jednostka pod adresem Modbus 8",
+          "slave_9": "Jednostka pod adresem Modbus 9",
+          "slave_10": "Jednostka pod adresem Modbus 10",
+          "slave_11": "Jednostka pod adresem Modbus 11",
+          "slave_12": "Jednostka pod adresem Modbus 12",
+          "slave_13": "Jednostka pod adresem Modbus 13",
+          "slave_14": "Jednostka pod adresem Modbus 14",
+          "slave_15": "Jednostka pod adresem Modbus 15",
+          "slave_16": "Jednostka pod adresem Modbus 16"
+        },
+        "data_description": {
+          "slave_2": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_3": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_4": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_5": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_6": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_7": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_8": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_9": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_10": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_11": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_12": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_13": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_14": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_15": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_16": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Nie udało się połączyć z bramą Meltem.",
+      "invalid_connection": "Podaj prawidłową ścieżkę urządzenia szeregowego albo nazwę hosta sieciowego i port TCP.",
+      "no_devices_found": "Na bramie nie znaleziono żadnych obsługiwanych jednostek Meltem M-WRG. Upewnij się, że jednostki zostały już dodane i skonfigurowane w bramie M-WRG-GW, zanim skonfigurujesz je w Home Assistant.",
+      "port_in_use": "Inna integracja już używa tego połączenia z innymi ustawieniami.",
+      "unknown": "Nieoczekiwany błąd. Szczegóły znajdziesz w dzienniku Home Assistant."
+    },
+    "abort": {
+      "already_configured": "Ta brama Meltem jest już skonfigurowana.",
+      "already_in_progress": "Konfiguracja tej bramy Meltem jest już w toku.",
+      "reconfigure_successful": "Połączenie z bramą Meltem zostało zaktualizowane."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Konfiguracja Meltem Modbus",
+        "description": "Wybierz, czy chcesz zmienić częstotliwość zapytań, czy przeszukać bramę pod kątem nowych, przeniesionych lub usuniętych jednostek. Aby zmienić profil pojedynczej jednostki, użyj opcji Skonfiguruj ponownie przy tej jednostce.",
+        "menu_options": {
+          "edit_request_rate": "Zmień częstotliwość zapytań",
+          "rescan_units": "Wyszukaj nowe jednostki"
+        }
+      },
+      "edit_request_rate": {
+        "title": "Zmień częstotliwość zapytań",
+        "description": "Ustaw wspólny limit zapytań odczytu Modbus dla wszystkich skonfigurowanych jednostek. Uruchamianie zadań odpytywania jest również ograniczone tą częstotliwością; jedno zadanie może zawierać kilka zapytań odczytu. Ponowne próby i odczyty po zapisie wliczają się do limitu zapytań. Aby zmienić port szeregowy, skonfiguruj integrację ponownie.",
+        "data": {
+          "max_requests_per_second": "Maksymalna liczba zapytań na sekundę"
+        },
+        "data_description": {
+          "max_requests_per_second": "Maksymalna częstotliwość pojedynczych zapytań odczytu dla wszystkich jednostek, wraz z ponownymi próbami i odczytami po zapisie. Uruchamianie zadań odpytywania jest również ograniczone tą częstotliwością; sekwencje zapisu używają oddzielnych czasów sprzętowych."
+        }
+      },
+      "rescan_units": {
+        "title": "Wyszukaj nowe jednostki Meltem M-WRG",
+        "description": "Przeszukaj bramę Meltem pod kątem skonfigurowanych jednostek Meltem M-WRG i zaktualizuj zapisane profile. Jednostki, których brama już nie zgłasza, zostaną usunięte wraz z urządzeniami po potwierdzeniu."
+      },
+      "confirm_remove": {
+        "title": "Usuń jednostki",
+        "description": "Brama nie zgłasza już części skonfigurowanych jednostek (liczba: {removed_count}). Zatwierdź, aby usunąć je wraz z urządzeniami, encjami i ustawieniami encji:\n\n{removed_units}\n\nJeśli jednostka jest tylko wyłączona lub poza zasięgiem radiowym, zamknij to okno i wyszukaj ponownie później."
+      },
+      "profiles": {
+        "title": "Wykryte jednostki Meltem M-WRG",
+        "description": "Ponowne wyszukiwanie znalazło jednostki Meltem M-WRG (liczba: {device_count}). Wybierz odpowiedni profil dla każdej wykrytej jednostki.\n\n{unit_details}",
+        "data": {
+          "slave_2": "Jednostka pod adresem Modbus 2",
+          "slave_3": "Jednostka pod adresem Modbus 3",
+          "slave_4": "Jednostka pod adresem Modbus 4",
+          "slave_5": "Jednostka pod adresem Modbus 5",
+          "slave_6": "Jednostka pod adresem Modbus 6",
+          "slave_7": "Jednostka pod adresem Modbus 7",
+          "slave_8": "Jednostka pod adresem Modbus 8",
+          "slave_9": "Jednostka pod adresem Modbus 9",
+          "slave_10": "Jednostka pod adresem Modbus 10",
+          "slave_11": "Jednostka pod adresem Modbus 11",
+          "slave_12": "Jednostka pod adresem Modbus 12",
+          "slave_13": "Jednostka pod adresem Modbus 13",
+          "slave_14": "Jednostka pod adresem Modbus 14",
+          "slave_15": "Jednostka pod adresem Modbus 15",
+          "slave_16": "Jednostka pod adresem Modbus 16"
+        },
+        "data_description": {
+          "slave_2": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_3": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_4": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_5": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_6": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_7": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_8": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_9": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_10": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_11": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_12": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_13": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_14": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_15": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.",
+          "slave_16": "Wybierz dokładny profil modelu jednostki pod tym adresem Modbus. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Nie udało się połączyć z bramą Meltem.",
+      "no_devices_found": "Na bramie nie znaleziono żadnych obsługiwanych jednostek Meltem M-WRG. Upewnij się, że jednostki zostały już dodane i skonfigurowane w bramie M-WRG-GW, zanim skonfigurujesz je w Home Assistant."
+    }
+  },
+  "triggers": {
+    "filter_change_due": {
+      "name": "Wymiana filtra wymagana",
+      "description": "Uruchamia się, gdy wybrana jednostka Meltem zgłasza, że wymagana jest wymiana filtra.",
+      "fields": {
+        "behavior": {
+          "name": "Uruchom, gdy"
+        },
+        "for": {
+          "name": "Przez co najmniej"
+        }
+      }
+    }
+  },
+  "conditions": {
+    "filter_change_due": {
+      "name": "Wymiana filtra wymagana",
+      "description": "Sprawdza, czy wybrana jednostka Meltem zgłasza, że wymagana jest wymiana filtra.",
+      "fields": {
+        "behavior": {
+          "name": "Warunek jest spełniony, jeśli"
+        },
+        "for": {
+          "name": "Przez co najmniej"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "exhaust_temperature": {
+        "name": "Temperatura powietrza wyrzucanego"
+      },
+      "outdoor_air_temperature": {
+        "name": "Temperatura powietrza zewnętrznego"
+      },
+      "extract_air_temperature": {
+        "name": "Temperatura powietrza wywiewanego"
+      },
+      "supply_air_temperature": {
+        "name": "Temperatura powietrza nawiewanego"
+      },
+      "humidity_extract_air": {
+        "name": "Wilgotność powietrza wywiewanego"
+      },
+      "humidity_supply_air": {
+        "name": "Wilgotność powietrza nawiewanego"
+      },
+      "absolute_humidity_extract_air": {
+        "name": "Wilgotność bezwzględna powietrza wywiewanego"
+      },
+      "absolute_humidity_supply_air": {
+        "name": "Wilgotność bezwzględna powietrza nawiewanego"
+      },
+      "external_input_level": {
+        "name": "Przepływ powietrza wejścia sterowania zewnętrznego"
+      },
+      "external_input_on_delay": {
+        "name": "Opóźnienie załączenia wejścia sterowania zewnętrznego"
+      },
+      "external_input_run_on": {
+        "name": "Czas dobiegu wejścia sterowania zewnętrznego"
+      },
+      "voc_extract_air": {
+        "name": "LZO w powietrzu wywiewanym"
+      },
+      "co2_supply_air": {
+        "name": "CO2 w powietrzu nawiewanym"
+      },
+      "co2_extract_air": {
+        "name": "CO2 w powietrzu wywiewanym"
+      },
+      "voc_supply_air": {
+        "name": "LZO w powietrzu nawiewanym"
+      },
+      "extract_air_flow": {
+        "name": "Przepływ powietrza wywiewanego"
+      },
+      "supply_air_flow": {
+        "name": "Przepływ powietrza nawiewanego"
+      },
+      "days_until_filter_change": {
+        "name": "Dni do wymiany filtra"
+      },
+      "operating_hours": {
+        "name": "Godziny pracy"
+      },
+      "fan_motor_hours": {
+        "name": "Godziny pracy wentylatora"
+      },
+      "rf_last_seen_age_seconds": {
+        "name": "Czas od ostatniego sygnału RF"
+      },
+      "rf_signal_strength": {
+        "name": "RSSI RF"
+      },
+      "modbus_slave_id": {
+        "name": "Identyfikator urządzenia podrzędnego Modbus"
+      },
+      "modbus_device_path": {
+        "name": "Punkt końcowy Modbus"
+      },
+      "app_setup_code": {
+        "name": "Kod konfiguracji aplikacji"
+      },
+      "gateway_last_answer": {
+        "name": "Ostatnia odpowiedź Modbus"
+      },
+      "gateway_connected_devices": {
+        "name": "Liczba połączonych urządzeń"
+      },
+      "gateway_rf_messages_current_hour": {
+        "name": "Wiadomości RF wysłane w tej godzinie"
+      },
+      "gateway_rf_messages_previous_hour": {
+        "name": "Wiadomości RF wysłane w poprzedniej godzinie"
+      },
+      "gateway_rf_load_current_hour": {
+        "name": "Obciążenie RF w tej godzinie"
+      },
+      "gateway_rf_load_previous_hour": {
+        "name": "Obciążenie RF w poprzedniej godzinie"
+      },
+      "gateway_response_time": {
+        "name": "Średni czas odpowiedzi"
+      },
+      "gateway_success_rate": {
+        "name": "Udane zapytania Modbus (5 min)"
+      },
+      "gateway_supply_air_flow": {
+        "name": "Całkowity przepływ powietrza nawiewanego"
+      },
+      "gateway_extract_air_flow": {
+        "name": "Całkowity przepływ powietrza wywiewanego"
+      },
+      "gateway_airflow_delta": {
+        "name": "Całkowita różnica przepływów powietrza"
+      },
+      "gateway_uptime": {
+        "name": "Czas działania"
+      },
+      "gateway_utc_clock": {
+        "name": "Zegar UTC"
+      },
+      "gateway_modbus_attempts_total": {
+        "name": "Próby zapytań Modbus"
+      },
+      "gateway_modbus_failures_total": {
+        "name": "Nieudane zapytania Modbus"
+      },
+      "gateway_link_recycles_total": {
+        "name": "Restarty łącza Modbus"
+      },
+      "gateway_failed_read_groups_total": {
+        "name": "Nieudane grupy odczytu"
+      },
+      "gateway_write_issues_total": {
+        "name": "Problemy z poleceniami zapisu"
+      },
+      "airflow_balance": {
+        "name": "Bilans przepływów powietrza"
+      },
+      "last_successful_update": {
+        "name": "Ostatnia udana aktualizacja"
+      }
+    },
+    "binary_sensor": {
+      "error_status": {
+        "name": "Błąd urządzenia"
+      },
+      "frost_protection_active": {
+        "name": "Ochrona przed zamarzaniem aktywna"
+      },
+      "filter_change_due": {
+        "name": "Wymiana filtra wymagana"
+      },
+      "rf_comm_status": {
+        "name": "Stan komunikacji RF"
+      },
+      "device_fault": {
+        "name": "Usterka urządzenia"
+      },
+      "value_error_status": {
+        "name": "Błąd wartości"
+      },
+      "data_health": {
+        "name": "Stan odczytu"
+      },
+      "gateway_connectivity": {
+        "name": "Połączenie Modbus"
+      },
+      "connectivity": {
+        "name": "Osiągalna"
+      }
+    },
+    "switch": {
+      "intensive": {
+        "name": "Wentylacja intensywna"
+      }
+    },
+    "number": {
+      "humidity_starting_point": {
+        "name": "Próg uruchomienia wilgotności"
+      },
+      "humidity_min_level": {
+        "name": "Minimalny poziom wilgotności"
+      },
+      "humidity_max_level": {
+        "name": "Maksymalny poziom wilgotności"
+      },
+      "co2_starting_point": {
+        "name": "Próg uruchomienia CO2"
+      },
+      "co2_min_level": {
+        "name": "Minimalny poziom CO2"
+      },
+      "co2_max_level": {
+        "name": "Maksymalny poziom CO2"
+      }
+    },
+    "fan": {
+      "supply_level": {
+        "name": "Powietrze nawiewane"
+      },
+      "extract_level": {
+        "name": "Powietrze wywiewane"
+      }
+    },
+    "select": {
+      "operation_mode": {
+        "name": "Sterowanie czujnikami",
+        "state": {
+          "inactive": "Wyłączone",
+          "humidity_control": "Sterowanie wilgotnością",
+          "co2_control": "Sterowanie CO2",
+          "automatic": "Automatyczne"
+        }
+      },
+      "preset_mode": {
+        "name": "Tryb szybki",
+        "state": {
+          "inactive": "Indywidualny",
+          "low": "Niski",
+          "medium": "Średni",
+          "high": "Wysoki"
+        }
+      }
+    }
+  },
+  "system_health": {
+    "info": {
+      "loaded_entries": "Załadowane wpisy konfiguracji",
+      "configured_units": "Skonfigurowane jednostki",
+      "state_units": "Jednostki ze stanem na żywo",
+      "last_update_success": "Ostatnia aktualizacja udana",
+      "last_job_error": "Ostatni błąd harmonogramu",
+      "last_unit_errors": "Ostatni błąd odczytu dla jednostki",
+      "unavailable_units": "Obecnie niedostępne jednostki",
+      "stale_read_groups": "Nieaktualne grupy odczytu"
+    }
+  },
+  "exceptions": {
+    "write_failed": {
+      "message": "Nie udało się wysłać polecenia do {unit}. Szczegóły znajdziesz w dzienniku Home Assistant."
+    },
+    "opposite_airflow_unknown": {
+      "message": "Przeciwny przepływ powietrza jednostki {unit} jest obecnie nieznany, więc nie można wyłączyć tylko jednego kierunku. Spróbuj ponownie, gdy jednostka zgłosi swój przepływ powietrza."
+    },
+    "airflow_unknown": {
+      "message": "Bieżący przepływ powietrza jednostki {unit} jest nieznany, więc nie można zmienić trybu pracy bez zgadywania poziomu. Ustaw przepływ powietrza za pomocą encji wentylatora."
+    },
+    "control_level_range": {
+      "message": "Poziom minimalny ({minimum} %) jednostki {unit} nie może być wyższy niż jej poziom maksymalny ({maximum} %)."
+    },
+    "gateway_unavailable": {
+      "message": "Nie udało się połączyć z bramą Meltem przez {port}. Sprawdź połączenie oraz, w przypadku USB, uprawnienia dostępu."
+    },
+    "port_in_use": {
+      "message": "Połączenie z bramą jest już używane z innymi ustawieniami."
+    },
+    "gateway_communication_failed": {
+      "message": "Komunikacja z bramą Meltem nie powiodła się. Sprawdź połączenie USB i port szeregowy."
+    }
+  },
+  "issues": {
+    "missing_humidity_extract_air": {
+      "title": "{unit}: wilgotność powietrza wywiewanego nie jest zgłaszana",
+      "description": "Profil {profile} jednostki {unit} zawiera czujnik wilgotności powietrza wywiewanego, ale jednostka stale zgłasza brak odczytu, więc czujnik wyświetla stan nieznany.\n\nSprawdź, czy profil wybrany dla jednostki odpowiada jej tabliczce znamionowej, a jeśli nie, skonfiguruj jednostkę ponownie. Jeśli profil jest prawidłowy, czujnik może być uszkodzony. Ten komunikat zniknie, gdy jednostka ponownie zgłosi wartość."
+    },
+    "missing_humidity_supply_air": {
+      "title": "{unit}: wilgotność powietrza nawiewanego nie jest zgłaszana",
+      "description": "Profil {profile} jednostki {unit} zawiera czujnik wilgotności powietrza nawiewanego, ale jednostka stale zgłasza brak odczytu, więc czujnik wyświetla stan nieznany.\n\nSprawdź, czy profil wybrany dla jednostki odpowiada jej tabliczce znamionowej, a jeśli nie, skonfiguruj jednostkę ponownie. Jeśli profil jest prawidłowy, czujnik może być uszkodzony. Ten komunikat zniknie, gdy jednostka ponownie zgłosi wartość."
+    },
+    "missing_co2_extract_air": {
+      "title": "{unit}: CO2 w powietrzu wywiewanym nie jest zgłaszane",
+      "description": "Profil {profile} jednostki {unit} zawiera czujnik CO2 w powietrzu wywiewanym, ale jednostka stale zgłasza brak odczytu, więc czujnik wyświetla stan nieznany.\n\nSprawdź, czy profil wybrany dla jednostki odpowiada jej tabliczce znamionowej, a jeśli nie, skonfiguruj jednostkę ponownie. Jeśli profil jest prawidłowy, czujnik może być uszkodzony. Ten komunikat zniknie, gdy jednostka ponownie zgłosi wartość."
+    },
+    "missing_voc_supply_air": {
+      "title": "{unit}: LZO w powietrzu nawiewanym nie są zgłaszane",
+      "description": "Profil {profile} jednostki {unit} zawiera czujnik LZO w powietrzu nawiewanym, ale jednostka stale zgłasza brak odczytu, więc czujnik wyświetla stan nieznany.\n\nSprawdź, czy profil wybrany dla jednostki odpowiada jej tabliczce znamionowej, a jeśli nie, skonfiguruj jednostkę ponownie. Jeśli profil jest prawidłowy, czujnik może być uszkodzony. Ten komunikat zniknie, gdy jednostka ponownie zgłosi wartość."
+    },
+    "new_units_found": {
+      "title": "Brama Meltem zgłasza jednostki, które nie są skonfigurowane",
+      "description": "Brama zgłasza jednostki Meltem M-WRG, których Home Assistant jeszcze nie ma (liczba: {count}), pod adresem Modbus {addresses}.\n\nAby je dodać, otwórz integrację Meltem Modbus i wybierz **Dodaj jednostkę** albo uruchom **Wyszukaj nowe jednostki** w jej opcjach. Profilu nie można wiarygodnie wykryć, więc wybierasz go na podstawie tabliczki znamionowej każdej jednostki. Ten komunikat zniknie, gdy wszystkie jednostki zgłaszane przez bramę zostaną skonfigurowane."
+    }
+  },
+  "config_subentries": {
+    "unit": {
+      "entry_type": "Jednostka Meltem M-WRG",
+      "initiate_flow": {
+        "user": "Dodaj jednostkę",
+        "reconfigure": "Zmień profil"
+      },
+      "step": {
+        "user": {
+          "title": "Dodaj jednostkę Meltem M-WRG",
+          "description": "Brama zgłasza jednostki, które nie są jeszcze skonfigurowane (liczba: {device_count}). Wybierz adres Modbus i dokładny profil modelu jednostki do dodania. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.\n\n{unit_details}",
+          "data": {
+            "slave": "Adres Modbus",
+            "slave_2": "Profil",
+            "slave_3": "Profil",
+            "slave_4": "Profil",
+            "slave_5": "Profil",
+            "slave_6": "Profil",
+            "slave_7": "Profil",
+            "slave_8": "Profil",
+            "slave_9": "Profil",
+            "slave_10": "Profil",
+            "slave_11": "Profil",
+            "slave_12": "Profil",
+            "slave_13": "Profil",
+            "slave_14": "Profil",
+            "slave_15": "Profil",
+            "slave_16": "Profil"
+          },
+          "data_description": {
+            "slave": "Adres Modbus jednostki do dodania, zgodnie z listą powyżej.",
+            "slave_2": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_3": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_4": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_5": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_6": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_7": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_8": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_9": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_10": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_11": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_12": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_13": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_14": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_15": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka.",
+            "slave_16": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka."
+          }
+        },
+        "profile": {
+          "title": "Profil jednostki pod adresem Modbus {slave}",
+          "description": "Wybierz dokładny profil modelu nowej jednostki. Sprawdź tabliczkę jednostki; wykryte czujniki są tylko wskazówką.\n\n{unit_details}",
+          "data": {
+            "profile": "Profil"
+          },
+          "data_description": {
+            "profile": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka."
+          }
+        },
+        "reconfigure": {
+          "title": "Zmień profil jednostki {unit}",
+          "description": "Wybierz dokładny profil modelu jednostki. Sprawdź tabliczkę jednostki; po zapisaniu integracja zostanie ponownie załadowana.\n\n{unit_details}",
+          "data": {
+            "profile": "Profil"
+          },
+          "data_description": {
+            "profile": "Profil modelu z tabliczki znamionowej decyduje o tym, jakie encje otrzyma jednostka."
+          }
+        }
+      },
+      "abort": {
+        "entry_not_loaded": "Brama Meltem nie jest załadowana. Jednostki można dodawać tylko wtedy, gdy brama jest połączona.",
+        "cannot_connect": "Nie udało się połączyć z bramą Meltem.",
+        "no_new_units": "Brama nie zgłasza jednostek, które nie są jeszcze skonfigurowane. Najpierw dodaj jednostkę w aplikacji Meltem.",
+        "already_configured": "Ta jednostka jest już skonfigurowana.",
+        "reconfigure_successful": "Jednostka została zaktualizowana."
+      }
+    }
+  }
+}

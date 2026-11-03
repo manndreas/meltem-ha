@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant.common import MockConfigEntry
 
-from custom_components.meltem_ventilation.const import DOMAIN
+from custom_components.meltem_ventilation.const import DOMAIN, PROFILE_METADATA
 from custom_components.meltem_ventilation.missing_sensors import (
     MISSING_SENSOR_ISSUE_AFTER_READS,
     MissingSensorIssues,
 )
+from custom_components.meltem_ventilation.modbus_client import placeholder_sensors
 from custom_components.meltem_ventilation.models import ReadJobOutcome, RoomConfig
 
 _ROOM = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc", slave=2)
@@ -157,3 +160,31 @@ async def test_removing_the_entry_removes_the_issues(
 
     assert _issue(hass, "unit_1", "co2_extract_air") is None
     assert _issue(hass, "unit_2", "humidity_supply_air") is None
+
+
+async def test_app_only_sensors_never_raise_an_issue(hass: HomeAssistant) -> None:
+    room = RoomConfig(key="unit_1", name="Unit 1", profile="ii_fc_voc", slave=2)
+    issues = _issues(hass)
+    # The app's register map is the only source for these two sensors, so a
+    # placeholder says nothing about whether the profile is right.
+    outcome = ReadJobOutcome(missing_sensor_values=frozenset({"co2_supply_air", "voc_extract_air"}))
+
+    for _ in range(2 * MISSING_SENSOR_ISSUE_AFTER_READS):
+        issues.record(room, outcome)
+
+    assert issues.raised == frozenset()
+    assert _issue(hass, "unit_1", "co2_supply_air") is None
+    assert _issue(hass, "unit_1", "voc_extract_air") is None
+
+
+@pytest.mark.parametrize("profile", sorted(PROFILE_METADATA))
+def test_every_issue_sensor_has_a_translation(profile: str) -> None:
+    strings = json.loads(
+        (Path(__file__).parents[3] / "custom_components" / DOMAIN / "strings.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    room = RoomConfig(key="unit_1", name="Unit 1", profile=profile, slave=2)
+
+    for sensor in placeholder_sensors(room):
+        assert f"missing_{sensor}" in strings["issues"]

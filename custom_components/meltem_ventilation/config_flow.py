@@ -62,7 +62,7 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Meltem Modbus."""
 
     VERSION = 2
-    MINOR_VERSION = 1
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         self._port = DEFAULT_PORT
