@@ -1518,6 +1518,20 @@ not close HW-7 or justify changing retry, timeout, or locking behavior. Keep
 the item open until the remaining observations are recorded with comparable
 success criteria.
 
+### T-3 50-ms repeat on 2026-11-03
+
+With HA stopped, the read-only `benchmark_gateway` ran the `airflow_block`
+scenario on slaves `2..7` for 10 rounds, with a `0.05 s` sleep after each
+response. All 60 reads of `41020..41021` succeeded; mean response time was
+`16.8 ms`, p95 `17.4 ms`, and the process took `4.61 s` including startup and
+link setup. No writes were sent.
+
+This is the permitted T-3 short-gap case, not a 20-requests/s integration
+setting: because the tool sleeps after each response, the mean start-to-start
+pace was about 67 ms (roughly 15 requests/s). The integration's configurable
+maximum remains 10 requests/s and `REQUEST_GAP_SECONDS` remains `0.1 s`;
+the short test does not justify changing either.
+
 ### Candidate solutions (HW-7)
 
 - **A — leave the transport unchanged** if the remaining measurements show no
@@ -1683,6 +1697,30 @@ This supports candidate A. The harness is not a separate Home Assistant
 installation; the remaining H-9 checks (USB discovery on the host, 24 hours of
 logs) stay with H-9. Local raw log, not archived: `hw9-events.jsonl`.
 
+### Integration-like rate sweep on 2026-11-03
+
+With the USB adapter confirmed as VID/PID `10AC:010A` and the port released,
+the read-only `benchmark_integration_like` client polled all six registered
+M-WRG-II units (slaves `2..7`, all `ii_plain`) through its airflow,
+temperature, status, and slow plans. Each rate ran for three cycles (72
+room/plan jobs); the job count below is not a raw Modbus-frame count.
+
+| Cap (req/s) | Successful jobs | Failed jobs | Mean job latency | p95 job latency |
+| --- | ---: | ---: | ---: | ---: |
+| 4 | 72 | 0 | 605.3 ms | 1073.1 ms |
+| 5 | 72 | 0 | 488.9 ms | 872.5 ms |
+| 6 | 72 | 0 | 413.5 ms | 736.5 ms |
+| 8 | 72 | 0 | 319.3 ms | 568.4 ms |
+| 10 | 72 | 0 | 265.5 ms | 472.2 ms |
+
+A separate `count_requests` pass over those four plans counted 54 function
+`0x03` reads (9 per unit); all succeeded, with zero consecutive timeouts and
+zero link recycles. No writes were sent. The direct client uses the
+integration's transport policy but does not run the Home Assistant coordinator,
+change options live, or provide a long soak. The result supports trying a
+higher cap, but does not establish that 10 req/s is a safe long-term default.
+The sensorless profiles also do not exercise HW-10's merged air-quality block.
+
 ### Candidate solutions (HW-9)
 
 - **A — no change** if the request spacing holds, which the transport is
@@ -1709,6 +1747,21 @@ Version 4.6.1 read `41006:1` (`-F`) or `41006:2` (`-FC`), `41009:2`, and
 item P2-2, which kept registers a unit has no sensor for out of the request.
 The merged block now includes `41007` (CO2) and `41008` (app-only VOC) on
 `-F` units and `41008` on `-FC` units.
+
+### Expected request reduction (code-level estimate)
+
+The air-quality portion changes from three requests to one (66.7% fewer).
+Including the separate temperature block, a complete sensor-equipped
+temperature refresh changes from four requests to two (50% fewer), saving 120
+requests per unit per hour at the 60-second interval. With the other scheduled
+groups unchanged, the estimated total is about 1,326 requests per unit per hour
+in 4.6.1 versus 1,206 in 5.0.0 (about 9.0% fewer). This estimate assumes the
+merged block succeeds and excludes retries and setup traffic.
+
+All six units in the 2026-11-03 rate sweep were `ii_plain`, which does not poll
+the air-quality block in either version; for that actual population, this
+optimization changes the expected routine read count by 0%. This is a
+version-to-version request-count estimate, not a live A/B benchmark.
 
 The T-8 block-read benchmark of 2026-11-02 in
 [MELTEM.md](MELTEM.md#request-pacing-and-block-reads) passed

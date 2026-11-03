@@ -150,6 +150,11 @@ implementation as Modbus TCP. Local, unarchived evidence:
 - in the one request-gap sweep, gaps of `0.05..0.3 s` passed, while gap `0`
   timed out reading the discovery list; this is not enough evidence to reduce
   the established `0.1 s` gap
+- a 50-ms T-3 repeat on all six units passed 60/60 airflow-block reads (mean
+  `16.8 ms`, p95 `17.4 ms`); the post-response gap means this was about 15
+  requests/s, not 20. It does not justify changing the integration's 10 req/s
+  cap or `0.1 s` gap; see
+  [HW-7](HARDWARE_BACKLOG.md#t-3-50-ms-repeat-on-2026-11-03)
 - a 24-hour read-only soak with six units saw no transport timeouts, protocol
   errors, Busy answers, or link recycles
 - reading another unit while a write settles caused no failures, but raised
@@ -161,6 +166,10 @@ implementation as Modbus TCP. Local, unarchived evidence:
   apart at 1, 2, 3, and 4 requests/s, including live rate changes and a reload
   (T-11 on 2026-11-02); the request gap of `0.1 s` is not kept across a link
   change, where `52..60 ms` passed without effect
+- an integration-like read sweep on six `ii_plain` units had no failed jobs at
+  4, 5, 6, 8, or 10 requests/s; mean job latency fell from `605 ms` at 4 to
+  `266 ms` at 10. It did not run the Home Assistant coordinator or a long soak;
+  details are under [HW-9](HARDWARE_BACKLOG.md#integration-like-rate-sweep-on-2026-11-03)
 - wider block-read benchmarks (T-8 on 2026-11-02, 30 rounds per variant across
   slaves `4`, `6`, and `7`) passed 30/30 for `41000..41013`, `41016..41021`,
   `40100..40104`, `41030..41033`, and `40000..40003`. Each single block read
