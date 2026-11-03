@@ -159,9 +159,11 @@ CI runs; the measured source and the threshold are configured in
 
 ## Recommended next steps
 
-1. **Complete Bronze for a Core candidacy:** provide brand assets that meet
-   the requirements in the central `core_integrations/meltem_ventilation`
-   directory.
+1. **Complete Bronze for a Core candidacy:** submit the prepared
+   [256 px icon](brand-assets/meltem_ventilation/icon.png) and
+   [512 px icon](brand-assets/meltem_ventilation/icon@2x.png) to the central
+   `core_integrations/meltem_ventilation` directory, after confirming permission
+   to use the Meltem branding. The same image can serve as the logo fallback.
 2. **Improve Gold:** decide whether a unit the gateway reports may be added
    automatically with a provisional profile, which would complete
    `dynamic-devices`; today a repair issue asks the user to add it.

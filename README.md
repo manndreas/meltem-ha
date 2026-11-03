@@ -5,7 +5,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/manndreas/meltem-ha)](https://github.com/manndreas/meltem-ha/releases)
 [![License](https://img.shields.io/github/license/manndreas/meltem-ha)](https://github.com/manndreas/meltem-ha/blob/main/LICENSE)
 
-Home Assistant custom integration for Meltem `M-WRG-S` and `M-WRG-II`
+**Unofficial** Home Assistant custom integration for Meltem `M-WRG-S` and `M-WRG-II`
 ventilation units via the Meltem `M-WRG-GW` gateway and Modbus RTU over USB or
 a raw RTU-over-TCP bridge.
 
