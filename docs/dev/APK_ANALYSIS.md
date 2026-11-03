@@ -66,10 +66,10 @@ inventory.
    An app/cloud register is not automatically a locally accessible Modbus
    holding register. See **JS 786**.
 4. The app's schedule editor uses **Monday = 0, Sunday = 6**, including the
-   values placed in its `dayOfWeek` API field. This conflicts with the
-   Sunday-zero convention documented in the separate `meltem-cloud-ha`
-   project. Do not silently change either implementation without checking
-   actual API payloads and hardware behaviour. See **JS 686, 787, 789**.
+   values placed in its `dayOfWeek` API field. A controlled save of a future
+   Wednesday switch point was consistent with `49012=2` locally, but the
+   cloud payload and actual scheduled execution were not captured. See
+   **JS 686, 787, 789** and the hardware comparison in [MELTEM.md](MELTEM.md#app-time-program-comparison-on-2026-11-03).
 5. Service metadata exposes calibration, frost protection, flap timing,
    factory reset and other sensitive settings. Presence in the bundle does
    not justify writing them. The service menu is conditional on
@@ -227,6 +227,14 @@ ping is sent.
 | --- | ---: | --- | --- | --- |
 | `0001c874` | 116852 | M-WRG-II | `VMD-22RPS44` | Five keypad settings; two-sensor settings; 149 listed service tags. |
 | `0001c853` | 116819 | M-WRG | `VMD-22RES22` | Three keypad settings; no two-sensor settings list; 104 listed service tags. |
+
+The bundled catalog has no separate `M-WRG-II P` / `M-WRG-II E` product
+entries or an app-side exchanger selector in the examined product lookup.
+The tested P and E units also share the same local product ID and product
+name; see [APP_CATALOG.md](APP_CATALOG.md#product-entries). The APK therefore
+provides no evidence that exchanger type can be auto-detected from its product
+catalog or app-specific sensor metadata. Continue to rely on the type plate;
+do not infer P/E from `41106`, `41113`, or an unverified service tag.
 
 Both catalog entries use the same active, setting, error and online-status
 register lists. The app groups names using `~` as a location/area/name
@@ -681,11 +689,22 @@ The series-specific service overrides are not part of that shared table:
   `round(value / 10) + 200`; mode `4` uses separate sides. This encoding and
   the local integration's raw airflow scaling are different contexts.
 
-**Cross-project conflict:** `meltem-cloud-ha/docs/SETTING_MAPPING.md` currently
-documents Sunday as day 0. The static app path above is direct evidence for
-Monday-zero in this app version, but it does not prove how every cloud or
-gateway version interprets the number. Compare sanitized live app requests,
-API readback and the actual day of operation before changing an integration.
+The static app path and the controlled `49012=2` read for a Wednesday point
+are consistent with Monday-zero for this app and device. Three additional
+rounds across all six units found `41106=0` on units 2–4 and `3` on units 5–7;
+the user reported that the latter programs were not active. The values and the
+unit-5 schedule-register responses are recorded in
+[MELTEM.md](MELTEM.md#cross-unit-scheduler-state-on-2026-11-03). The sample
+supports, but does not prove, that `3` means a stored, inactive program.
+Neither it nor the one-point save proves how every firmware executes a
+weekday. A controlled future multi-point test remains useful.
+
+A subsequent app-only two-point test on unit `4` changed the second point
+from LOW to MEDIUM, but the readable `49011..49017` tuple continued to show
+the first HIGH point. The user removed both test entries afterwards. This
+shows the sampled registers are not a complete, directly readable schedule
+list in the tested state; the details are recorded in
+[MELTEM.md](MELTEM.md#two-point-app-schedule-on-2026-11-03).
 
 ## Implications and open questions
 
@@ -696,10 +715,11 @@ API readback and the actual day of operation before changing an integration.
 - The app's 13-word cloud control request and local serial writes have
   different transport and confirmation semantics. Existing component
   register ranges and request timing remain unchanged.
-- Validate the weekday discrepancy before implementing or changing schedules.
-  Separate UI-selected day, JSON payload, cloud readback and physical execution.
-- Reconcile app tags `76`, `154`, `46` and `47` with any separate cloud
-  implementation before exposing them as differently labelled controls.
+- Validate the weekday mapping against a future point's actual execution
+  before implementing local schedule writes.
+- Do not map app service tags `76`, `154`, `46`, or `47` to local Modbus writes:
+  the APK metadata alone does not establish a local register mapping or safe
+  write sequence.
 - App metadata for product, sensors, ranges, defaults, VOC units and service
   options is not sufficient to infer an exact device profile or capability.
   Continue to distinguish absent, invalid, stale and unreadable values.

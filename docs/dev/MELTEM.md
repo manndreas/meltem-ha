@@ -709,6 +709,59 @@ and per-phase output are local, not archived: `snapshot-before.txt`,
 `schedule-disabled.txt`, `schedule-restored.txt`, and
 `schedule-registers-active.txt`.
 
+### Two-point app schedule on 2026-11-03
+
+After confirming slave `4` was again HIGH at `60/60 m³/h`, with no stored
+switch points and `41106=0`, the user saved two future points for Wednesday:
+12:00 HIGH and 14:00 LOW. The time program stayed disabled. No Modbus write was
+performed.
+
+The app showed both points. Opening the second point for editing did not change
+the raw register reads: three rounds still returned
+`49011..49017 = [0, 2, 12, 0, 3, 230, 0]`. The user then changed the second
+point from LOW to MEDIUM and saved, still leaving the program disabled.
+Three more rounds returned exactly the same seven values. Thus this read path
+exposed the first HIGH point, but did not expose the second point or its
+changed mode. It is not yet known whether the firmware holds a selected point
+behind a selector, whether the cloud schedule is stored elsewhere, or whether
+these `490xx` values are only a status/workaround view. `49011` remained `0`;
+it was not written or advanced during this test.
+
+The user restored the second point to LOW and deleted both test points. A
+final three-round check showed `41106=0`, `49011..49017` all zero,
+`49000..49002=[3, 3, 0]`, `41100..41102=[3, 230, 0]`, airflow `60/60`, and
+error flags `[0, 0, 0]`. This verifies the app-reported cleanup and current
+operating state, but not the complete contents of any hidden stored schedule.
+Raw output is local, not archived: `two-point-schedule-before.txt`,
+`two-point-schedule-second-open.txt`, `two-point-schedule-medium.txt`, and
+`two-point-schedule-cleanup.txt`.
+
+### Cross-unit scheduler state on 2026-11-03
+
+A further read-only check on all six registered units repeated
+`41106` three times, five seconds apart. All devices reported error flags
+`41016..41018 = [0, 0, 0]`; airflow and current mode stayed stable.
+
+| Unit | `41106` in each of 3 reads | App state available |
+| ---: | ---: | --- |
+| 2 | `0` | Not checked during this comparison. |
+| 3 | `0` | Not checked during this comparison. |
+| 4 | `0` | User confirmed the temporary point was deleted and the program disabled. |
+| 5 | `3` | User had reported the app program was not active; whether points remain stored was not checked. |
+| 6 | `3` | User had reported the app program was not active; whether points remain stored was not checked. |
+| 7 | `3` | User had reported the app program was not active; whether points remain stored was not checked. |
+
+This rules against treating `41106=3` as “program active.” Together with the
+controlled unit-4 sequence, it is consistent with `1` meaning active and `3`
+meaning inactive with a schedule configured, but that latter interpretation
+is not proven for units 5–7. Unit 5 additionally returned
+`49000..49002 = [0, 3, 1]`, `49011=14`, and zero in `49012..49017`;
+units 2, 3, 6, and 7 mostly returned `0x05` on the individual schedule
+register reads. These differences prevent treating the `490xx` values as a
+decoded list or a universal schedule readback. No Modbus writes were made.
+The three-round raw log is local, not archived:
+`scheduler-cross-unit-repeat.txt`.
+
 At 01:16, two more reads on unit `4` still found set-side
 `41120..41124=[0, 0, 0, 0, 0]` and `41132=0`, while the read-only status
 remained `[3, 230, 0]`, airflow `60/60`, and error `0`. The test plan has no

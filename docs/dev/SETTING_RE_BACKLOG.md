@@ -11,10 +11,10 @@ Purpose:
 - avoid broad blind scans across the full register space
 - make before/after captures reproducible
 
-This document is intentionally about local Modbus-facing reverse engineering,
-not the cloud API.
-
-For cloud-side app traffic mapping, see `meltem-cloud-ha/docs/SETTING_MAPPING.md`.
+This document is intentionally about local Modbus-facing reverse engineering.
+The static APK analysis, including the cloud API calls found in the app, is
+summarized in [APK_ANALYSIS.md](APK_ANALYSIS.md); cloud API register names do
+not imply corresponding local Modbus registers.
 
 The original raw captures for the March/April 2026 experiments were local
 working files and are not archived in this repository. Their recorded
