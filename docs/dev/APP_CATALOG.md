@@ -93,13 +93,13 @@ the configured profile or entity set from one poll.
 
 ## Register and mode leads
 
-The app's table and code suggest the following unit-side leads. Labels,
+The app's table and code suggest the following unit-side readings. Labels,
 access flags, and numerical mode codes are app metadata, not proof that local
 Modbus reads or writes are supported or safe:
 
 | Unit register | App-derived lead |
 | --- | --- |
-| `41008` / `41012` | VOC on the extract side / CO2 on the supply side. Previous reads of absent or unused sensors returned `32767`; see [MELTEM.md](MELTEM.md#identity-and-readable-registers). |
+| `41008` / `41012` | App labels extract-air VOC / supply-air CO2. Previous reads on units without these sensors returned `32767`; the integration exposes them only as disabled-by-default raw diagnostics for the VOC profile. See [MELTEM.md](MELTEM.md#app-derived-register-survey-on-2026-11-03). |
 | `41015` / `41019` | Speed capability bits / actual speed mode; the table marks `41019` for `0x0001C853`. |
 | `41100` | One table entry is keyed by `41100` but contains `41101` as its register field. This inconsistency limits confidence in the table. |
 | `41103..41106` | Temporary override mode and submodes, followed by scheduler state. |

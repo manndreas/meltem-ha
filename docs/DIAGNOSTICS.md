@@ -101,6 +101,12 @@ connect an HA GPIO or relay directly to the unit's mains-voltage input; wiring
 and compatible accessories must follow the unit manual and be handled by a
 qualified installer.
 
+Profiles with the matching sensor capability provide CO2 and VOC measurements
+for both extract and supply air. All four use ppm, their corresponding Home
+Assistant CO2 or VOC device class, and are enabled by default when supported by
+the selected profile. `32767` is reported as unknown; other values outside the
+same plausible range used for the corresponding existing sensor are rejected.
+
 **RF fault status** (`40103`) and **Value error** (`40104`) are disabled by
 default. They use the upstream Airios interpretation: fault status is off for
 `0`, on for nonzero values except `0xFFFF`, and unknown for `0xFFFF`. Value

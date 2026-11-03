@@ -31,6 +31,9 @@
   the existing temperature and humidity readings, without additional Modbus
   requests.
 - Include the raw current-mode registers in the diagnostics download.
+- Add extract-air VOC (`41008`) and supply-air CO2 (`41012`) measurements,
+  using the APK's ppm mapping and the same profile-based behavior as the
+  existing CO2 and VOC sensors.
 - Show the configured airflow, switch-on delay, and run-on time of the external
   control input as optional, read-only diagnostics. Each sensor is disabled by
   default and reads only its own register while enabled.

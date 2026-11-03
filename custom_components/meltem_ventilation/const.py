@@ -269,13 +269,15 @@ RAW_VALUE_TO_SENSOR_MODE: dict[int, str] = {
 }
 SENSOR_OPERATION_MODES: tuple[str, ...] = tuple(SENSOR_MODE_TO_RAW_VALUE)
 
-# Read-side sensor subcodes in 41101, from the ioBroker decode and not yet seen
-# on hardware; 144 is an unverified extra (HW-4). Used for every profile.
+# Read-side sensor subcodes in 41101. This table includes the community decode
+# and the additional automatic/CO2 values listed by the Meltem app.
 MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE: dict[int, int] = {
     48: MODE_AUTOMATIC_VALUE,
+    80: MODE_AUTOMATIC_VALUE,
     MODE_HUMIDITY_CONTROL_VALUE: MODE_HUMIDITY_CONTROL_VALUE,
     MODE_CO2_CONTROL_VALUE: MODE_CO2_CONTROL_VALUE,
     176: MODE_CO2_CONTROL_VALUE,
+    208: MODE_CO2_CONTROL_VALUE,
 }
 
 DIRECTION_SUPPLY = "supply"
@@ -325,7 +327,9 @@ REGISTER_HUMIDITY_EXTRACT_AIR = 41006
 REGISTER_CO2_EXTRACT_AIR = 41007
 REGISTER_SUPPLY_AIR_TEMPERATURE = 41009
 REGISTER_HUMIDITY_SUPPLY_AIR = 41011
+REGISTER_CO2_SUPPLY_AIR = 41012
 REGISTER_VOC_SUPPLY_AIR = 41013
+REGISTER_VOC_EXTRACT_AIR = 41008
 REGISTER_ERROR_STATUS = 41016
 REGISTER_FILTER_CHANGE_DUE = 41017
 REGISTER_FROST_PROTECTION_ACTIVE = 41018
@@ -368,7 +372,6 @@ EXTERNAL_INPUT_LIMITS: dict[str, tuple[int, int]] = {
     "external_input_on_delay": (0, 240),
     "external_input_run_on": (0, 240),
 }
-
 REGISTER_GATEWAY_NUMBER_OF_NODES = 43901
 REGISTER_GATEWAY_MAC_START = 41012
 REGISTER_GATEWAY_UTC_CLOCK = 41015
@@ -427,6 +430,8 @@ READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
             "absolute_humidity_extract_air",
             "absolute_humidity_supply_air",
             "co2_extract_air",
+            "co2_supply_air",
+            "voc_extract_air",
             "voc_supply_air",
         }
     ),
@@ -486,6 +491,8 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "absolute_humidity_extract_air",
             "absolute_humidity_supply_air",
             "co2_extract_air",
+            "co2_supply_air",
+            "voc_extract_air",
             "voc_supply_air",
             "extract_air_flow",
             "supply_air_flow",
@@ -535,6 +542,8 @@ ENTITY_PROFILES: dict[str, frozenset[str]] = {
     "absolute_humidity_extract_air": HUMIDITY_PROFILES,
     "absolute_humidity_supply_air": HUMIDITY_PROFILES,
     "co2_extract_air": CO2_PROFILES,
+    "co2_supply_air": CO2_PROFILES,
+    "voc_extract_air": VOC_PROFILES,
     "voc_supply_air": VOC_PROFILES,
     **{
         key: HUMIDITY_PROFILES if key.startswith("humidity_") else CO2_PROFILES

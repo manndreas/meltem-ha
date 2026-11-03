@@ -258,6 +258,8 @@ class TestDescriptionMetadata:
             ("humidity_extract_air", "humidity", "measurement"),
             ("humidity_supply_air", "humidity", "measurement"),
             ("co2_extract_air", "carbon_dioxide", "measurement"),
+            ("co2_supply_air", "carbon_dioxide", "measurement"),
+            ("voc_extract_air", "volatile_organic_compounds_parts", "measurement"),
             ("voc_supply_air", "volatile_organic_compounds_parts", "measurement"),
             ("extract_air_flow", "volume_flow_rate", "measurement"),
             ("supply_air_flow", "volume_flow_rate", "measurement"),
@@ -283,11 +285,26 @@ class TestDescriptionMetadata:
         )
 
     def test_concentration_entities_use_ratio_unit(self) -> None:
-        for key in ("co2_extract_air", "voc_supply_air", "co2_starting_point"):
+        for key in (
+            "co2_extract_air",
+            "co2_supply_air",
+            "voc_extract_air",
+            "voc_supply_air",
+            "co2_starting_point",
+        ):
             assert (
                 getattr(_DESCRIPTIONS[key], "native_unit_of_measurement", None)
                 == UnitOfRatio.PARTS_PER_MILLION
             )
+
+    @pytest.mark.parametrize(
+        "key",
+        ["co2_extract_air", "co2_supply_air", "voc_extract_air", "voc_supply_air"],
+    )
+    def test_air_quality_measurements_are_enabled_and_not_diagnostics(self, key: str) -> None:
+        description = _DESCRIPTIONS[key]
+        assert description.entity_category is None
+        assert description.entity_registry_enabled_default is True
 
     @pytest.mark.parametrize(
         ("key", "entity_category"),

@@ -65,6 +65,8 @@ def _full_state() -> RoomState:
         absolute_humidity_extract_air=absolute_humidity(21.5, 48),
         absolute_humidity_supply_air=absolute_humidity(19.0, 41),
         co2_extract_air=780,
+        co2_supply_air=850,
+        voc_extract_air=420,
         voc_supply_air=120,
         extract_air_flow=40,
         supply_air_flow=42,

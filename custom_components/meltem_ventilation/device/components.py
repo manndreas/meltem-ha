@@ -18,6 +18,7 @@ from ..const import (
     REGISTER_CO2_MAX_LEVEL,
     REGISTER_CO2_MIN_LEVEL,
     REGISTER_CO2_STARTING_POINT,
+    REGISTER_CO2_SUPPLY_AIR,
     REGISTER_CURRENT_LEVEL,
     REGISTER_ERROR_STATUS,
     REGISTER_EXHAUST_AIR_TEMPERATURE,
@@ -50,6 +51,7 @@ from ..const import (
     REGISTER_SUPPLY_AIR_FLOW,
     REGISTER_SUPPLY_AIR_TEMPERATURE,
     REGISTER_SUPPLY_MODE_STATUS,
+    REGISTER_VOC_EXTRACT_AIR,
     REGISTER_VOC_SUPPLY_AIR,
 )
 
@@ -173,14 +175,16 @@ class Temperatures(Component):
 
 
 class AirQuality(Component):
-    """Extract air humidity/CO2, supply air temperature, and supply air humidity/VOC."""
+    """Air quality and temperature registers in the grouped sensor block."""
 
     register_ranges = ((REGISTER_HUMIDITY_EXTRACT_AIR, REGISTER_VOC_SUPPLY_AIR),)
 
     humidity_extract_air = raw_register(REGISTER_HUMIDITY_EXTRACT_AIR)
     co2_extract_air = raw_register(REGISTER_CO2_EXTRACT_AIR)
+    voc_extract_air = raw_register(REGISTER_VOC_EXTRACT_AIR)
     supply_air_temperature = _float32(REGISTER_SUPPLY_AIR_TEMPERATURE)
     humidity_supply_air = raw_register(REGISTER_HUMIDITY_SUPPLY_AIR)
+    co2_supply_air = raw_register(REGISTER_CO2_SUPPLY_AIR)
     voc_supply_air = raw_register(REGISTER_VOC_SUPPLY_AIR)
 
 

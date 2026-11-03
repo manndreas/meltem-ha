@@ -257,8 +257,9 @@ Potentially useful but still unclassified areas are:
   has returned both `0x05` exceptions and successful values in different
   probes.
 - within the reported `41000..41029` island: `41008`, `41012..41015`,
-  `41022..41026`, and `41028..41029` have no confirmed semantics. `41013` is
-  used as VOC for one selected profile, but that mapping remains unverified.
+  `41022..41026`, and `41028..41029` have no manufacturer-documented
+  semantics. The integration follows the APK mapping for `41008` (extract VOC),
+  `41012` (supply CO2), and `41013` (supply VOC), using ppm for these sensors.
 - `41019` behaved as gateway uptime on address `1`; that meaning should not be
   assumed for room-unit addresses.
 - `40103` and `40104` returned stable values in separate probes, but are not
@@ -573,11 +574,11 @@ comparison, not a verified mapping for the locally tested `VMD-22RPS44`.
 
 ### Registers not covered by the collected manufacturer documents
 
-The integration uses `41013` as "VOC, supply air" (UINT16, `ppm`) for the
-`O/VOC-AUL` profile. An earlier version of this file listed the register and
-an `O/VOC-AUL` column (all temperatures, both humidities, CO2 and VOC) in the
-sensor matrix. None of the documents collected in `docs/meltem/` contains the
-register or the option. Their origin is unknown; treat both as unverified.
+The integration follows the APK map for `41008` (VOC, extract air), `41012`
+(CO2, supply air), and `41013` (VOC, supply air), and uses ppm for all three.
+None of the documents collected in `docs/meltem/` contains these registers or
+the `O/VOC-AUL` option. The 2026-11-03 survey covered only sensorless units, so
+it did not capture positive sensor readings; see the survey above.
 
 ### Slave 5 compared with the other units
 

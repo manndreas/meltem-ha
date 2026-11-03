@@ -162,6 +162,8 @@ class RoomState:
     absolute_humidity_extract_air: float | None = None
     absolute_humidity_supply_air: float | None = None
     co2_extract_air: int | None = None
+    co2_supply_air: int | None = None
+    voc_extract_air: int | None = None
     voc_supply_air: int | None = None
     extract_air_flow: int | None = None
     supply_air_flow: int | None = None

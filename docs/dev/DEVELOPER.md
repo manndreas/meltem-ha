@@ -75,6 +75,10 @@ are retained before mode normalization for the diagnostics download.
 External-input diagnostics use independent single-register reads only while
 enabled, with the shared gateway lock and transport rate limit. At most one
 such room read is added per scheduler tick; disabled entities trigger none.
+The four CO2/VOC measurements use ppm and normal air-quality polling. Registers
+`41008` and `41012` are decoded from the existing `41006..41013` block on the
+VOC profile. CO2 supply on CO2-only profiles uses a separate `41012` component
+read; component register ranges remain unchanged.
 
 `WriteConfirmations` keeps outcomes per room and write key for internal
 read-health evaluation. Confirmation deadlines and recent failed or

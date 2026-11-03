@@ -39,6 +39,7 @@ from custom_components.meltem_ventilation.const import (
     PRESET_MODE_CODE_LOW,
     PRESET_MODE_CODE_MEDIUM,
     PROFILE_METADATA,
+    REGISTER_CO2_SUPPLY_AIR,
     REGISTER_CURRENT_LEVEL,
     REGISTER_EXHAUST_AIR_TEMPERATURE,
     REGISTER_EXTRACT_AIR_FLOW,
@@ -652,8 +653,9 @@ class TestMeasuredValues:
                     _float_words(22.0) + _float_words(5.5) + _float_words(19.0)
                 ),
                 REGISTER_SUPPLY_AIR_TEMPERATURE: _float_words(18.5),
-                REGISTER_HUMIDITY_EXTRACT_AIR: [44, 780],
+                REGISTER_HUMIDITY_EXTRACT_AIR: [44, 780, 420],
                 REGISTER_HUMIDITY_SUPPLY_AIR: [46, 0, 120],
+                REGISTER_CO2_SUPPLY_AIR: [850],
             }
         )
 
@@ -667,9 +669,32 @@ class TestMeasuredValues:
             "humidity_extract_air": 44,
             "humidity_supply_air": 46,
             "co2_extract_air": 780,
+            "co2_supply_air": 850,
+            "voc_extract_air": 420,
             "voc_supply_air": 120,
         }
         assert _values(state, expected) == expected
+
+    async def test_co2_only_profile_reads_supply_co2_without_expanding_group_range(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        unit.holding.update(
+            {
+                REGISTER_EXTRACT_AIR_TEMPERATURE: (
+                    _float_words(22.0) + _float_words(5.5) + _float_words(19.0)
+                ),
+                REGISTER_SUPPLY_AIR_TEMPERATURE: _float_words(18.5),
+                REGISTER_HUMIDITY_EXTRACT_AIR: [44, 780],
+                REGISTER_HUMIDITY_SUPPLY_AIR: [46],
+                REGISTER_CO2_SUPPLY_AIR: [850],
+            }
+        )
+
+        state = await client.read_room_state(_FC, RoomState(), _TEMPERATURES)
+
+        assert state.co2_extract_air == 780
+        assert state.co2_supply_air == 850
+        assert _reads(unit) == [(41000, 6), (41006, 6), (REGISTER_CO2_SUPPLY_AIR, 1)]
 
     async def test_nan_temperature_keeps_the_previous_value(
         self, client: MeltemModbusClient, unit: MockModbusUnit
@@ -712,7 +737,7 @@ class TestMeasuredValues:
                     _float_words(22.0) + _float_words(5.5) + _float_words(19.0)
                 ),
                 REGISTER_SUPPLY_AIR_TEMPERATURE: _float_words(18.5),
-                REGISTER_HUMIDITY_EXTRACT_AIR: [239, 32767],
+                REGISTER_HUMIDITY_EXTRACT_AIR: [239, 32767, 32767],
                 REGISTER_HUMIDITY_SUPPLY_AIR: [239, 32767, 32767],
             }
         )
@@ -720,6 +745,8 @@ class TestMeasuredValues:
             humidity_extract_air=44,
             humidity_supply_air=46,
             co2_extract_air=780,
+            co2_supply_air=850,
+            voc_extract_air=120,
             voc_supply_air=120,
         )
 
@@ -729,11 +756,15 @@ class TestMeasuredValues:
         assert state.humidity_extract_air is None
         assert state.humidity_supply_air is None
         assert state.co2_extract_air is None
+        assert state.co2_supply_air is None
+        assert state.voc_extract_air is None
         assert state.voc_supply_air is None
         assert outcome.missing_sensor_values == {
             "humidity_extract_air",
             "humidity_supply_air",
             "co2_extract_air",
+            "co2_supply_air",
+            "voc_extract_air",
             "voc_supply_air",
         }
         assert outcome.sensor_values == frozenset()
@@ -754,8 +785,8 @@ class TestMeasuredValues:
                     _float_words(22.0) + _float_words(5.5) + _float_words(19.0)
                 ),
                 REGISTER_SUPPLY_AIR_TEMPERATURE: _float_words(18.5),
-                REGISTER_HUMIDITY_EXTRACT_AIR: [45, 800],
-                REGISTER_HUMIDITY_SUPPLY_AIR: [47, 32767, 32767],
+                REGISTER_HUMIDITY_EXTRACT_AIR: [45, 800, 400],
+                REGISTER_HUMIDITY_SUPPLY_AIR: [47, 800, 32767],
             }
         )
 
@@ -763,12 +794,16 @@ class TestMeasuredValues:
 
         assert state.humidity_extract_air == 45
         assert state.co2_extract_air == 800
+        assert state.voc_extract_air == 400
         assert state.humidity_supply_air == 47
+        assert state.co2_supply_air == 800
         assert state.voc_supply_air is None
         assert outcome.missing_sensor_values == {"voc_supply_air"}
         assert outcome.sensor_values == {
             "humidity_extract_air",
             "co2_extract_air",
+            "voc_extract_air",
+            "co2_supply_air",
             "humidity_supply_air",
         }
         assert state.read_health_for("temperature").consecutive_failures == 0
@@ -1365,7 +1400,7 @@ class TestModeReadBackoff:
 class TestModeDecoding:
     @pytest.mark.parametrize(
         ("raw_submode", "expected_mode"),
-        [(48, "automatic"), (176, "co2_control"), (80, None), (208, None)],
+        [(48, "automatic"), (176, "co2_control"), (80, "automatic"), (208, "co2_control")],
     )
     async def test_raw_mode_status_is_preserved_before_normalization(
         self,

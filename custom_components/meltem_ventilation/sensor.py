@@ -341,6 +341,20 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         value_fn=lambda state: state.co2_extract_air,
     ),
     MeltemSensorDescription(
+        key="co2_supply_air",
+        device_class=SensorDeviceClass.CO2,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
+        value_fn=lambda state: state.co2_supply_air,
+    ),
+    MeltemSensorDescription(
+        key="voc_extract_air",
+        device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
+        value_fn=lambda state: state.voc_extract_air,
+    ),
+    MeltemSensorDescription(
         key="voc_supply_air",
         device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -431,7 +445,6 @@ EXTERNAL_INPUT_SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         entity_registry_enabled_default=False,
     ),
 )
-
 
 GATEWAY_UPTIME_DESCRIPTION = SensorEntityDescription(
     key="gateway_uptime",

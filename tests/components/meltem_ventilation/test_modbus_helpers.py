@@ -19,11 +19,13 @@ from custom_components.meltem_ventilation.const import (
     BASE_SUPPORTED_ENTITY_KEYS,
     REGISTER_APP_SETUP_CODE,
     REGISTER_CO2_EXTRACT_AIR,
+    REGISTER_CO2_SUPPLY_AIR,
     REGISTER_GATEWAY_NODE_ADDRESS_1,
     REGISTER_GATEWAY_NUMBER_OF_NODES,
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_PRODUCT_ID,
+    REGISTER_VOC_EXTRACT_AIR,
     REGISTER_VOC_SUPPLY_AIR,
 )
 from custom_components.meltem_ventilation.device import PolicyUnit
@@ -50,6 +52,8 @@ _CAPABILITY_REGISTERS = (
     REGISTER_HUMIDITY_EXTRACT_AIR,
     REGISTER_HUMIDITY_SUPPLY_AIR,
     REGISTER_CO2_EXTRACT_AIR,
+    REGISTER_CO2_SUPPLY_AIR,
+    REGISTER_VOC_EXTRACT_AIR,
     REGISTER_VOC_SUPPLY_AIR,
 )
 
@@ -236,13 +240,15 @@ class TestDiscoverGatewayNodes:
 
 
 class TestDetectSlaveDetails:
-    async def test_detects_voc_profile_with_minimal_reads(self, unit: MockModbusUnit) -> None:
+    async def test_detects_voc_profile_from_sensor_reads(self, unit: MockModbusUnit) -> None:
         unit.holding.update(
             {
                 REGISTER_PRODUCT_ID: _PRODUCT_ID_WORDS,
                 REGISTER_APP_SETUP_CODE: [0x0001, 0x0000],
                 REGISTER_HUMIDITY_EXTRACT_AIR: 45,
                 REGISTER_CO2_EXTRACT_AIR: 800,
+                REGISTER_CO2_SUPPLY_AIR: 850,
+                REGISTER_VOC_EXTRACT_AIR: 100,
                 REGISTER_HUMIDITY_SUPPLY_AIR: 48,
                 REGISTER_VOC_SUPPLY_AIR: 120,
             }
@@ -261,6 +267,8 @@ class TestDetectSlaveDetails:
             (REGISTER_HUMIDITY_EXTRACT_AIR, 1),
             (REGISTER_HUMIDITY_SUPPLY_AIR, 1),
             (REGISTER_CO2_EXTRACT_AIR, 1),
+            (REGISTER_CO2_SUPPLY_AIR, 1),
+            (REGISTER_VOC_EXTRACT_AIR, 1),
             (REGISTER_VOC_SUPPLY_AIR, 1),
             (REGISTER_APP_SETUP_CODE, 2),
         ]
@@ -277,6 +285,24 @@ class TestDetectSlaveDetails:
         assert result == UnitProbeResult(
             "plain", "ID 116852 | App: M-WRG-II (VMD-22RPS44) | basic", 116852
         )
+
+    @pytest.mark.parametrize(
+        ("register", "value", "expected_profile"),
+        [
+            (REGISTER_CO2_SUPPLY_AIR, 850, "fc"),
+            (REGISTER_VOC_EXTRACT_AIR, 100, "fc_voc"),
+        ],
+    )
+    async def test_new_sensor_registers_detect_their_profile(
+        self, unit: MockModbusUnit, register: int, value: int, expected_profile: str
+    ) -> None:
+        unit.holding[register] = value
+        unit.fail_read(REGISTER_PRODUCT_ID, IllegalDataAddressError())
+        for capability_register in _CAPABILITY_REGISTERS:
+            if capability_register != register:
+                unit.fail_read(capability_register, IllegalDataAddressError())
+
+        assert (await detect_slave_details(unit)).profile == expected_profile
 
     async def test_an_unreadable_app_setup_code_does_not_fail_profile_detection(
         self, unit: MockModbusUnit
@@ -331,6 +357,8 @@ class TestDetectSlaveDetails:
                 REGISTER_HUMIDITY_EXTRACT_AIR: 0xFFFF,
                 REGISTER_HUMIDITY_SUPPLY_AIR: 0xFFFF,
                 REGISTER_CO2_EXTRACT_AIR: 0,
+                REGISTER_CO2_SUPPLY_AIR: 0,
+                REGISTER_VOC_EXTRACT_AIR: 0xFFFF,
                 REGISTER_VOC_SUPPLY_AIR: 0xFFFF,
             }
         )
@@ -345,9 +373,11 @@ class TestDetectSlaveDetails:
         [
             (REGISTER_HUMIDITY_EXTRACT_AIR, 239),
             (REGISTER_CO2_EXTRACT_AIR, 32767),
+            (REGISTER_CO2_SUPPLY_AIR, 32767),
+            (REGISTER_VOC_EXTRACT_AIR, 32767),
         ],
     )
-    async def test_app_sensor_sentinels_do_not_suggest_a_profile(
+    async def test_air_quality_sensor_sentinels_do_not_suggest_a_profile(
         self, unit: MockModbusUnit, register: int, sentinel: int
     ) -> None:
         unit.holding[register] = sentinel
@@ -403,6 +433,8 @@ class TestPlausibilityChecks:
             ("humidity_extract_air", 0, 100),
             ("humidity_supply_air", 0, 100),
             ("co2_extract_air", 250, 10000),
+            ("co2_supply_air", 250, 10000),
+            ("voc_extract_air", 0, 10000),
             ("voc_supply_air", 0, 10000),
         ],
     )

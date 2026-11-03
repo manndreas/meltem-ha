@@ -237,6 +237,12 @@
       "external_input_run_on": {
         "name": "External control input run-on time"
       },
+      "voc_extract_air": {
+        "name": "Extract air VOC"
+      },
+      "co2_supply_air": {
+        "name": "Supply air CO2"
+      },
       "co2_extract_air": {
         "name": "Extract air CO2"
       },

@@ -73,8 +73,8 @@ _HUMIDITY_SENSORS = {
     "absolute_humidity_extract_air",
     "absolute_humidity_supply_air",
 }
-_CO2_SENSORS = {"co2_extract_air"}
-_VOC_SENSORS = {"voc_supply_air"}
+_CO2_SENSORS = {"co2_extract_air", "co2_supply_air"}
+_VOC_SENSORS = {"voc_extract_air", "voc_supply_air"}
 
 _BASE_BINARY_SENSORS = {
     "error_status",
@@ -715,6 +715,50 @@ async def test_external_input_sensor_reads_only_while_enabled(
     assert state.attributes["unit_of_measurement"] == unit
     assert await hass.config_entries.async_unload(entry_id)
     assert not coordinator.optional_room_reads[("unit_1", key)].enabled
+
+
+@pytest.mark.parametrize(
+    ("key", "profile_with_sensor", "profile_without_sensor", "device_class"),
+    [
+        ("co2_supply_air", "ii_fc", "ii_f", "carbon_dioxide"),
+        (
+            "voc_extract_air",
+            "ii_fc_voc",
+            "ii_fc",
+            "volatile_organic_compounds_parts",
+        ),
+    ],
+)
+async def test_air_quality_sensor_is_enabled_only_for_profiles_with_that_sensor(
+    hass: HomeAssistant,
+    setup_profile: SetupProfile,
+    key: str,
+    profile_with_sensor: str,
+    profile_without_sensor: str,
+    device_class: str,
+) -> None:
+    registry = er.async_get(hass)
+    entry_id = await setup_profile(profile_with_sensor)
+    entity_id = registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_{key}"
+    )
+    assert entity_id is not None
+    registered = registry.async_get(entity_id)
+    assert registered is not None
+    assert registered.disabled_by is None
+    assert registered.entity_category is None
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes["device_class"] == device_class
+    assert state.attributes["unit_of_measurement"] == "ppm"
+
+    plain_entry_id = await setup_profile(profile_without_sensor)
+    assert (
+        registry.async_get_entity_id(
+            Platform.SENSOR, DOMAIN, f"{DOMAIN}_{plain_entry_id}_unit_1_{key}"
+        )
+        is None
+    )
 
 
 async def test_app_setup_code_keeps_stored_code_when_runtime_read_fails(

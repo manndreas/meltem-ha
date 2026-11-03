@@ -27,6 +27,8 @@ gateways, Home Assistant hosts, or other connected equipment.
 - writable humidity and CO2 control thresholds for supported profiles
 - optional, read-only absolute-humidity estimates and external-control-input
   settings; these diagnostics are disabled by default and do not write to the unit
+- CO2 and VOC measurements for extract and supply air, reported in ppm and
+  enabled by default on profiles that support each sensor
 - gateway connected-device count, measured airflow totals and delta, connection
   diagnostics, and optional RF, uptime, UTC clock, and communication-quality sensors
 - per-unit reachability, read health, last successful update, measured airflow

@@ -111,8 +111,11 @@ _OPTIONAL_DIAGNOSTIC_COMPONENTS = (_BRIDGE_RF_COMPONENTS - {"rf_comm_status"}) |
 _AIR_QUALITY_FIELDS: tuple[tuple[str, str, frozenset[str]], ...] = (
     ("humidity_extract_air", "air_quality", HUMIDITY_PROFILES),
     ("co2_extract_air", "air_quality", CO2_PROFILES),
+    ("voc_extract_air", "air_quality", VOC_PROFILES),
+    ("co2_supply_air", "air_quality", VOC_PROFILES),
     ("humidity_supply_air", "air_quality", HUMIDITY_PROFILES),
     ("voc_supply_air", "air_quality", VOC_PROFILES),
+    ("co2_supply_air", "co2_supply_air", CO2_PROFILES - VOC_PROFILES),
 )
 
 
@@ -767,7 +770,13 @@ def _due_fields(room: RoomConfig, plan: RefreshPlan) -> dict[str, _FieldRead]:
     supply_temp_component = "air_quality" if environment else "supply_temperature"
     add("supply_air_temperature", supply_temp_component, "temperature", extended and temperatures)
     for name, component, profiles in _AIR_QUALITY_FIELDS:
-        add(name, component, "temperature", environment and room.profile in profiles)
+        add(
+            name,
+            component,
+            "temperature",
+            environment and room.profile in profiles,
+            attribute="value" if component == name else None,
+        )
     add("error_status", "status", "status", plan.refresh_status)
     add("frost_protection_active", "status", "status", plan.refresh_status)
     add("filter_change_due", "status", "filter", plan.refresh_filter_change_due)

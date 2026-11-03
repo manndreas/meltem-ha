@@ -253,8 +253,8 @@ labels, not independently established Modbus access rights.
 | `40103` | Unit fault | R; included in error checks. |
 | `41000`, `41002`, `41004` | Exhaust, inlet and outlet temperatures | R; metadata range `-200..200`, UI uses strict bounds. Local measured temperature mapping differs; see [MELTEM.md](MELTEM.md#temperature-register-quirk). |
 | `41006`, `41011` | Exhaust and supply humidity | R; metadata min 1, max 100. |
-| `41007`, `41012` | Exhaust and supply CO2 | R; metadata min 0, max 32766. |
-| `41008`, `41013` | Exhaust and supply VOC | R; app says ppm, but the physical unit/scaling is not verified. |
+| `41007`, `41012` | Exhaust and supply CO2 | R; metadata min 0, max 32766; the integration uses ppm and exposes each on CO2-capable profiles. |
+| `41008`, `41013` | Exhaust and supply VOC | R; metadata says ppm; the integration uses ppm and exposes each on VOC-capable profiles. |
 | `41009` | Supply temperature | R; same temperature metadata. |
 | `41015` | Ventilation-speed capability bits | R. |
 | `41016`, `41017` | Fault code, dirty-filter flag | R; included in error checks. |
@@ -286,8 +286,9 @@ the same as these sentinels. See **JS 783** and
 
 The UI derives absolute humidity from temperature and relative humidity rather
 than reading an extra register. The filter display changes colour at 10 days.
-The app's VOC unit labels and temperature labels must not override local
-measurements.
+The integration follows the APK mapping and exposes all four CO2/VOC register
+values as ppm measurements on profiles with the matching sensor capability.
+No positive reading from a sensor-equipped unit has yet been captured.
 
 ## Runtime modes and airflow
 

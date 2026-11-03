@@ -438,7 +438,14 @@ class TestConfigFlowUser:
         co2_unit = gateway_link.for_unit(2)
         # Product ID 116852 as a little-endian uint32, then humidity and CO2.
         co2_unit.holding.update(
-            {40002: [116852 & 0xFFFF, 116852 >> 16], 41006: 45, 41007: 800, 41011: 50}
+            {
+                40002: [116852 & 0xFFFF, 116852 >> 16],
+                41006: 45,
+                41007: 800,
+                41008: 32767,
+                41011: 50,
+                41012: 32767,
+            }
         )
         co2_unit.fail_read(41013, IllegalDataAddressError())
         gateway_link.for_unit(3).fail_requests(ModbusTimeoutError("silent"))
@@ -463,7 +470,7 @@ class TestConfigFlowUser:
         gateway_link.for_unit(DEFAULT_GATEWAY_DEVICE_ID).holding.update({43901: 1, 43902: [2]})
         unit = gateway_link.for_unit(2)
         unit.holding.update({40002: [116819 & 0xFFFF, 116819 >> 16]})
-        for register in (41006, 41007, 41011, 41013):
+        for register in (41006, 41007, 41008, 41011, 41012, 41013):
             unit.fail_read(register, IllegalDataAddressError())
 
         with _patch_resolve():

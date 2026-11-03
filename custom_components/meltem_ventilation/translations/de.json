@@ -237,6 +237,12 @@
       "external_input_run_on": {
         "name": "Externer Steuereingang – Nachlaufzeit"
       },
+      "voc_extract_air": {
+        "name": "Abluft-VOC"
+      },
+      "co2_supply_air": {
+        "name": "Zuluft-CO2"
+      },
       "co2_extract_air": {
         "name": "Abluft-CO2"
       },

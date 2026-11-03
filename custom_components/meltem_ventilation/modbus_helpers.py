@@ -233,6 +233,8 @@ _PROBE_COMPONENTS = (
     "humidity_extract_air",
     "humidity_supply_air",
     "co2_extract_air",
+    "co2_supply_air",
+    "voc_extract_air",
     "voc_supply_air",
 )
 
@@ -241,13 +243,15 @@ PLAUSIBLE_RANGES: dict[str, tuple[int, int]] = {
     "humidity_extract_air": (0, 100),
     "humidity_supply_air": (0, 100),
     "co2_extract_air": (250, 10000),
+    "co2_supply_air": (250, 10000),
+    "voc_extract_air": (0, 10000),
     "voc_supply_air": (0, 10000),
 }
 
 # Richest suffix first: the first one with a detected sensor wins.
 _SUFFIXES: tuple[tuple[str, str, frozenset[str]], ...] = (
-    ("fc_voc", "VOC", frozenset({"voc_supply_air"})),
-    ("fc", "CO2", frozenset({"co2_extract_air"})),
+    ("fc_voc", "VOC", frozenset({"voc_extract_air", "voc_supply_air"})),
+    ("fc", "CO2", frozenset({"co2_extract_air", "co2_supply_air"})),
     ("f", "humidity", frozenset({"humidity_extract_air", "humidity_supply_air"})),
 )
 
@@ -329,8 +333,16 @@ _CAPABILITY_ENTITY_KEYS: dict[str, frozenset[str]] = {
             "humidity_max_level",
         }
     ),
-    "co2": frozenset({"co2_extract_air", "co2_starting_point", "co2_min_level", "co2_max_level"}),
-    "voc": frozenset({"voc_supply_air"}),
+    "co2": frozenset(
+        {
+            "co2_extract_air",
+            "co2_supply_air",
+            "co2_starting_point",
+            "co2_min_level",
+            "co2_max_level",
+        }
+    ),
+    "voc": frozenset({"voc_extract_air", "voc_supply_air"}),
 }
 
 
