@@ -107,13 +107,13 @@ have names such as `Unit 1` and can be renamed in Home Assistant. See the
 
 ## Supported profiles
 
-- `M-WRG-S`
-- `M-WRG-S (-F)`
-- `M-WRG-S (-FC)`
-- `M-WRG-II`
-- `M-WRG-II (-F)`
-- `M-WRG-II (-FC)`
-- `M-WRG-II (O/VOC-AUL)`
+- `M-WRG-S (-F, -FC)`
+- `M-WRG-II (-F, -FC, O/VOC-AUL)`
+
+The `M-WRG-II` profiles support both `P` units with a plate heat exchanger
+and `E` units with an enthalpy heat exchanger that also recovers moisture.
+Choose the profile based on the unit's sensors; no separate `P` or `E`
+profile is needed.
 
 The integration can detect optional sensors such as humidity, CO2 and VOC, but
 it cannot yet reliably distinguish `M-WRG-S` from `M-WRG-II` automatically.
