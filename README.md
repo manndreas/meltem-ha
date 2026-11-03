@@ -15,34 +15,23 @@ gateways, Home Assistant hosts, or other connected equipment.
 
 ## Features
 
-- support for Meltem `M-WRG-S` and `M-WRG-II` unit families
-- automatic discovery of configured units via the `M-WRG-GW` gateway
-- per-unit profile selection during setup
-- temperature, airflow, filter and operating-hour sensors, plus humidity, CO2
-  and VOC sensors depending on the profile; optional absolute-humidity sensors
-  are calculated from the existing temperature and humidity readings
-- separate supply air and extract air fan entities per unit
-- app-style quick modes, sensor-driven control modes and an intensive
-  ventilation switch
-- writable humidity and CO2 control thresholds for supported profiles
-- optional, read-only absolute-humidity estimates and external-control-input
-  settings; these diagnostics are disabled by default and do not write to the unit
-- CO2 measurement for extract air on the `-FC` profiles and VOC measurement for
-  supply air on the `O/VOC-AUL` profile, reported in ppm and enabled by default.
-  The `O/VOC-AUL` profile also offers supply-air CO2 and extract-air VOC, which
-  only the Meltem app's register map describes; these two are disabled by
-  default until a unit with those sensors confirms them
-- gateway connected-device count, measured airflow totals and delta, connection
-  diagnostics, and optional RF, uptime, UTC clock, and communication-quality sensors
-- per-unit reachability, read health, last successful update, measured airflow
-  balance, and optional RF, fan-hour, app-setup-code and external-input diagnostics
-- automation triggers and conditions for a due filter change
-- each unit as its own entry under the gateway, with **Add unit** and a
-  per-unit profile change
-- repair notices for units the gateway reports but Home Assistant does not have
-  yet, and for sensors of the selected profile that report no value
-- USB discovery for the Meltem gateway
-- manual setup of raw RTU-over-TCP bridges (not yet tested with a real bridge)
+- **Device support:** Connect Meltem `M-WRG-S` and `M-WRG-II` units through
+  their `M-WRG-GW` gateway via USB or a network bridge.
+- **Simple setup:** Find units already configured in the Meltem app and manage
+  each one as a separate Home Assistant device.
+- **Ventilation control:** Adjust supply and extract air separately, use quick
+  and sensor-based modes, and switch on intensive ventilation. Supported units
+  also allow you to adjust humidity and CO2 thresholds.
+- **Air and unit status:** See temperatures, airflow and filter status, plus
+  humidity, CO2 and VOC readings where supported by your unit.
+- **Maintenance and automations:** Use filter-change triggers and conditions
+  to create reminders and automations.
+- **Diagnostics:** Check connection and unit health, view optional information
+  such as operating hours, and receive repair notices for newly detected units
+  or sensors that report no value.
+
+See the [control guide](./docs/CONTROLS.md) and
+[diagnostics guide](./docs/DIAGNOSTICS.md) for details.
 
 ## Controls
 
@@ -53,18 +42,10 @@ including balanced and one-sided airflow and sensor modes.
 
 ## Automations
 
-The integration provides a **Filter change due** trigger for automations. It
-fires when a Meltem unit reports that its filter needs replacing. See the
-[filter change due trigger guide](./docs/TRIGGER_FILTER_CHANGE_DUE.md) for the
-UI steps, trigger options, and a YAML example.
-
-The **Filter change due** condition lets an automation check that state after
-another trigger has fired. See the
-[filter change due condition guide](./docs/CONDITION_FILTER_CHANGE_DUE.md) for
-UI instructions, options, and a YAML example.
-
-See the [automation example](./docs/AUTOMATION_EXAMPLES.md) for a YAML
-automation that runs intensive ventilation while a room is occupied.
+Use the **Filter change due** trigger and condition to create filter-change
+automations. See the [trigger guide](./docs/TRIGGER_FILTER_CHANGE_DUE.md),
+[condition guide](./docs/CONDITION_FILTER_CHANGE_DUE.md), and
+[ventilation automation example](./docs/AUTOMATION_EXAMPLES.md).
 
 ## Installation
 
@@ -109,18 +90,10 @@ To remove the config entry and uninstall the integration, follow the
 5. Let the integration read the configured unit list from the gateway
 6. Assign the correct profile to each detected unit
 
-The profile list shows each unit's App setup code when available. Match it to
-the code below the DataMatrix on the unit label to identify which Modbus
-address belongs to each physical unit. Profile selection still uses the model
-information on the type plate. For known product IDs, the setup preview also
-shows a series and product identifier from the app catalog; the older-series
-mapping has not yet been verified on hardware. Existing units with a known ID
-show the identifier in their device details.
-
-Units are listed by their Modbus address and initially named `Unit 1`, `Unit 2`
-and so on. Each unit appears as its own entry under the gateway on the
-integration page. Rename them like any other Home Assistant device; the new
-name is also shown when you change a profile later.
+When available, the App setup code helps you match a detected unit to its
+label. Choose its profile using the model on the type plate. Units initially
+have names such as `Unit 1` and can be renamed in Home Assistant. See the
+[setup guide](./docs/SETUP.md) for more on identifying units.
 
 ### Units
 
@@ -155,34 +128,21 @@ different hardware is very welcome.
 Open the integration options via `Settings` -> `Devices & Services` -> `Meltem Modbus`
 -> `Configure`.
 
-- **Change request rate** — adjust the shared read-request cap (default
-  **4 requests per second**, configurable from **0.5 to 10**). See
-  [polling and diagnostics](./docs/DIAGNOSTICS.md) for details.
-- **Scan for new units** — read the unit list from the gateway again: new units
-  are added and moved units are updated; the profiles of all units can be
-  changed in the same step. Units the gateway no longer reports are listed for
-  confirmation before they are removed together with their devices
+- **Change request rate** — adjust how often the integration queries the
+  gateway.
+- **Scan for new units** — find changes to units registered with the gateway.
+  You are asked before units that are no longer reported are removed.
 
-To change the gateway connection or switch between USB serial and RTU over
-TCP, choose `Reconfigure` in the menu of the integration entry. The new
-connection is checked before it is saved; existing units and entity IDs remain.
-Hostnames, including `.local` names, must be resolvable by the Home Assistant
-host. Automatic network discovery is not supported.
+To change the gateway connection, choose `Reconfigure` in the integration
+menu. Existing units and entity IDs remain. See the
+[setup guide](./docs/SETUP.md) for details about these options and network
+connections.
 
 ## Polling and diagnostics
 
-The integration polls the gateway rather than receiving pushed updates.
-Values appear progressively at startup, depending on the request rate and
-number of configured units. See the
-[diagnostics guide](./docs/DIAGNOSTICS.md) for refresh intervals, read health,
-availability, and log collection.
-
-The gateway device exposes the connected-device count, Modbus connection status,
-and total measured supply, extract, and delta airflow across configured units.
-Each unit also exposes its reachability, read health, and airflow balance.
-Communication quality, cumulative Modbus counters, RF diagnostics, the last
-successful update timestamp, the app setup code, gateway uptime, and the
-gateway UTC clock can be enabled in the entity settings.
+Readings update periodically and may take a little time to appear after
+startup. The [diagnostics guide](./docs/DIAGNOSTICS.md) covers refresh times,
+connection health, optional sensors, and collecting logs.
 
 ## Troubleshooting
 
