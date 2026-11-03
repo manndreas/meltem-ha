@@ -15,11 +15,17 @@ therefore formally belongs to the special **Custom** category. The Bronze,
 Silver, Gold, and Platinum tiers are awarded to Core integrations. No
 `quality_scale.yaml` defining a target or achieved tier is present.
 
+Since Home Assistant 2026.3, Custom integrations can ship their brand images
+in their own `brand/` directory, so no brands repository pull request is needed
+for this integration as a Custom integration. See the
+[Home Assistant announcement](https://contributors.home-assistant.io/blog/2026/02/24/brands-proxy-api/).
+
 If assessed as a candidate for Home Assistant Core, this review finds that the
 integration **does not yet meet Bronze**. All other applicable Bronze rules are
 met; the remaining gap is publishing the brand assets in the central
-repository for Core integrations. The HACS integration includes the assets
-locally, as intended for Custom integrations.
+repository for Core integrations. A brands pull request can be submitted early
+when preparing a Core contribution; it does not depend on the integration
+already being part of Core.
 
 If `brands` is excluded from the theoretical assessment, all other applicable
 Bronze rules and all applicable Silver rules are met. This would make the
@@ -48,7 +54,7 @@ reviewed locations in the repository.
 | --- | --- | --- |
 | ➖ | [`action-setup`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/action-setup) | No service actions are provided that would need to be registered in `async_setup`. |
 | ✅ | [`appropriate-polling`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/appropriate-polling) | The coordinator limits the request rate, staggers read jobs, and uses backoff on transport failures. [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [polling.py](../../custom_components/meltem_ventilation/polling.py) |
-| ❌ | [`brands`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/brands) | Local [brand assets](../../custom_components/meltem_ventilation/brand/icon.png) and [logo files](../../custom_components/meltem_ventilation/brand/logo.png) are present for the HACS custom integration. A Core candidate still needs an entry under [`core_integrations/meltem_ventilation`](https://github.com/home-assistant/brands/tree/master/core_integrations) in the central [brands repository](https://github.com/home-assistant/brands). |
+| ❌ | [`brands`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/brands) | The HACS custom integration ships its [icon](../../custom_components/meltem_ventilation/brand/icon.png) and [logo](../../custom_components/meltem_ventilation/brand/logo.png) locally; no central brands pull request is needed for that. For a Core candidacy, an entry under [`core_integrations/meltem_ventilation`](https://github.com/home-assistant/brands/tree/master/core_integrations) is still required. |
 | ✅ | [`common-modules`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/common-modules) | Shared responsibilities are split across modules such as [coordinator.py](../../custom_components/meltem_ventilation/coordinator.py), [polling.py](../../custom_components/meltem_ventilation/polling.py), and [read_health.py](../../custom_components/meltem_ventilation/read_health.py). |
 | ✅ | [`config-flow-test-coverage`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-flow-test-coverage) | The full test suite covers [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py) and [subentry_flow.py](../../custom_components/meltem_ventilation/subentry_flow.py) at 100%, [options_flow.py](../../custom_components/meltem_ventilation/options_flow.py) at 99%, and [flow_helpers.py](../../custom_components/meltem_ventilation/flow_helpers.py) at 99%. [test_config_flow.py](../../tests/components/meltem_ventilation/test_config_flow.py) tests recovery from errors in the user, USB, options, and reconfigure flows, as well as preventing the same gateway from being configured twice. |
 | ✅ | [`config-flow`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-flow) | UI setup, field-level `data_description` text for every config and options form field, and English, German, Spanish, French, Italian, Polish, Portuguese, Turkish, Ukrainian, and Arabic translations are provided. The gateway connection (legacy serial path or transport, host, and TCP port) is stored in `ConfigEntry.data`, each unit with its profile in a config subentry, and the request rate in `ConfigEntry.options`. The migration moves the existing rate from `data` to `options` without overwriting an existing options value. [strings.json](../../custom_components/meltem_ventilation/strings.json), [config_flow.py](../../custom_components/meltem_ventilation/config_flow.py), [options_flow.py](../../custom_components/meltem_ventilation/options_flow.py), [migration.py](../../custom_components/meltem_ventilation/migration.py) |
@@ -159,11 +165,11 @@ CI runs; the measured source and the threshold are configured in
 
 ## Recommended next steps
 
-1. **Complete Bronze for a Core candidacy:** submit the prepared
-   [256 px icon](brand-assets/meltem_ventilation/icon.png) and
-   [512 px icon](brand-assets/meltem_ventilation/icon@2x.png) to the central
-   `core_integrations/meltem_ventilation` directory, after confirming permission
-   to use the Meltem branding. The same image can serve as the logo fallback.
+1. **If pursuing a Core candidacy:** submit suitable brand assets to the central
+   `core_integrations/meltem_ventilation` directory. The local
+   [icon](../../custom_components/meltem_ventilation/brand/icon.png) can serve
+   as a starting point; check the current brands repository requirements before
+   submitting.
 2. **Improve Gold:** decide whether a unit the gateway reports may be added
    automatically with a provisional profile, which would complete
    `dynamic-devices`; today a repair issue asks the user to add it.
