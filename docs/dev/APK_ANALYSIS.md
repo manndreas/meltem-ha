@@ -65,11 +65,13 @@ inventory.
    protocol involving cloud registers `40911`, `40901`, `40949` and `40954`.
    An app/cloud register is not automatically a locally accessible Modbus
    holding register. See **JS 786**.
-4. The app's schedule editor uses **Monday = 0, Sunday = 6**, including the
-   values placed in its `dayOfWeek` API field. A controlled save of a future
-   Wednesday switch point was consistent with `49012=2` locally, but the
-   cloud payload and actual scheduled execution were not captured. See
-   **JS 686, 787, 789** and the hardware comparison in [MELTEM.md](MELTEM.md#app-time-program-comparison-on-2026-11-03).
+4. The normal schedule editor gets and replaces a complete `switchPoints`
+   list through dedicated cloud API endpoints. A separate selector/action
+   helper for `490xx` registers is present in the bundle, but no in-bundle
+   caller was found. A later two-point hardware test executed MED at Tuesday
+   12:05 and HIGH at 12:10; the local `49011..49017` view remained on the
+   second point even while MED was active. See **JS 682, 683, 684, 787, 788,
+   789** and [MELTEM.md](MELTEM.md#two-point-schedule-execution-on-2026-11-03).
 5. Service metadata exposes calibration, frost protection, flap timing,
    factory reset and other sensitive settings. Presence in the bundle does
    not justify writing them. The service menu is conditional on
@@ -306,6 +308,12 @@ necessarily one local Modbus transaction.
 | Night / interval / temperature | `[3, 226, ...]` / `[3, 231, ...]` / `[2, 224, ...]` |
 | Unbalanced | `[4, supplyCode, extractCode, 0, ...]` |
 
+These are **runtime commands**, not the saved values displayed in the settings
+pages. The app's setting catalog separately assigns tag `11` to intensive
+airflow, `12` to intensive duration, and `13`, `14`, `15` to the stored
+keypad LOW, MED and HIGH airflow values. Editing those tags does not send the
+corresponding `41120` quick-mode command.
+
 For the unbalanced UI path, a positive slider value is encoded as
 `round(value / 10) + 200`; zero remains zero. The controls use 10-unit UI
 steps. The metadata also lists continuous submodes `201..210`, automatic
@@ -359,6 +367,41 @@ scale, with signed-16-bit interpretation where the minimum is negative.
 Concurrency can race the shared tag selector, and no local availability of
 these addresses follows from the cloud protocol. The previously attempted
 local checks are described in [SETTING_RE_BACKLOG.md](SETTING_RE_BACKLOG.md).
+
+### What the app settings screen does
+
+**JS 786** uses two distinct setting paths:
+
+- The six direct settings in `settingRegisters` (`42000..42005`) are read as a
+  register list. A changed value is sent to `/device/data/set` using that
+  register address; the app then polls `/device/data/live` until the returned
+  value equals what it sent. This is the app-side path corresponding to the
+  documented humidity/CO2 threshold and airflow-bound registers.
+- The other configurable items are catalog tags, grouped into pages such as
+  Boost, Control Panel, Cross Air, Two Sensors, Interval, Temperature and
+  Other. For a single device, the UI selects a tag with `40911`, reads its
+  value through `40901`, and edits it through the `40949` payload described
+  above. `SERVICE` mode uses the product's `allTags` catalog; ordinary setting
+  pages use its selected tag list.
+
+The tag UI converts displayed values using each tag's `min`, `max`, `step`,
+`unit` and optional `stepTag`. A boolean setting has its own button-value
+mapping, including a special mapping for tag `19`. On successful tag write,
+the app accepts `40954 == 2` and updates its displayed cache to the value it
+sent; that is not an independent readback of the persisted tag. These routes
+are cloud API calls made with `deviceId`, not evidence that the same numeric
+addresses are writable over local Modbus.
+
+For example, tags `11..15` are saved configuration, while LOW/MED/HIGH runtime
+selection uses the distinct `41120` mode codes shown above. Similarly, tag `12`
+is the configured intensive duration, whereas activating intensive
+ventilation uses the temporary `41120` override. The app also exposes more
+complex service tags for humidity/CO2 control, two-sensor control, fan
+calibration, frost protection and other functions. Their presence, labels,
+defaults and ranges in the catalog do not establish safe local write
+registers. This integration currently implements the documented local
+`42000..42005` setting writes; it does not implement the app's service-tag
+write protocol.
 
 ### User-facing tag metadata
 
@@ -664,6 +707,11 @@ The series-specific service overrides are not part of that shared table:
 
 **JS 686, 787, 788, 789, 799** show:
 
+- The normal schedule screen reads through
+  `fetchTimePrograms -> getDeviceTimePrograms -> GET /device/timeprogram/get`.
+  The response's `switchPoints` array is the source for the screen; the app
+  fills missing `49015..49017` properties with zero, assigns an ID from
+  day/hour/minute, sorts the list, and caches it on the phone.
 - A switch point has `dayOfWeek`, `hour`, `minute`, and `registers` containing
   `49015` mode, `49016` submode and `49017` second submode. The editor creates
   an ID from day/hour/minute and sorts by those fields.
@@ -678,14 +726,21 @@ The series-specific service overrides are not part of that shared table:
   per unit; this analysis does not claim the client separately enforces a
   six-per-day limit.
 - The normal editor gets the existing schedule, modifies a cached copy, sorts
-  it and sends the **whole** resulting list to the set endpoint. It polls
-  status and reloads. Templates and a per-device cache live on the phone;
-  templates are intentionally retained by the app's logout cleanup.
-- A second register-oriented helper sets `49011`, writes an action to
-  `49000` (`READ=0`, `EDIT=1`, `DELETE=2`, `DELETEALL=3`, `ADD=4`) and
-  reads `49001, 49002, 49011..49017`. An RF workaround checks for missing
-  points. The existence of this helper does not establish that it is the
-  normal JSON API path or a safe local write sequence.
+  it and sends the **whole** resulting list as the JSON body to
+  `POST /device/timeprogram/set`; the query also carries `deviceId` and
+  session parameters. The editor polls `/device/timeprogram/set/status` for
+  completion (`6000`), then reloads. Delete-all sends an empty list. Templates
+  and a per-device cache live on the phone; templates are intentionally
+  retained by the app's logout cleanup.
+- A separate helper in **JS 788** selects an index by writing `49011`, writes
+  an action to `49000` (`READ=0`, `EDIT=1`, `DELETE=2`, `DELETEALL=3`,
+  `ADD=4`), then polls live values for `49001`, `49002`, and `49011..49017`.
+  Its `handleRfProblem` routine searches selected indices and can add a point
+  when it does not find the requested data. Static reference search found no
+  in-bundle caller for either `actionTimeProgram` or `handleRfProblem`; this
+  helper therefore is not the normal editor read/write path in this bundle.
+  Its presence is evidence of an alternate/legacy API workflow, not proof of
+  local serial access or a safe sequence to use from this integration.
 - App schedule airflow editing can encode a positive level as
   `round(value / 10) + 200`; mode `4` uses separate sides. This encoding and
   the local integration's raw airflow scaling are different contexts.
@@ -697,15 +752,28 @@ the user reported that the latter programs were not active. The values and the
 unit-5 schedule-register responses are recorded in
 [MELTEM.md](MELTEM.md#cross-unit-scheduler-state-on-2026-11-03). The sample
 supports, but does not prove, that `3` means a stored, inactive program.
-Neither it nor the one-point save proves how every firmware executes a
-weekday. A controlled future multi-point test remains useful.
+The later two-point execution test below confirmed Tuesday scheduling on
+slave `4`; behavior on other weekdays and firmware remains untested.
 
 A subsequent app-only two-point test on unit `4` changed the second point
 from LOW to MEDIUM, but the readable `49011..49017` tuple continued to show
 the first HIGH point. The user removed both test entries afterwards. This
-shows the sampled registers are not a complete, directly readable schedule
-list in the tested state; the details are recorded in
+shows that reading the register window with its existing selector value of
+zero did not return the second point. The app's normal editor gets its list
+from the cloud `switchPoints` endpoint; the separate selector/action helper
+was not invoked in this test and has no in-bundle caller. The result therefore
+does not establish whether other schedule points live at other local
+registers, behind selector values, or only in the cloud-backed API. Details
+are recorded in
 [MELTEM.md](MELTEM.md#two-point-app-schedule-on-2026-11-03).
+
+A later app-only execution test set Tuesday MED at `12:05` and HIGH at `12:10`
+on slave `4`. The measured airflow changed to `30/30` and then returned to
+`60/60`, confirming that the cloud schedule actually executes on this unit.
+During MED, the readable `49011..49017` tuple still described the second HIGH
+point. This confirms neither a complete local schedule list nor a safe local
+schedule write protocol; see
+[MELTEM.md](MELTEM.md#two-point-schedule-execution-on-2026-11-03).
 
 ## Implications and open questions
 
@@ -716,8 +784,9 @@ list in the tested state; the details are recorded in
 - The app's 13-word cloud control request and local serial writes have
   different transport and confirmation semantics. Existing component
   register ranges and request timing remain unchanged.
-- Validate the weekday mapping against a future point's actual execution
-  before implementing local schedule writes.
+- One controlled Tuesday schedule executed at the expected times on slave `4`;
+  validate other weekdays and firmware before generalizing that behavior.
+  The execution result does not establish a local schedule write protocol.
 - Do not map app service tags `76`, `154`, `46`, or `47` to local Modbus writes:
   the APK metadata alone does not establish a local register mapping or safe
   write sequence.

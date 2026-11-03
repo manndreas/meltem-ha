@@ -752,10 +752,10 @@ A further read-only check on all six registered units repeated
 | 6 | `3` | User had reported the app program was not active; whether points remain stored was not checked. |
 | 7 | `3` | User had reported the app program was not active; whether points remain stored was not checked. |
 
-This rules against treating `41106=3` as “program active.” Together with the
-controlled unit-4 sequence, it is consistent with `1` meaning active and `3`
-meaning inactive with a schedule configured, but that latter interpretation
-is not proven for units 5–7. Unit 5 additionally returned
+This rules against treating `41106=3` as “program active.” The controlled
+unit-4 tests below show `1` while an enabled program is running, `3` with
+points stored but the program disabled, and `0` after deleting the points.
+This mapping is observed on slave `4`; it is not proven for units 5–7. Unit 5 additionally returned
 `49000..49002 = [0, 3, 1]`, `49011=14`, and zero in `49012..49017`;
 units 2, 3, 6, and 7 mostly returned `0x05` on the individual schedule
 register reads. These differences prevent treating the `490xx` values as a
@@ -773,6 +773,47 @@ write-based follow-ups were therefore not started. The final read at 01:22
 confirmed the same unit `4` state and no `41016` error on any of the six units.
 The read-only checks are local, not archived: `restore-state-check.txt` and
 `final-state.txt`.
+
+### Two-point schedule execution on 2026-11-03
+
+After confirming the schedule was empty and disabled, the app was used to add
+two Tuesday points on slave `4`: MED at `12:05` and HIGH at `12:10`. The app
+list showed both points. The time program was enabled through the app; no
+Modbus writes were made.
+
+The passive monitor started at `12:04:13` and ran 100 rounds at five-second
+intervals through `12:12:29`, reading measured airflow `41020..41021`, error
+flags `41016..41018`, current mode/scheduler status `41100..41106`, and the
+schedule registers `49000..49002` and `49011..49017`.
+Before activation, the stored-but-disabled schedule had `41106=3`,
+`49000..49002=[4, 3, 0]`, and
+`49011..49017=[1, 1, 12, 10, 3, 230, 0]`.
+
+| Observation | `41100..41102` | `41106` | `41020..41021` | `41016..41018` |
+| --- | --- | ---: | --- | --- |
+| Points stored, schedule disabled | `[3, 230, 0]` | `3` | `[60, 60]` | `[0, 0, 0]` |
+| Before first point | `[3, 230, 0]` | `1` | `[60, 60]` | `[0, 0, 0]` |
+| Around `12:05:03` | `[3, 229, 0]` | `1` | `[60, 60]` | `[0, 0, 0]` |
+| Around `12:05:13` | `[3, 229, 0]` | `1` | `[30, 30]` | `[0, 0, 0]` |
+| Around `12:10:03` | `[3, 230, 0]` | `1` | `[60, 60]` | `[0, 0, 0]` |
+
+Thus the Tuesday MED point took effect within about ten seconds of `12:05`;
+the HIGH point took effect at the `12:10` sample. This confirms actual
+execution on this unit and is consistent with the app's Monday-zero weekday
+mapping, but it does not establish behavior on other weekdays or firmware.
+
+Throughout the active schedule, `49000..49002` stayed `[4, 3, 0]`, while
+`49011..49017` stayed `[1, 1, 12, 10, 3, 230, 0]`. That tuple corresponds to
+the second point (with `49011=1`, consistent with index `1`: Tuesday, 12:10,
+HIGH) even while the first MED point was active. It therefore is not a live
+“currently executing point” readback in this test. It still does not prove
+whether other entries are stored behind other selector values or elsewhere.
+
+After the second point, the app was used to disable the program and delete
+both points. The app showed an empty schedule; final passive reads returned
+`41106=0`, `49000..49002=[3, 3, 0]`, `49011..49017` all zero, HIGH status
+`[3, 230, 0]`, airflow `[60, 60]`, and error flags `[0, 0, 0]`. The monitor
+and raw captures were local and are not archived.
 
 ## Temperature register quirk
 
@@ -1158,6 +1199,189 @@ Important limitation:
 - therefore missing LEDs for these two shortcuts should currently be treated
   as likely normal device behavior, not as proof that the HA integration is
   writing the wrong runtime preset registers
+
+### App-saved LOW setting A-B-A on 2026-11-03
+
+On slave `4`, the app settings screen showed LOW `10`, MED `30`, HIGH `60`
+m³/h, and intensive airflow `80` m³/h with a 15-minute run-on time. The unit
+remained in manual HIGH at `60/60` m³/h throughout. After taking a
+read-only `keypad`-family baseline, the user-approved test changed only the
+saved LOW setting in the app from `10` to `20` m³/h, then restored it to
+`10`. No Modbus writes were made.
+
+| Phase | App LOW | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `10` | `1` in three reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `20` | `20` in two reads | unchanged | unchanged |
+| Restored | `10` | `10` in two reads | unchanged | unchanged |
+
+Read-only attempts to `40911` and `40949` returned `Illegal Data Address`
+(`0x02`) before and during the changed phase. Comparing the complete captured
+`keypad` register family before and after the app save found no change in
+product/device, measurement, mode/runtime, or documented configuration
+values. Only shadow/meta words changed: `52003..52007` went from
+`[5378, 5378, 5378, 5379, 5379]` to `[4352, 4352, 4352, 4352, 4352]`, and
+`52008..52009` from `[5379, 5379]` to `[5377, 5377]`. These words did not
+revert when LOW was restored.
+
+The repeat shows that `40901` can reflect the most recently app-saved LOW
+value, but its baseline `1` while the app setting was already `10`, and the
+lack of a corresponding stable register in the captured setting family, mean
+it is not established as the persistent LOW register or a Modbus write
+target. The shadow changes are not decoded as airflow values. The test
+confirms an app-side A-B-A change and restoration, not a local Modbus write
+sequence.
+
+### App-saved MED setting A-B-A on 2026-11-03
+
+After restoring LOW to `10`, the app showed MED `30` and the unit remained in
+manual HIGH at `60/60` m³/h. The user-approved app-only test changed MED to
+`40` m³/h and restored it to `30`.
+
+| Phase | App MED | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `30` | `10` in two reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `40` | `40` in two reads | unchanged | unchanged |
+| Restored | `30` | `30` in two reads | unchanged | unchanged |
+
+As in the LOW test, reads of `40911` and `40949` returned
+`Illegal Data Address` (`0x02`) before and during the changed phase. The
+captured `keypad` family showed only `52008` and `52009` changing during the
+app save: `52008` went from `5381` to `4352`, and `52009` from `5381` to
+`5377`. After restoring MED, `52008` was `5377` and `52009` remained `5377`;
+neither exactly returned to its original value. All other captured values,
+including measurement, mode/runtime, and documented configuration registers,
+were unchanged.
+
+The previous `2026-10-16` MED experiment returned `40901=20` after setting MED
+to `40`; this result was not reproduced. Together, the new LOW and MED tests
+show that `40901` follows the app-saved value in these two A-B-A sequences,
+but its initial `1` while LOW was `10` means it still cannot be identified as
+a persistent per-setting register or a local Modbus write target. Both
+settings were changed only through the app; no Modbus writes were made.
+
+### App-saved intensive airflow A-B-A on 2026-11-03
+
+With LOW `10`, MED `30`, HIGH `60`, and intensive airflow `80` m³/h shown in
+the app, the user-approved test changed only the saved intensive airflow to
+`90` m³/h and restored it to `80`. The configured 15-minute run-on time was
+left unchanged. The unit remained in manual HIGH at `60/60` m³/h.
+
+| Phase | App intensive airflow | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `80` | `30` in two reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `90` | `90` in two reads | unchanged | unchanged |
+| Restored | `80` | `80` in two reads | unchanged | unchanged |
+
+Reads of `40911` and `40949` returned `Illegal Data Address` (`0x02`) before
+and during the changed phase. The `keypad`-family snapshots changed only in
+shadow/meta words `52004..52009`: `52004..52007` changed from `4352` to `5377`
+and returned to `4352` on restore; `52008..52009` changed from `5380` to
+`5377` and restored to `[4352, 5377]`. No other captured values changed
+except the exhaust-air temperature pair `41004..41005`, which moved from
+`10.46` to `10.57 °C` during the run and remained there after restore. The
+measured airflow, mode status, and documented configuration values stayed
+unchanged. No Modbus writes were made.
+
+Across the LOW, MED, and intensive-airflow tests, `40901` followed the last
+app-saved value (`20`, `40`, and `90`), then the restored value (`10`, `30`,
+and `80`). Before the MED and intensive tests it held the preceding test's
+restored value, not that setting's current value. This supports interpreting it
+as a shared last-write/readback value rather than a dedicated persistent
+setting register; it does not identify a safe local write target. The
+configured intensive duration was tested separately below.
+
+### App-saved intensive duration A-B-A on 2026-11-03
+
+The app's intensive airflow had been restored to `80` m³/h with a 15-minute
+run-on. The user-approved test changed only the run-on to `20` minutes and
+restored it to `15`; airflow remained `80` m³/h. The unit stayed in manual
+HIGH at `60/60` m³/h.
+
+| Phase | App run-on | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `15 min` | `80` in two reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `20 min` | `20` in two reads | unchanged | unchanged |
+| Restored | `15 min` | `15` in two reads | unchanged | unchanged |
+
+As in the other tests, reads of `40911` and `40949` returned `Illegal Data
+Address` (`0x02`) before and during the changed phase. The `keypad`-family
+snapshots showed only `52008..52009` changing during the save, from
+`[5389, 5389]` to `[5379, 5379]`; they remained `[5379, 5379]` after restore.
+The `41004..41005` exhaust-temperature reading also varied between captures.
+Other captured values, including measured airflow, current mode, and
+documented configuration registers, remained unchanged. No Modbus writes were
+made.
+
+Across the LOW, MED, intensive-airflow, and intensive-duration app-only A-B-A
+tests, `40901` followed the last app-saved value and its restore. Before each
+test after LOW, it held the previous test's restored value. This strengthens
+the interpretation of `40901` as a shared last-write/readback value, not a
+dedicated persistent setting register. The tests still do not reveal a local
+Modbus write target or a safe local write sequence.
+
+### App-saved extract shortcut A-B-A on 2026-11-03
+
+The app showed the saved `Taste 4 (III) Abluft` airflow at `80` m³/h. The
+user-approved test changed only that preset to `90` m³/h and restored it to
+`80`. The unit remained in manual HIGH at `60/60` m³/h.
+
+This test used an expanded read-only snapshot of 24 previously identified
+register islands: `40000..40025`, `40026..40033`, `40041`, `40050..40051`,
+`40071`, `40100..40104`, `40109..40110`, `40120`, `40200..40209`, `40901`,
+`40911`, `40949`, `41000..41034`, `41100..41113`, `41120..41124`, `41132`,
+`41133`, `42000..42009`, `49000..49002`, `49011..49017`, `51100..51113`,
+`51120..51133`, `51150..51151`, and `52000..52010`. Of 176 addresses, 173
+returned values. No broad register-space scan or Modbus write was performed.
+
+| Phase | App `Taste 4 Abluft` | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `80` | `15` in two reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `90` | `90` in two reads | unchanged | unchanged |
+| Restored | `80` | `80` in two reads | unchanged | unchanged |
+
+Reads of `40911` and `40949` returned `Illegal Data Address` (`0x02`) before
+and during the changed phase. The expanded snapshot found no setting-shaped
+register changing with the saved airflow. `52008..52009` changed from
+`[5378, 5378]` to `[4352, 4352]` during the app save and stayed there after
+restore. `40100` moved from `40` to `24` and then `39`; this is the provisional
+RF last-seen-age field, whose reset behavior is independent of the app setting.
+All other captured values were unchanged. The app setting was restored, and
+there was no change to the unit's active mode or airflow.
+
+This broader capture confirms that the known, previously readable register
+islands still expose no direct value for this saved one-sided airflow preset.
+`40901` again follows the most recently app-saved value, but is not a
+per-setting local register; the `520xx` values remain undecoded metadata.
+
+### App-saved supply shortcut A-B-A on 2026-11-03
+
+The app showed the saved `Taste 4 (III) Zuluft` airflow at `80` m³/h. The
+user-approved test changed only that preset to `90` m³/h and restored it to
+`80`. The unit remained in manual HIGH at `60/60` m³/h. The same 24-range
+read-only snapshot of previously identified register islands was used.
+
+| Phase | App `Taste 4 Zuluft` | Local FC03 `40901` | Airflow / mode | `42000..42005` |
+| --- | ---: | --- | --- | --- |
+| Before | `80` | `80` in two reads | `60/60`; `[3, 230, 0]` | `[60, 10, 60, 600, 10, 60]` |
+| Changed | `90` | `90` in two reads | unchanged | unchanged |
+| Restored | `80` | `80` in two reads | unchanged | unchanged |
+
+Reads of `40911` and `40949` returned `Illegal Data Address` (`0x02`) before
+and during the changed phase. The expanded snapshot found only four changed
+registers: `40100` (RF last-seen age) went `4 -> 13 -> 43`; `40109` (RF signal
+strength) changed from raw `65505` to `65492`; `40901` followed the app value;
+and shadow word `52009` changed `4352 -> 5378 -> 4352`. These RF/measurement
+changes do not track the saved airflow. All other captured values, including
+current airflow, mode, and documented configuration, remained unchanged.
+There was no Modbus write.
+
+Across all six app-only A-B-A tests (LOW, MED, intensive airflow, intensive
+duration, extract shortcut, and supply shortcut), `40901` held the previous
+test's restored value at the start of the next setting test, then followed the
+new app value and its restore. Its behavior is consistent with a shared
+last-write/readback value, not a local per-setting register. No direct local
+setting register or safe Modbus write sequence has been identified.
 
 ## Unit and link lifecycle
 

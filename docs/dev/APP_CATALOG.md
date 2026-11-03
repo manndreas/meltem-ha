@@ -99,7 +99,8 @@ Modbus reads or writes are supported or safe:
 
 | Unit register | App-derived lead |
 | --- | --- |
-| `41008` / `41012` | App labels extract-air VOC / supply-air CO2. Previous reads on units without these sensors returned `32767`; the integration exposes them only as disabled-by-default raw diagnostics for the VOC profile. See [MELTEM.md](MELTEM.md#app-derived-register-survey-on-2026-11-03). |
+| `41007`, `41012` | App labels extract- and supply-air CO2 in ppm; the integration exposes both as regular CO2 measurements on CO2-capable profiles. |
+| `41008`, `41013` | App labels extract- and supply-air VOC in ppm; the integration exposes both as regular VOC measurements on the VOC profile. |
 | `41015` / `41019` | Speed capability bits / actual speed mode; the table marks `41019` for `0x0001C853`. |
 | `41100` | One table entry is keyed by `41100` but contains `41101` as its register field. This inconsistency limits confidence in the table. |
 | `41103..41106` | Temporary override mode and submodes, followed by scheduler state. |
@@ -107,9 +108,15 @@ Modbus reads or writes are supported or safe:
 | `42006` | Priority override mode, marked read-write by the app. No local write semantics have been established. |
 
 The table associates night, interval, and temperature modes with submode
-values `226`, `231`, and `224`, respectively. These are candidates, not
-implemented commands. Registers in the table are unit-side leads: addresses
-such as `41012`, `41015`, and `41019` have different meanings on the gateway.
+values `226`, `231`, and `224`, respectively. These remain unimplemented
+commands. Registers in the table are unit-side leads: addresses such as
+`41012`, `41015`, and `41019` have different meanings on the gateway.
+
+The 2026-11-03 survey on units without humidity, CO2 or VOC sensors returned
+`32767` for `41007`, `41008`, `41012` and `41013`; it did not provide a
+positive sensor reading. The integration follows the APK's ppm labels for
+all four fields, but sensor-equipped hardware validation remains outstanding.
+See [MELTEM.md](MELTEM.md#app-derived-register-survey-on-2026-11-03).
 
 Do not add speculative reads, writes, or grouped register ranges from these
 leads. Further investigation requires a reviewed, targeted test and the

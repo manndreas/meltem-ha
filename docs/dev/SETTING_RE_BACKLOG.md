@@ -31,6 +31,23 @@ What is already clear:
 - therefore the effective configuration is very likely persisted locally
 - however, the concrete local register write path for many app settings is not
   yet identified in the tested holding-register ranges
+- APK 1.17 confirms that tags `11..15` (intensive airflow/duration and keypad
+  LOW/MED/HIGH) use the app's cloud tag protocol, not direct writes to their
+  tag numbers. No equivalent local Modbus mapping or safe write sequence was
+  found; see [APK_ANALYSIS.md](APK_ANALYSIS.md#what-the-app-settings-screen-does).
+- New app-only A-B-A tests for LOW, MED, intensive airflow, intensive
+  duration, and both extract/supply shortcuts on slave `4` made local `40901`
+  follow each newly saved value and its restore. Before tests after LOW it held
+  the preceding setting's restored value. Expanded snapshots of known
+  readable islands exposed no direct per-setting value; only undecoded `520xx`
+  shadow/meta words, RF fields, and temperature readings varied. See the
+  [LOW](MELTEM.md#app-saved-low-setting-a-b-a-on-2026-11-03),
+  [MED](MELTEM.md#app-saved-med-setting-a-b-a-on-2026-11-03),
+  [intensive airflow](MELTEM.md#app-saved-intensive-airflow-a-b-a-on-2026-11-03),
+  [intensive duration](MELTEM.md#app-saved-intensive-duration-a-b-a-on-2026-11-03),
+  [extract shortcut](MELTEM.md#app-saved-extract-shortcut-a-b-a-on-2026-11-03),
+  and [supply shortcut](MELTEM.md#app-saved-supply-shortcut-a-b-a-on-2026-11-03)
+  measurements.
 
 What is not yet justified:
 
@@ -323,8 +340,10 @@ Interpretation:
   - humidity control thresholds and airflow bounds
   - CO2 control thresholds and airflow bounds
   - external control input airflow and delays
-- on slave `4`, `40901` was locally readable and sometimes tracked an app-edited
-  keypad value, but not consistently enough to treat it as a per-setting value
+- on slave `4`, `40901` tracked app-saved LOW, MED, intensive airflow/duration,
+  and extract/supply shortcut values in A-B-A tests, but at each test after LOW
+  began with the previous setting's restored value; it is a shared/readback
+  lead, not an established persistent per-setting register or local write target
 - runtime preset writes exist in `41120..41124` plus commit register `41132`
 - additional local shadow/meta ranges exist and do move when settings or panel
   actions change:
@@ -563,14 +582,17 @@ Stop pursuing a family for now if:
 The point is to find a stable local write model, not to spend unlimited time
 on speculative search.
 
-Current status after the latest keypad and intensive runs:
+Current status after the app-setting A-B-A runs:
 
 - local persistence is well supported, but a directly usable local write
   sequence for app-side defaults is still missing
 - the 2026-10-09 run-on-time A-B-A test still found no direct setting field;
   only shadow/meta drift was observed
-- the 2026-10-16 LOW/HIGH reads sometimes tracked app values through `40901`,
-  while MED did not; treat `40901` as a likely shared/overwritten readback
+- the 2026-11-03 app-only A-B-A tests for LOW, MED, intensive airflow/duration,
+  and extract/supply shortcuts made `40901` follow the last saved value, then
+  its restore; tests after LOW started with the previous setting's restored
+  value. Expanded known-island snapshots found no direct per-setting register;
+  only shadow/meta words, RF readings, and temperature values changed
 - the vendor Modbus table does not document keypad-default writes; no
   `40xxx` write was attempted
 - further progress needs a documented local write sequence or a separately
