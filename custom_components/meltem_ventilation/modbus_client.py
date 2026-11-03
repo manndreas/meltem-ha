@@ -32,12 +32,12 @@ from .const import (
     CO2_PROFILES,
     CONTROL_SETTING_REGISTERS,
     DEFAULT_GATEWAY_DEVICE_ID,
+    EXTERNAL_INPUT_LIMITS,
+    EXTERNAL_INPUT_REGISTERS,
     FIXED_TIMEOUT,
     HUMIDITY_PROFILES,
     MODE_MANUAL,
     MODE_OFF,
-    MODE_SENSOR_CONTROL,
-    MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE,
     MODE_UNBALANCED,
     PLAIN_PROFILES,
     READ_GROUP_ENTITY_KEYS,
@@ -47,6 +47,7 @@ from .const import (
 )
 from .device import MeltemGateway, MeltemRoomDevice
 from .device.transport import NO_ANSWER_ERRORS, ReadQuarantinedError, RequestOutcome
+from .environment import absolute_humidity
 from .modbus_helpers import (
     PLAUSIBLE_RANGES,
     MeltemConnectionError,
@@ -344,6 +345,19 @@ class MeltemModbusClient:
 
         async with self._gateway_operation(f"reading app setup code for room {room.key}"):
             return await self._room_device(room).async_read_app_setup_code()
+
+    async def async_read_external_input_setting(self, room: RoomConfig, key: str) -> int:
+        """Read one documented external-input setting without changing it."""
+
+        if key not in EXTERNAL_INPUT_REGISTERS:
+            raise MeltemModbusError(f"Unknown external input setting {key!r}")
+        address = EXTERNAL_INPUT_REGISTERS[key]
+        async with self._gateway_operation(f"reading {key} for room {room.key}"):
+            (value,) = await self._unit(room.slave).read_holding_registers(address, 1)
+        minimum, maximum = EXTERNAL_INPUT_LIMITS[key]
+        if not minimum <= value <= maximum:
+            raise MeltemModbusError(f"Invalid {key} readback: {value}")
+        return value
 
     async def async_read_gateway_node_count(self) -> int:
         """Read how many devices are registered with the gateway."""
@@ -708,13 +722,9 @@ class MeltemModbusClient:
 
         self._mode_backoff.clear(key)
         job.unit_success_groups.update(_MODE_GROUPS)
-        mode = cast(int, status.mode)
-        current_level = cast(int, status.current_level)
-        if mode == MODE_SENSOR_CONTROL:
-            current_level = MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE.get(current_level, current_level)
         return ModeRead(
-            mode=mode,
-            current_level=current_level,
+            mode=cast(int, status.mode),
+            current_level=cast(int, status.current_level),
             extract_target_level=cast(int, status.extract_target_level),
         )
 
@@ -872,6 +882,14 @@ def _fresh_values(
             values[name] = bool(value) if name in _FLAG_FIELDS else value
         if values[name] is not None and source.component not in _BRIDGE_RF_COMPONENTS:
             job.value_groups.add(source.group)
+    for result_key, temperature_key, humidity_key in (
+        ("absolute_humidity_extract_air", "extract_air_temperature", "humidity_extract_air"),
+        ("absolute_humidity_supply_air", "supply_air_temperature", "humidity_supply_air"),
+    ):
+        if temperature_key in due or humidity_key in due:
+            values[result_key] = absolute_humidity(
+                values.get(temperature_key), values.get(humidity_key)
+            )
     return values
 
 

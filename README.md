@@ -19,15 +19,18 @@ gateways, Home Assistant hosts, or other connected equipment.
 - automatic discovery of configured units via the `M-WRG-GW` gateway
 - per-unit profile selection during setup
 - temperature, airflow, filter and operating-hour sensors, plus humidity, CO2
-  and VOC sensors depending on the profile
+  and VOC sensors depending on the profile; optional absolute-humidity sensors
+  are calculated from the existing temperature and humidity readings
 - separate supply air and extract air fan entities per unit
 - app-style quick modes, sensor-driven control modes and an intensive
   ventilation switch
 - writable humidity and CO2 control thresholds for supported profiles
+- optional, read-only absolute-humidity estimates and external-control-input
+  settings; these diagnostics are disabled by default and do not write to the unit
 - gateway connected-device count, measured airflow totals and delta, connection
   diagnostics, and optional RF, uptime, UTC clock, and communication-quality sensors
 - per-unit reachability, read health, last successful update, measured airflow
-  balance, and optional RF, fan-hour, and app-setup-code diagnostics
+  balance, and optional RF, fan-hour, app-setup-code and external-input diagnostics
 - automation triggers and conditions for a due filter change
 - each unit as its own entry under the gateway, with **Add unit** and a
   per-unit profile change

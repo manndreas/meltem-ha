@@ -43,6 +43,7 @@ from custom_components.meltem_ventilation.number import (
 from custom_components.meltem_ventilation.sensor import (
     APP_SETUP_CODE_DESCRIPTION,
     CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS,
+    EXTERNAL_INPUT_SENSOR_DESCRIPTIONS,
     GATEWAY_CONNECTED_DEVICES_DESCRIPTION,
     GATEWAY_SENSOR_DESCRIPTIONS,
     GATEWAY_UPTIME_DESCRIPTION,
@@ -67,6 +68,7 @@ _ICONS = _COMPONENT_DIR / "icons.json"
 
 _ALL_DESCRIPTIONS = (
     *SENSOR_DESCRIPTIONS,
+    *EXTERNAL_INPUT_SENSOR_DESCRIPTIONS,
     *BINARY_SENSOR_DESCRIPTIONS,
     *CONTROL_SETTING_DESCRIPTIONS,
 )
@@ -425,6 +427,7 @@ class TestTranslations:
 
         assert set(strings["sensor"]) == {
             *_keys(SENSOR_DESCRIPTIONS),
+            *_keys(EXTERNAL_INPUT_SENSOR_DESCRIPTIONS),
             *_keys(GATEWAY_SENSOR_DESCRIPTIONS),
             *_keys(CUMULATIVE_GATEWAY_SENSOR_DESCRIPTIONS),
             *_keys(ROOM_DIAGNOSTIC_DESCRIPTIONS),

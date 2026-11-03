@@ -9,6 +9,7 @@ from typing import Any, cast
 from homeassistant.components.diagnostics import REDACTED, async_redact_data
 from homeassistant.core import HomeAssistant
 
+from . import read_health
 from .const import CONF_HOST, CONF_PORT
 from .cumulative_diagnostics import CumulativeDiagnostics
 from .gateway_connection import RtuTcpGatewayConnection, gateway_connection_from_data
@@ -88,6 +89,13 @@ def _serialize_room(room: RoomConfig) -> dict[str, Any]:
 
 def _serialize_room_state(state: RoomState, port: str) -> dict[str, Any]:
     data = asdict(state)
+    if (raw := state.mode_status_raw) is not None:
+        data["mode_status_raw"] = {
+            "41100": raw[0],
+            "41101": raw[1],
+            "41102": raw[2],
+            "fresh": read_health.group_fresh(state, "flow_control"),
+        }
     for _group_key, health in data["group_read_health"]:
         health["last_error"] = redact_port(health["last_error"], port)
         # A monotonic clock reading means nothing outside this process.

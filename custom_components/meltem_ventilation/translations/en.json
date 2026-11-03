@@ -222,6 +222,21 @@
       "humidity_supply_air": {
         "name": "Supply air humidity"
       },
+      "absolute_humidity_extract_air": {
+        "name": "Absolute extract air humidity"
+      },
+      "absolute_humidity_supply_air": {
+        "name": "Absolute supply air humidity"
+      },
+      "external_input_level": {
+        "name": "External control input airflow"
+      },
+      "external_input_on_delay": {
+        "name": "External control input switch-on delay"
+      },
+      "external_input_run_on": {
+        "name": "External control input run-on time"
+      },
       "co2_extract_air": {
         "name": "Extract air CO2"
       },

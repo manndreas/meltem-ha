@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.const import EntityCategory, UnitOfTime, UnitOfVolumeFlowRate
+from homeassistant.const import EntityCategory, UnitOfDensity, UnitOfTime, UnitOfVolumeFlowRate
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.typing import UNDEFINED
@@ -81,6 +81,16 @@ def _sensor(key: str, state: RoomState | None = None) -> MeltemSensorEntity:
 
 
 class TestSensorEntityCreation:
+    @pytest.mark.parametrize(
+        "key", ["absolute_humidity_extract_air", "absolute_humidity_supply_air"]
+    )
+    def test_absolute_humidity_sensors_are_disabled_by_default(self, key: str) -> None:
+        sensor = _sensor(key)
+        assert sensor.entity_registry_enabled_default is False
+        assert sensor.state_class is SensorStateClass.MEASUREMENT
+        assert sensor.device_class is SensorDeviceClass.ABSOLUTE_HUMIDITY
+        assert sensor.native_unit_of_measurement == UnitOfDensity.GRAMS_PER_CUBIC_METER
+
     @pytest.mark.parametrize("gateway_mac", [None, "02:00:00:00:00:01"])
     def test_gateway_device_info_optional_mac(self, gateway_mac: str | None) -> None:
         info = entity_module.gateway_device_info("gateway-entry", gateway_mac)
@@ -309,6 +319,16 @@ class TestSensorEntityCreation:
                 UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR,
             ),
             ("co2_extract_air", SensorDeviceClass.CO2, "ppm"),
+            (
+                "absolute_humidity_extract_air",
+                SensorDeviceClass.ABSOLUTE_HUMIDITY,
+                UnitOfDensity.GRAMS_PER_CUBIC_METER,
+            ),
+            (
+                "absolute_humidity_supply_air",
+                SensorDeviceClass.ABSOLUTE_HUMIDITY,
+                UnitOfDensity.GRAMS_PER_CUBIC_METER,
+            ),
         ],
     )
     def test_device_class_and_unit_come_from_the_description(
@@ -539,6 +559,16 @@ class TestSensorNativeValue:
         [
             pytest.param("exhaust_temperature", RoomState(exhaust_temperature=22.5), 22.5),
             pytest.param("humidity_extract_air", RoomState(humidity_extract_air=55), 55),
+            pytest.param(
+                "absolute_humidity_extract_air",
+                RoomState(absolute_humidity_extract_air=8.64),
+                8.64,
+            ),
+            pytest.param(
+                "absolute_humidity_supply_air",
+                RoomState(absolute_humidity_supply_air=7.21),
+                7.21,
+            ),
             pytest.param("co2_extract_air", RoomState(co2_extract_air=800), 800),
             pytest.param("voc_supply_air", RoomState(voc_supply_air=120), 120),
             pytest.param(
@@ -578,6 +608,7 @@ class TestSensorAvailability:
             ("supply_air_flow", "flow", False),
             ("exhaust_temperature", "flow", True),
             ("exhaust_temperature", "temperature", False),
+            ("absolute_humidity_extract_air", "temperature", False),
         ],
     )
     def test_sensor_follows_the_freshness_of_its_own_read_group(

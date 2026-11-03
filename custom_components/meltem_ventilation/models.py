@@ -159,6 +159,8 @@ class RoomState:
     supply_air_temperature: float | None = None
     humidity_extract_air: int | None = None
     humidity_supply_air: int | None = None
+    absolute_humidity_extract_air: float | None = None
+    absolute_humidity_supply_air: float | None = None
     co2_extract_air: int | None = None
     voc_supply_air: int | None = None
     extract_air_flow: int | None = None
@@ -174,6 +176,7 @@ class RoomState:
     operation_mode: str | None = None
     preset_mode: str | None = None
     intensive_active: bool | None = None
+    mode_status_raw: tuple[int, int, int] | None = None
     target_level: int | None = None
     balanced_target_readback: int | None = None
     extract_target_level: int | None = None
@@ -213,7 +216,9 @@ class RoomState:
 
 
 _ROOM_VALUE_FIELDS: tuple[str, ...] = tuple(
-    item.name for item in fields(RoomState) if item.name != "group_read_health"
+    item.name
+    for item in fields(RoomState)
+    if item.name not in {"group_read_health", "mode_status_raw"}
 )
 EMPTY_ROOM_STATE = RoomState()
 

@@ -27,6 +27,13 @@
   stays ignored when the integration reloads.
 - **Scan for new units** lists the units the gateway no longer reports and
   removes them only after you confirm.
+- Calculate optional absolute extract- and supply-air humidity sensors from
+  the existing temperature and humidity readings, without additional Modbus
+  requests.
+- Include the raw current-mode registers in the diagnostics download.
+- Show the configured airflow, switch-on delay, and run-on time of the external
+  control input as optional, read-only diagnostics. Each sensor is disabled by
+  default and reads only its own register while enabled.
 
 ### Improvements (5.0.0)
 

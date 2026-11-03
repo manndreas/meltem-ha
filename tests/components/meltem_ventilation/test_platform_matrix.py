@@ -59,6 +59,9 @@ _BASE_SENSORS = {
     "modbus_slave_id",
     "airflow_balance",
     "last_successful_update",
+    "external_input_level",
+    "external_input_on_delay",
+    "external_input_run_on",
 }
 # The -F variant adds all remaining temperatures together with humidity.
 _HUMIDITY_SENSORS = {
@@ -67,6 +70,8 @@ _HUMIDITY_SENSORS = {
     "supply_air_temperature",
     "humidity_extract_air",
     "humidity_supply_air",
+    "absolute_humidity_extract_air",
+    "absolute_humidity_supply_air",
 }
 _CO2_SENSORS = {"co2_extract_air"}
 _VOC_SENSORS = {"voc_supply_air"}
@@ -172,6 +177,10 @@ def setup_profile_fixture(hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.MeltemModbusClient.async_read_room_app_setup_code",
         AsyncMock(return_value="R000001"),
+    )
+    monkeypatch.setattr(
+        "custom_components.meltem_ventilation.MeltemModbusClient.async_read_external_input_setting",
+        AsyncMock(return_value=60),
     )
     monkeypatch.setattr(
         "custom_components.meltem_ventilation.coordinator."
@@ -658,6 +667,54 @@ async def test_app_setup_code_reads_only_when_enabled(
     assert state is not None
     assert state.state == "R000001"
     assert await hass.config_entries.async_unload(entry_id)
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "unit"),
+    [
+        ("external_input_level", 60, "%"),
+        ("external_input_on_delay", 1, "min"),
+        ("external_input_run_on", 15, "min"),
+    ],
+)
+async def test_external_input_sensor_reads_only_while_enabled(
+    hass: HomeAssistant, setup_profile: SetupProfile, key: str, value: int, unit: str
+) -> None:
+    entry_id = await setup_profile("ii_plain")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    coordinator = entry.runtime_data.coordinator
+    read_setting = coordinator.client.async_read_external_input_setting
+    read_setting.assert_not_awaited()
+    assert not coordinator.optional_room_reads
+
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{DOMAIN}_{entry_id}_unit_1_{key}"
+    )
+    assert entity_id is not None
+    registered = registry.async_get(entity_id)
+    assert registered is not None
+    assert registered.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    registry.async_update_entity(entity_id, disabled_by=None)
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
+
+    coordinator = entry.runtime_data.coordinator
+    read_setting.return_value = value
+    coordinator.async_set_updated_data({"unit_1": RoomState(target_level=30)})
+    async with coordinator._gateway_lock:
+        assert await coordinator._async_read_optional_gateway_values_due() == {"unit_1"}
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+
+    read_setting.assert_awaited_once_with(coordinator.rooms[0], key)
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == str(value)
+    assert state.attributes["unit_of_measurement"] == unit
+    assert await hass.config_entries.async_unload(entry_id)
+    assert not coordinator.optional_room_reads[("unit_1", key)].enabled
 
 
 async def test_app_setup_code_keeps_stored_code_when_runtime_read_fails(

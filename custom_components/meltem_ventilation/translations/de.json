@@ -222,6 +222,21 @@
       "humidity_supply_air": {
         "name": "Zuluftfeuchte"
       },
+      "absolute_humidity_extract_air": {
+        "name": "Absolute Abluftfeuchte"
+      },
+      "absolute_humidity_supply_air": {
+        "name": "Absolute Zuluftfeuchte"
+      },
+      "external_input_level": {
+        "name": "Externer Steuereingang – Lüftungsstufe"
+      },
+      "external_input_on_delay": {
+        "name": "Externer Steuereingang – Einschaltverzögerung"
+      },
+      "external_input_run_on": {
+        "name": "Externer Steuereingang – Nachlaufzeit"
+      },
       "co2_extract_air": {
         "name": "Abluft-CO2"
       },

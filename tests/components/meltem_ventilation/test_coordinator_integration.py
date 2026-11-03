@@ -123,6 +123,8 @@ class _FakeClient:
         self.node_count_error: MeltemModbusError | None = None
         self.rf_statistics_calls = 0
         self.rf_statistics_error: MeltemModbusError | None = None
+        self.external_input_calls: list[tuple[str, str]] = []
+        self.external_input_error: MeltemModbusError | None = None
 
     async def async_disconnect_gateway(self) -> None:
         raise AssertionError("Gateway disconnection is not expected in polling tests")
@@ -160,6 +162,12 @@ class _FakeClient:
 
     async def async_read_room_app_setup_code(self, room: RoomConfig) -> str | None:
         raise AssertionError("App setup code reads are not expected in coordinator polling tests")
+
+    async def async_read_external_input_setting(self, room: RoomConfig, key: str) -> int:
+        self.external_input_calls.append((room.key, key))
+        if self.external_input_error is not None:
+            raise self.external_input_error
+        return 60
 
     async def discover_gateway_units(self, start: int, end: int) -> list[int]:
         raise AssertionError("Gateway discovery is not expected in coordinator polling tests")
@@ -439,6 +447,133 @@ class TestGatewayRfStatistics:
         await refresh
         assert not coordinator.optional_gateway_reads["rf_statistics"].consumers
         assert not coordinator.optional_gateway_reads["rf_statistics"].reading
+        await coordinator.async_shutdown()
+
+
+class TestExternalInputDiagnostics:
+    async def test_only_enabled_settings_are_read_one_per_tick(
+        self, hass: HomeAssistant, clock: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
+        original_read = client.async_read_external_input_setting
+
+        async def read_with_lock(room: RoomConfig, key: str) -> int:
+            assert coordinator._gateway_lock.locked()
+            return await original_read(room, key)
+
+        monkeypatch.setattr(client, "async_read_external_input_setting", read_with_lock)
+        coordinator.data = {
+            "unit_1": RoomState(target_level=30),
+            "unit_2": RoomState(target_level=30),
+        }
+        skip_startup(coordinator)
+        _set_jobs_due(coordinator, clock.now + 99_999)
+        coordinator._gateway_units.set_enabled("new_unit_issue", False)
+        await coordinator.async_refresh()
+        assert not client.external_input_calls
+        assert coordinator.optional_room_reads == {}
+
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        coordinator.set_external_input_enabled("unit_1", "external_input_on_delay", True)
+        coordinator.set_external_input_enabled("unit_2", "external_input_run_on", True)
+        for expected_count in range(1, 4):
+            clock.now += 1
+            await coordinator.async_refresh()
+            assert len(client.external_input_calls) == expected_count
+        assert client.external_input_calls == [
+            ("unit_1", "external_input_level"),
+            ("unit_1", "external_input_on_delay"),
+            ("unit_2", "external_input_run_on"),
+        ]
+        assert coordinator.external_input_value("unit_1", "external_input_level") == 60
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", False)
+        assert coordinator.external_input_value("unit_1", "external_input_level") is None
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        assert coordinator.external_input_value("unit_1", "external_input_level") is None
+        clock.now += 1
+        await coordinator.async_refresh()
+        assert client.external_input_calls[-1] == ("unit_1", "external_input_level")
+        await coordinator.async_shutdown()
+
+    async def test_failure_is_isolated_and_value_expires(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        skip_startup(coordinator)
+        _set_jobs_due(coordinator, clock.now + 99_999)
+        coordinator._gateway_units.set_enabled("new_unit_issue", False)
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        await coordinator.async_refresh()
+        assert coordinator.external_input_value("unit_1", "external_input_level") == 60
+
+        client.external_input_error = MeltemModbusError("unsupported")
+        clock.now += 3600
+        await coordinator.async_refresh()
+        assert coordinator.last_update_success
+        assert coordinator.external_input_value("unit_1", "external_input_level") == 60
+        clock.now += 7201
+        assert coordinator.external_input_value("unit_1", "external_input_level") is None
+        await coordinator.async_shutdown()
+
+    async def test_optional_read_updates_its_room_alongside_another_rooms_job(
+        self, hass: HomeAssistant, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass, _ROOM_1, _ROOM_2)
+        coordinator.data = {
+            "unit_1": RoomState(target_level=30),
+            "unit_2": RoomState(target_level=30),
+        }
+        client.fresh_read_groups = ("flow", "flow_control")
+        skip_startup(coordinator)
+        _set_jobs_due(coordinator, clock.now + 99_999)
+        next(job for job in coordinator.poll_jobs if job.room_key == "unit_1").next_due = clock.now
+        coordinator.set_external_input_enabled("unit_2", "external_input_level", True)
+        seen: list[tuple[bool, bool]] = []
+        coordinator.async_add_listener(
+            lambda: seen.append(
+                (coordinator.room_updated("unit_1"), coordinator.room_updated("unit_2"))
+            )
+        )
+
+        await coordinator.async_refresh()
+
+        assert seen == [(True, True)]
+        assert client.external_input_calls == [("unit_2", "external_input_level")]
+        await coordinator.async_shutdown()
+
+    async def test_disabling_and_reenabling_during_a_read_retries_immediately(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, clock: SimpleNamespace
+    ) -> None:
+        coordinator, client = _build(hass)
+        coordinator.data = {"unit_1": RoomState(target_level=30)}
+        skip_startup(coordinator)
+        _set_jobs_due(coordinator, clock.now + 99_999)
+        started = asyncio.Event()
+        calls = 0
+
+        async def read(_room: RoomConfig, _key: str) -> int:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                started.set()
+                await asyncio.Future()
+            return 60
+
+        monkeypatch.setattr(client, "async_read_external_input_setting", read)
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        refresh = asyncio.create_task(coordinator.async_refresh())
+        await started.wait()
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", False)
+        coordinator.set_external_input_enabled("unit_1", "external_input_level", True)
+        await refresh
+
+        assert coordinator.last_update_success
+        assert coordinator.external_input_value("unit_1", "external_input_level") is None
+        clock.now += 1
+        await coordinator.async_refresh()
+        assert calls == 2
+        assert coordinator.external_input_value("unit_1", "external_input_level") == 60
         await coordinator.async_shutdown()
 
 

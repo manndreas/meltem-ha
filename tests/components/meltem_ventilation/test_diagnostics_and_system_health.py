@@ -6,7 +6,7 @@ import json
 import types
 from copy import deepcopy
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -114,6 +114,39 @@ def _dump(diagnostics: dict[str, Any]) -> str:
 
 
 class TestDiagnostics:
+    @pytest.mark.parametrize("fresh", [True, False])
+    async def test_raw_mode_registers_report_freshness_without_normalizing(
+        self, hass: HomeAssistant, fresh: bool
+    ) -> None:
+        entry = _entry(hass)
+        coordinator = entry.runtime_data.coordinator
+        read_at = datetime.now(UTC)
+        coordinator.safe_data = {
+            "unit_1": RoomState(mode_status_raw=(2, 176, 0)).with_read_health(
+                "flow_control",
+                ReadHealth(
+                    last_attempt=read_at if fresh else read_at + timedelta(seconds=1),
+                    last_successful_read=read_at,
+                    consecutive_failures=0 if fresh else 1,
+                    last_error=None if fresh else "read failed",
+                ),
+            )
+        }
+
+        result = await async_get_config_entry_diagnostics(hass, entry)
+        raw = result["coordinator"]["room_states"]["unit_1"]["mode_status_raw"]
+        assert raw == {"41100": 2, "41101": 176, "41102": 0, "fresh": fresh}
+
+    async def test_raw_mode_registers_are_unknown_before_any_read(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = _entry(hass)
+        result = await async_get_config_entry_diagnostics(hass, entry)
+        assert result["coordinator"]["room_states"]["unit_1"]["mode_status_raw"] is None
+
+    def test_raw_mode_registers_alone_do_not_make_a_room_available(self) -> None:
+        assert not RoomState(mode_status_raw=(2, 80, 0)).has_data
+
     @pytest.mark.parametrize("with_runtime", [False, True])
     async def test_network_host_is_redacted(self, hass: HomeAssistant, with_runtime: bool) -> None:
         entry = _entry(hass, with_runtime=with_runtime)

@@ -1,4 +1,4 @@
-"""Optional gateway values that are read only while an entity needs them."""
+"""Optional values read through the gateway only while a consumer needs them."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class OptionalGatewayRead[T]:
-    """One optional gateway value, read only while at least one entity needs it.
+    """One optional value, read only while at least one consumer needs it.
 
     Its read runs in the coordinator's poll tick under the gateway lock, and
     disabling the last consumer cancels a read that is still waiting.
@@ -32,6 +32,7 @@ class OptionalGatewayRead[T]:
         stale_seconds: float,
         first_read_delay: float = 0.0,
         on_value: Callable[[T], None] | None = None,
+        clear_on_disable: bool = False,
     ) -> None:
         self._hass = hass
         self.name = name
@@ -40,11 +41,13 @@ class OptionalGatewayRead[T]:
         self._stale_seconds = stale_seconds
         self._first_read_delay = first_read_delay
         self._on_value = on_value
+        self._clear_on_disable = clear_on_disable
         self._consumers: set[str] = set()
         self._next_due = 0.0
         self._value: T | None = None
         self._read_at: float | None = None
         self._task: asyncio.Task[T] | None = None
+        self._disable_generation = 0
 
     @property
     def consumers(self) -> frozenset[str]:
@@ -84,8 +87,13 @@ class OptionalGatewayRead[T]:
             return False
         if self.enabled:
             self._next_due = time.monotonic() + self._first_read_delay
-        elif self._task is not None:
-            self._task.cancel()
+        else:
+            self._disable_generation += 1
+            if self._clear_on_disable:
+                self._value = None
+                self._read_at = None
+            if self._task is not None:
+                self._task.cancel()
         return True
 
     def seconds_until_due(self) -> float | None:
@@ -98,6 +106,7 @@ class OptionalGatewayRead[T]:
 
         if not self.enabled or time.monotonic() < self._next_due:
             return False
+        generation = self._disable_generation
         self._task = self._hass.async_create_task(self._read(), f"Meltem gateway {self.name}")
         try:
             self._value = value = await self._task
@@ -105,11 +114,16 @@ class OptionalGatewayRead[T]:
             if self._on_value is not None:
                 self._on_value(value)
         except asyncio.CancelledError:
-            if self.enabled:
+            if self._disable_generation == generation:
                 raise
         except MeltemModbusError as err:
             _LOGGER.debug("Optional gateway %s read failed: %s", self.name, err)
         finally:
             self._task = None
-            self._next_due = time.monotonic() + self._refresh_seconds
+            delay = (
+                self._first_read_delay
+                if self.enabled and self._disable_generation != generation
+                else self._refresh_seconds
+            )
+            self._next_due = time.monotonic() + delay
         return True

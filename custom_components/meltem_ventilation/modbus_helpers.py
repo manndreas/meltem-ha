@@ -322,6 +322,8 @@ _CAPABILITY_ENTITY_KEYS: dict[str, frozenset[str]] = {
             "supply_air_temperature",
             "humidity_extract_air",
             "humidity_supply_air",
+            "absolute_humidity_extract_air",
+            "absolute_humidity_supply_air",
             "humidity_starting_point",
             "humidity_min_level",
             "humidity_max_level",

@@ -36,6 +36,13 @@ configured units, a lower request-rate cap, or transport retries can delay the
 initial scan and later refreshes; the intervals above are targets, not
 guaranteed delivery times.
 
+On units with humidity sensors, **Absolute extract air humidity** and
+**Absolute supply air humidity** estimate g/m³ from the matching temperature
+and relative humidity. Both sensors are disabled by default and add no
+Modbus reads. A result is unknown if either input is missing or the inputs
+were not obtained together; stale temperature-group data also makes the
+sensor unavailable.
+
 ## Read health and availability
 
 After three consecutive transport failures (timeouts or lost connections),
@@ -71,10 +78,28 @@ unit **dBm is provisional**: the upstream register map specifies the signed
 encoding but does not establish the physical unit for this register. See the
 [hardware observations](dev/MELTEM.md) for the measured values.
 
-These room diagnostics use separate register reads and read-health groups;
-an unsupported diagnostic does not invalidate the existing measurements or
-controls. The room reads follow the normal supported-profile polling even
-when their entities are disabled; hiding them does not stop those reads.
+These RF and operating-hour room diagnostics use separate register reads and
+read-health groups; an unsupported diagnostic does not invalidate the existing
+measurements or controls. Their reads follow the normal supported-profile
+polling even when their entities are disabled; hiding them does not stop those
+reads.
+
+**External control input airflow**, **switch-on delay**, and **run-on time**
+are the configured settings for the unit's physical external control input.
+The manufacturer describes this as a mains-voltage input for a compatible switch,
+timer, motion detector, or similar accessory; an active input takes priority
+over Modbus commands. These sensors show configuration, **not** whether the
+input is currently active. They do not control or switch the input.
+
+The sensors are disabled by default; enabling one reads only its own documented
+register (`42007`, `42008`, or `42009`), approximately once per hour. Disabling
+it stops those reads. Airflow is shown in percent and the delays in minutes;
+values outside the manufacturer register ranges are rejected. A failed or
+unsupported read does not make the room or other entities unavailable. A
+cached value expires after three hours without a successful read. Do not
+connect an HA GPIO or relay directly to the unit's mains-voltage input; wiring
+and compatible accessories must follow the unit manual and be handled by a
+qualified installer.
 
 **RF fault status** (`40103`) and **Value error** (`40104`) are disabled by
 default. They use the upstream Airios interpretation: fault status is off for
@@ -119,7 +144,11 @@ such as unit names, may still be present.
 The download lists every unit under `entry.units` with its stored address,
 profile, and identity. Under `coordinator`, `next_poll_delay_seconds` is the
 time the scheduler waits after its current tick, and `poll_scheduled` shows
-that the next tick is planned.
+that the next tick is planned. Each room state also includes the last raw
+mode-status registers `41100..41102`, before mode decoding. Their `fresh`
+flag distinguishes a current successful mode read from retained older values;
+the accompanying flow-control read health records its last successful time.
+This adds no register reads.
 
 ### Repair notices
 

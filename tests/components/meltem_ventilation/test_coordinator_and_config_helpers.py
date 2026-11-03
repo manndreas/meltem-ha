@@ -116,6 +116,9 @@ class _FakeClient:
     async def async_read_room_app_setup_code(self, room: RoomConfig) -> str | None:
         raise AssertionError("Optional app setup code reads are disabled in these tests")
 
+    async def async_read_external_input_setting(self, room: RoomConfig, key: str) -> int:
+        raise AssertionError("External input diagnostics are disabled in these tests")
+
     async def probe_slave_details(self, slave: int) -> UnitProbeResult:
         self.probe_calls.append(slave)
         return UnitProbeResult("plain", f"ID {slave}", product_id=slave)

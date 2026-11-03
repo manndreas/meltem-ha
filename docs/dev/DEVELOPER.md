@@ -68,6 +68,14 @@ read timestamp must remain visible. Room reachability is unknown until its
 first read attempt. The timestamp is the latest successful supported group for
 that room only.
 
+Absolute humidity is computed only when the matching temperature and humidity
+arrive in the same room read; a partial or invalid pair clears the derived
+value instead of combining fresh and stale inputs. Raw `41100..41102` values
+are retained before mode normalization for the diagnostics download.
+External-input diagnostics use independent single-register reads only while
+enabled, with the shared gateway lock and transport rate limit. At most one
+such room read is added per scheduler tick; disabled entities trigger none.
+
 `WriteConfirmations` keeps outcomes per room and write key for internal
 read-health evaluation. Confirmation deadlines and recent failed or
 unconfirmed writes remain available through Read health without an additional

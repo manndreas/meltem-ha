@@ -13,6 +13,7 @@ from .const import (
     MODE_MANUAL,
     MODE_OFF,
     MODE_SENSOR_CONTROL,
+    MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE,
     MODE_UNBALANCED,
     OPERATION_MODE_MANUAL,
     OPERATION_MODE_OFF,
@@ -36,7 +37,7 @@ CLEAR_INTENSIVE: tuple[tuple[str, int], ...] = (("preset_mode", 0), ("preset_val
 
 @dataclass(slots=True, frozen=True)
 class ModeRead:
-    """Decoded values from the read-only current-mode status map."""
+    """Raw values from the read-only current-mode status map."""
 
     mode: int
     current_level: int
@@ -93,9 +94,19 @@ def preset_mode_writes(room: RoomConfig, preset_mode: str) -> tuple[tuple[str, i
 def apply_mode_read(room: RoomConfig, state: RoomState, block: ModeRead | None) -> RoomState:
     """Apply a decoded mode-status read (or its absence) to ``state``."""
 
+    raw_status = state.mode_status_raw
+    if block is not None:
+        raw_status = (block.mode, block.current_level, block.extract_target_level)
+        if block.mode == MODE_SENSOR_CONTROL:
+            block = replace(
+                block,
+                current_level=MODE_STATUS_SENSOR_MODE_TO_RAW_VALUE.get(
+                    block.current_level, block.current_level
+                ),
+            )
     if block is not None and _mode_status_reports_intensive(block):
         # The intensive status hides the base mode, so the last known one stays.
-        return replace(state, intensive_active=True)
+        return replace(state, intensive_active=True, mode_status_raw=raw_status)
 
     operation_mode = (
         _decode_operation_mode(block.mode, block.current_level)
@@ -134,6 +145,7 @@ def apply_mode_read(room: RoomConfig, state: RoomState, block: ModeRead | None) 
         extract_target_level=extract_target_level,
         preset_mode=_decode_preset_mode(block, state.preset_mode),
         intensive_active=state.intensive_active if block is None else False,
+        mode_status_raw=raw_status,
     )
 
 

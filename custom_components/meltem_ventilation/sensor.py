@@ -24,6 +24,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
+    UnitOfDensity,
     UnitOfRatio,
     UnitOfTemperature,
     UnitOfTime,
@@ -315,6 +316,24 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         value_fn=lambda state: state.humidity_supply_air,
     ),
     MeltemSensorDescription(
+        key="absolute_humidity_extract_air",
+        device_class=SensorDeviceClass.ABSOLUTE_HUMIDITY,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfDensity.GRAMS_PER_CUBIC_METER,
+        suggested_display_precision=1,
+        entity_registry_enabled_default=False,
+        value_fn=lambda state: state.absolute_humidity_extract_air,
+    ),
+    MeltemSensorDescription(
+        key="absolute_humidity_supply_air",
+        device_class=SensorDeviceClass.ABSOLUTE_HUMIDITY,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfDensity.GRAMS_PER_CUBIC_METER,
+        suggested_display_precision=1,
+        entity_registry_enabled_default=False,
+        value_fn=lambda state: state.absolute_humidity_supply_air,
+    ),
+    MeltemSensorDescription(
         key="co2_extract_air",
         device_class=SensorDeviceClass.CO2,
         state_class=SensorStateClass.MEASUREMENT,
@@ -387,6 +406,29 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
         value_fn=lambda state: state.rf_signal_strength,
+    ),
+)
+
+EXTERNAL_INPUT_SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="external_input_level",
+        native_unit_of_measurement=PERCENTAGE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    SensorEntityDescription(
+        key="external_input_on_delay",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    SensorEntityDescription(
+        key="external_input_run_on",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
     ),
 )
 
@@ -468,6 +510,11 @@ async def async_setup_entry(
             if room_has_entity(room, description.key)
         )
         room_entities.extend(
+            MeltemExternalInputSensor(coordinator, room, description)
+            for description in EXTERNAL_INPUT_SENSOR_DESCRIPTIONS
+            if room_has_entity(room, description.key)
+        )
+        room_entities.extend(
             MeltemRoomDiagnosticSensor(coordinator, room, description)
             for description in ROOM_DIAGNOSTIC_DESCRIPTIONS
             if room_has_entity(room, description.key)
@@ -494,6 +541,40 @@ class MeltemSensorEntity(MeltemEntity, SensorEntity):
     @property
     def native_value(self) -> int | float | None:
         return self.entity_description.value_fn(self.room_state)
+
+
+class MeltemExternalInputSensor(MeltemEntity, SensorEntity):
+    """One on-demand, read-only external-input setting."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: MeltemDataUpdateCoordinator,
+        room: RoomConfig,
+        description: SensorEntityDescription,
+    ) -> None:
+        super().__init__(coordinator, room, description.key)
+        self.entity_description = description
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        key = self.entity_description.key
+        self.coordinator.set_external_input_enabled(self.room.key, key, True)
+        self.async_on_remove(
+            lambda: self.coordinator.set_external_input_enabled(self.room.key, key, False)
+        )
+        self.async_on_remove(
+            self.coordinator.async_add_diagnostic_listener(self.async_write_ha_state)
+        )
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.native_value is not None
+
+    @property
+    def native_value(self) -> int | None:
+        return self.coordinator.external_input_value(self.room.key, self.entity_description.key)
 
 
 class MeltemGatewayUptimeSensor(MeltemGatewayEntity, SensorEntity):

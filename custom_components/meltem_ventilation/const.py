@@ -78,6 +78,8 @@ GATEWAY_CONNECTED_DEVICES_REFRESH_SECONDS = 60.0
 GATEWAY_CONNECTED_DEVICES_STALE_SECONDS = 180.0
 GATEWAY_RF_STATISTICS_REFRESH_SECONDS = 60.0
 GATEWAY_RF_STATISTICS_STALE_SECONDS = 180.0
+EXTERNAL_INPUT_REFRESH_SECONDS = 3600.0
+EXTERNAL_INPUT_STALE_SECONDS = 3 * EXTERNAL_INPUT_REFRESH_SECONDS
 
 GATEWAY_ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
     "modbus_device_path": Platform.SENSOR,
@@ -352,6 +354,20 @@ REGISTER_HUMIDITY_MAX_LEVEL = 42002
 REGISTER_CO2_STARTING_POINT = 42003
 REGISTER_CO2_MIN_LEVEL = 42004
 REGISTER_CO2_MAX_LEVEL = 42005
+REGISTER_EXTERNAL_INPUT_LEVEL = 42007
+REGISTER_EXTERNAL_INPUT_ON_DELAY = 42008
+REGISTER_EXTERNAL_INPUT_RUN_ON = 42009
+
+EXTERNAL_INPUT_REGISTERS: dict[str, int] = {
+    "external_input_level": REGISTER_EXTERNAL_INPUT_LEVEL,
+    "external_input_on_delay": REGISTER_EXTERNAL_INPUT_ON_DELAY,
+    "external_input_run_on": REGISTER_EXTERNAL_INPUT_RUN_ON,
+}
+EXTERNAL_INPUT_LIMITS: dict[str, tuple[int, int]] = {
+    "external_input_level": (10, 100),
+    "external_input_on_delay": (0, 240),
+    "external_input_run_on": (0, 240),
+}
 
 REGISTER_GATEWAY_NUMBER_OF_NODES = 43901
 REGISTER_GATEWAY_MAC_START = 41012
@@ -408,6 +424,8 @@ READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
             "supply_air_temperature",
             "humidity_extract_air",
             "humidity_supply_air",
+            "absolute_humidity_extract_air",
+            "absolute_humidity_supply_air",
             "co2_extract_air",
             "voc_supply_air",
         }
@@ -452,6 +470,7 @@ BASE_SUPPORTED_ENTITY_KEYS: frozenset[str] = frozenset(
         "airflow_balance",
         "connectivity",
         "last_successful_update",
+        *EXTERNAL_INPUT_REGISTERS,
     }
 )
 
@@ -464,6 +483,8 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "supply_air_temperature",
             "humidity_extract_air",
             "humidity_supply_air",
+            "absolute_humidity_extract_air",
+            "absolute_humidity_supply_air",
             "co2_extract_air",
             "voc_supply_air",
             "extract_air_flow",
@@ -477,6 +498,7 @@ ENTITY_PLATFORM_BY_KEY: dict[str, Platform] = {
             "modbus_slave_id",
             "airflow_balance",
             "last_successful_update",
+            *EXTERNAL_INPUT_REGISTERS,
         ),
         Platform.SENSOR,
     ),
@@ -510,6 +532,8 @@ ENTITY_PROFILES: dict[str, frozenset[str]] = {
     "supply_air_temperature": HUMIDITY_PROFILES,
     "humidity_extract_air": HUMIDITY_PROFILES,
     "humidity_supply_air": HUMIDITY_PROFILES,
+    "absolute_humidity_extract_air": HUMIDITY_PROFILES,
+    "absolute_humidity_supply_air": HUMIDITY_PROFILES,
     "co2_extract_air": CO2_PROFILES,
     "voc_supply_air": VOC_PROFILES,
     **{
