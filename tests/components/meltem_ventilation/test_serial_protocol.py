@@ -8,6 +8,7 @@ import sys
 import time
 from collections import deque
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -61,7 +62,10 @@ def _frame(payload: bytes) -> bytes:
 
 
 def _connection(device: str) -> ModbusConnection:
-    return TmodbusConnection(build_serial_params(device))
+    # A PTY carries bytes but cannot model UART parity; the production 8E1
+    # settings are asserted separately in test_gateway_connection.
+    params = replace(build_serial_params(device), parity="N")
+    return TmodbusConnection(params)
 
 
 class _RtuGateway:
