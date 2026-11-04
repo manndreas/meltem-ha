@@ -1,0 +1,160 @@
+name: Bug report
+description: Report a problem with the Meltem Modbus integration.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening an issue, check whether it has already been reported.
+        See the [diagnostics guide](https://github.com/manndreas/meltem-ha/blob/main/docs/DIAGNOSTICS.md) for how polling, sensor values, and read health work.
+
+        Please do not post app setup codes, passwords, tokens, full Home Assistant logs, or unrelated personal or network details. Review diagnostic files before attaching them.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you observed.
+      placeholder: A temperature entity stays unavailable after setup.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What best describes the problem?
+      options:
+        - Entities are missing
+        - An entity shows unknown
+        - An entity shows unavailable
+        - A value is incorrect or stale
+        - A control or setting does not work
+        - Setup or connection fails
+        - Other or not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the actions and affected unit. If it happens intermittently, say how often.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: Optional, but helpful if the expected behavior is not obvious.
+    validations:
+      required: false
+
+  - type: input
+    id: unit_model
+    attributes:
+      label: Unit model(s)
+      description: Enter the model as printed on the type plate, if known. Do not include the app setup code.
+      placeholder: M-WRG-S/Z-T-F
+    validations:
+      required: false
+
+  - type: dropdown
+    id: selected_profile
+    attributes:
+      label: Profile selected in the integration
+      options:
+        - M-WRG-S
+        - M-WRG-S (-F)
+        - M-WRG-S (-FC)
+        - M-WRG-II
+        - M-WRG-II (-F)
+        - M-WRG-II (-FC)
+        - M-WRG-II (O/VOC-AUL)
+        - Other or not sure
+    validations:
+      required: false
+
+  - type: input
+    id: affected_units
+    attributes:
+      label: How many units are affected?
+      placeholder: "1 of 8"
+    validations:
+      required: false
+
+  - type: textarea
+    id: sensor_details
+    attributes:
+      label: Affected entities or readings
+      description: For sensor or polling problems, list the entity names and whether they are missing, unknown, unavailable, stale, or incorrect. Include the unit's Read health or last read error if available.
+      placeholder: |
+        Unit: Bathroom
+        Entities: Extract air temperature, Extract air humidity
+        State: unavailable
+        Read health / last read error: ...
+    validations:
+      required: false
+
+  - type: input
+    id: home_assistant_version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.11.0"
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Meltem Modbus integration version
+      placeholder: "5.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation_type
+    attributes:
+      label: Home Assistant installation type
+      options:
+        - Home Assistant OS
+        - Home Assistant Container
+        - Home Assistant Supervised
+        - Home Assistant Core
+        - Other or not sure
+    validations:
+      required: false
+
+  - type: dropdown
+    id: gateway_connection
+    attributes:
+      label: How is the M-WRG-GW connected?
+      options:
+        - USB serial connection
+        - RTU-over-TCP network bridge (for example, ESP32)
+        - Other or not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics or relevant log excerpt
+      description: If possible, attach the integration diagnostics download after creating the issue. Review it first and remove private details. For logs, include only relevant lines and redact hostnames, IP addresses, serial numbers, and identifiers.
+      placeholder: Paste a short, redacted excerpt here, or describe which diagnostic file you attached.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Add screenshots or other details that may help reproduce the problem. Remove names, addresses, and other private information first.
+    validations:
+      required: false
