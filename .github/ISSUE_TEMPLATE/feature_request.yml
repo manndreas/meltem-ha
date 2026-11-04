@@ -1,0 +1,69 @@
+name: Feature request
+description: Suggest a capability or improvement for the Meltem Modbus integration.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check existing issues before submitting. Model-specific support may need confirmation on real hardware.
+        Please link to manufacturer references rather than uploading manuals. Do not include app setup codes or other private details.
+
+  - type: textarea
+    id: request
+    attributes:
+      label: What problem or need would this address?
+      description: Describe the use case and what you would like the integration to do.
+      placeholder: I would like to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected_units
+    attributes:
+      label: Affected unit(s) or setup (if relevant)
+      description: Include the type-plate model, selected integration profile, and gateway or bridge details if they matter. Do not include the app setup code.
+      placeholder: |
+        Model: M-WRG-S/Z-T-F
+        Selected profile: M-WRG-S (-F)
+        Gateway connection: USB or RTU-over-TCP bridge (for example, ESP32)
+    validations:
+      required: false
+
+  - type: dropdown
+    id: hardware_access
+    attributes:
+      label: Can you help test this on real hardware?
+      options:
+        - Yes, I can test it
+        - I can share observations, but cannot run tests
+        - No or not sure
+        - Not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround (optional)
+      description: Mention any existing integration feature or external tool you use instead.
+    validations:
+      required: false
+
+  - type: input
+    id: reference
+    attributes:
+      label: Supporting reference (optional)
+      description: Link to a relevant manufacturer document, register reference, or prior discussion.
+      placeholder: https://...
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context (optional)
+      description: Add any other information that helps explain the use case.
+    validations:
+      required: false
