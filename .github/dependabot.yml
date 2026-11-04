@@ -13,7 +13,7 @@ updates:
     ignore:
       # These follow the supported Home Assistant release and move together by hand.
       - dependency-name: homeassistant
-      - dependency-name: pytest-home-assistant
+      - dependency-name: pytest-homeassistant
       - dependency-name: modbus-connection
       - dependency-name: tmodbus
       - dependency-name: pymodbus

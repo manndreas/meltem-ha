@@ -74,6 +74,7 @@ class _RtuGateway:
         self.buffer = bytearray()
         self.requests: list[tuple[int, int, int, int]] = []
         self.actions: deque[str] = deque()
+        self.write_actions: deque[str] = deque()
         self.late_response: bytes | None = None
         self.errors: list[str] = []
         self.pending: list[asyncio.TimerHandle] = []
@@ -109,7 +110,10 @@ class _RtuGateway:
             address = int.from_bytes(request[2:4], "big")
             value = int.from_bytes(request[4:6], "big")
             self.requests.append((unit, function, address, value))
-            action = self.actions.popleft() if self.actions else "normal"
+            if function == 6 and self.write_actions:
+                action = self.write_actions.popleft()
+            else:
+                action = self.actions.popleft() if self.actions else "normal"
             if action == "timeout":
                 continue
             registers = self.registers.get(unit, {})
@@ -650,7 +654,7 @@ async def test_home_assistant_fan_service_reports_and_recovers_from_rtu_write_re
         room_entity_unique_id(serial_hass_entry.entry_id, "unit_1", "supply_level"),
     )
     assert supply_id is not None
-    serial_gateway.actions.extend(("normal", "exception"))
+    serial_gateway.write_actions.extend(("normal", "exception"))
     before_write = len(serial_gateway.requests)
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(

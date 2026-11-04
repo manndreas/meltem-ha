@@ -2,7 +2,7 @@
 #
 # Pin Home Assistant and its official test helpers to the supported release.
 homeassistant==2026.11.0
-pytest-home-assistant @ https://github.com/home-assistant/core/archive/refs/tags/2026.11.0.tar.gz#subdirectory=packages/pytest-home-assistant
+pytest-homeassistant @ https://github.com/home-assistant/core/archive/refs/tags/2026.11.0.tar.gz#subdirectory=packages/pytest-homeassistant
 # Match the Modbus integration manifest in Home Assistant 2026.11.0.
 modbus-connection[tmodbus]==4.12.7
 tmodbus==1.1.0

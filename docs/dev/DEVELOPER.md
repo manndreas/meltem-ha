@@ -1050,7 +1050,7 @@ The file overview is in `AGENTS.md` under "Important files".
 ## Tests
 
 The test suite runs against a real Home Assistant test environment provided by
-`pytest-home-assistant`, which requires Python 3.14. Modbus
+`pytest-homeassistant`, which requires Python 3.14. Modbus
 traffic runs against `modbus_connection.mock.MockModbusConnection`, an
 in-memory register bank, so the request shapes, the retry policy, and the
 decoding are tested together. It covers the Modbus layer, the coordinator,

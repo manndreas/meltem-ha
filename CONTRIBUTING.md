@@ -31,7 +31,7 @@ For an existing environment, first uninstall
 `pytest-homeassistant-custom-component`; the old and new test plugins must not
 be installed together.
 
-The official `pytest-home-assistant` test helpers are pinned to the Home
+The official `pytest-homeassistant` test helpers are pinned to the Home
 Assistant Core `2026.11.0` source tag.
 They do not install the requirements of Home Assistant's Modbus integration, so
 `requirements-test.txt` adds the
