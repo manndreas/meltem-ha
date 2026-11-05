@@ -8,15 +8,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from modbus_connection import ModbusSerialParams
+from modbus_connection import ModbusSerialParams, ModbusTcpParams
 
 from .const import (
     CONF_CONNECTION_TYPE,
     CONF_HOST,
     CONF_NETWORK_PORT,
     CONF_PORT,
+    CONNECTION_MODBUS_TCP,
     CONNECTION_RTU_OVER_TCP,
     CONNECTION_SERIAL,
+    DEFAULT_MODBUS_TCP_PORT,
     DEFAULT_NETWORK_PORT,
     FIXED_BAUDRATE,
     FIXED_BYTESIZE,
@@ -134,7 +136,47 @@ class RtuTcpGatewayConnection:
         )
 
 
-type GatewayConnection = SerialGatewayConnection | RtuTcpGatewayConnection
+@dataclass(frozen=True, slots=True)
+class ModbusTcpGatewayConnection:
+    """A gateway reached through Modbus TCP with MBAP framing."""
+
+    host: str
+    port: int = DEFAULT_MODBUS_TCP_PORT
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.host, str):
+            raise ValueError("Gateway host must be a string")
+        if (
+            isinstance(self.port, bool)
+            or not isinstance(self.port, int)
+            or not 1 <= self.port <= 65535
+        ):
+            raise ValueError("Gateway TCP port must be between 1 and 65535")
+        object.__setattr__(self, "host", _normalize_host(self.host))
+
+    @property
+    def unique_id(self) -> str:
+        host = f"[{self.host}]" if ":" in self.host else self.host
+        return f"modbus-tcp://{host}:{self.port}"
+
+    @property
+    def timeout(self) -> float:
+        return NETWORK_TIMEOUT
+
+    def as_data(self) -> dict[str, str | int]:
+        return {
+            CONF_CONNECTION_TYPE: CONNECTION_MODBUS_TCP,
+            CONF_HOST: self.host,
+            CONF_NETWORK_PORT: self.port,
+        }
+
+    def modbus_params(self) -> ModbusTcpParams:
+        return ModbusTcpParams(host=self.host, port=self.port)
+
+
+type GatewayConnection = (
+    SerialGatewayConnection | RtuTcpGatewayConnection | ModbusTcpGatewayConnection
+)
 
 
 def gateway_connection_from_data(data: Mapping[str, Any]) -> GatewayConnection:
@@ -148,4 +190,6 @@ def gateway_connection_from_data(data: Mapping[str, Any]) -> GatewayConnection:
         return SerialGatewayConnection(port)
     if connection_type == CONNECTION_RTU_OVER_TCP:
         return RtuTcpGatewayConnection(data[CONF_HOST], data[CONF_NETWORK_PORT])
+    if connection_type == CONNECTION_MODBUS_TCP:
+        return ModbusTcpGatewayConnection(data[CONF_HOST], data[CONF_NETWORK_PORT])
     raise ValueError(f"Unknown gateway connection type: {connection_type!r}")

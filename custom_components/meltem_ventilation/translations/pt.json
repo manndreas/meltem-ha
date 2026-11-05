@@ -4,7 +4,8 @@
     "connection_type": {
       "options": {
         "serial": "Série USB",
-        "rtu_over_tcp": "RTU sobre TCP"
+        "rtu_over_tcp": "RTU sobre TCP",
+        "modbus_tcp": "Modbus TCP (MBAP)"
       }
     },
     "profile_mismatch_action": {
@@ -18,18 +19,20 @@
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "Configure primeiro o M-WRG-GW e as respetivas unidades na aplicação Meltem. Escolha série USB ou RTU em bruto sobre TCP. As ligações de rede não têm encriptação nem autenticação; utilize apenas uma rede local de confiança.",
+        "description": "Configure primeiro o M-WRG-GW e as respetivas unidades na aplicação Meltem. Escolha série USB, RTU em bruto sobre TCP ou Modbus TCP (MBAP). As ligações de rede não têm encriptação nem autenticação; utilize apenas uma rede local de confiança.",
         "data": {
           "connection_type": "Tipo de ligação",
           "port": "Porta série",
-          "host": "Nome de anfitrião ou endereço IP da ponte",
-          "network_port": "Porta TCP da ponte"
+          "host": "Nome de anfitrião ou endereço IP do endpoint",
+          "network_port": "Porta TCP da ponte de rede",
+          "modbus_tcp_port": "Porta Modbus TCP"
         },
         "data_description": {
           "connection_type": "Escolha a ligação utilizada para aceder ao gateway.",
           "port": "Caminho do dispositivo para a ligação série USB.",
-          "host": "Nome de anfitrião ou endereço IP da ponte RTU sobre TCP.",
-          "network_port": "Porta TCP da ponte RTU em bruto."
+          "host": "Nome de anfitrião ou endereço IP da ponte ou do endpoint Modbus TCP.",
+          "network_port": "Porta TCP da ponte de rede.",
+          "modbus_tcp_port": "Porta TCP do endpoint Modbus TCP/MBAP (predefinição: 502)."
         }
       },
       "reconfigure": {
@@ -38,14 +41,16 @@
         "data": {
           "connection_type": "Tipo de ligação",
           "port": "Porta série",
-          "host": "Nome de anfitrião ou endereço IP da ponte",
-          "network_port": "Porta TCP da ponte"
+          "host": "Nome de anfitrião ou endereço IP do endpoint",
+          "network_port": "Porta TCP da ponte de rede",
+          "modbus_tcp_port": "Porta Modbus TCP"
         },
         "data_description": {
           "connection_type": "Escolha a ligação utilizada para aceder ao gateway.",
           "port": "Caminho do dispositivo para a ligação série USB.",
-          "host": "Nome de anfitrião ou endereço IP da ponte RTU sobre TCP.",
-          "network_port": "Porta TCP da ponte RTU em bruto."
+          "host": "Nome de anfitrião ou endereço IP da ponte ou do endpoint Modbus TCP.",
+          "network_port": "Porta TCP da ponte de rede.",
+          "modbus_tcp_port": "Porta TCP do endpoint Modbus TCP/MBAP (predefinição: 502)."
         }
       },
       "confirm_usb": {

@@ -4,7 +4,8 @@
     "connection_type": {
       "options": {
         "serial": "Połączenie szeregowe USB",
-        "rtu_over_tcp": "RTU przez TCP"
+        "rtu_over_tcp": "RTU przez TCP",
+        "modbus_tcp": "Modbus TCP (MBAP)"
       }
     },
     "profile_mismatch_action": {
@@ -18,18 +19,20 @@
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "Najpierw skonfiguruj bramę M-WRG-GW i jej jednostki w aplikacji Meltem. Wybierz połączenie szeregowe USB lub surowe RTU przez TCP. Połączenia sieciowe nie są szyfrowane ani uwierzytelniane; używaj wyłącznie zaufanej sieci lokalnej.",
+        "description": "Najpierw skonfiguruj bramę M-WRG-GW i jej jednostki w aplikacji Meltem. Wybierz połączenie szeregowe USB, surowe RTU przez TCP lub Modbus TCP (MBAP). Połączenia sieciowe nie są szyfrowane ani uwierzytelniane; używaj wyłącznie zaufanej sieci lokalnej.",
         "data": {
           "connection_type": "Typ połączenia",
           "port": "Port szeregowy",
-          "host": "Nazwa hosta lub adres IP mostka",
-          "network_port": "Port TCP mostka"
+          "host": "Nazwa hosta lub adres IP punktu końcowego",
+          "network_port": "Port TCP mostka sieciowego",
+          "modbus_tcp_port": "Port Modbus TCP"
         },
         "data_description": {
           "connection_type": "Wybierz połączenie używane do komunikacji z bramą.",
           "port": "Ścieżka urządzenia dla połączenia szeregowego USB.",
-          "host": "Nazwa hosta lub adres IP mostka RTU przez TCP.",
-          "network_port": "Port TCP surowego mostka RTU."
+          "host": "Nazwa hosta lub adres IP mostka lub punktu końcowego Modbus TCP.",
+          "network_port": "Port TCP mostka sieciowego.",
+          "modbus_tcp_port": "Port TCP punktu końcowego Modbus TCP/MBAP (domyślnie: 502)."
         }
       },
       "reconfigure": {
@@ -38,14 +41,16 @@
         "data": {
           "connection_type": "Typ połączenia",
           "port": "Port szeregowy",
-          "host": "Nazwa hosta lub adres IP mostka",
-          "network_port": "Port TCP mostka"
+          "host": "Nazwa hosta lub adres IP punktu końcowego",
+          "network_port": "Port TCP mostka sieciowego",
+          "modbus_tcp_port": "Port Modbus TCP"
         },
         "data_description": {
           "connection_type": "Wybierz połączenie używane do komunikacji z bramą.",
           "port": "Ścieżka urządzenia dla połączenia szeregowego USB.",
-          "host": "Nazwa hosta lub adres IP mostka RTU przez TCP.",
-          "network_port": "Port TCP surowego mostka RTU."
+          "host": "Nazwa hosta lub adres IP mostka lub punktu końcowego Modbus TCP.",
+          "network_port": "Port TCP mostka sieciowego.",
+          "modbus_tcp_port": "Port TCP punktu końcowego Modbus TCP/MBAP (domyślnie: 502)."
         }
       },
       "confirm_usb": {

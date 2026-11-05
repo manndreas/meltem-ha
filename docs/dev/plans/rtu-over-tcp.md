@@ -1,5 +1,8 @@
 # RTU-over-TCP implementation plan
 
+> Historical plan for the initial RTU-over-TCP transport. Its original scope
+> excluded MBAP; Modbus TCP/MBAP was added later as a separate connection type.
+
 ## Problem and approach
 
 The integration currently assumes a serial USB device path throughout setup,

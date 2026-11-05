@@ -4,7 +4,8 @@
     "connection_type": {
       "options": {
         "serial": "Serie por USB",
-        "rtu_over_tcp": "RTU sobre TCP"
+        "rtu_over_tcp": "RTU sobre TCP",
+        "modbus_tcp": "Modbus TCP (MBAP)"
       }
     },
     "profile_mismatch_action": {
@@ -18,18 +19,20 @@
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "Configura primero el M-WRG-GW y sus unidades en la aplicación Meltem. Elige serie por USB o RTU sin procesar sobre TCP. Las conexiones de red no tienen cifrado ni autenticación; utiliza únicamente una red local de confianza.",
+        "description": "Configura primero el M-WRG-GW y sus unidades en la aplicación Meltem. Elige serie por USB, RTU sin procesar sobre TCP o Modbus TCP (MBAP). Las conexiones de red no tienen cifrado ni autenticación; utiliza únicamente una red local de confianza.",
         "data": {
           "connection_type": "Tipo de conexión",
           "port": "Puerto serie",
-          "host": "Nombre de host o dirección IP del puente",
-          "network_port": "Puerto TCP del puente"
+          "host": "Nombre de host o dirección IP del endpoint",
+          "network_port": "Puerto TCP del puente de red",
+          "modbus_tcp_port": "Puerto de Modbus TCP"
         },
         "data_description": {
           "connection_type": "Elige la conexión utilizada para acceder a la pasarela.",
           "port": "Ruta del dispositivo para la conexión serie por USB.",
-          "host": "Nombre de host o dirección IP del puente RTU sobre TCP.",
-          "network_port": "Puerto TCP del puente RTU sin procesar."
+          "host": "Nombre de host o dirección IP del puente o del endpoint Modbus TCP.",
+          "network_port": "Puerto TCP del puente de red.",
+          "modbus_tcp_port": "Puerto TCP del endpoint Modbus TCP/MBAP (predeterminado: 502)."
         }
       },
       "reconfigure": {
@@ -38,14 +41,16 @@
         "data": {
           "connection_type": "Tipo de conexión",
           "port": "Puerto serie",
-          "host": "Nombre de host o dirección IP del puente",
-          "network_port": "Puerto TCP del puente"
+          "host": "Nombre de host o dirección IP del endpoint",
+          "network_port": "Puerto TCP del puente de red",
+          "modbus_tcp_port": "Puerto de Modbus TCP"
         },
         "data_description": {
           "connection_type": "Elige la conexión utilizada para acceder a la pasarela.",
           "port": "Ruta del dispositivo para la conexión serie por USB.",
-          "host": "Nombre de host o dirección IP del puente RTU sobre TCP.",
-          "network_port": "Puerto TCP del puente RTU sin procesar."
+          "host": "Nombre de host o dirección IP del puente o del endpoint Modbus TCP.",
+          "network_port": "Puerto TCP del puente de red.",
+          "modbus_tcp_port": "Puerto TCP del endpoint Modbus TCP/MBAP (predeterminado: 502)."
         }
       },
       "confirm_usb": {

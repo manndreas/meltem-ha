@@ -2068,3 +2068,48 @@ Tests: [H-14](LIVE_GATEWAY_TESTS.md#h-14--silent-unit-and-40101).
   warning in **Read health**, if `40100` proves to be a reliable age.
 - **D — enable RF communication status by default** if B is not adopted, so
   users can at least see the condition.
+
+---
+
+## HW-15 — Verify reliable Modbus TCP/MBAP operation
+
+Priority: medium
+Status: open
+Affected code: `gateway_connection.ModbusTcpGatewayConnection`,
+config flow, `tools.mock_gateway.MbapRtuTcpMockBridge`
+
+### Observation (HW-15)
+
+A read-only comparison on 2026-11-03 connected to the M-WRG-GW at TCP port
+`502` and matched gateway identity, unit discovery, and ten selected unit
+register reads against USB serial. Later connections were refused. The
+measurement is recorded once in
+[MELTEM.md](MELTEM.md#read-only-modbus-tcp-comparison-on-2026-11-03).
+
+The integration's MBAP transport and simulated RTU bridge pass software tests.
+No sustained Home Assistant session using the real gateway's MBAP endpoint or
+a physical MBAP-to-RTU bridge has been validated.
+
+### Why this needs a live check (HW-15)
+
+1. The short TCP availability window was not explained or reproduced.
+2. Sustained reads, startup timing, and compatibility with other gateway
+   clients are unknown.
+3. Only read behavior was compared; writes and write confirmation must remain
+   unclaimed until separately measured on an approved test unit.
+
+### What to measure (HW-15)
+
+Run [T-14](LIVE_GATEWAY_TESTS.md#t-14--modbus-tcpmbap-read-only-check) only
+with an approved gateway and unit, using read-only setup and polling. Do not
+reset or reconfigure the gateway, issue Modbus writes, or run another client
+against the same endpoint during the check.
+
+### Candidate solutions (HW-15)
+
+- **A — keep MBAP as a documented network option** if the endpoint stays
+  reachable and the integration reads match USB serial.
+- **B — document the specific compatible bridge/firmware and limitations** if
+  direct gateway access is intermittent but a separate bridge is reliable.
+- **C — mark native gateway MBAP as unsupported** if repeated read-only checks
+  show the endpoint is not a stable interface.

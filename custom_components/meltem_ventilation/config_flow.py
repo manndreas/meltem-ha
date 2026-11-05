@@ -23,9 +23,12 @@ from homeassistant.helpers.service_info.usb import UsbServiceInfo
 from .const import (
     CONF_CONNECTION_TYPE,
     CONF_HOST,
+    CONF_MODBUS_TCP_PORT,
     CONF_NETWORK_PORT,
     CONF_PORT,
+    CONNECTION_MODBUS_TCP,
     CONNECTION_RTU_OVER_TCP,
+    DEFAULT_MODBUS_TCP_PORT,
     DEFAULT_PORT,
     DOMAIN,
     GATEWAY_NAME,
@@ -48,6 +51,7 @@ from .flow_helpers import (
 )
 from .gateway_connection import (
     GatewayConnection,
+    ModbusTcpGatewayConnection,
     RtuTcpGatewayConnection,
     SerialGatewayConnection,
     gateway_connection_from_data,
@@ -187,12 +191,16 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if data.get(CONF_CONNECTION_TYPE) == CONNECTION_RTU_OVER_TCP:
             return RtuTcpGatewayConnection(data.get(CONF_HOST, ""), data[CONF_NETWORK_PORT])
+        if data.get(CONF_CONNECTION_TYPE) == CONNECTION_MODBUS_TCP:
+            return ModbusTcpGatewayConnection(
+                data.get(CONF_HOST, ""), data.get(CONF_MODBUS_TCP_PORT, DEFAULT_MODBUS_TCP_PORT)
+            )
         port = data.get(CONF_PORT, "").strip()
         if not port:
             raise ValueError("Serial device path is required")
         return SerialGatewayConnection(await async_resolve_port(self.hass, port))
 
-    async def _async_scan(self, port: str | RtuTcpGatewayConnection) -> str | None:
+    async def _async_scan(self, port: str | GatewayConnection) -> str | None:
         """Scan the gateway and keep its units; return the form error on failure."""
 
         try:
@@ -317,8 +325,8 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     try:
                         runtime = getattr(entry, "runtime_data", None)
                         if (
-                            isinstance(current, RtuTcpGatewayConnection)
-                            and isinstance(connection, RtuTcpGatewayConnection)
+                            not isinstance(current, SerialGatewayConnection)
+                            and not isinstance(connection, SerialGatewayConnection)
                             and entry.state is ConfigEntryState.LOADED
                             and runtime is not None
                         ):
@@ -334,7 +342,13 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         key: value
                         for key, value in entry.data.items()
                         if key
-                        not in {CONF_PORT, CONF_CONNECTION_TYPE, CONF_HOST, CONF_NETWORK_PORT}
+                        not in {
+                            CONF_PORT,
+                            CONF_CONNECTION_TYPE,
+                            CONF_HOST,
+                            CONF_NETWORK_PORT,
+                            CONF_MODBUS_TCP_PORT,
+                        }
                     } | connection.as_data()
                     if entry.update_listeners:
                         return self.async_update_and_abort(

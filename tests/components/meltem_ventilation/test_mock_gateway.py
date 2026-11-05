@@ -1,4 +1,4 @@
-"""Tests for the reusable RTU-over-TCP mock gateway."""
+"""Tests for the RTU-over-TCP mock gateway and its simulated MBAP bridge."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 from collections.abc import AsyncIterator, Mapping
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -29,7 +30,9 @@ from custom_components.meltem_ventilation.const import (
     CONF_CONNECTION_TYPE,
     CONF_HOST,
     CONF_MAX_REQUESTS_PER_SECOND,
+    CONF_MODBUS_TCP_PORT,
     CONF_NETWORK_PORT,
+    CONNECTION_MODBUS_TCP,
     CONNECTION_RTU_OVER_TCP,
     DOMAIN,
     MODE_MANUAL,
@@ -61,6 +64,7 @@ from custom_components.meltem_ventilation.diagnostics import (
 )
 from custom_components.meltem_ventilation.flow_helpers import detect_slave_details
 from custom_components.meltem_ventilation.gateway_connection import (
+    ModbusTcpGatewayConnection,
     RtuTcpGatewayConnection,
 )
 from custom_components.meltem_ventilation.identifiers import room_entity_unique_id
@@ -75,6 +79,7 @@ from tools.mock_gateway import (
     DEFAULT_UNITS,
     NO_HUMIDITY_VALUE,
     NO_SENSOR_VALUE,
+    MbapRtuTcpMockBridge,
     RtuTcpMockGateway,
     build_gateway,
     parse_args,
@@ -204,7 +209,215 @@ async def test_mock_gateway_serves_discovery_profiles_and_committed_writes(
     finally:
         await gateway.close()
 
+
+async def test_mock_gateway_serves_mbap_through_simulated_bridge(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    gateway = RtuTcpMockGateway({2: "ii_fc_voc", 3: "ii_f"})
+    rtu_port = await gateway.start()
+    bridge = MbapRtuTcpMockBridge("127.0.0.1", rtu_port)
+    mbap_port = await bridge.start()
+    connection = ModbusTcpGatewayConnection("127.0.0.1", mbap_port)
+    units = {}
+    try:
+        async with AsyncExitStack() as stack:
+            for slave in (1, 2, 3):
+                units[slave] = await stack.enter_async_context(
+                    async_get_temporary_unit(hass, connection.modbus_params(), slave)
+                )
+            client = MeltemModbusClient(
+                units.__getitem__,
+                port=connection.unique_id,
+                timeout=connection.timeout,
+            )
+            try:
+                await client.async_validate_gateway()
+                assert await read_gateway_node_count(client.unit_for(1)) == 2
+                assert await discover_gateway_nodes(
+                    client.unit_for(1), connection.unique_id, start=2, end=16
+                ) == [2, 3]
+                assert (await detect_slave_details(client.unit_for(2))).profile == "fc_voc"
+                assert (await detect_slave_details(client.unit_for(3))).profile == "f"
+
+                room = RoomConfig(key="slave_2", name="Unit 2", profile="ii_fc_voc", slave=2)
+                await client.write_level(room, 50)
+                assert await client.unit_for(2).read_holding_registers(REGISTER_MODE_STATUS, 3) == [
+                    MODE_MANUAL,
+                    100,
+                    100,
+                ]
+            finally:
+                client.shutdown()
+    finally:
+        await bridge.close()
+        await gateway.close()
     assert gateway.writes == 3
+
+
+async def test_mbap_bridge_preserves_transaction_id_of_a_late_reply(
+    socket_enabled: None,
+) -> None:
+    gateway = RtuTcpMockGateway({2: "ii_f"})
+    rtu_port = await gateway.start()
+    bridge = MbapRtuTcpMockBridge("127.0.0.1", rtu_port)
+    mbap_port = await bridge.start()
+    bridge.inject_late_reply()
+    reader, writer = await asyncio.open_connection("127.0.0.1", mbap_port)
+
+    async def read_mbap_response() -> tuple[int, bytes]:
+        header = await reader.readexactly(7)
+        pdu = await reader.readexactly(int.from_bytes(header[4:6], "big") - 1)
+        return int.from_bytes(header[:2], "big"), pdu
+
+    try:
+        writer.write(_mbap_read_request(1, 2, REGISTER_HUMIDITY_EXTRACT_AIR))
+        await writer.drain()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(read_mbap_response(), 0.05)
+
+        writer.write(_mbap_read_request(2, 2, REGISTER_HUMIDITY_EXTRACT_AIR))
+        await writer.drain()
+
+        expected_pdu = b"\x03\x02\x000"
+        assert await asyncio.wait_for(read_mbap_response(), 2) == (1, expected_pdu)
+        assert await asyncio.wait_for(read_mbap_response(), 2) == (2, expected_pdu)
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        await bridge.close()
+        await gateway.close()
+
+
+async def test_mbap_bridge_enforces_single_client(socket_enabled: None) -> None:
+    gateway = RtuTcpMockGateway({2: "ii_f"})
+    rtu_port = await gateway.start()
+    bridge = MbapRtuTcpMockBridge("127.0.0.1", rtu_port, single_client=True)
+    mbap_port = await bridge.start()
+    first_reader, first_writer = await asyncio.open_connection("127.0.0.1", mbap_port)
+    second_reader, second_writer = await asyncio.open_connection("127.0.0.1", mbap_port)
+    try:
+        assert await asyncio.wait_for(second_reader.read(), 2) == b""
+        assert not first_reader.at_eof()
+    finally:
+        first_writer.close()
+        second_writer.close()
+        await first_writer.wait_closed()
+        await second_writer.wait_closed()
+        await bridge.close()
+        await gateway.close()
+
+
+async def test_cli_starts_mbap_bridge_for_the_existing_mock(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    process, _ = await _start_cli_gateway("--units", "2:ii_f", "--mbap-port", "0")
+    try:
+        assert process.stdout is not None
+        mbap_port: int | None = None
+        while mbap_port is None:
+            line = await asyncio.wait_for(process.stdout.readline(), 5)
+            assert line
+            text = line.decode().strip()
+            if text.startswith("Simulated Modbus TCP/MBAP bridge listening on 127.0.0.1:"):
+                mbap_port = int(text.rsplit(":", 1)[1])
+
+        connection = ModbusTcpGatewayConnection("127.0.0.1", mbap_port)
+        async with async_get_temporary_unit(hass, connection.modbus_params(), 1) as gateway_unit:
+            assert await read_gateway_node_count(gateway_unit) == 1
+    finally:
+        await _stop_cli_gateway(process)
+
+
+async def test_cli_applies_single_client_limit_to_mbap_bridge(
+    socket_enabled: None,
+) -> None:
+    process, _ = await _start_cli_gateway(
+        "--units", "2:ii_f", "--single-client", "--mbap-port", "0"
+    )
+    first_writer: asyncio.StreamWriter | None = None
+    second_writer: asyncio.StreamWriter | None = None
+    try:
+        assert process.stdout is not None
+        mbap_port: int | None = None
+        while mbap_port is None:
+            line = await asyncio.wait_for(process.stdout.readline(), 5)
+            assert line
+            text = line.decode().strip()
+            if text.startswith("Simulated Modbus TCP/MBAP bridge listening on 127.0.0.1:"):
+                mbap_port = int(text.rsplit(":", 1)[1])
+
+        _, first_writer = await asyncio.open_connection("127.0.0.1", mbap_port)
+        second_reader, second_writer = await asyncio.open_connection("127.0.0.1", mbap_port)
+        assert await asyncio.wait_for(second_reader.read(), 2) == b""
+    finally:
+        for writer in (first_writer, second_writer):
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()
+        await _stop_cli_gateway(process)
+
+
+async def test_mbap_config_flow_sets_up_real_integration_against_simulated_bridge(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    gateway = RtuTcpMockGateway({2: "ii_f"})
+    rtu_port = await gateway.start()
+    bridge = MbapRtuTcpMockBridge("127.0.0.1", rtu_port)
+    mbap_port = await bridge.start()
+    try:
+        flow = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        flow = await hass.config_entries.flow.async_configure(
+            flow["flow_id"],
+            {
+                CONF_CONNECTION_TYPE: CONNECTION_MODBUS_TCP,
+                CONF_HOST: "127.0.0.1",
+                CONF_MODBUS_TCP_PORT: mbap_port,
+            },
+        )
+        assert flow.get("step_id") == "profiles"
+        flow = await hass.config_entries.flow.async_configure(flow["flow_id"], {"slave_2": "ii_f"})
+        entry = _created_entry(flow)
+        await hass.async_block_till_done()
+
+        assert entry.state is ConfigEntryState.LOADED
+        assert entry.data == {
+            CONF_CONNECTION_TYPE: CONNECTION_MODBUS_TCP,
+            CONF_HOST: "127.0.0.1",
+            CONF_NETWORK_PORT: mbap_port,
+        }
+        registry = er.async_get(hass)
+        fan_entity_id = registry.async_get_entity_id(
+            "fan",
+            DOMAIN,
+            room_entity_unique_id(entry.entry_id, "slave_2", "supply_level"),
+        )
+        temperature_entity_id = registry.async_get_entity_id(
+            "sensor",
+            DOMAIN,
+            room_entity_unique_id(entry.entry_id, "slave_2", "extract_air_temperature"),
+        )
+        assert fan_entity_id is not None
+        assert temperature_entity_id is not None
+        await _wait_for_entities(hass, (fan_entity_id, temperature_entity_id))
+        await hass.services.async_call(
+            "fan",
+            "set_percentage",
+            {"entity_id": fan_entity_id, "percentage": 50},
+            blocking=True,
+        )
+        assert gateway.writes >= 3
+
+        diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+        assert diagnostics["entry"]["data"][CONF_HOST] != "127.0.0.1"
+        assert "127.0.0.1" not in json.dumps(diagnostics, cls=ExtendedJSONEncoder)
+    finally:
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if entry.state is ConfigEntryState.LOADED:
+                await hass.config_entries.async_unload(entry.entry_id)
+        await bridge.close()
+        await gateway.close()
 
 
 async def test_mock_without_units_returns_a_valid_empty_discovery(
@@ -309,6 +522,17 @@ def _created_entry(result: Mapping[str, object]) -> config_entries.ConfigEntry:
 
 def _read_frame(unit_id: int, address: int, count: int) -> bytes:
     return rtu_frame(bytes((unit_id, 3)) + request_echo(address, count))
+
+
+def _mbap_read_request(transaction_id: int, unit_id: int, address: int) -> bytes:
+    pdu = bytes((3,)) + request_echo(address, 1)
+    return (
+        transaction_id.to_bytes(2, "big")
+        + b"\x00\x00"
+        + (len(pdu) + 1).to_bytes(2, "big")
+        + bytes((unit_id,))
+        + pdu
+    )
 
 
 async def test_end_to_end_setup_entities_diagnostics_options_and_reconfigure(
@@ -832,6 +1056,7 @@ def test_invalid_scripted_faults_are_rejected() -> None:
         ["--unit-delay", "2:-1"],
         ["--unit-delay", "x:1"],
         ["--unit-delay", "2:a"],
+        ["--mbap-port", "70000"],
         ["--control-port", "70000"],
         ["--units", "2:nope"],
     ],

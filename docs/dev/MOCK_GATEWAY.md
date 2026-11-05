@@ -1,8 +1,10 @@
 # Local mock gateway
 
-Use this stateful RTU-over-TCP simulator to smoke-test Home Assistant setup and
-runtime flows without a physical gateway. It serves raw RTU frames, not Modbus
-TCP frames, and is not a substitute for the live hardware checks in
+Use this stateful RTU-over-TCP simulator and its optional MBAP bridge to
+smoke-test Home Assistant setup and runtime flows without a physical gateway.
+The simulator serves raw RTU frames; the bridge presents Modbus TCP/MBAP and
+translates requests to the simulator. Neither is a substitute for the live
+hardware checks in
 [LIVE_GATEWAY_TESTS.md](LIVE_GATEWAY_TESTS.md).
 
 The register model is in `tools/_mock_model.py`; `tools/mock_gateway.py` adds
@@ -35,20 +37,28 @@ app-only registers `41008` (extract VOC) and `41012` (supply CO2) carry values
 only on `ii_fc_voc`; real units have not confirmed them yet.
 
 Use `--help` for all options. For example, choose different models or a free
-port:
+port. Add `--mbap-port` to expose a simulated Modbus TCP/MBAP bridge that
+forwards requests to the raw RTU mock:
 
 ```bash
-.venv/bin/python -m tools.mock_gateway --units 2:ii_plain,3:s_fc --port 55020
+.venv/bin/python -m tools.mock_gateway \
+  --units 2:ii_plain,3:s_fc --port 55020 --mbap-port 1502
 ```
+
+The raw RTU endpoint listens on port `55020`; the simulated MBAP endpoint
+listens on port `1502`. In Home Assistant, choose **Modbus TCP (MBAP)** and
+connect to the latter. This exercises the integration's MBAP transport and a
+software RTU-to-MBAP bridge, but does not validate any physical bridge firmware.
 
 The simulated product IDs follow the app catalog: `116852` for `ii_*` and
 `116819` for `s_*`. The latter remains unconfirmed on real hardware; the
 simulation is not evidence that an M-WRG-S unit reports that value.
 
 In Home Assistant, add the integration with **RTU over TCP**, host
-`127.0.0.1`, and the selected port. Select the matching profile for each unit.
-The simulator prints each Modbus read, write, and injected fault; `Ctrl+C`
-stops it.
+`127.0.0.1`, and the raw endpoint port. With `--mbap-port`, you can instead
+choose **Modbus TCP (MBAP)** and use the MBAP endpoint port. Select the matching
+profile for each unit. The simulator prints each Modbus read, write, and
+injected fault; `Ctrl+C` stops it.
 
 If Home Assistant runs in a container or on another host, bind to a reachable
 interface, for example `--host 0.0.0.0`, and connect to that host's address.
@@ -74,9 +84,11 @@ no observation backs are marked as mock choices.
 | Quick-mode airflow: LOW 20, MEDIUM 30, HIGH 60, intensive 80 m³/h (capped at the profile maximum). | Mock choice; intensive ran at 80/80 m³/h in W-8 |
 | `41015 = 49144`, `41019 = 31`, `41113 = 425`, and `42006 = 12` on every unit; external input level 60 %, on-delay 1 min, run-on 15 min. | [App-derived register survey](MELTEM.md#app-derived-register-survey-on-2026-11-03), [reference](reference/modbus.md) |
 
-The simulator does not model request pacing: it answers as fast as it can, also
-to several clients at once. How the real gateway degrades under too many
-requests is not characterized well enough to imitate.
+The RTU simulator does not model request pacing: by default it answers as fast
+as it can, including to several clients at once. `--single-client` rejects a
+second connection on both the RTU endpoint and the optional MBAP bridge. How
+the real gateway degrades under too many requests is not characterized well
+enough to imitate.
 
 ## Suggested smoke sequence
 
@@ -165,6 +177,10 @@ Fault actions:
 - `--drop-rate 0.05 --corrupt-rate 0.02 --seed 1`: lose or break a share of
   the replies for a soak test of the retry and recovery paths; `--seed` makes
   a run repeatable.
+- `MbapRtuTcpMockBridge.inject_late_reply()` in a Python test holds one MBAP
+  response until the next request, then sends it with its original transaction
+  ID. This exercises late-response handling without changing the RTU mock's
+  existing raw-frame fault behavior.
 - Stop the simulator with `Ctrl+C` to test an unavailable gateway. Restart it
   to check recovery.
 

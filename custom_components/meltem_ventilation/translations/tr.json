@@ -4,7 +4,8 @@
     "connection_type": {
       "options": {
         "serial": "USB seri",
-        "rtu_over_tcp": "TCP üzerinden RTU"
+        "rtu_over_tcp": "TCP üzerinden RTU",
+        "modbus_tcp": "Modbus TCP (MBAP)"
       }
     },
     "profile_mismatch_action": {
@@ -18,18 +19,20 @@
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "Önce M-WRG-GW ağ geçidini ve ünitelerini Meltem uygulamasında kurun. USB seri veya TCP üzerinden ham RTU bağlantısını seçin. Ağ bağlantılarında şifreleme ve kimlik doğrulama yoktur; yalnızca güvenilir bir yerel ağ kullanın.",
+        "description": "Önce M-WRG-GW ağ geçidini ve ünitelerini Meltem uygulamasında kurun. USB seri, TCP üzerinden ham RTU veya Modbus TCP (MBAP) bağlantısını seçin. Ağ bağlantılarında şifreleme ve kimlik doğrulama yoktur; yalnızca güvenilir bir yerel ağ kullanın.",
         "data": {
           "connection_type": "Bağlantı türü",
           "port": "Seri bağlantı noktası",
-          "host": "Köprü ana bilgisayar adı veya IP adresi",
-          "network_port": "Köprü TCP bağlantı noktası"
+          "host": "Uç noktanın ana bilgisayar adı veya IP adresi",
+          "network_port": "Ağ köprüsünün TCP bağlantı noktası",
+          "modbus_tcp_port": "Modbus TCP bağlantı noktası"
         },
         "data_description": {
           "connection_type": "Ağ geçidine ulaşmak için kullanılacak bağlantıyı seçin.",
           "port": "USB seri bağlantısı için aygıt yolu.",
-          "host": "TCP üzerinden RTU köprüsünün ana bilgisayar adı veya IP adresi.",
-          "network_port": "Ham RTU köprüsünün TCP bağlantı noktası."
+          "host": "Ağ köprüsünün veya Modbus TCP uç noktasının ana bilgisayar adı ya da IP adresi.",
+          "network_port": "Ağ köprüsünün TCP bağlantı noktası.",
+          "modbus_tcp_port": "Modbus TCP/MBAP uç noktasının TCP bağlantı noktası (varsayılan: 502)."
         }
       },
       "reconfigure": {
@@ -38,14 +41,16 @@
         "data": {
           "connection_type": "Bağlantı türü",
           "port": "Seri bağlantı noktası",
-          "host": "Köprü ana bilgisayar adı veya IP adresi",
-          "network_port": "Köprü TCP bağlantı noktası"
+          "host": "Uç noktanın ana bilgisayar adı veya IP adresi",
+          "network_port": "Ağ köprüsünün TCP bağlantı noktası",
+          "modbus_tcp_port": "Modbus TCP bağlantı noktası"
         },
         "data_description": {
           "connection_type": "Ağ geçidine ulaşmak için kullanılacak bağlantıyı seçin.",
           "port": "USB seri bağlantısı için aygıt yolu.",
-          "host": "TCP üzerinden RTU köprüsünün ana bilgisayar adı veya IP adresi.",
-          "network_port": "Ham RTU köprüsünün TCP bağlantı noktası."
+          "host": "Ağ köprüsünün veya Modbus TCP uç noktasının ana bilgisayar adı ya da IP adresi.",
+          "network_port": "Ağ köprüsünün TCP bağlantı noktası.",
+          "modbus_tcp_port": "Modbus TCP/MBAP uç noktasının TCP bağlantı noktası (varsayılan: 502)."
         }
       },
       "confirm_usb": {

@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from . import read_health
 from .const import CONF_HOST, CONF_PORT
 from .cumulative_diagnostics import CumulativeDiagnostics
-from .gateway_connection import RtuTcpGatewayConnection, gateway_connection_from_data
+from .gateway_connection import SerialGatewayConnection, gateway_connection_from_data
 from .models import (
     MeltemIntegrationConfigEntry,
     MeltemRuntimeData,
@@ -118,7 +118,7 @@ async def async_get_config_entry_diagnostics(
 
     coordinator = runtime_data.coordinator
     connection = gateway_connection_from_data(entry.data)
-    port = connection.host if isinstance(connection, RtuTcpGatewayConnection) else connection.port
+    port = connection.port if isinstance(connection, SerialGatewayConnection) else connection.host
     transport = coordinator.client.transport_diagnostics()
     cumulative = getattr(coordinator, "cumulative_diagnostics", None)
     cumulative_snapshot = (

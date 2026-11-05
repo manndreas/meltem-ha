@@ -30,8 +30,10 @@ CONF_PORT = "port"
 CONF_CONNECTION_TYPE = "connection_type"
 CONF_HOST = "host"
 CONF_NETWORK_PORT = "network_port"
+CONF_MODBUS_TCP_PORT = "modbus_tcp_port"
 CONNECTION_SERIAL = "serial"
 CONNECTION_RTU_OVER_TCP = "rtu_over_tcp"
+CONNECTION_MODBUS_TCP = "modbus_tcp"
 # Only in config entries before version 2, which stored the units in their data.
 CONF_ROOMS = "rooms"
 
@@ -45,6 +47,7 @@ CONF_NAME_IS_DEVICE_NAME = "name_is_device_name"
 
 DEFAULT_PORT = "/dev/ttyACM0"
 DEFAULT_NETWORK_PORT = 5020
+DEFAULT_MODBUS_TCP_PORT = 502
 DEFAULT_GATEWAY_DEVICE_ID = 1
 DEFAULT_SCAN_SLAVE_START = 2
 DEFAULT_SCAN_SLAVE_END = 16

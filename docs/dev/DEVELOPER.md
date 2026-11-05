@@ -12,7 +12,8 @@ Related documents:
 - `docs/dev/HARDWARE_BACKLOG.md`: review findings that need a live gateway before
   they can be decided
 - `docs/dev/LIVE_GATEWAY_TESTS.md`: how to measure them
-- `docs/dev/MOCK_GATEWAY.md`: how to run software-only RTU-over-TCP smoke tests
+- `docs/dev/MOCK_GATEWAY.md`: how to run software-only RTU-over-TCP and simulated
+  Modbus TCP/MBAP smoke tests
 - `docs/dev/SETTING_RE_BACKLOG.md`: parked reverse engineering of app settings
 - `docs/dev/APK_ANALYSIS.md`: static Android app and cloud-protocol reference
 
@@ -140,7 +141,7 @@ field to unknown. Hardware observations are recorded in [MELTEM.md](MELTEM.md).
 ## Scope
 
 The integration targets Meltem M-WRG units behind an `M-WRG-GW` gateway over
-Modbus RTU via USB or a raw RTU-over-TCP bridge.
+Modbus RTU via USB, a raw RTU-over-TCP bridge, or a Modbus TCP/MBAP endpoint.
 
 Supported series/profiles:
 
@@ -161,11 +162,12 @@ did obtain matching gateway and unit values over native Modbus TCP, but the
 port subsequently refused new connections. The reason and the conditions for
 reliable access remain unknown.
 
-The integration therefore continues to use Modbus RTU over USB serial or raw
-RTU-over-TCP. The latter is not Modbus TCP/MBAP. Do not reset or reconfigure
-the gateway merely to make its LAN port accessible, and do not assume normal
-control, write support, or coexistence with the app from the short read-only
-observation.
+The integration now also has a Modbus TCP/MBAP connection type, tested through
+the software MBAP-to-RTU bridge in [MOCK_GATEWAY.md](MOCK_GATEWAY.md). The
+brief hardware comparison did not validate sustained use of the gateway's
+native TCP endpoint, writes, or coexistence with the app. Do not reset or
+reconfigure the gateway merely to make its LAN port accessible; see
+[HW-15](HARDWARE_BACKLOG.md#hw-15--verify-reliable-modbus-tcp-mbap-operation).
 
 ## Gateway and Modbus behavior
 
@@ -190,20 +192,22 @@ Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
   released when the entry unloads, and the link closes after the last holder
 - `async_get_temporary_unit(hass, params, unit_id)` in the config flow
 - `gateway_connection.py` interprets existing entries without a connection
-  type as serial and builds parameters for serial or raw RTU-over-TCP links
+  type as serial and builds parameters for serial, raw RTU-over-TCP, or
+  Modbus TCP/MBAP links
 - the backend is always tmodbus via `modbus-connection`; HA `2026.11.0` pins
   `modbus-connection` `4.12.7`. Version `4.12.3` first added `require_timeout`
   and the device-modelling framework used here; the integration's minimum
   dependency is aligned with the supported HA baseline
 - serial parameters from `build_serial_params` are fixed at 19200 baud, 8E1,
-  RTU; network parameters use `socket://host:port` with RTU framing
+  RTU; raw RTU-over-TCP uses `socket://host:port` with RTU framing; MBAP uses
+  `ModbusTcpParams` with the host and TCP port
 - another integration that uses the same endpoint with incompatible link
   settings makes setup fail with `ConfigEntryError` (config flow:
   `port_in_use`)
 - every unit asks for `set_message_spacing(REQUEST_GAP_SECONDS)` and a
   transport-specific timeout before its first request (`prepare_unit`);
   both are floors, so another consumer of the same endpoint can only raise
-  them. USB uses `FIXED_TIMEOUT` (0.8 s); RTU over TCP uses
+  them. USB uses `FIXED_TIMEOUT` (0.8 s); both network protocols use
   `NETWORK_TIMEOUT` (5 s), including DNS and connection establishment. The
   shared Modbus API does not separate connect and response timeouts, so a
   silent unit over TCP can take 5 s per attempt

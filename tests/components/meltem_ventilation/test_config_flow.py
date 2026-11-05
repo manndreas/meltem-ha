@@ -36,8 +36,10 @@ from custom_components.meltem_ventilation.const import (
     CONF_CONNECTION_TYPE,
     CONF_HOST,
     CONF_MAX_REQUESTS_PER_SECOND,
+    CONF_MODBUS_TCP_PORT,
     CONF_NETWORK_PORT,
     CONF_PORT,
+    CONNECTION_MODBUS_TCP,
     CONNECTION_RTU_OVER_TCP,
     CONNECTION_SERIAL,
     DEFAULT_GATEWAY_DEVICE_ID,
@@ -95,10 +97,11 @@ def _assert_connection_visibility(result: ConfigFlowResult) -> None:
         for marker in _flow_schema(result).schema
         if isinstance(marker, data_entry_flow.Optional)
     }
-    assert set(markers) == {CONF_PORT, CONF_HOST, CONF_NETWORK_PORT}
+    assert set(markers) == {CONF_PORT, CONF_HOST, CONF_NETWORK_PORT, CONF_MODBUS_TCP_PORT}
     for connection_type, visible in (
         (CONNECTION_SERIAL, {CONF_PORT}),
         (CONNECTION_RTU_OVER_TCP, {CONF_HOST, CONF_NETWORK_PORT}),
+        (CONNECTION_MODBUS_TCP, {CONF_HOST, CONF_MODBUS_TCP_PORT}),
     ):
         for name, marker in markers.items():
             assert marker.visible is not None
@@ -303,6 +306,46 @@ class TestConfigFlowUser:
             CONF_NETWORK_PORT: 5020,
         }
 
+    async def test_modbus_tcp_setup_scans_with_mbap_parameters(
+        self, hass: HomeAssistant, gateway_link: MockModbusConnection
+    ) -> None:
+        params_seen = []
+
+        @asynccontextmanager
+        async def record_unit(hass, params, unit_id):
+            params_seen.append(params)
+            yield gateway_link.for_unit(unit_id)
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        _assert_connection_visibility(result)
+        with (
+            _patch_scan([2]),
+            _patch_detect(),
+            patch(f"{_PATCHES_BASE}.async_get_temporary_unit", new=record_unit),
+        ):
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_MODBUS_TCP,
+                    CONF_HOST: "Bridge.Local.",
+                },
+            )
+        assert result.get("step_id") == "profiles"
+        assert params_seen
+        assert all(params.host == "bridge.local." for params in params_seen)
+        assert all(params.port == 502 for params in params_seen)
+        assert all(params.framer == "socket" for params in params_seen)
+        result = await _async_submit_profiles(hass, result, {"slave_2": "ii_plain"})
+        entry = _flow_entry(result)
+        assert entry.unique_id == "modbus-tcp://bridge.local.:502"
+        assert entry.data == {
+            CONF_CONNECTION_TYPE: CONNECTION_MODBUS_TCP,
+            CONF_HOST: "bridge.local.",
+            CONF_NETWORK_PORT: 502,
+        }
+
     async def test_invalid_network_host_is_preserved_for_correction(
         self, hass: HomeAssistant
     ) -> None:
@@ -357,6 +400,7 @@ class TestConfigFlowUser:
                     CONF_PORT: _PORT,
                     CONF_HOST: 123,
                     CONF_NETWORK_PORT: -1,
+                    CONF_MODBUS_TCP_PORT: -1,
                 },
             )
         assert result.get("step_id") == "profiles"
@@ -1748,6 +1792,26 @@ class TestReconfigureFlow:
                 CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
                 CONF_HOST: "bridge.local.",
                 CONF_NETWORK_PORT: 5020,
+            }
+            assert entry.entry_id == entry_id
+            assert set(entry.subentries) == subentry_ids
+            assert registry.async_get(entity.entity_id) == entity
+            result = await entry.start_reconfigure_flow(hass)
+            _assert_connection_visibility(result)
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_MODBUS_TCP,
+                    CONF_HOST: "Bridge.Local.",
+                    CONF_MODBUS_TCP_PORT: 1502,
+                },
+            )
+            assert result.get("reason") == "reconfigure_successful"
+            assert entry.unique_id == "modbus-tcp://bridge.local.:1502"
+            assert entry.data == {
+                CONF_CONNECTION_TYPE: CONNECTION_MODBUS_TCP,
+                CONF_HOST: "bridge.local.",
+                CONF_NETWORK_PORT: 1502,
             }
             assert entry.entry_id == entry_id
             assert set(entry.subentries) == subentry_ids

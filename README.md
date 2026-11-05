@@ -6,8 +6,8 @@
 [![License](https://img.shields.io/github/license/manndreas/meltem-ha)](https://github.com/manndreas/meltem-ha/blob/main/LICENSE)
 
 **Unofficial** Home Assistant custom integration for Meltem `M-WRG-S` and `M-WRG-II`
-ventilation units via the Meltem `M-WRG-GW` gateway and Modbus RTU over USB or
-a raw RTU-over-TCP bridge.
+ventilation units via the Meltem `M-WRG-GW` gateway using Modbus RTU over USB,
+raw RTU-over-TCP, or Modbus TCP/MBAP through a compatible bridge.
 
 Use this integration at your own risk. It is an unofficial project and comes
 with no warranty. The authors are not liable for damage to Meltem devices,
@@ -56,7 +56,8 @@ automations. See the [trigger guide](./docs/TRIGGER_FILTER_CHANGE_DUE.md),
 - supported `M-WRG-S` / `M-WRG-II` units paired with the gateway using the
   Meltem app
 - either the gateway connected to the Home Assistant host via USB, or a
-  network bridge that transports raw Modbus RTU frames over TCP
+  reachable TCP endpoint on the gateway or a bridge that transports raw
+  Modbus RTU frames or Modbus TCP/MBAP
   > **Note:** Use a USB cable that is fully wired for data — charge-only cables will not work.
 
 > **Pairing and internet access:** Pair each unit with the gateway in the Meltem
@@ -64,10 +65,17 @@ automations. See the [trigger guide](./docs/TRIGGER_FILTER_CHANGE_DUE.md),
 > units. After pairing, it communicates locally with the gateway, so ongoing
 > use of the integration does not require internet access or the Meltem cloud.
 
-RTU-over-TCP uses raw RTU frames, not Modbus TCP/MBAP. Network connections have
-no encryption or authentication: use them only on a trusted local network.
-RTU over TCP has so far only been tested against software simulators, not with
-a real network bridge and gateway. Reports from users who try it are welcome.
+The **RTU over TCP** option uses raw RTU frames; **Modbus TCP** uses MBAP
+framing. They are separate protocols and require a bridge that supports the
+selected one. The M-WRG Modbus bus itself is RTU, and the M-WRG-GW is not
+documented as a native Modbus TCP/MBAP server. A brief read-only MBAP
+comparison with a real gateway returned matching values, but later connections
+were refused; sustained operation and writes remain unverified. The
+integration's MBAP path and simulated bridge are tested in software, not with a
+real bridge in normal operation. See the
+[hardware notes](./docs/dev/MELTEM.md#read-only-modbus-tcp-comparison-on-2026-11-03).
+Network connections have no encryption or authentication: use them only on a
+trusted local network. Reports from users who test real bridges are welcome.
 
 ### Marketplace
 
@@ -91,8 +99,8 @@ To remove the config entry and uninstall the integration, follow the
 1. Open `Settings` -> `Devices & Services`
 2. Click `Add Integration`
 3. Search for `Meltem Modbus`
-4. Choose USB serial and enter the gateway's serial port, or choose RTU over TCP
-   and enter the bridge hostname or IP address and TCP port (default `5020`)
+4. Choose USB serial, RTU over TCP, or Modbus TCP and enter the required serial
+   port or bridge hostname/IP address and TCP port
 5. Let the integration read the configured unit list from the gateway
 6. Assign the correct profile to each detected unit
 

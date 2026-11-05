@@ -401,12 +401,13 @@ otherwise setup reports that the port is already in use. For USB these are
 19200 baud, 8E1. An RTU-over-TCP endpoint is opened as a `socket://` link with
 115200 baud, 8N1; Home Assistant's own Modbus integration uses the same
 settings for an `rtuovertcp` hub, while the gateway's serial settings apply on
-the bridge side.
+the bridge side. A Modbus TCP/MBAP endpoint uses normal TCP framing and does
+not set serial parameters on the Home Assistant side.
 The longest timeout any of them asks for applies to all requests on that
 endpoint, so a long timeout elsewhere slows down this integration when a unit
 does not answer. The integration requests 0.8 seconds for USB and 5 seconds
-for RTU over TCP. The network timeout covers both connection establishment
-and Modbus responses.
+for either network connection type. The network timeout covers both connection
+establishment and Modbus responses.
 
 When reconfiguring a loaded network connection, the integration disconnects
 the current shared link while it checks the replacement. Other integrations

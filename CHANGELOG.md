@@ -1,5 +1,18 @@
 # Changelog
 
+## 5.1.0
+
+### New Features (5.1.0)
+
+- **Modbus TCP:** Connect through a Modbus TCP/MBAP endpoint as well as USB
+  serial or a raw RTU-over-TCP bridge. The connection type and TCP port can be
+  changed later without replacing the integration entry or unit devices.
+
+### Improvements (5.1.0)
+
+- Extend the local mock gateway with an optional MBAP-to-RTU bridge for
+  software testing.
+
 ## 5.0.0
 
 ### Breaking Changes (5.0.0)

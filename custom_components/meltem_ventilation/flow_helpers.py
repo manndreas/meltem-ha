@@ -15,20 +15,24 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import selector
+from homeassistant.helpers.field_visibility import ConditionOperator, FieldCondition
 from modbus_connection import ModbusUnit
 
 from .const import (
     CONF_CONNECTION_TYPE,
     CONF_HOST,
+    CONF_MODBUS_TCP_PORT,
     CONF_NAME_IS_DEVICE_NAME,
     CONF_NETWORK_PORT,
     CONF_PORT,
     CONF_PROFILE,
     CONF_SLAVE,
     CONF_UNIT_KEY,
+    CONNECTION_MODBUS_TCP,
     CONNECTION_RTU_OVER_TCP,
     CONNECTION_SERIAL,
     DEFAULT_GATEWAY_DEVICE_ID,
+    DEFAULT_MODBUS_TCP_PORT,
     DEFAULT_NETWORK_PORT,
     DEFAULT_PORT,
     DEFAULT_SCAN_SLAVE_END,
@@ -42,7 +46,12 @@ from .const import (
     product_metadata,
     profile_label,
 )
-from .gateway_connection import GatewayConnection, RtuTcpGatewayConnection, SerialGatewayConnection
+from .gateway_connection import (
+    GatewayConnection,
+    ModbusTcpGatewayConnection,
+    RtuTcpGatewayConnection,
+    SerialGatewayConnection,
+)
 from .modbus_helpers import (
     MeltemConnectionError,
     MeltemModbusError,
@@ -111,20 +120,39 @@ def connection_schema(
         connection_type = CONNECTION_RTU_OVER_TCP
         serial_port = DEFAULT_PORT
         host = connection.host
-        network_port = connection.port
+    elif isinstance(connection, ModbusTcpGatewayConnection):
+        connection_type = CONNECTION_MODBUS_TCP
+        serial_port = DEFAULT_PORT
+        host = connection.host
     else:
         connection_type = CONNECTION_SERIAL
         serial_port = connection.port
         host = ""
-        network_port = DEFAULT_NETWORK_PORT
     values = values or {}
+    rtu_port = values.get(
+        CONF_NETWORK_PORT,
+        connection.port
+        if isinstance(connection, RtuTcpGatewayConnection)
+        else DEFAULT_NETWORK_PORT,
+    )
+    modbus_tcp_port = values.get(
+        CONF_MODBUS_TCP_PORT,
+        connection.port
+        if isinstance(connection, ModbusTcpGatewayConnection)
+        else DEFAULT_MODBUS_TCP_PORT,
+    )
+    network_visibility: FieldCondition = {
+        "field": CONF_CONNECTION_TYPE,
+        "operator": ConditionOperator.IN,
+        "value": [CONNECTION_RTU_OVER_TCP, CONNECTION_MODBUS_TCP],
+    }
     return vol.Schema(
         {
             vol.Required(
                 CONF_CONNECTION_TYPE, default=values.get(CONF_CONNECTION_TYPE, connection_type)
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
-                    options=[CONNECTION_SERIAL, CONNECTION_RTU_OVER_TCP],
+                    options=[CONNECTION_SERIAL, CONNECTION_RTU_OVER_TCP, CONNECTION_MODBUS_TCP],
                     translation_key="connection_type",
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
@@ -137,12 +165,23 @@ def connection_schema(
             data_entry_flow.Optional(
                 CONF_HOST,
                 default=values.get(CONF_HOST, host),
-                visible={"field": CONF_CONNECTION_TYPE, "value": CONNECTION_RTU_OVER_TCP},
+                visible=network_visibility,
             ): str,
             data_entry_flow.Optional(
                 CONF_NETWORK_PORT,
-                default=values.get(CONF_NETWORK_PORT, network_port),
-                visible={"field": CONF_CONNECTION_TYPE, "value": CONNECTION_RTU_OVER_TCP},
+                default=rtu_port,
+                visible={
+                    "field": CONF_CONNECTION_TYPE,
+                    "value": CONNECTION_RTU_OVER_TCP,
+                },
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+            data_entry_flow.Optional(
+                CONF_MODBUS_TCP_PORT,
+                default=modbus_tcp_port,
+                visible={
+                    "field": CONF_CONNECTION_TYPE,
+                    "value": CONNECTION_MODBUS_TCP,
+                },
             ): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
         }
     )
@@ -459,7 +498,7 @@ class PortInUseError(MeltemConnectionError):
 
 @asynccontextmanager
 async def temporary_units(
-    hass: HomeAssistant, port: str | RtuTcpGatewayConnection
+    hass: HomeAssistant, port: str | GatewayConnection
 ) -> AsyncGenerator[Callable[[int], Awaitable[ModbusUnit]], None]:
     """Hold units on the gateway link for one flow step.
 
@@ -516,7 +555,7 @@ def probe_profiles(results: Mapping[int, UnitProbeResult]) -> dict[int, str]:
 
 
 async def async_discover_units(
-    hass: HomeAssistant, port: str | RtuTcpGatewayConnection
+    hass: HomeAssistant, port: str | GatewayConnection
 ) -> tuple[list[int], dict[int, UnitProbeResult]]:
     """Read the unit list from the gateway and probe every unit on one link.
 
@@ -539,7 +578,7 @@ async def async_discover_units(
     return slaves, probe_results
 
 
-async def async_validate_port(hass: HomeAssistant, port: str | RtuTcpGatewayConnection) -> None:
+async def async_validate_port(hass: HomeAssistant, port: str | GatewayConnection) -> None:
     """Check that a gateway answers on the given connection."""
 
     async with temporary_units(hass, port) as unit_for:

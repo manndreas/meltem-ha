@@ -29,12 +29,16 @@ shown when you change a profile later. Existing device names are not changed.
 ## Changing the gateway connection
 
 Choose `Reconfigure` in the integration entry menu to change the gateway
-connection or switch between USB serial and RTU over TCP. The new connection
-is checked before it is saved; existing units and entity IDs remain.
+connection or switch between USB serial, RTU over TCP, and Modbus TCP/MBAP.
+The new connection is checked before it is saved; existing units and entity
+IDs remain.
 
-Enter the network bridge hostname or IP address and TCP port manually.
+Enter the network endpoint or bridge hostname/IP address and TCP port manually.
 Hostnames, including `.local` names, must be resolvable by the Home Assistant
-host. Automatic network discovery is not supported. See the
+host. Raw RTU-over-TCP uses port `5020` by default; Modbus TCP/MBAP uses `502`.
+For MBAP, enter the gateway's address if its TCP endpoint is available, or
+the address of a compatible bridge. Automatic network discovery is not
+supported. See the
 [installation requirements](../README.md#requirements) for connection and
 security limitations.
 

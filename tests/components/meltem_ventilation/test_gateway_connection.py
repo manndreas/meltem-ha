@@ -1,17 +1,19 @@
 """Tests for serial and RTU-over-TCP gateway configuration."""
 
 import pytest
-from modbus_connection import ModbusSerialParams
+from modbus_connection import ModbusSerialParams, ModbusTcpParams
 
 from custom_components.meltem_ventilation.const import (
     CONF_CONNECTION_TYPE,
     CONF_HOST,
     CONF_NETWORK_PORT,
     CONF_PORT,
+    CONNECTION_MODBUS_TCP,
     CONNECTION_RTU_OVER_TCP,
     CONNECTION_SERIAL,
 )
 from custom_components.meltem_ventilation.gateway_connection import (
+    ModbusTcpGatewayConnection,
     RtuTcpGatewayConnection,
     SerialGatewayConnection,
     gateway_connection_from_data,
@@ -67,6 +69,41 @@ def test_network_port_is_part_of_identity_and_params() -> None:
         CONF_HOST: "bridge.local",
         CONF_NETWORK_PORT: 1234,
     }
+
+
+@pytest.mark.parametrize(
+    ("input_host", "host", "address"),
+    [
+        (" Example.Local. ", "example.local.", "example.local."),
+        ("192.168.10.2", "192.168.10.2", "192.168.10.2"),
+        ("[2001:DB8::1]", "2001:db8::1", "[2001:db8::1]"),
+    ],
+)
+def test_modbus_tcp_connection_uses_mbap_params(input_host: str, host: str, address: str) -> None:
+    connection = ModbusTcpGatewayConnection(input_host)
+
+    assert connection.host == host
+    assert connection.unique_id == f"modbus-tcp://{address}:502"
+    assert connection.modbus_params() == ModbusTcpParams(host=host, port=502)
+    assert connection.as_data() == {
+        CONF_CONNECTION_TYPE: CONNECTION_MODBUS_TCP,
+        CONF_HOST: host,
+        CONF_NETWORK_PORT: 502,
+    }
+    assert gateway_connection_from_data(connection.as_data()) == connection
+
+
+def test_modbus_tcp_port_is_part_of_identity_and_params() -> None:
+    connection = ModbusTcpGatewayConnection("bridge.local", 1502)
+
+    assert connection.unique_id == "modbus-tcp://bridge.local:1502"
+    assert connection.modbus_params() == ModbusTcpParams(host="bridge.local", port=1502)
+
+
+@pytest.mark.parametrize("port", [0, -1, 65536, True, "502"])
+def test_modbus_tcp_rejects_invalid_port(port: object) -> None:
+    with pytest.raises(ValueError, match="TCP port"):
+        ModbusTcpGatewayConnection("bridge.local", port)  # type: ignore[arg-type]
 
 
 def test_absolute_and_relative_hostnames_have_distinct_endpoints() -> None:

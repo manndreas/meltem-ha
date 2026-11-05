@@ -4,7 +4,8 @@
     "connection_type": {
       "options": {
         "serial": "Série USB",
-        "rtu_over_tcp": "RTU sur TCP"
+        "rtu_over_tcp": "RTU sur TCP",
+        "modbus_tcp": "Modbus TCP (MBAP)"
       }
     },
     "profile_mismatch_action": {
@@ -18,18 +19,20 @@
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "Configurez d'abord la passerelle M-WRG-GW et ses unités dans l'application Meltem. Choisissez une liaison série USB ou du RTU brut sur TCP. Les connexions réseau ne sont ni chiffrées ni authentifiées ; utilisez uniquement un réseau local de confiance.",
+        "description": "Configurez d'abord la passerelle M-WRG-GW et ses unités dans l'application Meltem. Choisissez une liaison série USB, du RTU brut sur TCP ou Modbus TCP (MBAP). Les connexions réseau ne sont ni chiffrées ni authentifiées ; utilisez uniquement un réseau local de confiance.",
         "data": {
           "connection_type": "Type de connexion",
           "port": "Port série",
-          "host": "Nom d'hôte ou adresse IP du pont",
-          "network_port": "Port TCP du pont"
+          "host": "Nom d'hôte ou adresse IP du point de terminaison",
+          "network_port": "Port TCP du pont réseau",
+          "modbus_tcp_port": "Port Modbus TCP"
         },
         "data_description": {
           "connection_type": "Choisissez la connexion utilisée pour joindre la passerelle.",
           "port": "Chemin du périphérique pour la connexion série USB.",
-          "host": "Nom d'hôte ou adresse IP du pont RTU sur TCP.",
-          "network_port": "Port TCP du pont RTU brut."
+          "host": "Nom d'hôte ou adresse IP du pont ou du point de terminaison Modbus TCP.",
+          "network_port": "Port TCP du pont réseau.",
+          "modbus_tcp_port": "Port TCP du point de terminaison Modbus TCP/MBAP (par défaut : 502)."
         }
       },
       "reconfigure": {
@@ -38,14 +41,16 @@
         "data": {
           "connection_type": "Type de connexion",
           "port": "Port série",
-          "host": "Nom d'hôte ou adresse IP du pont",
-          "network_port": "Port TCP du pont"
+          "host": "Nom d'hôte ou adresse IP du point de terminaison",
+          "network_port": "Port TCP du pont réseau",
+          "modbus_tcp_port": "Port Modbus TCP"
         },
         "data_description": {
           "connection_type": "Choisissez la connexion utilisée pour joindre la passerelle.",
           "port": "Chemin du périphérique pour la connexion série USB.",
-          "host": "Nom d'hôte ou adresse IP du pont RTU sur TCP.",
-          "network_port": "Port TCP du pont RTU brut."
+          "host": "Nom d'hôte ou adresse IP du pont ou du point de terminaison Modbus TCP.",
+          "network_port": "Port TCP du pont réseau.",
+          "modbus_tcp_port": "Port TCP du point de terminaison Modbus TCP/MBAP (par défaut : 502)."
         }
       },
       "confirm_usb": {

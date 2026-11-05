@@ -1,8 +1,9 @@
-"""Run a stateful RTU-over-TCP mock of a Meltem M-WRG-GW and its units.
+"""Run a stateful RTU-over-TCP mock and optional MBAP bridge for Meltem units.
 
 The register model and the hardware behavior it follows are in
-``tools/_mock_model.py``. This module adds the network side, fault injection,
-runtime commands, and the command line; see ``docs/dev/MOCK_GATEWAY.md``.
+``tools/_mock_model.py``. This module adds the network servers, fault
+injection, runtime commands, and the command line; see
+``docs/dev/MOCK_GATEWAY.md``.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ __all__ = [
     "DEFAULT_UNITS",
     "FAULT_ACTIONS",
     "MAX_REGISTER_COUNT",
+    "MbapRtuTcpMockBridge",
     "NO_HUMIDITY_VALUE",
     "NO_SENSOR_VALUE",
     "RtuTcpMockGateway",
@@ -634,6 +636,161 @@ class RtuTcpMockGateway:
         return f"register map written to {args[0]}"
 
 
+class MbapRtuTcpMockBridge:
+    """Translate Modbus TCP/MBAP requests to a raw RTU-over-TCP mock gateway."""
+
+    def __init__(
+        self,
+        backend_host: str,
+        backend_port: int,
+        *,
+        backend_timeout: float = 6.0,
+        single_client: bool = False,
+    ) -> None:
+        if not 1 <= backend_port <= 65535:
+            raise ValueError("backend TCP port must be between 1 and 65535")
+        if backend_timeout <= 0:
+            raise ValueError("backend timeout must be positive")
+        self.backend_host = backend_host
+        self.backend_port = backend_port
+        self.backend_timeout = backend_timeout
+        self.single_client = single_client
+        self._server: asyncio.Server | None = None
+        self._writers: set[asyncio.StreamWriter] = set()
+        self._active_clients = 0
+        self._late_replies = 0
+
+    def inject_late_reply(self, count: int = 1) -> None:
+        """Hold the next MBAP response and send it before the following response."""
+
+        if count < 1:
+            raise ValueError("the late reply count must be at least 1")
+        self._late_replies += count
+
+    async def start(self, host: str = DEFAULT_HOST, port: int = 0) -> int:
+        """Start the MBAP endpoint and return its bound port."""
+
+        if self._server is not None:
+            raise RuntimeError("MBAP bridge is already running")
+        self._server = await asyncio.start_server(self._handle_client, host, port)
+        return _bound_port(self._server)
+
+    async def close(self) -> None:
+        """Stop the MBAP endpoint and its active client connections."""
+
+        server = self._server
+        self._server = None
+        if server is not None:
+            server.close()
+        writers = tuple(self._writers)
+        for writer in writers:
+            writer.close()
+        if writers:
+            await asyncio.gather(
+                *(writer.wait_closed() for writer in writers), return_exceptions=True
+            )
+        if server is not None:
+            await server.wait_closed()
+
+    async def serve_forever(self) -> None:
+        """Wait for clients until the server is cancelled or closed."""
+
+        if self._server is None:
+            raise RuntimeError("MBAP bridge is not running")
+        await self._server.serve_forever()
+
+    async def _handle_client(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        if self.single_client and self._active_clients:
+            print("Rejecting a second MBAP client (--single-client).", flush=True)
+            writer.close()
+            await writer.wait_closed()
+            return
+        self._active_clients += 1
+        self._writers.add(writer)
+        peer = writer.get_extra_info("peername")
+        print(f"MBAP client connected: {peer}", flush=True)
+        late_response: bytes | None = None
+        try:
+            while True:
+                try:
+                    header = await reader.readexactly(7)
+                except asyncio.IncompleteReadError:
+                    return
+                transaction_id = header[:2]
+                protocol_id = int.from_bytes(header[2:4], "big")
+                length = int.from_bytes(header[4:6], "big")
+                unit_id = header[6]
+                if protocol_id != 0 or not 2 <= length <= 254:
+                    print(f"Closing malformed MBAP client {peer}.", flush=True)
+                    return
+                pdu = await reader.readexactly(length - 1)
+                try:
+                    response_pdu = await asyncio.wait_for(
+                        self._exchange(unit_id, pdu), timeout=self.backend_timeout
+                    )
+                except TimeoutError:
+                    continue
+                response = (
+                    transaction_id
+                    + b"\x00\x00"
+                    + (len(response_pdu) + 1).to_bytes(2, "big")
+                    + bytes((unit_id,))
+                    + response_pdu
+                )
+                if self._late_replies:
+                    self._late_replies -= 1
+                    late_response = response
+                    continue
+                if late_response is not None:
+                    writer.write(late_response)
+                    late_response = None
+                writer.write(response)
+                await writer.drain()
+        except (ConnectionError, OSError, ValueError, asyncio.IncompleteReadError) as err:
+            print(f"MBAP bridge request from {peer} failed: {err}", flush=True)
+        finally:
+            self._writers.discard(writer)
+            self._active_clients -= 1
+            writer.close()
+            await writer.wait_closed()
+            print(f"MBAP client disconnected: {peer}", flush=True)
+
+    async def _exchange(self, unit_id: int, pdu: bytes) -> bytes:
+        if not pdu or pdu[0] not in (3, 6):
+            raise ValueError("mock MBAP bridge supports functions 0x03 and 0x06")
+        reader, writer = await asyncio.open_connection(self.backend_host, self.backend_port)
+        try:
+            writer.write(rtu_frame(bytes((unit_id,)) + pdu))
+            await writer.drain()
+            response = await self._read_rtu_response(reader, unit_id, pdu[0])
+            return response[1:-2]
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    async def _read_rtu_response(
+        self, reader: asyncio.StreamReader, unit_id: int, request_function: int
+    ) -> bytes:
+        response = await reader.readexactly(2)
+        response_unit, response_function = response
+        if response_unit != unit_id:
+            raise ConnectionError("RTU response has the wrong unit address")
+        if response_function == request_function | 0x80:
+            response += await reader.readexactly(3)
+        elif response_function == 3:
+            byte_count = await reader.readexactly(1)
+            response += byte_count + await reader.readexactly(byte_count[0] + 2)
+        elif response_function == 6:
+            response += await reader.readexactly(6)
+        else:
+            raise ConnectionError("RTU response has an unexpected function code")
+        if rtu_frame(response[:-2]) != response:
+            raise ConnectionError("RTU response has an invalid CRC")
+        return response
+
+
 def _expect(args: list[str], minimum: int, maximum: int, usage: str) -> None:
     if not minimum <= len(args) <= maximum:
         raise ValueError(f"usage: {usage}")
@@ -673,12 +830,20 @@ def write_register_map(gateway: RtuTcpMockGateway, path: str | Path) -> None:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a local, stateful RTU-over-TCP mock for the Meltem integration.",
+        description=(
+            "Run a stateful RTU-over-TCP mock and optional Modbus TCP/MBAP bridge "
+            "for the Meltem integration."
+        ),
         epilog="Type 'help' on standard input or the control port for the runtime commands.",
     )
     parser.add_argument("--host", default=DEFAULT_HOST, help="Bind address (default: loopback).")
     parser.add_argument(
         "--port", type=int, default=DEFAULT_PORT, help="TCP port to listen on (default: 5020)."
+    )
+    parser.add_argument(
+        "--mbap-port",
+        type=int,
+        help="Also serve Modbus TCP/MBAP through a simulated RTU bridge on this TCP port.",
     )
     parser.add_argument(
         "--units",
@@ -719,7 +884,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--single-client",
         action="store_true",
-        help="Reject another connection while one client is connected.",
+        help="Reject another RTU or MBAP connection while a client is connected.",
     )
     parser.add_argument(
         "--warmup-seconds",
@@ -772,7 +937,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Also accept runtime commands on this TCP port (0 picks a free one).",
     )
     args = parser.parse_args(argv)
-    for name in ("port", "control_port"):
+    for name in ("port", "mbap_port", "control_port"):
         value = getattr(args, name)
         if value is not None and not 0 <= value <= 65535:
             parser.error(f"--{name.replace('_', '-')} must be between 0 and 65535")
@@ -827,25 +992,34 @@ def _read_stdin_commands(loop: asyncio.AbstractEventLoop, gateway: RtuTcpMockGat
 
 async def _serve(args: argparse.Namespace, gateway: RtuTcpMockGateway) -> None:
     port = await gateway.start(args.host, args.port)
-    print(f"Mock Meltem gateway listening on {args.host}:{port}", flush=True)
-    paired = gateway.model.paired
-    print(
-        "Reported units: "
-        + (
-            ", ".join(f"{address}={gateway.model.units[address]}" for address in paired)
-            if paired
-            else "none"
-        ),
-        flush=True,
-    )
-    if args.control_port is not None:
-        control_port = await gateway.start_control(args.host, args.control_port)
-        print(f"Runtime commands on {args.host}:{control_port}", flush=True)
-    _read_stdin_commands(asyncio.get_running_loop(), gateway)
-    print("Type 'help' for runtime commands. Press Ctrl+C to stop.", flush=True)
+    bridge: MbapRtuTcpMockBridge | None = None
     try:
+        print(f"Mock Meltem gateway listening on {args.host}:{port}", flush=True)
+        paired = gateway.model.paired
+        print(
+            "Reported units: "
+            + (
+                ", ".join(f"{address}={gateway.model.units[address]}" for address in paired)
+                if paired
+                else "none"
+            ),
+            flush=True,
+        )
+        if args.mbap_port is not None:
+            bridge = MbapRtuTcpMockBridge(args.host, port, single_client=args.single_client)
+            mbap_port = await bridge.start(args.host, args.mbap_port)
+            print(
+                f"Simulated Modbus TCP/MBAP bridge listening on {args.host}:{mbap_port}", flush=True
+            )
+        if args.control_port is not None:
+            control_port = await gateway.start_control(args.host, args.control_port)
+            print(f"Runtime commands on {args.host}:{control_port}", flush=True)
+        _read_stdin_commands(asyncio.get_running_loop(), gateway)
+        print("Type 'help' for runtime commands. Press Ctrl+C to stop.", flush=True)
         await gateway.serve_forever()
     finally:
+        if bridge is not None:
+            await bridge.close()
         await gateway.close()
 
 

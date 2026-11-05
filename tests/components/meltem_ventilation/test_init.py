@@ -46,6 +46,7 @@ from custom_components.meltem_ventilation.const import (
     CONF_NETWORK_PORT,
     CONF_PORT,
     CONF_ROOMS,
+    CONNECTION_MODBUS_TCP,
     CONNECTION_RTU_OVER_TCP,
     DOMAIN,
     FIXED_TIMEOUT,
@@ -229,6 +230,30 @@ class TestAsyncSetupEntry:
         unit_factory = setup_mocks.client_cls.call_args.args[0]
         assert unit_factory.args[2].device == "socket://bridge.local:5020"
         assert unit_factory.args[2].framer == "rtu"
+        assert setup_mocks.client_cls.call_args.kwargs["timeout"] == NETWORK_TIMEOUT
+        setup_mocks.resolve_port.assert_not_called()
+        assert entry.runtime_data.setup_snapshot[CONF_HOST] == "bridge.local"
+
+    async def test_modbus_tcp_setup_builds_mbap_client(
+        self, hass: HomeAssistant, setup_mocks: _SetupMocks
+    ) -> None:
+        entry = _entry(hass)
+        data = {
+            CONF_CONNECTION_TYPE: CONNECTION_MODBUS_TCP,
+            CONF_HOST: "bridge.local",
+            CONF_NETWORK_PORT: 1502,
+        }
+        hass.config_entries.async_update_entry(entry, data=data)
+        with patch.object(
+            entry,
+            "async_create_background_task",
+            side_effect=lambda _hass, coro, _name, **_kwargs: coro.close(),
+        ):
+            assert await async_setup_entry(hass, entry)
+        params = setup_mocks.client_cls.call_args.args[0].args[2]
+        assert params.host == "bridge.local"
+        assert params.port == 1502
+        assert params.framer == "socket"
         assert setup_mocks.client_cls.call_args.kwargs["timeout"] == NETWORK_TIMEOUT
         setup_mocks.resolve_port.assert_not_called()
         assert entry.runtime_data.setup_snapshot[CONF_HOST] == "bridge.local"

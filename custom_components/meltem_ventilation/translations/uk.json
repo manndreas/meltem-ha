@@ -4,7 +4,8 @@
     "connection_type": {
       "options": {
         "serial": "Послідовне з'єднання USB",
-        "rtu_over_tcp": "RTU через TCP"
+        "rtu_over_tcp": "RTU через TCP",
+        "modbus_tcp": "Modbus TCP (MBAP)"
       }
     },
     "profile_mismatch_action": {
@@ -18,18 +19,20 @@
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "Спочатку налаштуйте шлюз M-WRG-GW і його блоки в застосунку Meltem. Виберіть послідовне з'єднання USB або «сирий» RTU через TCP. Мережеві з'єднання не мають шифрування й автентифікації; використовуйте лише довірену локальну мережу.",
+        "description": "Спочатку налаштуйте шлюз M-WRG-GW і його блоки в застосунку Meltem. Виберіть послідовне з'єднання USB, «сирий» RTU через TCP або Modbus TCP (MBAP). Мережеві з'єднання не мають шифрування й автентифікації; використовуйте лише довірену локальну мережу.",
         "data": {
           "connection_type": "Тип з'єднання",
           "port": "Послідовний порт",
-          "host": "Ім'я хоста або IP-адреса моста",
-          "network_port": "TCP-порт моста"
+          "host": "Ім'я хоста або IP-адреса кінцевої точки",
+          "network_port": "TCP-порт мережевого моста",
+          "modbus_tcp_port": "Порт Modbus TCP"
         },
         "data_description": {
           "connection_type": "Виберіть з'єднання, яке використовується для доступу до шлюзу.",
           "port": "Шлях до пристрою для послідовного з'єднання USB.",
-          "host": "Ім'я хоста або IP-адреса моста RTU через TCP.",
-          "network_port": "TCP-порт «сирого» моста RTU."
+          "host": "Ім'я хоста або IP-адреса мережевого моста або кінцевої точки Modbus TCP.",
+          "network_port": "TCP-порт мережевого моста.",
+          "modbus_tcp_port": "TCP-порт кінцевої точки Modbus TCP/MBAP (типово: 502)."
         }
       },
       "reconfigure": {
@@ -38,14 +41,16 @@
         "data": {
           "connection_type": "Тип з'єднання",
           "port": "Послідовний порт",
-          "host": "Ім'я хоста або IP-адреса моста",
-          "network_port": "TCP-порт моста"
+          "host": "Ім'я хоста або IP-адреса кінцевої точки",
+          "network_port": "TCP-порт мережевого моста",
+          "modbus_tcp_port": "Порт Modbus TCP"
         },
         "data_description": {
           "connection_type": "Виберіть з'єднання, яке використовується для доступу до шлюзу.",
           "port": "Шлях до пристрою для послідовного з'єднання USB.",
-          "host": "Ім'я хоста або IP-адреса моста RTU через TCP.",
-          "network_port": "TCP-порт «сирого» моста RTU."
+          "host": "Ім'я хоста або IP-адреса мережевого моста або кінцевої точки Modbus TCP.",
+          "network_port": "TCP-порт мережевого моста.",
+          "modbus_tcp_port": "TCP-порт кінцевої точки Modbus TCP/MBAP (типово: 502)."
         }
       },
       "confirm_usb": {

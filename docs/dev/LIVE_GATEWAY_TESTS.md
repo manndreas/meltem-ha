@@ -710,6 +710,25 @@ Run R on every unit unless the test says otherwise.
   wide block fails candidate B for that unit. Record success rate and total
   time per variant.
 
+### T-14 — Modbus TCP/MBAP read-only check
+
+- **Checks:** HW-15: the M-WRG-GW's TCP/502 endpoint or a physical MBAP-to-RTU
+  bridge remains available for setup and normal read-only polling.
+- **Type:** R; needs an approved gateway and a unit that can be read over USB
+  serial for comparison.
+- **Before:** Follow the
+  [safety rules](#before-and-after-every-w-test), use only one client at a
+  time, and record which endpoint/bridge firmware is being tested. Do not reset
+  or reconfigure the gateway.
+- **Run:** Configure Home Assistant with **Modbus TCP (MBAP)** and perform
+  setup plus at least 30 minutes of normal polling. Do not use any controls or
+  services that write registers. Compare gateway discovery and selected
+  read-only unit values with the USB serial connection.
+- **Pass:** The endpoint stays connected for the entire run, setup completes,
+  read groups recover normally, and the compared values match USB. Record any
+  connection refusals, timeouts, and the interval before the first failure.
+  Any write is out of scope for this test.
+
 ## W — Writes on a released test unit
 
 Only on slaves released in [P-4](#p-4--ask-the-person-once), one unit at a

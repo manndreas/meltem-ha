@@ -24,6 +24,7 @@ from custom_components.meltem_ventilation.const import (
     CONF_NETWORK_PORT,
     CONF_PORT,
     CONF_ROOMS,
+    CONNECTION_MODBUS_TCP,
     CONNECTION_RTU_OVER_TCP,
     DOMAIN,
 )
@@ -187,14 +188,17 @@ class TestDiagnostics:
         assert not RoomState(mode_status_raw=(2, 80, 0)).has_data
 
     @pytest.mark.parametrize("with_runtime", [False, True])
-    async def test_network_host_is_redacted(self, hass: HomeAssistant, with_runtime: bool) -> None:
+    @pytest.mark.parametrize("connection_type", [CONNECTION_RTU_OVER_TCP, CONNECTION_MODBUS_TCP])
+    async def test_network_host_is_redacted(
+        self, hass: HomeAssistant, with_runtime: bool, connection_type: str
+    ) -> None:
         entry = _entry(hass, with_runtime=with_runtime)
         hass.config_entries.async_update_entry(
             entry,
             data={
-                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_CONNECTION_TYPE: connection_type,
                 CONF_HOST: "private-bridge.local",
-                CONF_NETWORK_PORT: 5020,
+                CONF_NETWORK_PORT: 502 if connection_type == CONNECTION_MODBUS_TCP else 5020,
             },
         )
         if with_runtime:
@@ -473,23 +477,27 @@ class TestDiagnostics:
 
 
 class TestSystemHealth:
-    async def test_redacts_network_host_in_errors(self, hass: HomeAssistant) -> None:
+    @pytest.mark.parametrize("connection_type", [CONNECTION_RTU_OVER_TCP, CONNECTION_MODBUS_TCP])
+    async def test_redacts_network_host_in_errors(
+        self, hass: HomeAssistant, connection_type: str
+    ) -> None:
         entry = _entry(hass)
         hass.config_entries.async_update_entry(
             entry,
             data={
-                CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+                CONF_CONNECTION_TYPE: connection_type,
                 CONF_HOST: "private-bridge.local",
-                CONF_NETWORK_PORT: 5020,
+                CONF_NETWORK_PORT: 502 if connection_type == CONNECTION_MODBUS_TCP else 5020,
             },
         )
         entry.mock_state(hass, ConfigEntryState.LOADED)
         entry.runtime_data.coordinator.last_job_error = MeltemModbusError(
-            "socket://private-bridge.local:5020"
+            f"socket://private-bridge.local:{502 if connection_type == CONNECTION_MODBUS_TCP else 5020}"
         )
         info = await system_health_info(hass)
         assert "private-bridge.local" not in str(info)
-        assert info["last_job_error"] == f"socket://{REDACTED}:5020"
+        expected_port = 502 if connection_type == CONNECTION_MODBUS_TCP else 5020
+        assert info["last_job_error"] == f"socket://{REDACTED}:{expected_port}"
 
     async def test_reports_nothing_without_entries(self, hass: HomeAssistant) -> None:
         assert await system_health_info(hass) == {"loaded_entries": 0}
