@@ -53,10 +53,16 @@ automations. See the [trigger guide](./docs/TRIGGER_FILTER_CHANGE_DUE.md),
 
 - Home Assistant `2026.11.0` or newer
 - a Meltem `M-WRG-GW` gateway
-- supported `M-WRG-S` / `M-WRG-II` units already added in the Meltem app
+- supported `M-WRG-S` / `M-WRG-II` units paired with the gateway using the
+  Meltem app
 - either the gateway connected to the Home Assistant host via USB, or a
   network bridge that transports raw Modbus RTU frames over TCP
   > **Note:** Use a USB cable that is fully wired for data — charge-only cables will not work.
+
+> **Pairing and internet access:** Pair each unit with the gateway in the Meltem
+> app; pairing requires an internet connection. This integration cannot pair
+> units. After pairing, it communicates locally with the gateway, so ongoing
+> use of the integration does not require internet access or the Meltem cloud.
 
 RTU-over-TCP uses raw RTU frames, not Modbus TCP/MBAP. Network connections have
 no encryption or authentication: use them only on a trusted local network.
