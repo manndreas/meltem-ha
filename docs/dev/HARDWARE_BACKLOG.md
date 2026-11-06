@@ -1733,8 +1733,8 @@ The sensorless profiles also do not exercise HW-10's merged air-quality block.
 ## HW-10 — Merged air-quality block on sensor-equipped units
 
 Priority: medium
-Status: in progress (an `M-WRG-S/Z-T-F` refused the merged block on
-2026-11-06; candidate B is implemented, live validation pending)
+Status: in progress (an `M-WRG-S/Z-T-F` refused the merged block; the user
+reports all sensors working again on 5.1.0, but T-12 validation remains open)
 Affected code: `device/components.AirQuality`, `device/components.ExtractAirQuality`,
 `device/components.SupplyAirQuality`, `device/device.MeltemRoomDevice`,
 `modbus_client._due_fields`, `const.READ_GROUP_ENTITY_KEYS`
@@ -1777,7 +1777,8 @@ they read `41004..41005` only.
 1. A block read fails as a whole as soon as one register in it is unreadable
    ([MELTEM.md](MELTEM.md#product-registers-and-readable-islands)). All sensorless
    units surveyed so far answered `41007`, `41008`, `41012`, and `41013` with
-   the `32767` placeholder, but no sensor-equipped unit has been read.
+   the `32767` placeholder, but no sensor-equipped unit has been surveyed
+   register by register.
 2. If a `-F` unit refused `41007`, the whole block would fail. In 5.0.0, that
    error landed in the `temperature` group: after three jobs every
    temperature, humidity, CO2, and VOC entity of that unit became
@@ -1818,7 +1819,15 @@ This matches the failure predicted in
 [Why this needs a live check](#why-this-needs-a-live-check-hw-10), on the
 older series. The report does not say which register the gateway refuses;
 `41007` and `41008` are the only ones in the block without a sensor on a
-`-F` unit. No split reads were run on that unit.
+`-F` unit. No direct split-read tests were run on that unit.
+
+### Field report follow-up on 2026-11-06
+
+The same user reported that all sensors on the `M-WRG-S/Z-T-F` work again
+after updating to 5.1.0. This supports the fix for that unit, but is not a
+T-12 measurement: no individual-register results or repeated-read comparison
+were supplied. The register that caused the merged read to fail remains
+unknown.
 
 ### Current implementation (HW-10)
 
@@ -1857,10 +1866,9 @@ Why `O/VOC-AUL` keeps the merged block:
   evidence: the gateway also answers `Acknowledge` during its RF warm-up, so a
   runtime switch would have to tell the two cases apart.
 
-Still open: confirm that the split reads work on the reporting
-`M-WRG-S/Z-T-F` and on `M-WRG-II -F/-FC`, find the refused register
-(steps 1 and 3 above), and confirm the merged block on an `O/VOC-AUL` unit
-(step 1).
+Still open: measure the split reads on the reporting `M-WRG-S/Z-T-F` and on
+`M-WRG-II -F/-FC`, find the refused register (steps 1 and 3 above), and confirm
+the merged block on an `O/VOC-AUL` unit (step 1).
 
 ### Candidate solutions (HW-10)
 

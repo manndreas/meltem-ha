@@ -143,9 +143,11 @@ implementation as Modbus TCP. Local, unarchived evidence:
 - stable block reads: airflow `41020..41021`, status `41016..41018`, and
   temperatures `41000..41005`. The merged air-quality block `41006..41011`
   was refused with `0x05` by an `M-WRG-S/Z-T-F`, so `-F` and `-FC` read
-  `41006`, `41009..41010`, and `41011` separately; `O/VOC-AUL` still reads
-  `41006..41013` in one request, see
-  [HW-10](HARDWARE_BACKLOG.md#hw-10--merged-air-quality-block-on-sensor-equipped-units)
+  `41006` (`41006..41007` on `-FC`), `41009..41010`, and `41011`
+  separately; `O/VOC-AUL` still reads `41006..41013` in one request. The
+  user reported all sensors working again on that unit after updating to
+  5.1.0; individual-register and repeated-read tests remain open. See
+  [HW-10](HARDWARE_BACKLOG.md#field-report-follow-up-on-2026-11-06)
 - over tmodbus (since `4.0.0`), simple reads took about `16 ms` on average,
   slightly faster than with the earlier pymodbus client (`18.6..19.5 ms`)
 - in the one request-gap sweep, gaps of `0.05..0.3 s` passed, while gap `0`
