@@ -265,8 +265,10 @@ class RefreshPlan:
             groups.extend(("flow", "flow_control", "intensive"))
         if self.refresh_status:
             groups.append("status")
-        if self.refresh_temperatures or self.refresh_environment:
+        if self.refresh_temperatures:
             groups.append("temperature")
+        if self.refresh_environment:
+            groups.append("air_quality")
         if self.refresh_filter_change_due or self.refresh_filter_days:
             groups.append("filter")
         if self.refresh_operating_hours:

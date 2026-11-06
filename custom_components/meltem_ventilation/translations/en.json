@@ -31,7 +31,7 @@
           "connection_type": "Choose the connection used to reach the gateway.",
           "port": "Device path for the USB serial connection.",
           "host": "Hostname or IP address of the bridge or Modbus TCP endpoint.",
-          "network_port": "TCP port of the raw RTU-over-TCP bridge.",
+          "network_port": "TCP port of the raw RTU-over-TCP bridge (default 5020).",
           "modbus_tcp_port": "TCP port of the Modbus TCP/MBAP endpoint (default 502)."
         }
       },
@@ -49,7 +49,7 @@
           "connection_type": "Choose the connection used to reach the gateway.",
           "port": "Device path for the USB serial connection.",
           "host": "Hostname or IP address of the bridge or Modbus TCP endpoint.",
-          "network_port": "TCP port of the raw RTU-over-TCP bridge.",
+          "network_port": "TCP port of the raw RTU-over-TCP bridge (default 5020).",
           "modbus_tcp_port": "TCP port of the Modbus TCP/MBAP endpoint (default 502)."
         }
       },

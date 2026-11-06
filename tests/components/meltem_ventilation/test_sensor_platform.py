@@ -625,7 +625,12 @@ class TestSensorAvailability:
             ("supply_air_flow", "flow", False),
             ("exhaust_temperature", "flow", True),
             ("exhaust_temperature", "temperature", False),
+            ("exhaust_temperature", "air_quality", True),
+            ("humidity_extract_air", "temperature", True),
+            ("humidity_extract_air", "air_quality", False),
             ("absolute_humidity_extract_air", "temperature", False),
+            ("absolute_humidity_extract_air", "air_quality", False),
+            ("absolute_humidity_extract_air", "flow", True),
         ],
     )
     def test_sensor_follows_the_freshness_of_its_own_read_group(

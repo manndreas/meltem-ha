@@ -24,14 +24,14 @@
           "connection_type": "Type de connexion",
           "port": "Port série",
           "host": "Nom d'hôte ou adresse IP du point de terminaison",
-          "network_port": "Port TCP du pont réseau",
+          "network_port": "Port du pont RTU sur TCP",
           "modbus_tcp_port": "Port Modbus TCP"
         },
         "data_description": {
           "connection_type": "Choisissez la connexion utilisée pour joindre la passerelle.",
           "port": "Chemin du périphérique pour la connexion série USB.",
           "host": "Nom d'hôte ou adresse IP du pont ou du point de terminaison Modbus TCP.",
-          "network_port": "Port TCP du pont réseau.",
+          "network_port": "Port TCP du pont RTU brut sur TCP (par défaut : 5020).",
           "modbus_tcp_port": "Port TCP du point de terminaison Modbus TCP/MBAP (par défaut : 502)."
         }
       },
@@ -42,14 +42,14 @@
           "connection_type": "Type de connexion",
           "port": "Port série",
           "host": "Nom d'hôte ou adresse IP du point de terminaison",
-          "network_port": "Port TCP du pont réseau",
+          "network_port": "Port du pont RTU sur TCP",
           "modbus_tcp_port": "Port Modbus TCP"
         },
         "data_description": {
           "connection_type": "Choisissez la connexion utilisée pour joindre la passerelle.",
           "port": "Chemin du périphérique pour la connexion série USB.",
           "host": "Nom d'hôte ou adresse IP du pont ou du point de terminaison Modbus TCP.",
-          "network_port": "Port TCP du pont réseau.",
+          "network_port": "Port TCP du pont RTU brut sur TCP (par défaut : 5020).",
           "modbus_tcp_port": "Port TCP du point de terminaison Modbus TCP/MBAP (par défaut : 502)."
         }
       },

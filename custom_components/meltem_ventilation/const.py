@@ -30,6 +30,7 @@ CONF_PORT = "port"
 CONF_CONNECTION_TYPE = "connection_type"
 CONF_HOST = "host"
 CONF_NETWORK_PORT = "network_port"
+# Form field only; entries store the MBAP port under CONF_NETWORK_PORT as well.
 CONF_MODBUS_TCP_PORT = "modbus_tcp_port"
 CONNECTION_SERIAL = "serial"
 CONNECTION_RTU_OVER_TCP = "rtu_over_tcp"
@@ -431,6 +432,10 @@ READ_GROUP_ENTITY_KEYS: dict[str, frozenset[str]] = {
             "outdoor_air_temperature",
             "extract_air_temperature",
             "supply_air_temperature",
+        }
+    ),
+    "air_quality": frozenset(
+        {
             "humidity_extract_air",
             "humidity_supply_air",
             "absolute_humidity_extract_air",

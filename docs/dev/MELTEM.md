@@ -140,10 +140,11 @@ implementation as Modbus TCP. Local, unarchived evidence:
 - a request gap of `0.1 s` was stable; no gap at all inflated latency heavily
   without improving reliability
 - setup scans are sensitive to short timeouts
-- stable block reads: airflow `41020..41021`, status `41016..41018`,
-  temperatures `41000..41005`, and air quality plus supply temperature
-  `41006..41011` (`41006..41013` on `O/VOC-AUL`); the air-quality block has
-  only been read on sensorless units so far, see
+- stable block reads: airflow `41020..41021`, status `41016..41018`, and
+  temperatures `41000..41005`. The merged air-quality block `41006..41011`
+  was refused with `0x05` by an `M-WRG-S/Z-T-F`, so `-F` and `-FC` read
+  `41006`, `41009..41010`, and `41011` separately; `O/VOC-AUL` still reads
+  `41006..41013` in one request, see
   [HW-10](HARDWARE_BACKLOG.md#hw-10--merged-air-quality-block-on-sensor-equipped-units)
 - over tmodbus (since `4.0.0`), simple reads took about `16 ms` on average,
   slightly faster than with the earlier pymodbus client (`18.6..19.5 ms`)
@@ -859,6 +860,12 @@ Observed on tested `M-WRG-GW` gateways:
 The 2026-10-02 scan could not re-evaluate the swap: all six discovered units
 were `ii_plain`; `41000` and `41002` decoded as NaN, while `41004` was a
 plausible room temperature. Repeat the swap test on a sensor-equipped variant.
+
+A diagnostics download from an `M-WRG-S/Z-T-F` on 2026-11-06 fits the swap:
+`41000` read `19.28 °C` (room side), `41002` `6.89 °C` (outdoor), and `41004`
+`11.71 °C`, between the two as expected for exhaust air after heat recovery.
+It is one snapshot from a user, not a controlled test; see the
+[field report](HARDWARE_BACKLOG.md#field-report-on-2026-11-06).
 
 The Meltem app 1.17 labels the cloud values the same way: `41000` as extract
 air (`Abluft`), `41004` as exhaust air (`Fortluft`), and it pairs `41000` with

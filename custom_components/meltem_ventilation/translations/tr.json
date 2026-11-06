@@ -24,14 +24,14 @@
           "connection_type": "Bağlantı türü",
           "port": "Seri bağlantı noktası",
           "host": "Uç noktanın ana bilgisayar adı veya IP adresi",
-          "network_port": "Ağ köprüsünün TCP bağlantı noktası",
+          "network_port": "TCP üzerinden RTU köprüsünün bağlantı noktası",
           "modbus_tcp_port": "Modbus TCP bağlantı noktası"
         },
         "data_description": {
           "connection_type": "Ağ geçidine ulaşmak için kullanılacak bağlantıyı seçin.",
           "port": "USB seri bağlantısı için aygıt yolu.",
           "host": "Ağ köprüsünün veya Modbus TCP uç noktasının ana bilgisayar adı ya da IP adresi.",
-          "network_port": "Ağ köprüsünün TCP bağlantı noktası.",
+          "network_port": "TCP üzerinden ham RTU köprüsünün TCP bağlantı noktası (varsayılan: 5020).",
           "modbus_tcp_port": "Modbus TCP/MBAP uç noktasının TCP bağlantı noktası (varsayılan: 502)."
         }
       },
@@ -42,14 +42,14 @@
           "connection_type": "Bağlantı türü",
           "port": "Seri bağlantı noktası",
           "host": "Uç noktanın ana bilgisayar adı veya IP adresi",
-          "network_port": "Ağ köprüsünün TCP bağlantı noktası",
+          "network_port": "TCP üzerinden RTU köprüsünün bağlantı noktası",
           "modbus_tcp_port": "Modbus TCP bağlantı noktası"
         },
         "data_description": {
           "connection_type": "Ağ geçidine ulaşmak için kullanılacak bağlantıyı seçin.",
           "port": "USB seri bağlantısı için aygıt yolu.",
           "host": "Ağ köprüsünün veya Modbus TCP uç noktasının ana bilgisayar adı ya da IP adresi.",
-          "network_port": "Ağ köprüsünün TCP bağlantı noktası.",
+          "network_port": "TCP üzerinden ham RTU köprüsünün TCP bağlantı noktası (varsayılan: 5020).",
           "modbus_tcp_port": "Modbus TCP/MBAP uç noktasının TCP bağlantı noktası (varsayılan: 502)."
         }
       },

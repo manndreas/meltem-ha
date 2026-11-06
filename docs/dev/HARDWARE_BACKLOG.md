@@ -1733,20 +1733,23 @@ The sensorless profiles also do not exercise HW-10's merged air-quality block.
 ## HW-10 — Merged air-quality block on sensor-equipped units
 
 Priority: medium
-Status: open
-Affected code: `device/components.AirQuality`, `device/device.MeltemRoomDevice`,
-`modbus_client._due_fields`
+Status: in progress (an `M-WRG-S/Z-T-F` refused the merged block on
+2026-11-06; candidate B is implemented, live validation pending)
+Affected code: `device/components.AirQuality`, `device/components.ExtractAirQuality`,
+`device/components.SupplyAirQuality`, `device/device.MeltemRoomDevice`,
+`modbus_client._due_fields`, `const.READ_GROUP_ENTITY_KEYS`
 
 ### Observation (HW-10)
 
-Since 5.0.0 the `AirQuality` component reads the extract-air sensors, the
+In 5.0.0 the `AirQuality` component read the extract-air sensors, the
 supply-air temperature, and the supply-air sensors in one request:
 `41006..41011` on `-F` and `-FC` units, `41006..41013` on `O/VOC-AUL`.
 Version 4.6.1 read `41006:1` (`-F`) or `41006:2` (`-FC`), `41009:2`, and
 `41011:1` (or `41011:3` with VOC) separately; that split was the fix for review
 item P2-2, which kept registers a unit has no sensor for out of the request.
-The merged block now includes `41007` (CO2) and `41008` (app-only VOC) on
-`-F` units and `41008` on `-FC` units.
+The merged block included `41007` (CO2) and `41008` (app-only VOC) on
+`-F` units and `41008` on `-FC` units. For what the integration reads since
+5.1.0, see [Current implementation](#current-implementation-hw-10).
 
 ### Expected request reduction (code-level estimate)
 
@@ -1775,27 +1778,99 @@ they read `41004..41005` only.
    ([MELTEM.md](MELTEM.md#product-registers-and-readable-islands)). All sensorless
    units surveyed so far answered `41007`, `41008`, `41012`, and `41013` with
    the `32767` placeholder, but no sensor-equipped unit has been read.
-2. If a `-F` unit refused `41007`, the whole block would fail. `AirQuality`
-   is not an optional component, so no component backoff applies, and the
-   error lands in the `temperature` group: after three jobs every
-   temperature, humidity, CO2, and VOC entity of that unit would become
-   unavailable.
+2. If a `-F` unit refused `41007`, the whole block would fail. In 5.0.0, that
+   error landed in the `temperature` group: after three jobs every
+   temperature, humidity, CO2, and VOC entity of that unit became
+   unavailable, as the [field report](#field-report-on-2026-11-06) then
+   showed.
 
 ### What to measure (HW-10)
 
 1. On each available `-F`, `-FC`, and `O/VOC-AUL` unit, read the merged block
    30 times and compare it with the 4.6.1 split reads of the same unit.
 2. Record what the unit returns in the registers it has no sensor for.
+3. On an `M-WRG-S/Z-T-F`, read `41006..41013` one register at a time to find
+   the register that makes the merged block fail.
 
 Tests: [T-12](LIVE_GATEWAY_TESTS.md#t-12--merged-air-quality-block-on-sensor-units).
+
+### Field report on 2026-11-06
+
+A user reported missing temperature and humidity sensors for one
+`M-WRG-S/Z-T-F` at slave `7`, set up with the `M-WRG-S (-F)` profile on
+version 5.0.0 (Home Assistant `2026.11.0`, RTU-over-TCP through an ESP32
+bridge). The other seven units on the gateway are plain `M-WRG-S` and were
+not affected; they read only `41004..41005`. The diagnostics download showed:
+
+- The merged block `41006×6` returned exception `0x05` (`Acknowledge`) on
+  every attempt; the `temperature` group had three consecutive failures and
+  no successful read since the start.
+- `41000×6` was answered in the same jobs: `41000` = `19.28 °C`, `41002` =
+  `6.89 °C`, `41004` = `11.71 °C`. Those values were stored, but the failed
+  group made them unavailable.
+- Supply air temperature, both humidities, and both absolute humidities stayed
+  unknown, since 5.0.0 read the supply temperature from the same block.
+- `42000×3` (the humidity control settings) returned `0x05` once, an hour
+  after a successful read of `70 / 10 / 60`. One failure is below the
+  failure threshold and not related to this block.
+
+This matches the failure predicted in
+[Why this needs a live check](#why-this-needs-a-live-check-hw-10), on the
+older series. The report does not say which register the gateway refuses;
+`41007` and `41008` are the only ones in the block without a sensor on a
+`-F` unit. No split reads were run on that unit.
+
+### Current implementation (HW-10)
+
+Candidate B is implemented, together with a separate read group:
+
+- `-F` and `-FC` read `41006:1` (`41006:2` with CO2), `41009:2`, and
+  `41011:1` again, as in 4.6.1, on both series. A temperature job sends four
+  requests instead of two.
+- `O/VOC-AUL` keeps the merged `41006..41013` block, for the reasons below.
+  Its supply air temperature now comes from the separate `41009:2` read, so
+  a VOC unit sends three requests instead of two.
+- Humidity, CO2, VOC, and absolute humidity form the read group
+  `air_quality`. A refused air-quality read leaves the `temperature` group
+  and its entities available, and does not count as a failed job.
+
+Why `O/VOC-AUL` keeps the merged block:
+
+- The option exists only on `M-WRG-II`, and units of that series answered
+  the registers they have no sensor for, unlike the refusing
+  `M-WRG-S/Z-T-F`. Six sensorless `M-WRG-II` units (software `2326` and
+  `2584`) returned `239` in `41006` and `41011` and `32767` in `41007`,
+  `41008`, `41012`, and `41013`
+  ([survey of 2026-11-03](MELTEM.md#app-derived-register-survey-on-2026-11-03)).
+  T-8 read `41000..41013` 30/30 on three of them
+  ([MELTEM.md](MELTEM.md#request-pacing-and-block-reads)).
+- No `O/VOC-AUL` unit has been read yet, so this is an inference from the
+  series, not a measurement.
+- If a VOC unit refuses the block anyway, only its `air_quality` group
+  fails, and the component backoff after `Acknowledge` limits the retries.
+- Splitting without evidence costs one more request per temperature job and
+  either drops the app-only `voc_extract_air` (`41008`) or reads `41006:3`,
+  which contains the same unverified register.
+- Should a VOC unit refuse the block, select the split components for
+  `VOC_PROFILES` in `modbus_client._due_fields`, with a supply-side component
+  for `41011..41013`. An automatic fallback is not worth it on current
+  evidence: the gateway also answers `Acknowledge` during its RF warm-up, so a
+  runtime switch would have to tell the two cases apart.
+
+Still open: confirm that the split reads work on the reporting
+`M-WRG-S/Z-T-F` and on `M-WRG-II -F/-FC`, find the refused register
+(steps 1 and 3 above), and confirm the merged block on an `O/VOC-AUL` unit
+(step 1).
 
 ### Candidate solutions (HW-10)
 
 - **A — no change** if every sensor-equipped variant answers the merged block
   as reliably as the split reads.
-- **B — restore the split reads for the affected variants** by narrowing
-  `AirQuality.register_ranges` per profile, as 4.6.1 did, if a variant
-  refuses a register in the block.
+- **B — restore the split reads for the affected variants** with components
+  that cover only the registers of the fitted sensors (`ExtractAirQuality`
+  and `SupplyAirQuality`), as 4.6.1 did, if a variant refuses a register in
+  the block. Implemented for `-F` and `-FC` after the
+  [field report](#field-report-on-2026-11-06).
 
 ---
 
@@ -2076,7 +2151,7 @@ Tests: [H-14](LIVE_GATEWAY_TESTS.md#h-14--silent-unit-and-40101).
 Priority: medium
 Status: open
 Affected code: `gateway_connection.ModbusTcpGatewayConnection`,
-config flow, `tools.mock_gateway.MbapRtuTcpMockBridge`
+config flow, `device/transport.py`, `tools.mock_gateway.MbapRtuTcpMockBridge`
 
 ### Observation (HW-15)
 
@@ -2090,6 +2165,28 @@ The integration's MBAP transport and simulated RTU bridge pass software tests.
 No sustained Home Assistant session using the real gateway's MBAP endpoint or
 a physical MBAP-to-RTU bridge has been validated.
 
+### Exception replies from a bridge (HW-15)
+
+`device/transport.py` treats exception `0x0A` (gateway path unavailable) and
+`0x0B` (gateway target failed to respond) as the gateway answering for a unit
+behind it: it retries the request once, resets the timeout counter, and
+refreshes **Modbus connection** and **Last Modbus response**. Unlike after a
+timeout, it neither pauses further reads of that unit nor stops the rest of
+the job.
+
+A separate MBAP-to-RTU bridge usually sends these exceptions itself when its
+RTU side gets no reply. Behind such a bridge, this code analysis predicts:
+
+- each due block of a silent unit is sent twice, and each attempt waits for
+  the bridge's own response timeout
+- a gateway that is unplugged or powered off does not turn **Modbus
+  connection** off; only its units become unavailable
+
+Over USB and raw RTU over TCP, only the gateway can send these replies.
+Whether the gateway's own TCP/502 endpoint sends them is unknown. The mock
+bridge reproduces the bridge behavior with `--mbap-bridge-exceptions`, see
+[MOCK_GATEWAY.md](MOCK_GATEWAY.md#failure-scenarios).
+
 ### Why this needs a live check (HW-15)
 
 1. The short TCP availability window was not explained or reproduced.
@@ -2097,13 +2194,18 @@ a physical MBAP-to-RTU bridge has been validated.
    clients are unknown.
 3. Only read behavior was compared; writes and write confirmation must remain
    unclaimed until separately measured on an approved test unit.
+4. Which device sends `0x0A` and `0x0B` on an MBAP link, and when, decides
+   whether the integration may keep counting them as an answer of the
+   gateway, see [above](#exception-replies-from-a-bridge-hw-15).
 
 ### What to measure (HW-15)
 
 Run [T-14](LIVE_GATEWAY_TESTS.md#t-14--modbus-tcpmbap-read-only-check) only
 with an approved gateway and unit, using read-only setup and polling. Do not
 reset or reconfigure the gateway, issue Modbus writes, or run another client
-against the same endpoint during the check.
+against the same endpoint during the check. With a separate bridge, also
+record its RTU response timeout and what it returns for an address without a
+paired unit and, if the person agrees, while it is unplugged from the gateway.
 
 ### Candidate solutions (HW-15)
 
@@ -2113,3 +2215,8 @@ against the same endpoint during the check.
   direct gateway access is intermittent but a separate bridge is reliable.
 - **C — mark native gateway MBAP as unsupported** if repeated read-only checks
   show the endpoint is not a stable interface.
+- **D — treat `0x0A` and `0x0B` on MBAP links like a timeout** (no link
+  answer, read pause, no second attempt) if bridges send them for a silent
+  unit or gateway. This keeps **Modbus connection** meaningful behind a
+  bridge, but only fits if the gateway's own endpoint does not use them for a
+  unit it still reaches.

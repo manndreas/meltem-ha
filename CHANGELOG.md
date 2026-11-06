@@ -11,7 +11,22 @@
 ### Improvements (5.1.0)
 
 - Extend the local mock gateway with an optional MBAP-to-RTU bridge for
-  software testing.
+  software testing. With `--mbap-bridge-exceptions`, it answers like most real
+  bridges with exception `0x0A` or `0x0B` when the gateway side is unreachable
+  or silent.
+- The README shows which type plate belongs to which profile, for example
+  `M-WRG-S/Z-T-F` → `M-WRG-S (-F)`.
+
+### Fixes (5.1.0)
+
+- `-F` and `-FC` units read only the registers of their fitted sensors again,
+  as before 5.0.0. An `M-WRG-S/Z-T-F` refused the combined read of 5.0.0,
+  which left all of its temperature and humidity sensors unavailable. The
+  `O/VOC-AUL` profile still reads its sensors together and now reads the
+  supply air temperature separately.
+- Temperatures stay available when only the humidity, CO2, or VOC values of a
+  unit cannot be read. **Read health** and the diagnostics download show those
+  values as a separate `air_quality` group.
 
 ## 5.0.0
 

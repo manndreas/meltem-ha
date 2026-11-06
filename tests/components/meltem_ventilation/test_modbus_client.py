@@ -26,6 +26,7 @@ from modbus_connection.mock import MockModbusConnection, MockModbusUnit, WriteEv
 
 from custom_components.meltem_ventilation import read_health
 from custom_components.meltem_ventilation.const import (
+    CO2_PROFILES,
     MODE_AUTOMATIC_VALUE,
     MODE_CO2_CONTROL_VALUE,
     MODE_HUMIDITY_CONTROL_VALUE,
@@ -39,6 +40,7 @@ from custom_components.meltem_ventilation.const import (
     PRESET_MODE_CODE_LOW,
     PRESET_MODE_CODE_MEDIUM,
     PROFILE_METADATA,
+    REGISTER_CO2_EXTRACT_AIR,
     REGISTER_CO2_SUPPLY_AIR,
     REGISTER_CURRENT_LEVEL,
     REGISTER_EXHAUST_AIR_TEMPERATURE,
@@ -53,7 +55,6 @@ from custom_components.meltem_ventilation.const import (
     REGISTER_MODE_STATUS,
     REGISTER_OPERATING_HOURS,
     REGISTER_SUPPLY_AIR_TEMPERATURE,
-    REGISTER_VOC_SUPPLY_AIR,
     TRANSPORT_READ_RECOVERY_SECONDS,
 )
 from custom_components.meltem_ventilation.device.components import FanMotorHours, GatewayUtcClock
@@ -73,6 +74,7 @@ _F = replace(_PLAIN, profile="ii_f")
 _FC = replace(_PLAIN, profile="ii_fc")
 _FC_VOC = replace(_PLAIN, profile="ii_fc_voc")
 _S_FC = replace(_S_PLAIN, profile="s_fc")
+_S_F = replace(_S_PLAIN, profile="s_f")
 _FLOW = RefreshPlan.only(refresh_airflow=True)
 _TEMPERATURES = RefreshPlan.only(refresh_temperatures=True, refresh_environment=True)
 _CONTROL_SETTINGS = RefreshPlan.only(refresh_control_settings=True)
@@ -477,6 +479,7 @@ class TestRequestShapes:
         assert _reads(unit) == [
             (41020, 2),
             (41000, 6),
+            (41009, 2),
             (41006, 8),
             (41016, 3),
             (41027, 1),
@@ -538,34 +541,48 @@ class TestRequestShapes:
         assert _reads(unit) == []
         assert state.read_health_for("control_settings").last_attempt is None
 
-    async def test_humidity_profile_reads_one_block_without_the_voc_register(
-        self, client: MeltemModbusClient, unit: MockModbusUnit
+    @pytest.mark.parametrize(
+        ("room", "extract_air_quality"),
+        [(_F, (41006, 1)), (_S_F, (41006, 1)), (_FC, (41006, 2)), (_S_FC, (41006, 2))],
+    )
+    async def test_sensor_profiles_read_only_the_registers_of_their_sensors(
+        self,
+        client: MeltemModbusClient,
+        unit: MockModbusUnit,
+        room: RoomConfig,
+        extract_air_quality: tuple[int, int],
     ) -> None:
-        # The block includes 41007/41008, which no -F unit has been read with
-        # yet; that check is HW-10 in docs/dev/HARDWARE_BACKLOG.md.
-        await client.read_room_state(_PLAIN, RoomState(), _TEMPERATURES)
-        unit.read_events.clear()
+        # An M-WRG-S/Z-T-F refused the merged 41006..41011 block with
+        # Acknowledge (HW-10), so -F and -FC skip the registers they have no
+        # sensor for.
         unit.holding.update(
             {
                 REGISTER_EXTRACT_AIR_TEMPERATURE: (
                     _float_words(21.0) + _float_words(10.0) + _float_words(18.0)
                 ),
                 REGISTER_SUPPLY_AIR_TEMPERATURE: _float_words(19.0),
-                REGISTER_HUMIDITY_EXTRACT_AIR: [45],
+                REGISTER_HUMIDITY_EXTRACT_AIR: [45, 780],
                 REGISTER_HUMIDITY_SUPPLY_AIR: [50],
             }
         )
-        unit.fail_read(REGISTER_VOC_SUPPLY_AIR, _REJECTED)
+        for register in (41008, 41012, 41013):
+            unit.fail_read(register, AcknowledgeError())
+        if room.profile not in CO2_PROFILES:
+            unit.fail_read(REGISTER_CO2_EXTRACT_AIR, AcknowledgeError())
 
-        state = await client.read_room_state(_F, RoomState(), _TEMPERATURES)
+        state = await client.read_room_state(room, RoomState(), _TEMPERATURES)
 
         assert _reads(unit) == [
             (REGISTER_EXTRACT_AIR_TEMPERATURE, 6),
-            (REGISTER_HUMIDITY_EXTRACT_AIR, 6),
+            (REGISTER_SUPPLY_AIR_TEMPERATURE, 2),
+            extract_air_quality,
+            (REGISTER_HUMIDITY_SUPPLY_AIR, 1),
         ]
+        assert state.supply_air_temperature == 19.0
         assert state.humidity_extract_air == 45
         assert state.humidity_supply_air == 50
         assert state.read_health_for("temperature").consecutive_failures == 0
+        assert state.read_health_for("air_quality").consecutive_failures == 0
 
 
 # ---------------------------------------------------------------------------
@@ -591,7 +608,7 @@ class TestMeasuredValues:
 
         assert state.absolute_humidity_extract_air == pytest.approx(8.639, abs=0.001)
         assert state.absolute_humidity_supply_air == 0.0
-        assert _reads(unit) == [(41000, 6), (41006, 6)]
+        assert _reads(unit) == [(41000, 6), (41009, 2), (41006, 1), (41011, 1)]
 
     async def test_absolute_humidity_does_not_combine_a_partial_read_with_old_inputs(
         self, client: MeltemModbusClient, unit: MockModbusUnit
@@ -610,12 +627,23 @@ class TestMeasuredValues:
         assert state.absolute_humidity_extract_air is not None
         assert state.absolute_humidity_supply_air is not None
 
+        unit.holding[REGISTER_EXTRACT_AIR_TEMPERATURE] = (
+            _float_words(20.0) + _float_words(7.0) + _float_words(19.0)
+        )
         partial = await client.read_room_state(
             _F, state, RefreshPlan.only(refresh_temperatures=True)
         )
+        assert partial.outdoor_air_temperature == pytest.approx(7.0)
         assert partial.humidity_extract_air == 50
         assert partial.absolute_humidity_extract_air is None
         assert partial.absolute_humidity_supply_air is None
+        assert partial.read_health_for("air_quality") == state.read_health_for("air_quality")
+
+        env_only = await client.read_room_state(
+            _F, RoomState(), RefreshPlan.only(refresh_environment=True)
+        )
+        assert env_only.read_health_for("temperature").last_attempt is None
+        assert env_only.read_health_for("air_quality").last_attempt is not None
 
         recovered = await client.read_room_state(_F, partial, _TEMPERATURES)
         assert recovered.absolute_humidity_extract_air == pytest.approx(8.639, abs=0.001)
@@ -643,8 +671,40 @@ class TestMeasuredValues:
         failed = await client.read_room_state(_F, state, _TEMPERATURES)
         assert failed.humidity_extract_air == 50
         assert failed.absolute_humidity_extract_air is None
-        assert failed.absolute_humidity_supply_air is None
-        assert failed.read_health_for("temperature").last_error is not None
+        # The supply side is read separately and still pairs fresh inputs.
+        assert failed.absolute_humidity_supply_air == pytest.approx(6.911, abs=0.001)
+        assert failed.read_health_for("air_quality").last_error is not None
+        assert failed.read_health_for("temperature").last_error is None
+
+    async def test_refused_air_quality_read_leaves_the_temperatures_available(
+        self, client: MeltemModbusClient, unit: MockModbusUnit
+    ) -> None:
+        # The temperatures of an M-WRG-S/Z-T-F went unavailable with the
+        # air-quality read they shared a read group with (HW-10).
+        unit.holding.update(
+            {
+                REGISTER_EXTRACT_AIR_TEMPERATURE: (
+                    _float_words(19.3) + _float_words(6.9) + _float_words(11.7)
+                ),
+                REGISTER_SUPPLY_AIR_TEMPERATURE: _float_words(17.0),
+            }
+        )
+        unit.fail_read(REGISTER_HUMIDITY_EXTRACT_AIR, AcknowledgeError())
+        unit.fail_read(REGISTER_HUMIDITY_SUPPLY_AIR, AcknowledgeError())
+        state = RoomState()
+        for _ in range(2):
+            state = await client.read_room_state(_S_F, state, _TEMPERATURES)
+            client._component_backoff.clear_slave(_S_F.slave)
+        state, outcome = await client.read_room(_S_F, state, _TEMPERATURES)
+
+        assert state.extract_air_temperature == pytest.approx(19.3)
+        assert state.outdoor_air_temperature == pytest.approx(6.9)
+        assert state.exhaust_temperature == pytest.approx(11.7)
+        assert state.supply_air_temperature == pytest.approx(17.0)
+        assert read_health.group_available(state, "temperature")
+        assert not read_health.group_available(state, "air_quality")
+        assert outcome.errors.keys() == {"air_quality"}
+        assert read_health.job_read_failure(_S_F, outcome, _TEMPERATURES) is None
 
     async def test_fc_voc_profile_reads_temperatures_and_air_quality(
         self, client: MeltemModbusClient, unit: MockModbusUnit
@@ -663,6 +723,7 @@ class TestMeasuredValues:
 
         state = await client.read_room_state(_FC_VOC, RoomState(), _TEMPERATURES)
 
+        assert _reads(unit) == [(41000, 6), (41009, 2), (41006, 8)]
         expected = {
             "extract_air_temperature": 22.0,
             "outdoor_air_temperature": 5.5,
@@ -698,7 +759,7 @@ class TestMeasuredValues:
         assert state.co2_extract_air == 780
         assert state.co2_supply_air is None
         assert "co2_supply_air" not in outcome.missing_sensor_values
-        assert _reads(unit) == [(41000, 6), (41006, 6)]
+        assert _reads(unit) == [(41000, 6), (41009, 2), (41006, 2), (41011, 1)]
 
     async def test_nan_temperature_keeps_the_previous_value(
         self, client: MeltemModbusClient, unit: MockModbusUnit
@@ -1015,10 +1076,10 @@ class TestReadHealth:
         self, client: MeltemModbusClient, unit: MockModbusUnit
     ) -> None:
         room = replace(
-            _F, supported_entity_keys=frozenset({"exhaust_temperature", "humidity_extract_air"})
+            _F, supported_entity_keys=frozenset({"exhaust_temperature", "supply_air_temperature"})
         )
         unit.fail_read(REGISTER_EXTRACT_AIR_TEMPERATURE, IllegalDataAddressError())
-        unit.fail_read(REGISTER_HUMIDITY_EXTRACT_AIR, ModbusTimeoutError("silent"))
+        unit.fail_read(REGISTER_SUPPLY_AIR_TEMPERATURE, ModbusTimeoutError("silent"))
 
         state, outcome = await client.read_room(room, RoomState(), _TEMPERATURES)
 

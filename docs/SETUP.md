@@ -7,7 +7,9 @@ For installation and the initial setup steps, see the [README](../README.md).
 During setup, the profile list shows each unit's App setup code when available.
 Match it to the code below the DataMatrix on the unit label to identify which
 Modbus address belongs to each physical unit. Choose the profile using the
-model information on the type plate.
+model information on the type plate; the
+[README](../README.md#supported-profiles) shows which type plate belongs to
+which profile.
 
 For known product IDs, the setup list also shows the device family from the
 app catalog. The older-family mapping has not yet been verified on hardware.
@@ -37,8 +39,10 @@ Enter the network endpoint or bridge hostname/IP address and TCP port manually.
 Hostnames, including `.local` names, must be resolvable by the Home Assistant
 host. Raw RTU-over-TCP uses port `5020` by default; Modbus TCP/MBAP uses `502`.
 For MBAP, enter the gateway's address if its TCP endpoint is available, or
-the address of a compatible bridge. Automatic network discovery is not
-supported. See the
+the address of a compatible bridge. On a separate MBAP-to-RTU bridge, set its
+response timeout to about 1 second; see
+[Diagnostics](DIAGNOSTICS.md#modbus-tcp-through-a-separate-bridge) for
+why. Automatic network discovery is not supported. See the
 [installation requirements](../README.md#requirements) for connection and
 security limitations.
 

@@ -167,7 +167,7 @@ the software MBAP-to-RTU bridge in [MOCK_GATEWAY.md](MOCK_GATEWAY.md). The
 brief hardware comparison did not validate sustained use of the gateway's
 native TCP endpoint, writes, or coexistence with the app. Do not reset or
 reconfigure the gateway merely to make its LAN port accessible; see
-[HW-15](HARDWARE_BACKLOG.md#hw-15--verify-reliable-modbus-tcp-mbap-operation).
+[HW-15](HARDWARE_BACKLOG.md#hw-15--verify-reliable-modbus-tcpmbap-operation).
 
 ## Gateway and Modbus behavior
 
@@ -221,16 +221,21 @@ Assistant's `modbus` integration for one `ModbusUnit` per Modbus address:
   requests cannot be serialized by this coordinator
 
 Register blocks are `Component`s in `device/components.py`. Each one pins
-`register_ranges` to a block benchmarked on the gateway (`Temperatures` reads
-`41000..41005` and `AirQuality` reads `41006..41011` or `41006..41013` in one
-request alongside `Temperatures`). T-8 benchmarked these blocks only on
-sensorless `M-WRG-II` units, which never send the `AirQuality` request at
-runtime; whether `-F` and `-FC` units answer the whole block, including
-`41007`/`41008` on `-F`, is open as
+`register_ranges` to a block read on the gateway. `Temperatures` reads
+`41000..41005` and `SupplyTemperature` reads `41009..41010`. `-F` and `-FC`
+units read their air-quality sensors with `ExtractAirQuality` (`41006`, or
+`41006..41007` with CO2) and `SupplyAirQuality` (`41011`). Only `O/VOC-AUL`
+reads the merged `AirQuality` block `41006..41013`. 5.0.0 had merged the `-F`
+and `-FC` reads into `41006..41011` as well, until an `M-WRG-S/Z-T-F` refused
+that block, see
 [HW-10](HARDWARE_BACKLOG.md#hw-10--merged-air-quality-block-on-sensor-equipped-units).
+T-8 benchmarked the merged blocks only on sensorless `M-WRG-II` units, which
+never send them at runtime.
 `tests/components/meltem_ventilation/test_modbus_client.py` checks the request
 shapes with the mock's `read_events`. Do not merge blocks without a benchmark
-on the real gateway.
+on the real gateway, and on a sensor-equipped unit for the air-quality
+registers: a block read fails as a whole as soon as one register in it is
+refused.
 
 The retry rules live in `device/transport.py` (`TransportPolicy`, one shared
 instance per gateway link):
@@ -243,6 +248,12 @@ instance per gateway link):
 | `ClientClosedError` | no retry |
 | other `ModbusExceptionError` | no retry; resets the counter |
 | `TRANSPORT_DISCONNECT_AFTER_TIMEOUTS` timeouts in a row, across all units, and no answer at all for `TRANSPORT_LINK_QUIET_SECONDS` | `disconnect()`; the next request reopens the link, and a new quiet window starts |
+
+Over Modbus TCP through a separate bridge, `0x0A` and `0x0B` usually come from
+the bridge rather than the gateway, so a silent unit or an unplugged gateway
+behind it still counts as an answer of the link. Whether to treat them like a
+timeout there is open as
+[HW-15](HARDWARE_BACKLOG.md#exception-replies-from-a-bridge-hw-15).
 
 After an unanswered, malformed, disconnected or cancelled holding-register read,
 the policy pauses further reads of that unit for `TRANSPORT_READ_RECOVERY_SECONDS`
@@ -455,7 +466,9 @@ Current job groups:
 - `flow`: airflow values
 - `flow_control`: mode and airflow controls
 - `status`: fault, frost, and RF status
-- `temperature`: temperature and environment values
+- `temperature`: temperatures, plus humidity, CO2, and VOC values in their
+  own read-health group `air_quality`, so that a refused air-quality read
+  leaves the temperatures available
 - `filter`: filter values
 - `hours`: operating hours and software version
 - `control_settings`: humidity and CO2 settings

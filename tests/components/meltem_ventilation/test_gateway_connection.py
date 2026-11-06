@@ -106,6 +106,22 @@ def test_modbus_tcp_rejects_invalid_port(port: object) -> None:
         ModbusTcpGatewayConnection("bridge.local", port)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("connection_class", [RtuTcpGatewayConnection, ModbusTcpGatewayConnection])
+def test_network_connections_reject_a_non_string_host(
+    connection_class: type[RtuTcpGatewayConnection | ModbusTcpGatewayConnection],
+) -> None:
+    with pytest.raises(ValueError, match="host must be a string"):
+        connection_class(123)  # type: ignore[arg-type]
+
+
+def test_network_connection_types_with_the_same_endpoint_differ() -> None:
+    rtu = RtuTcpGatewayConnection("bridge.local", 502)
+    mbap = ModbusTcpGatewayConnection("bridge.local", 502)
+
+    assert rtu != mbap
+    assert rtu.unique_id != mbap.unique_id
+
+
 def test_absolute_and_relative_hostnames_have_distinct_endpoints() -> None:
     absolute = RtuTcpGatewayConnection("bridge.example.com.")
     relative = RtuTcpGatewayConnection("bridge.example.com")

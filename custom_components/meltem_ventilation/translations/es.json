@@ -24,14 +24,14 @@
           "connection_type": "Tipo de conexión",
           "port": "Puerto serie",
           "host": "Nombre de host o dirección IP del endpoint",
-          "network_port": "Puerto TCP del puente de red",
+          "network_port": "Puerto del puente RTU sobre TCP",
           "modbus_tcp_port": "Puerto de Modbus TCP"
         },
         "data_description": {
           "connection_type": "Elige la conexión utilizada para acceder a la pasarela.",
           "port": "Ruta del dispositivo para la conexión serie por USB.",
           "host": "Nombre de host o dirección IP del puente o del endpoint Modbus TCP.",
-          "network_port": "Puerto TCP del puente de red.",
+          "network_port": "Puerto TCP del puente de RTU sin procesar sobre TCP (predeterminado: 5020).",
           "modbus_tcp_port": "Puerto TCP del endpoint Modbus TCP/MBAP (predeterminado: 502)."
         }
       },
@@ -42,14 +42,14 @@
           "connection_type": "Tipo de conexión",
           "port": "Puerto serie",
           "host": "Nombre de host o dirección IP del endpoint",
-          "network_port": "Puerto TCP del puente de red",
+          "network_port": "Puerto del puente RTU sobre TCP",
           "modbus_tcp_port": "Puerto de Modbus TCP"
         },
         "data_description": {
           "connection_type": "Elige la conexión utilizada para acceder a la pasarela.",
           "port": "Ruta del dispositivo para la conexión serie por USB.",
           "host": "Nombre de host o dirección IP del puente o del endpoint Modbus TCP.",
-          "network_port": "Puerto TCP del puente de red.",
+          "network_port": "Puerto TCP del puente de RTU sin procesar sobre TCP (predeterminado: 5020).",
           "modbus_tcp_port": "Puerto TCP del endpoint Modbus TCP/MBAP (predeterminado: 502)."
         }
       },

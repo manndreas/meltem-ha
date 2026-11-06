@@ -29,6 +29,7 @@ from .const import (
     CONNECTION_MODBUS_TCP,
     CONNECTION_RTU_OVER_TCP,
     DEFAULT_MODBUS_TCP_PORT,
+    DEFAULT_NETWORK_PORT,
     DEFAULT_PORT,
     DOMAIN,
     GATEWAY_NAME,
@@ -190,7 +191,9 @@ class MeltemVentilationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Validate network input or resolve a stable serial device path."""
 
         if data.get(CONF_CONNECTION_TYPE) == CONNECTION_RTU_OVER_TCP:
-            return RtuTcpGatewayConnection(data.get(CONF_HOST, ""), data[CONF_NETWORK_PORT])
+            return RtuTcpGatewayConnection(
+                data.get(CONF_HOST, ""), data.get(CONF_NETWORK_PORT, DEFAULT_NETWORK_PORT)
+            )
         if data.get(CONF_CONNECTION_TYPE) == CONNECTION_MODBUS_TCP:
             return ModbusTcpGatewayConnection(
                 data.get(CONF_HOST, ""), data.get(CONF_MODBUS_TCP_PORT, DEFAULT_MODBUS_TCP_PORT)

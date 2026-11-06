@@ -6,7 +6,7 @@ import ipaddress
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from modbus_connection import ModbusSerialParams, ModbusTcpParams
 
@@ -94,11 +94,14 @@ class SerialGatewayConnection:
 
 
 @dataclass(frozen=True, slots=True)
-class RtuTcpGatewayConnection:
-    """A gateway reached through raw RTU frames on a TCP connection."""
+class _NetworkGatewayConnection:
+    """A gateway reached over TCP; each subclass sets its framing and default port."""
 
     host: str
-    port: int = DEFAULT_NETWORK_PORT
+    port: int
+
+    _CONNECTION_TYPE: ClassVar[str]
+    _SCHEME: ClassVar[str]
 
     def __post_init__(self) -> None:
         if not isinstance(self.host, str):
@@ -112,63 +115,53 @@ class RtuTcpGatewayConnection:
         object.__setattr__(self, "host", _normalize_host(self.host))
 
     @property
-    def unique_id(self) -> str:
+    def _endpoint(self) -> str:
         host = f"[{self.host}]" if ":" in self.host else self.host
-        return f"rtu-over-tcp://{host}:{self.port}"
+        return f"{host}:{self.port}"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._SCHEME}://{self._endpoint}"
 
     @property
     def timeout(self) -> float:
         return NETWORK_TIMEOUT
 
     def as_data(self) -> dict[str, str | int]:
+        # Both network types store their port under ``network_port``; only the
+        # flow form splits it into two fields, so each keeps its own default.
         return {
-            CONF_CONNECTION_TYPE: CONNECTION_RTU_OVER_TCP,
+            CONF_CONNECTION_TYPE: self._CONNECTION_TYPE,
             CONF_HOST: self.host,
             CONF_NETWORK_PORT: self.port,
         }
 
+
+@dataclass(frozen=True, slots=True)
+class RtuTcpGatewayConnection(_NetworkGatewayConnection):
+    """A gateway reached through raw RTU frames on a TCP connection."""
+
+    port: int = DEFAULT_NETWORK_PORT
+
+    _CONNECTION_TYPE: ClassVar[str] = CONNECTION_RTU_OVER_TCP
+    _SCHEME: ClassVar[str] = "rtu-over-tcp"
+
     def modbus_params(self) -> ModbusSerialParams:
-        host = f"[{self.host}]" if ":" in self.host else self.host
         return ModbusSerialParams(
-            device=f"socket://{host}:{self.port}",
+            device=f"socket://{self._endpoint}",
             baudrate=_SOCKET_BAUDRATE,
             framer="rtu",
         )
 
 
 @dataclass(frozen=True, slots=True)
-class ModbusTcpGatewayConnection:
+class ModbusTcpGatewayConnection(_NetworkGatewayConnection):
     """A gateway reached through Modbus TCP with MBAP framing."""
 
-    host: str
     port: int = DEFAULT_MODBUS_TCP_PORT
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.host, str):
-            raise ValueError("Gateway host must be a string")
-        if (
-            isinstance(self.port, bool)
-            or not isinstance(self.port, int)
-            or not 1 <= self.port <= 65535
-        ):
-            raise ValueError("Gateway TCP port must be between 1 and 65535")
-        object.__setattr__(self, "host", _normalize_host(self.host))
-
-    @property
-    def unique_id(self) -> str:
-        host = f"[{self.host}]" if ":" in self.host else self.host
-        return f"modbus-tcp://{host}:{self.port}"
-
-    @property
-    def timeout(self) -> float:
-        return NETWORK_TIMEOUT
-
-    def as_data(self) -> dict[str, str | int]:
-        return {
-            CONF_CONNECTION_TYPE: CONNECTION_MODBUS_TCP,
-            CONF_HOST: self.host,
-            CONF_NETWORK_PORT: self.port,
-        }
+    _CONNECTION_TYPE: ClassVar[str] = CONNECTION_MODBUS_TCP
+    _SCHEME: ClassVar[str] = "modbus-tcp"
 
     def modbus_params(self) -> ModbusTcpParams:
         return ModbusTcpParams(host=self.host, port=self.port)

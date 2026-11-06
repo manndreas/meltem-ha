@@ -24,14 +24,14 @@
           "connection_type": "Тип з'єднання",
           "port": "Послідовний порт",
           "host": "Ім'я хоста або IP-адреса кінцевої точки",
-          "network_port": "TCP-порт мережевого моста",
+          "network_port": "Порт мосту RTU через TCP",
           "modbus_tcp_port": "Порт Modbus TCP"
         },
         "data_description": {
           "connection_type": "Виберіть з'єднання, яке використовується для доступу до шлюзу.",
           "port": "Шлях до пристрою для послідовного з'єднання USB.",
           "host": "Ім'я хоста або IP-адреса мережевого моста або кінцевої точки Modbus TCP.",
-          "network_port": "TCP-порт мережевого моста.",
+          "network_port": "TCP-порт мосту «сирого» RTU через TCP (типово: 5020).",
           "modbus_tcp_port": "TCP-порт кінцевої точки Modbus TCP/MBAP (типово: 502)."
         }
       },
@@ -42,14 +42,14 @@
           "connection_type": "Тип з'єднання",
           "port": "Послідовний порт",
           "host": "Ім'я хоста або IP-адреса кінцевої точки",
-          "network_port": "TCP-порт мережевого моста",
+          "network_port": "Порт мосту RTU через TCP",
           "modbus_tcp_port": "Порт Modbus TCP"
         },
         "data_description": {
           "connection_type": "Виберіть з'єднання, яке використовується для доступу до шлюзу.",
           "port": "Шлях до пристрою для послідовного з'єднання USB.",
           "host": "Ім'я хоста або IP-адреса мережевого моста або кінцевої точки Modbus TCP.",
-          "network_port": "TCP-порт мережевого моста.",
+          "network_port": "TCP-порт мосту «сирого» RTU через TCP (типово: 5020).",
           "modbus_tcp_port": "TCP-порт кінцевої точки Modbus TCP/MBAP (типово: 502)."
         }
       },

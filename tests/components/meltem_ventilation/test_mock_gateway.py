@@ -23,7 +23,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.json import ExtendedJSONEncoder
-from modbus_connection import AcknowledgeError, IllegalDataAddressError
+from modbus_connection import AcknowledgeError, GatewayTargetError, IllegalDataAddressError
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.meltem_ventilation.const import (
@@ -76,11 +76,14 @@ from custom_components.meltem_ventilation.modbus_helpers import (
 from custom_components.meltem_ventilation.models import RoomConfig
 from custom_components.meltem_ventilation.units import unit_subentry_data
 from tools.mock_gateway import (
+    DEFAULT_MBAP_BRIDGE_EXCEPTION_TIMEOUT,
+    DEFAULT_MBAP_RESPONSE_TIMEOUT,
     DEFAULT_UNITS,
     NO_HUMIDITY_VALUE,
     NO_SENSOR_VALUE,
     MbapRtuTcpMockBridge,
     RtuTcpMockGateway,
+    _serve,
     build_gateway,
     parse_args,
     parse_units,
@@ -259,33 +262,153 @@ async def test_mbap_bridge_preserves_transaction_id_of_a_late_reply(
 ) -> None:
     gateway = RtuTcpMockGateway({2: "ii_f"})
     rtu_port = await gateway.start()
-    bridge = MbapRtuTcpMockBridge("127.0.0.1", rtu_port)
+    bridge = MbapRtuTcpMockBridge("0.0.0.0", rtu_port)
     mbap_port = await bridge.start()
-    bridge.inject_late_reply()
+    bridge.inject_late_reply(2)
     reader, writer = await asyncio.open_connection("127.0.0.1", mbap_port)
-
-    async def read_mbap_response() -> tuple[int, bytes]:
-        header = await reader.readexactly(7)
-        pdu = await reader.readexactly(int.from_bytes(header[4:6], "big") - 1)
-        return int.from_bytes(header[:2], "big"), pdu
 
     try:
         writer.write(_mbap_read_request(1, 2, REGISTER_HUMIDITY_EXTRACT_AIR))
         await writer.drain()
         with pytest.raises(TimeoutError):
-            await asyncio.wait_for(read_mbap_response(), 0.05)
+            await asyncio.wait_for(_read_mbap_response(reader), 0.05)
 
         writer.write(_mbap_read_request(2, 2, REGISTER_HUMIDITY_EXTRACT_AIR))
         await writer.drain()
 
         expected_pdu = b"\x03\x02\x000"
-        assert await asyncio.wait_for(read_mbap_response(), 2) == (1, expected_pdu)
-        assert await asyncio.wait_for(read_mbap_response(), 2) == (2, expected_pdu)
+        assert await asyncio.wait_for(_read_mbap_response(reader), 2) == (1, expected_pdu)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(_read_mbap_response(reader), 0.05)
+
+        writer.write(_mbap_read_request(3, 2, REGISTER_HUMIDITY_EXTRACT_AIR))
+        await writer.drain()
+        assert await asyncio.wait_for(_read_mbap_response(reader), 2) == (2, expected_pdu)
+        assert await asyncio.wait_for(_read_mbap_response(reader), 2) == (3, expected_pdu)
     finally:
         writer.close()
         await writer.wait_closed()
         await bridge.close()
         await gateway.close()
+
+
+@pytest.mark.parametrize(
+    ("bridge_exceptions", "expected"),
+    [(False, None), (True, b"\x83\x0b")],
+)
+async def test_mbap_bridge_answers_a_silent_unit_only_with_bridge_exceptions(
+    socket_enabled: None, bridge_exceptions: bool, expected: bytes | None
+) -> None:
+    gateway = RtuTcpMockGateway({2: "ii_f"}, silent_units=[2])
+    rtu_port = await gateway.start()
+    bridge = MbapRtuTcpMockBridge(
+        "127.0.0.1", rtu_port, backend_timeout=0.1, bridge_exceptions=bridge_exceptions
+    )
+    mbap_port = await bridge.start()
+    reader, writer = await asyncio.open_connection("127.0.0.1", mbap_port)
+    try:
+        writer.write(_mbap_read_request(7, 2, REGISTER_HUMIDITY_EXTRACT_AIR))
+        await writer.drain()
+        if expected is None:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(_read_mbap_response(reader), 0.5)
+        else:
+            assert await asyncio.wait_for(_read_mbap_response(reader), 2) == (7, expected)
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        await bridge.close()
+        await gateway.close()
+
+
+@pytest.mark.parametrize("fault", ["bad-crc", "wrong-function"])
+async def test_mbap_bridge_exceptions_report_an_invalid_rtu_reply(
+    socket_enabled: None, fault: str
+) -> None:
+    gateway = RtuTcpMockGateway({2: "ii_f"})
+    rtu_port = await gateway.start()
+    bridge = MbapRtuTcpMockBridge("127.0.0.1", rtu_port, bridge_exceptions=True)
+    mbap_port = await bridge.start()
+    gateway.inject_fault(fault, 2)
+    reader, writer = await asyncio.open_connection("127.0.0.1", mbap_port)
+    try:
+        for transaction_id in (1, 2):
+            writer.write(_mbap_read_request(transaction_id, 2, REGISTER_HUMIDITY_EXTRACT_AIR))
+            await writer.drain()
+        assert await asyncio.wait_for(_read_mbap_response(reader), 2) == (1, b"\x83\x0b")
+        # The client connection stays open, and the next reply is valid again.
+        assert await asyncio.wait_for(_read_mbap_response(reader), 2) == (2, b"\x03\x02\x000")
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        await bridge.close()
+        await gateway.close()
+
+
+async def test_mbap_bridge_exceptions_report_an_unreachable_rtu_side(
+    socket_enabled: None,
+) -> None:
+    bridge = MbapRtuTcpMockBridge("127.0.0.1", 5020, bridge_exceptions=True)
+    mbap_port = await bridge.start()
+    reader, writer = await asyncio.open_connection("127.0.0.1", mbap_port)
+    try:
+        with patch.object(
+            bridge, "_open_backend", side_effect=ConnectionRefusedError("RTU side is down")
+        ):
+            writer.write(_mbap_read_request(3, 2, REGISTER_HUMIDITY_EXTRACT_AIR))
+            await writer.drain()
+            assert await asyncio.wait_for(_read_mbap_response(reader), 2) == (3, b"\x83\x0a")
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        await bridge.close()
+
+
+@pytest.mark.parametrize(
+    ("bridge_exceptions", "expected"),
+    [(False, None), (True, b"\x83\x0b")],
+)
+async def test_mbap_bridge_handles_an_rtu_side_that_drops_the_connection(
+    socket_enabled: None, bridge_exceptions: bool, expected: bytes | None
+) -> None:
+    async def drop_connection(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writer.close()
+
+    backend = await asyncio.start_server(drop_connection, "127.0.0.1", 0)
+    backend_port = backend.sockets[0].getsockname()[1]
+    bridge = MbapRtuTcpMockBridge("127.0.0.1", backend_port, bridge_exceptions=bridge_exceptions)
+    mbap_port = await bridge.start()
+    reader, writer = await asyncio.open_connection("127.0.0.1", mbap_port)
+    try:
+        writer.write(_mbap_read_request(4, 2, REGISTER_HUMIDITY_EXTRACT_AIR))
+        await writer.drain()
+        if expected is None:
+            # Without bridge exceptions, the bridge closes the client connection.
+            assert await asyncio.wait_for(reader.read(), 2) == b""
+        else:
+            assert await asyncio.wait_for(_read_mbap_response(reader), 2) == (4, expected)
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        await bridge.close()
+        backend.close()
+        await backend.wait_closed()
+
+
+@pytest.mark.parametrize(
+    ("bridge_exceptions", "timeout"),
+    [
+        (False, DEFAULT_MBAP_RESPONSE_TIMEOUT),
+        (True, DEFAULT_MBAP_BRIDGE_EXCEPTION_TIMEOUT),
+    ],
+)
+def test_mbap_bridge_response_timeout_follows_bridge_exceptions(
+    bridge_exceptions: bool, timeout: float
+) -> None:
+    bridge = MbapRtuTcpMockBridge("127.0.0.1", 5020, bridge_exceptions=bridge_exceptions)
+
+    assert bridge.backend_timeout == timeout
+    assert MbapRtuTcpMockBridge("127.0.0.1", 5020, backend_timeout=2.5).backend_timeout == 2.5
 
 
 async def test_mbap_bridge_enforces_single_client(socket_enabled: None) -> None:
@@ -305,6 +428,47 @@ async def test_mbap_bridge_enforces_single_client(socket_enabled: None) -> None:
         await second_writer.wait_closed()
         await bridge.close()
         await gateway.close()
+
+
+@pytest.mark.parametrize(
+    ("host", "backend_host"),
+    [
+        ("", "127.0.0.1"),
+        ("0.0.0.0", "127.0.0.1"),
+        ("::", "::1"),
+        ("127.0.0.1", "127.0.0.1"),
+        ("::1", "::1"),
+        ("192.0.2.1", "192.0.2.1"),
+        ("localhost", "localhost"),
+    ],
+)
+def test_mbap_bridge_reaches_a_wildcard_backend_through_loopback(
+    host: str, backend_host: str
+) -> None:
+    assert MbapRtuTcpMockBridge(host, 5020).backend_host == backend_host
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::"])
+async def test_cli_binds_both_listeners_to_the_requested_host(host: str) -> None:
+    gateway = RtuTcpMockGateway({2: "ii_f"})
+    args = parse_args(
+        ["--host", host, "--port", "0", "--mbap-port", "0", "--mbap-response-timeout", "0.5"]
+    )
+    with (
+        patch.object(gateway, "start", return_value=5020) as start,
+        patch.object(gateway, "serve_forever"),
+        patch.object(gateway, "close"),
+        patch("tools.mock_gateway._read_stdin_commands"),
+        patch("tools.mock_gateway.MbapRtuTcpMockBridge", autospec=True) as bridge,
+    ):
+        bridge.return_value.start.return_value = 1502
+        await _serve(args, gateway)
+
+        start.assert_awaited_once_with(host, 0)
+        # The bridge itself maps a wildcard backend host to loopback.
+        assert bridge.call_args.args == (host, 5020)
+        assert bridge.call_args.kwargs["backend_timeout"] == 0.5
+        bridge.return_value.start.assert_awaited_once_with(host, 0)
 
 
 async def test_cli_starts_mbap_bridge_for_the_existing_mock(
@@ -354,6 +518,40 @@ async def test_cli_applies_single_client_limit_to_mbap_bridge(
             if writer is not None:
                 writer.close()
                 await writer.wait_closed()
+        await _stop_cli_gateway(process)
+
+
+async def test_cli_passes_bridge_exceptions_to_the_mbap_bridge(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    process, _ = await _start_cli_gateway(
+        "--units",
+        "2:ii_f",
+        "--silent-unit",
+        "2",
+        "--mbap-port",
+        "0",
+        "--mbap-bridge-exceptions",
+    )
+    try:
+        assert process.stdout is not None
+        mbap_port: int | None = None
+        while mbap_port is None:
+            line = await asyncio.wait_for(process.stdout.readline(), 5)
+            assert line
+            text = line.decode().strip()
+            if text.startswith("Simulated Modbus TCP/MBAP bridge listening on 127.0.0.1:"):
+                mbap_port = int(text.rsplit(":", 1)[1])
+
+        connection = ModbusTcpGatewayConnection("127.0.0.1", mbap_port)
+        async with async_get_temporary_unit(hass, connection.modbus_params(), 2) as unit:
+            # With its default 1 s response timeout, the bridge answers for the
+            # silent unit before the 5 s network timeout.
+            with pytest.raises(GatewayTargetError):
+                await asyncio.wait_for(
+                    unit.read_holding_registers(REGISTER_HUMIDITY_EXTRACT_AIR, 1), 4
+                )
+    finally:
         await _stop_cli_gateway(process)
 
 
@@ -533,6 +731,12 @@ def _mbap_read_request(transaction_id: int, unit_id: int, address: int) -> bytes
         + bytes((unit_id,))
         + pdu
     )
+
+
+async def _read_mbap_response(reader: asyncio.StreamReader) -> tuple[int, bytes]:
+    header = await reader.readexactly(7)
+    pdu = await reader.readexactly(int.from_bytes(header[4:6], "big") - 1)
+    return int.from_bytes(header[:2], "big"), pdu
 
 
 async def test_end_to_end_setup_entities_diagnostics_options_and_reconfigure(
@@ -1057,6 +1261,9 @@ def test_invalid_scripted_faults_are_rejected() -> None:
         ["--unit-delay", "x:1"],
         ["--unit-delay", "2:a"],
         ["--mbap-port", "70000"],
+        ["--mbap-port", "0", "--mbap-response-timeout", "0"],
+        ["--mbap-response-timeout", "1"],
+        ["--mbap-bridge-exceptions"],
         ["--control-port", "70000"],
         ["--units", "2:nope"],
     ],

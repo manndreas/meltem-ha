@@ -51,8 +51,8 @@ body:
       description: Add what you know; it is fine to leave unknown details out.
       placeholder: |
         Home Assistant: 2026.11.0
-        Meltem Modbus: 5.0.0
-        Gateway connection: USB or RTU-over-TCP bridge (for example, ESP32)
+        Meltem Modbus: 5.1.0
+        Gateway connection: USB, RTU-over-TCP bridge, or Modbus TCP (for example, ESP32)
     validations:
       required: false
 
@@ -70,7 +70,5 @@ body:
     attributes:
       label: Anything else? (optional)
       description: Add a screenshot or other detail that may help reproduce the problem. Remove private information first.
-    validations:
-      required: false
     validations:
       required: false

@@ -24,14 +24,14 @@
           "connection_type": "Typ połączenia",
           "port": "Port szeregowy",
           "host": "Nazwa hosta lub adres IP punktu końcowego",
-          "network_port": "Port TCP mostka sieciowego",
+          "network_port": "Port mostka RTU przez TCP",
           "modbus_tcp_port": "Port Modbus TCP"
         },
         "data_description": {
           "connection_type": "Wybierz połączenie używane do komunikacji z bramą.",
           "port": "Ścieżka urządzenia dla połączenia szeregowego USB.",
           "host": "Nazwa hosta lub adres IP mostka lub punktu końcowego Modbus TCP.",
-          "network_port": "Port TCP mostka sieciowego.",
+          "network_port": "Port TCP mostka przesyłającego surowe RTU przez TCP (domyślnie: 5020).",
           "modbus_tcp_port": "Port TCP punktu końcowego Modbus TCP/MBAP (domyślnie: 502)."
         }
       },
@@ -42,14 +42,14 @@
           "connection_type": "Typ połączenia",
           "port": "Port szeregowy",
           "host": "Nazwa hosta lub adres IP punktu końcowego",
-          "network_port": "Port TCP mostka sieciowego",
+          "network_port": "Port mostka RTU przez TCP",
           "modbus_tcp_port": "Port Modbus TCP"
         },
         "data_description": {
           "connection_type": "Wybierz połączenie używane do komunikacji z bramą.",
           "port": "Ścieżka urządzenia dla połączenia szeregowego USB.",
           "host": "Nazwa hosta lub adres IP mostka lub punktu końcowego Modbus TCP.",
-          "network_port": "Port TCP mostka sieciowego.",
+          "network_port": "Port TCP mostka przesyłającego surowe RTU przez TCP (domyślnie: 5020).",
           "modbus_tcp_port": "Port TCP punktu końcowego Modbus TCP/MBAP (domyślnie: 502)."
         }
       },

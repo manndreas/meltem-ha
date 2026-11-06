@@ -60,6 +60,7 @@ class MeltemSensorDescription(SensorEntityDescription):
     """Describe a Meltem sensor."""
 
     value_fn: Callable[[RoomState], int | float | None]
+    extra_read_group: str | None = None
 
 
 MODBUS_SLAVE_ID_DESCRIPTION = SensorEntityDescription(
@@ -322,6 +323,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfDensity.GRAMS_PER_CUBIC_METER,
         suggested_display_precision=1,
         entity_registry_enabled_default=False,
+        extra_read_group="temperature",
         value_fn=lambda state: state.absolute_humidity_extract_air,
     ),
     MeltemSensorDescription(
@@ -331,6 +333,7 @@ SENSOR_DESCRIPTIONS: tuple[MeltemSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfDensity.GRAMS_PER_CUBIC_METER,
         suggested_display_precision=1,
         entity_registry_enabled_default=False,
+        extra_read_group="temperature",
         value_fn=lambda state: state.absolute_humidity_supply_air,
     ),
     MeltemSensorDescription(
@@ -554,6 +557,15 @@ class MeltemSensorEntity(MeltemEntity, SensorEntity):
     ) -> None:
         super().__init__(coordinator, room, description.key, description.key)
         self.entity_description = description
+
+    @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        extra_group = self.entity_description.extra_read_group
+        return extra_group is None or self.coordinator.read_group_available(
+            self.room.key, extra_group
+        )
 
     @property
     def native_value(self) -> int | float | None:

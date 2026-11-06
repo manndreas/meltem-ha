@@ -38,6 +38,7 @@ _GROUPS = (
     "intensive",
     "status",
     "temperature",
+    "air_quality",
     "filter",
     "hours",
     "fan_hours",

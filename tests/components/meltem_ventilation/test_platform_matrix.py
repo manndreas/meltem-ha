@@ -285,7 +285,7 @@ def test_profile_has_only_supported_read_health_groups(profile: str) -> None:
         "value_error",
     }
     if _PROFILE_CAPABILITIES[profile] & {"humidity", "co2"}:
-        expected_groups.add("control_settings")
+        expected_groups.update(("air_quality", "control_settings"))
 
     assert actual_groups == expected_groups
 

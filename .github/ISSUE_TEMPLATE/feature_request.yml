@@ -27,7 +27,7 @@ body:
       placeholder: |
         Model: M-WRG-S/Z-T-F
         Selected profile: M-WRG-S (-F)
-        Gateway connection: USB or RTU-over-TCP bridge (for example, ESP32)
+        Gateway connection: USB, RTU-over-TCP bridge, or Modbus TCP (for example, ESP32)
     validations:
       required: false
 

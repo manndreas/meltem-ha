@@ -24,14 +24,14 @@
           "connection_type": "Tipo di connessione",
           "port": "Porta seriale",
           "host": "Nome host o indirizzo IP dell'endpoint",
-          "network_port": "Porta TCP del bridge di rete",
+          "network_port": "Porta del bridge RTU su TCP",
           "modbus_tcp_port": "Porta Modbus TCP"
         },
         "data_description": {
           "connection_type": "Scegli la connessione usata per raggiungere il gateway.",
           "port": "Percorso del dispositivo per la connessione seriale USB.",
           "host": "Nome host o indirizzo IP del bridge o dell'endpoint Modbus TCP.",
-          "network_port": "Porta TCP del bridge di rete.",
+          "network_port": "Porta TCP del bridge RTU grezzo su TCP (predefinita: 5020).",
           "modbus_tcp_port": "Porta TCP dell'endpoint Modbus TCP/MBAP (predefinita: 502)."
         }
       },
@@ -42,14 +42,14 @@
           "connection_type": "Tipo di connessione",
           "port": "Porta seriale",
           "host": "Nome host o indirizzo IP dell'endpoint",
-          "network_port": "Porta TCP del bridge di rete",
+          "network_port": "Porta del bridge RTU su TCP",
           "modbus_tcp_port": "Porta Modbus TCP"
         },
         "data_description": {
           "connection_type": "Scegli la connessione usata per raggiungere il gateway.",
           "port": "Percorso del dispositivo per la connessione seriale USB.",
           "host": "Nome host o indirizzo IP del bridge o dell'endpoint Modbus TCP.",
-          "network_port": "Porta TCP del bridge di rete.",
+          "network_port": "Porta TCP del bridge RTU grezzo su TCP (predefinita: 5020).",
           "modbus_tcp_port": "Porta TCP dell'endpoint Modbus TCP/MBAP (predefinita: 502)."
         }
       },

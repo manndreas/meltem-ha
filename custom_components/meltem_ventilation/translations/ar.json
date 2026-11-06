@@ -19,19 +19,19 @@
     "step": {
       "user": {
         "title": "Meltem Modbus",
-        "description": "قم أولاً بإعداد البوابة M-WRG-GW ووحداتها في تطبيق Meltem. اختر الاتصال التسلسلي عبر USB أو RTU الخام أو Modbus TCP (MBAP). اتصالات الشبكة غير مشفّرة ولا تتطلب مصادقة؛ استخدم شبكة محلية موثوقة فقط.",
+        "description": "قم أولاً بإعداد البوابة M-WRG-GW ووحداتها في تطبيق Meltem. اختر الاتصال التسلسلي عبر USB أو RTU الخام عبر TCP أو Modbus TCP (MBAP). اتصالات الشبكة غير مشفّرة ولا تتطلب مصادقة؛ استخدم شبكة محلية موثوقة فقط.",
         "data": {
           "connection_type": "نوع الاتصال",
           "port": "المنفذ التسلسلي",
           "host": "اسم المضيف أو عنوان IP لنقطة النهاية",
-          "network_port": "منفذ TCP لجسر الشبكة",
+          "network_port": "منفذ جسر RTU عبر TCP",
           "modbus_tcp_port": "منفذ Modbus TCP"
         },
         "data_description": {
           "connection_type": "اختر الاتصال المستخدم للوصول إلى البوابة.",
           "port": "مسار الجهاز للاتصال التسلسلي عبر USB.",
           "host": "اسم المضيف أو عنوان IP لجسر الشبكة أو نقطة نهاية Modbus TCP.",
-          "network_port": "منفذ TCP لجسر الشبكة.",
+          "network_port": "منفذ TCP لجسر RTU الخام عبر TCP (الافتراضي 5020).",
           "modbus_tcp_port": "منفذ TCP لنقطة نهاية Modbus TCP/MBAP (الافتراضي 502)."
         }
       },
@@ -42,14 +42,14 @@
           "connection_type": "نوع الاتصال",
           "port": "المنفذ التسلسلي",
           "host": "اسم المضيف أو عنوان IP لنقطة النهاية",
-          "network_port": "منفذ TCP لجسر الشبكة",
+          "network_port": "منفذ جسر RTU عبر TCP",
           "modbus_tcp_port": "منفذ Modbus TCP"
         },
         "data_description": {
           "connection_type": "اختر الاتصال المستخدم للوصول إلى البوابة.",
           "port": "مسار الجهاز للاتصال التسلسلي عبر USB.",
           "host": "اسم المضيف أو عنوان IP لجسر الشبكة أو نقطة نهاية Modbus TCP.",
-          "network_port": "منفذ TCP لجسر الشبكة.",
+          "network_port": "منفذ TCP لجسر RTU الخام عبر TCP (الافتراضي 5020).",
           "modbus_tcp_port": "منفذ TCP لنقطة نهاية Modbus TCP/MBAP (الافتراضي 502)."
         }
       },

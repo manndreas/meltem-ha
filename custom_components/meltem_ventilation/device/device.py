@@ -30,6 +30,7 @@ from .components import (
     AppSetupCode,
     Command,
     ControlSettings,
+    ExtractAirQuality,
     FanMotorHours,
     GatewayMac,
     GatewayUptime,
@@ -40,6 +41,7 @@ from .components import (
     ProductId,
     Register,
     Status,
+    SupplyAirQuality,
     SupplyTemperature,
     Temperatures,
 )
@@ -69,7 +71,6 @@ class MeltemRoomDevice(Device):
         *,
         exhaust_temperature_only: bool,
         has_co2: bool = True,
-        has_voc: bool = True,
     ) -> None:
         super().__init__(unit)
         self.airflow = Airflow(unit)
@@ -78,24 +79,14 @@ class MeltemRoomDevice(Device):
             # Plain units only expose the exhaust temperature (unit matrix).
             _only(self.temperatures, "exhaust_temperature")
         self.supply_temperature = SupplyTemperature(unit)
+        # Only the O/VOC-AUL profile reads the merged block. -F and -FC read
+        # just the registers of their sensors, since an M-WRG-S/Z-T-F refused
+        # the merged block (HW-10).
         self.air_quality = AirQuality(unit)
-        if not has_co2 or not has_voc:
-            air_quality_fields = [
-                "humidity_extract_air",
-                "supply_air_temperature",
-                "humidity_supply_air",
-            ]
-            if has_co2:
-                air_quality_fields.append("co2_extract_air")
-            if has_voc:
-                air_quality_fields.extend(("voc_extract_air", "voc_supply_air"))
-            _only(self.air_quality, *air_quality_fields)
-            self.air_quality.register_ranges = (
-                (
-                    REGISTER_HUMIDITY_EXTRACT_AIR,
-                    REGISTER_VOC_SUPPLY_AIR if has_voc else REGISTER_HUMIDITY_SUPPLY_AIR,
-                ),
-            )
+        self.extract_air_quality = ExtractAirQuality(unit)
+        if not has_co2:
+            _only(self.extract_air_quality, "humidity_extract_air")
+        self.supply_air_quality = SupplyAirQuality(unit)
         self.status = Status(unit)
         self.days_until_filter_change = Register(
             unit, base_offset=REGISTER_DAYS_UNTIL_FILTER_CHANGE

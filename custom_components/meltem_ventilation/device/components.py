@@ -175,17 +175,37 @@ class Temperatures(Component):
 
 
 class AirQuality(Component):
-    """Air quality and temperature registers in the grouped sensor block."""
+    """All air-quality sensors of the ``O/VOC-AUL`` variant in one block.
+
+    The block spans the supply air temperature, which ``SupplyTemperature``
+    reads, so that a refused air-quality register cannot take it along.
+    """
 
     register_ranges = ((REGISTER_HUMIDITY_EXTRACT_AIR, REGISTER_VOC_SUPPLY_AIR),)
 
     humidity_extract_air = raw_register(REGISTER_HUMIDITY_EXTRACT_AIR)
     co2_extract_air = raw_register(REGISTER_CO2_EXTRACT_AIR)
     voc_extract_air = raw_register(REGISTER_VOC_EXTRACT_AIR)
-    supply_air_temperature = _float32(REGISTER_SUPPLY_AIR_TEMPERATURE)
     humidity_supply_air = raw_register(REGISTER_HUMIDITY_SUPPLY_AIR)
     co2_supply_air = raw_register(REGISTER_CO2_SUPPLY_AIR)
     voc_supply_air = raw_register(REGISTER_VOC_SUPPLY_AIR)
+
+
+class ExtractAirQuality(Component):
+    """Extract air humidity and CO2 of the ``-F`` and ``-FC`` variants."""
+
+    register_ranges = ((REGISTER_HUMIDITY_EXTRACT_AIR, REGISTER_CO2_EXTRACT_AIR),)
+
+    humidity_extract_air = raw_register(REGISTER_HUMIDITY_EXTRACT_AIR)
+    co2_extract_air = raw_register(REGISTER_CO2_EXTRACT_AIR)
+
+
+class SupplyAirQuality(Component):
+    """Supply air humidity, the only supply-air sensor of ``-F`` and ``-FC``."""
+
+    register_ranges = ((REGISTER_HUMIDITY_SUPPLY_AIR, REGISTER_HUMIDITY_SUPPLY_AIR),)
+
+    humidity_supply_air = raw_register(REGISTER_HUMIDITY_SUPPLY_AIR)
 
 
 class SupplyTemperature(Component):

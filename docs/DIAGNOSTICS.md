@@ -25,7 +25,7 @@ Each unit's values are refreshed in groups:
 | Airflow and operating mode | 10 seconds |
 | Status flags (error, frost protection, RF communication) | 60 seconds |
 | RF last-seen age, RSSI, fault status, and value-error status | 60 seconds |
-| Temperatures and environment sensors | 60 seconds |
+| Temperatures and air-quality sensors (humidity, CO2, VOC) | 60 seconds |
 | Filter status and days until filter change | 1 hour |
 | Device and fan operating hours, firmware version | 1 hour |
 | Humidity and CO2 control settings | 1 hour |
@@ -40,7 +40,7 @@ On units with humidity sensors, **Absolute extract air humidity** and
 **Absolute supply air humidity** estimate g/m³ from the matching temperature
 and relative humidity. Both sensors are disabled by default and add no
 Modbus reads. A result is unknown if either input is missing or the inputs
-were not obtained together; stale temperature-group data also makes the
+were not obtained together; stale temperature or humidity data also makes the
 sensor unavailable.
 
 ## Read health and availability
@@ -52,7 +52,9 @@ read resumes the normal schedule.
 Airflow data is considered stale after 30 seconds without a successful read;
 other groups become stale after three times their normal interval. Read-only
 sensors and control-threshold numbers become unavailable when their own read
-group is stale or has failed three times in a row. Fans, mode selectors, and
+group is stale or has failed three times in a row. Temperatures and the
+air-quality sensors have separate read groups, so a unit that refuses its
+humidity registers still shows its temperatures. Fans, mode selectors, and
 the intensive switch stay available as long as the unit itself answers, so
 commands can still be sent. A unit as a whole is marked unavailable after
 three consecutive failed read jobs or more than 120 seconds without a
@@ -223,7 +225,10 @@ RF statistics, uptime, and UTC clock become unavailable when stale.
 
 **Modbus connection** detects recent gateway responses, not whether every unit behind
 it is reachable. A valid Modbus error response also proves that the link
-answered. Before the first response, this entity and **Last Modbus response**
+answered. Behind a separate Modbus TCP/MBAP bridge, the bridge itself usually
+sends the error responses `0x0A` or `0x0B` when it cannot reach the gateway,
+so **Modbus connection** can stay on while all units are unavailable. Before
+the first response, this entity and **Last Modbus response**
 are unknown. Once a response has been received, **Modbus connection** turns
 off after more than 30 seconds without another response, with up to 10 seconds
 of local refresh delay.
@@ -414,6 +419,16 @@ the current shared link while it checks the replacement. Other integrations
 using that link can be interrupted and will reconnect on their next request.
 If another integration reconnects during the check, a bridge that accepts only
 one client may still reject the replacement connection.
+
+## Modbus TCP through a separate bridge
+
+A separate MBAP-to-RTU bridge has its own response timeout for the gateway.
+Set it to about 1 second: longer than the 0.8 seconds the integration allows
+the gateway over USB, and well below the integration's 5-second network
+timeout, so that the bridge's error response arrives before the integration
+gives up on the request. Because the bridge itself sends these error
+responses (`0x0A` or `0x0B`), **Modbus connection** can stay on while units
+behind it are unavailable; see [Gateway diagnostics](#gateway-diagnostics).
 
 ## Logs
 

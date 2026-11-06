@@ -24,14 +24,14 @@
           "connection_type": "Tipo de ligação",
           "port": "Porta série",
           "host": "Nome de anfitrião ou endereço IP do endpoint",
-          "network_port": "Porta TCP da ponte de rede",
+          "network_port": "Porta da ponte RTU sobre TCP",
           "modbus_tcp_port": "Porta Modbus TCP"
         },
         "data_description": {
           "connection_type": "Escolha a ligação utilizada para aceder ao gateway.",
           "port": "Caminho do dispositivo para a ligação série USB.",
           "host": "Nome de anfitrião ou endereço IP da ponte ou do endpoint Modbus TCP.",
-          "network_port": "Porta TCP da ponte de rede.",
+          "network_port": "Porta TCP da ponte de RTU em bruto sobre TCP (predefinição: 5020).",
           "modbus_tcp_port": "Porta TCP do endpoint Modbus TCP/MBAP (predefinição: 502)."
         }
       },
@@ -42,14 +42,14 @@
           "connection_type": "Tipo de ligação",
           "port": "Porta série",
           "host": "Nome de anfitrião ou endereço IP do endpoint",
-          "network_port": "Porta TCP da ponte de rede",
+          "network_port": "Porta da ponte RTU sobre TCP",
           "modbus_tcp_port": "Porta Modbus TCP"
         },
         "data_description": {
           "connection_type": "Escolha a ligação utilizada para aceder ao gateway.",
           "port": "Caminho do dispositivo para a ligação série USB.",
           "host": "Nome de anfitrião ou endereço IP da ponte ou do endpoint Modbus TCP.",
-          "network_port": "Porta TCP da ponte de rede.",
+          "network_port": "Porta TCP da ponte de RTU em bruto sobre TCP (predefinição: 5020).",
           "modbus_tcp_port": "Porta TCP do endpoint Modbus TCP/MBAP (predefinição: 502)."
         }
       },

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import random
 import sys
@@ -52,6 +53,15 @@ DEFAULT_UNITS = "2:ii_fc_voc,3:ii_f"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5020
 FRAGMENT_PAUSE_SECONDS = 0.02
+# Longer than the integration's 5 s network timeout, so a missing RTU reply
+# reaches the client as silence unless the bridge answers with an exception.
+DEFAULT_MBAP_RESPONSE_TIMEOUT = 6.0
+# With exceptions, answer well before that timeout, as docs/DIAGNOSTICS.md
+# recommends for a real bridge.
+DEFAULT_MBAP_BRIDGE_EXCEPTION_TIMEOUT = 1.0
+# Wildcard bind addresses cannot be connected to on every platform, so the
+# bridge reaches a local RTU mock bound to one of them through loopback.
+_LOOPBACK_FOR_WILDCARD = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "::": "::1"}
 
 # Exception replies the integration maps to distinct errors.
 EXCEPTION_FAULTS = {
@@ -181,6 +191,10 @@ def rtu_frame(payload: bytes) -> bytes:
 
 def _exception_frame(unit_id: int, function: int, code: int) -> bytes:
     return rtu_frame(bytes((unit_id, function | 0x80, code)))
+
+
+def _exception_pdu(function: int, code: int) -> bytes:
+    return bytes((function | 0x80, code))
 
 
 def _distort(action: str | None, response: bytes, address: int, value: int) -> bytes:
@@ -637,24 +651,40 @@ class RtuTcpMockGateway:
 
 
 class MbapRtuTcpMockBridge:
-    """Translate Modbus TCP/MBAP requests to a raw RTU-over-TCP mock gateway."""
+    """Translate Modbus TCP/MBAP requests to a raw RTU-over-TCP mock gateway.
+
+    By default a missing RTU reply leaves the MBAP request unanswered. With
+    ``bridge_exceptions`` the bridge answers like most real MBAP-to-RTU
+    bridges instead: ``0x0B`` when the RTU reply is missing or invalid, and
+    ``0x0A`` when it cannot reach the RTU side at all. Without an explicit
+    ``backend_timeout``, it waits 6 s for the RTU reply, or 1 s with
+    ``bridge_exceptions``.
+    """
 
     def __init__(
         self,
         backend_host: str,
         backend_port: int,
         *,
-        backend_timeout: float = 6.0,
+        backend_timeout: float | None = None,
         single_client: bool = False,
+        bridge_exceptions: bool = False,
     ) -> None:
         if not 1 <= backend_port <= 65535:
             raise ValueError("backend TCP port must be between 1 and 65535")
+        if backend_timeout is None:
+            backend_timeout = (
+                DEFAULT_MBAP_BRIDGE_EXCEPTION_TIMEOUT
+                if bridge_exceptions
+                else DEFAULT_MBAP_RESPONSE_TIMEOUT
+            )
         if backend_timeout <= 0:
             raise ValueError("backend timeout must be positive")
-        self.backend_host = backend_host
+        self.backend_host = _LOOPBACK_FOR_WILDCARD.get(backend_host, backend_host)
         self.backend_port = backend_port
         self.backend_timeout = backend_timeout
         self.single_client = single_client
+        self.bridge_exceptions = bridge_exceptions
         self._server: asyncio.Server | None = None
         self._writers: set[asyncio.StreamWriter] = set()
         self._active_clients = 0
@@ -731,7 +761,9 @@ class MbapRtuTcpMockBridge:
                         self._exchange(unit_id, pdu), timeout=self.backend_timeout
                     )
                 except TimeoutError:
-                    continue
+                    if not self.bridge_exceptions:
+                        continue
+                    response_pdu = _exception_pdu(pdu[0], EXCEPTION_FAULTS["gateway-target"])
                 response = (
                     transaction_id
                     + b"\x00\x00"
@@ -741,6 +773,9 @@ class MbapRtuTcpMockBridge:
                 )
                 if self._late_replies:
                     self._late_replies -= 1
+                    if late_response is not None:
+                        writer.write(late_response)
+                        await writer.drain()
                     late_response = response
                     continue
                 if late_response is not None:
@@ -757,18 +792,32 @@ class MbapRtuTcpMockBridge:
             await writer.wait_closed()
             print(f"MBAP client disconnected: {peer}", flush=True)
 
+    async def _open_backend(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        return await asyncio.open_connection(self.backend_host, self.backend_port)
+
     async def _exchange(self, unit_id: int, pdu: bytes) -> bytes:
-        if not pdu or pdu[0] not in (3, 6):
-            raise ValueError("mock MBAP bridge supports functions 0x03 and 0x06")
-        reader, writer = await asyncio.open_connection(self.backend_host, self.backend_port)
+        if len(pdu) != 5 or pdu[0] not in (3, 6):
+            raise ValueError("mock MBAP bridge supports 5-byte 0x03 and 0x06 requests")
+        try:
+            reader, writer = await self._open_backend()
+        except OSError:
+            if not self.bridge_exceptions:
+                raise
+            return _exception_pdu(pdu[0], EXCEPTION_FAULTS["gateway-path"])
         try:
             writer.write(rtu_frame(bytes((unit_id,)) + pdu))
             await writer.drain()
             response = await self._read_rtu_response(reader, unit_id, pdu[0])
-            return response[1:-2]
+        except OSError, asyncio.IncompleteReadError:
+            if not self.bridge_exceptions:
+                raise
+            return _exception_pdu(pdu[0], EXCEPTION_FAULTS["gateway-target"])
         finally:
             writer.close()
-            await writer.wait_closed()
+            # The exchange is over, so a failed close must not replace its result.
+            with contextlib.suppress(OSError):
+                await writer.wait_closed()
+        return response[1:-2]
 
     async def _read_rtu_response(
         self, reader: asyncio.StreamReader, unit_id: int, request_function: int
@@ -779,13 +828,13 @@ class MbapRtuTcpMockBridge:
             raise ConnectionError("RTU response has the wrong unit address")
         if response_function == request_function | 0x80:
             response += await reader.readexactly(3)
+        elif response_function != request_function:
+            raise ConnectionError("RTU response has an unexpected function code")
         elif response_function == 3:
             byte_count = await reader.readexactly(1)
             response += byte_count + await reader.readexactly(byte_count[0] + 2)
-        elif response_function == 6:
-            response += await reader.readexactly(6)
         else:
-            raise ConnectionError("RTU response has an unexpected function code")
+            response += await reader.readexactly(6)
         if rtu_frame(response[:-2]) != response:
             raise ConnectionError("RTU response has an invalid CRC")
         return response
@@ -844,6 +893,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--mbap-port",
         type=int,
         help="Also serve Modbus TCP/MBAP through a simulated RTU bridge on this TCP port.",
+    )
+    parser.add_argument(
+        "--mbap-response-timeout",
+        type=float,
+        metavar="SECONDS",
+        help=(
+            "Seconds the simulated MBAP bridge waits for the RTU reply "
+            f"(default: {DEFAULT_MBAP_RESPONSE_TIMEOUT:g}, or "
+            f"{DEFAULT_MBAP_BRIDGE_EXCEPTION_TIMEOUT:g} with --mbap-bridge-exceptions)."
+        ),
+    )
+    parser.add_argument(
+        "--mbap-bridge-exceptions",
+        action="store_true",
+        help=(
+            "Let the simulated MBAP bridge answer 0x0B for a missing or invalid RTU reply "
+            "and 0x0A for an unreachable RTU side, instead of staying silent."
+        ),
     )
     parser.add_argument(
         "--units",
@@ -947,6 +1014,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     for name in ("drop_rate", "corrupt_rate"):
         if not 0 <= getattr(args, name) <= 1:
             parser.error(f"--{name.replace('_', '-')} must be between 0 and 1")
+    if args.mbap_response_timeout is not None and args.mbap_response_timeout <= 0:
+        parser.error("--mbap-response-timeout must be positive")
+    if args.mbap_port is None and (
+        args.mbap_response_timeout is not None or args.mbap_bridge_exceptions
+    ):
+        parser.error("--mbap-response-timeout and --mbap-bridge-exceptions need --mbap-port")
     return args
 
 
@@ -1006,7 +1079,13 @@ async def _serve(args: argparse.Namespace, gateway: RtuTcpMockGateway) -> None:
             flush=True,
         )
         if args.mbap_port is not None:
-            bridge = MbapRtuTcpMockBridge(args.host, port, single_client=args.single_client)
+            bridge = MbapRtuTcpMockBridge(
+                args.host,
+                port,
+                backend_timeout=args.mbap_response_timeout,
+                single_client=args.single_client,
+                bridge_exceptions=args.mbap_bridge_exceptions,
+            )
             mbap_port = await bridge.start(args.host, args.mbap_port)
             print(
                 f"Simulated Modbus TCP/MBAP bridge listening on {args.host}:{mbap_port}", flush=True

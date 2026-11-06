@@ -53,6 +53,16 @@
           'frost_protection_active': False,
           'group_read_health': tuple(
             tuple(
+              'air_quality',
+              dict({
+                'consecutive_failures': 0,
+                'last_attempt': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+                'last_error': None,
+                'last_error_timed_out': False,
+                'last_successful_read': HAFakeDatetime(2026, 11, 2, 12, 0, tzinfo=datetime.timezone.utc),
+              }),
+            ),
+            tuple(
               'control_settings',
               dict({
                 'consecutive_failures': 0,
@@ -658,6 +668,13 @@
 # name: test_entities[binary_sensor][binary_sensor.meltem_modbus_unit_1_read_health-state]
   StateSnapshot({
     'attributes': ReadOnlyDict({
+      'air_quality': dict({
+        'consecutive_failures': 0,
+        'last_attempt': '2026-11-02T12:00:00+00:00',
+        'last_error': None,
+        'last_successful_read': '2026-11-02T12:00:00+00:00',
+        'stale': False,
+      }),
       'control_settings': dict({
         'consecutive_failures': 0,
         'last_attempt': '2026-11-02T12:00:00+00:00',

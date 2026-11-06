@@ -124,6 +124,20 @@ have names such as `Unit 1` and can be renamed in Home Assistant. See the
 - `M-WRG-S (-F, -FC)`
 - `M-WRG-II (-F, -FC, O/VOC-AUL)`
 
+Choose the profile by the sensor suffix on the type plate (`-F` or `-FC`).
+The operating variant does not change the profile, for example `T` with the
+InControl touch sensor or `M` with Modbus:
+
+| Type plate, for example | Profile |
+| --- | --- |
+| `M-WRG-S`, `M-WRG-S M`, `M-WRG-S/Z-T` | `M-WRG-S` |
+| `M-WRG-S M-F`, `M-WRG-S/Z-T-F` | `M-WRG-S (-F)` |
+| `M-WRG-S M-FC`, `M-WRG-S/Z-T-FC` | `M-WRG-S (-FC)` |
+| `M-WRG-II P`, `M-WRG-II E-T` | `M-WRG-II` |
+| `M-WRG-II P-F`, `M-WRG-II E-T-F` | `M-WRG-II (-F)` |
+| `M-WRG-II P-FC`, `M-WRG-II E-T-FC` | `M-WRG-II (-FC)` |
+| `M-WRG-II` with the `O/VOC-AUL` option | `M-WRG-II (O/VOC-AUL)` |
+
 The `M-WRG-II` profiles support both `P` units with a plate heat exchanger
 and `E` units with an enthalpy heat exchanger that also recovers moisture.
 Choose the profile based on the unit's sensors; no separate `P` or `E`

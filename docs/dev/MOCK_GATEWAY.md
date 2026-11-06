@@ -50,6 +50,15 @@ listens on port `1502`. In Home Assistant, choose **Modbus TCP (MBAP)** and
 connect to the latter. This exercises the integration's MBAP transport and a
 software RTU-to-MBAP bridge, but does not validate any physical bridge firmware.
 
+By default, the bridge leaves a request unanswered when the RTU side does not
+reply, so the integration sees a timeout. Most real MBAP-to-RTU bridges answer
+with an exception instead; `--mbap-bridge-exceptions` imitates them with
+`0x0B` for a missing or invalid RTU reply and `0x0A` when the RTU side cannot
+be reached. The bridge waits `--mbap-response-timeout` seconds for the RTU
+reply: by default `6` seconds, longer than the integration's 5-second network
+timeout, and `1` second with `--mbap-bridge-exceptions`, as recommended for a
+real bridge, so the exception arrives before the integration gives up.
+
 The simulated product IDs follow the app catalog: `116852` for `ii_*` and
 `116819` for `s_*`. The latter remains unconfirmed on real hardware; the
 simulation is not evidence that an M-WRG-S unit reports that value.
@@ -62,6 +71,9 @@ injected fault; `Ctrl+C` stops it.
 
 If Home Assistant runs in a container or on another host, bind to a reachable
 interface, for example `--host 0.0.0.0`, and connect to that host's address.
+With wildcard bindings (`0.0.0.0` or `::`), the MBAP bridge connects to the
+local RTU mock through `127.0.0.1` or `::1`; both listeners keep the requested
+bind address.
 Modbus has no authentication or encryption: expose the simulator only on a
 trusted network.
 
@@ -163,11 +175,13 @@ Fault actions:
 - `--warmup-seconds 120`: the sensor, status, and airflow blocks return
   Acknowledge for two minutes after the start, as after connecting a real
   gateway. Use `reboot 120` later for the same after a gateway restart.
-- `--refuse 3:41007`: unit 3 (`ii_f`) refuses the CO2 register inside its
-  merged air-quality block, which makes the whole block fail. This rehearses
-  the risk described in
-  [HW-10](HARDWARE_BACKLOG.md#hw-10--merged-air-quality-block-on-sensor-equipped-units)
-  in software; it is not evidence that a real unit behaves like this.
+- `--refuse 3:41007`: unit 3 (`ii_f`) refuses the CO2 register, so a raw
+  read of the merged block `41006×6` fails as a whole, as an
+  `M-WRG-S/Z-T-F` did in
+  [HW-10](HARDWARE_BACKLOG.md#hw-10--merged-air-quality-block-on-sensor-equipped-units).
+  The integration does not read `41007` on `-F` units, so its humidity
+  sensors must keep working. Which register the real unit refused is not
+  known.
 - `--refuse 1:41019-41020`: the gateway refuses its uptime, so the optional
   uptime read keeps failing and retries with a growing delay.
 - `--settle-ms 3000`: status and airflow change three seconds after each
@@ -181,6 +195,10 @@ Fault actions:
   response until the next request, then sends it with its original transaction
   ID. This exercises late-response handling without changing the RTU mock's
   existing raw-frame fault behavior.
+- `--mbap-bridge-exceptions --silent-unit 3` with `--mbap-port`: the bridge
+  answers requests to unit 3 with `0x0B` after one second instead of staying
+  silent, so the integration sees an answered request rather than a timeout,
+  see [HW-15](HARDWARE_BACKLOG.md#exception-replies-from-a-bridge-hw-15).
 - Stop the simulator with `Ctrl+C` to test an unavailable gateway. Restart it
   to check recovery.
 

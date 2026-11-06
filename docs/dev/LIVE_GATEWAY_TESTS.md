@@ -693,10 +693,13 @@ Run R on every unit unless the test says otherwise.
   `--read 41006:1 --read 41009:2 --read 41011:1` (`-F`) or
   `--read 41006:2 --read 41009:2 --read 41011:1` (`-FC`), and
   `--read 41006:8` against `--read 41006:2 --read 41009:2 --read 41011:3`
-  (`O/VOC-AUL`).
+  (`O/VOC-AUL`). On a unit that refuses the merged block, also read
+  `41006` to `41013` one register at a time with `--rounds 5`.
 - **Pass:** 30/30 merged reads succeed with the same values as the split
   reads. Any exception response on the merged block fails HW-10. Record what
-  each variant returns in the registers it has no sensor for.
+  each variant returns in the registers it has no sensor for, and which
+  single register a refusing unit rejects. The split reads must succeed
+  30/30 on every `-F` and `-FC` unit, since the integration uses them.
 
 ### T-13 — Mode status block with override registers
 
@@ -723,11 +726,18 @@ Run R on every unit unless the test says otherwise.
 - **Run:** Configure Home Assistant with **Modbus TCP (MBAP)** and perform
   setup plus at least 30 minutes of normal polling. Do not use any controls or
   services that write registers. Compare gateway discovery and selected
-  read-only unit values with the USB serial connection.
+  read-only unit values with the USB serial connection. With a separate
+  bridge, also read one address without a paired unit with any Modbus TCP
+  client while the Home Assistant entry is disabled, and ask the person
+  whether the bridge may be unplugged from the gateway for a minute while
+  Home Assistant keeps polling.
 - **Pass:** The endpoint stays connected for the entire run, setup completes,
   read groups recover normally, and the compared values match USB. Record any
   connection refusals, timeouts, and the interval before the first failure.
-  Any write is out of scope for this test.
+  With a separate bridge, record its RTU response timeout, what it returned
+  for the unpaired address and while unplugged (no reply, `0x0A`, or `0x0B`),
+  and whether **Modbus connection** turned off. Any write is out of scope for
+  this test.
 
 ## W — Writes on a released test unit
 

@@ -108,13 +108,16 @@ _BRIDGE_RF_COMPONENTS = frozenset(
 )
 _OPTIONAL_DIAGNOSTIC_COMPONENTS = (_BRIDGE_RF_COMPONENTS - {"rf_comm_status"}) | {"fan_motor_hours"}
 
-# The two APK-only fields come from the block the VOC profile reads anyway.
+# Each field with the component the -F and -FC profiles read it from. Those
+# components cover only the registers of the fitted sensors (HW-10). The
+# O/VOC-AUL profile reads every field from the merged ``air_quality`` block,
+# which also carries the two APK-only fields.
 _AIR_QUALITY_FIELDS: tuple[tuple[str, str, frozenset[str]], ...] = (
-    ("humidity_extract_air", "air_quality", HUMIDITY_PROFILES),
-    ("co2_extract_air", "air_quality", CO2_PROFILES),
+    ("humidity_extract_air", "extract_air_quality", HUMIDITY_PROFILES),
+    ("co2_extract_air", "extract_air_quality", CO2_PROFILES),
     ("voc_extract_air", "air_quality", VOC_PROFILES),
     ("co2_supply_air", "air_quality", VOC_PROFILES),
-    ("humidity_supply_air", "air_quality", HUMIDITY_PROFILES),
+    ("humidity_supply_air", "supply_air_quality", HUMIDITY_PROFILES),
     ("voc_supply_air", "air_quality", VOC_PROFILES),
 )
 
@@ -324,7 +327,6 @@ class MeltemModbusClient:
                 self._unit(room.slave),
                 exhaust_temperature_only=room.profile in PLAIN_PROFILES,
                 has_co2=room.profile in CO2_PROFILES,
-                has_voc=room.profile in VOC_PROFILES,
             )
         return device
 
@@ -789,18 +791,24 @@ def _due_fields(room: RoomConfig, plan: RefreshPlan) -> dict[str, _FieldRead]:
             due[name] = _FieldRead(component, attribute or name, group)
 
     extended = room.profile not in PLAIN_PROFILES
+    merged_air_quality = room.profile in VOC_PROFILES
     temperatures = plan.refresh_temperatures
     environment = plan.refresh_environment
 
     add("extract_air_flow", "airflow", "flow", plan.refresh_airflow)
     add("supply_air_flow", "airflow", "flow", plan.refresh_airflow)
     add("exhaust_temperature", "temperatures", "temperature", temperatures)
-    add("outdoor_air_temperature", "temperatures", "temperature", extended and environment)
+    add("outdoor_air_temperature", "temperatures", "temperature", extended and temperatures)
     add("extract_air_temperature", "temperatures", "temperature", extended and temperatures)
-    supply_temp_component = "air_quality" if environment else "supply_temperature"
-    add("supply_air_temperature", supply_temp_component, "temperature", extended and temperatures)
+    add("supply_air_temperature", "supply_temperature", "temperature", extended and temperatures)
+    # A separate group, so a refused air-quality read leaves the temperatures available.
     for name, component, profiles in _AIR_QUALITY_FIELDS:
-        add(name, component, "temperature", environment and room.profile in profiles)
+        add(
+            name,
+            "air_quality" if merged_air_quality else component,
+            "air_quality",
+            environment and room.profile in profiles,
+        )
     add("error_status", "status", "status", plan.refresh_status)
     add("frost_protection_active", "status", "status", plan.refresh_status)
     add("filter_change_due", "status", "filter", plan.refresh_filter_change_due)
